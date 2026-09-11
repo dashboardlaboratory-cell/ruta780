@@ -1,0 +1,302 @@
+---
+title: "Archivos, errores y módulos"
+subtitle: "Python · Lección 4"
+nivel: L3
+modulo: python
+fase: F0
+prereqs: [python/03-comprehensions]
+siguientes: [python/05-entorno-uv-git]
+libro: "McKinney 3E, cap. 3"
+---
+
+::: {.meta-leccion}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F0]{.item}
+[**Libro** McKinney cap. 3]{.item}
+[**Prereqs** [Comprehensions](03-comprehensions.qmd)]{.item}
+:::
+
+## La idea
+
+Tres cosas que separan un script de notebook de código que otra persona puede correr: **cerrar lo que abres**, **fallar con un mensaje útil**, y **poder importarse sin ejecutarse**.
+
+## Archivos: siempre con `with`
+
+```{pyodide}
+# El sistema de archivos aquí es virtual, dentro del navegador. Funciona igual.
+with open("ventas.csv", "w", encoding="utf-8") as f:
+    f.write("sucursal,venta,trx\n")
+    f.write("multiplaza,4200.0,140\n")
+    f.write("costa,1800.0,45\n")
+    f.write("brisas,3100.0,100\n")
+
+with open("ventas.csv", encoding="utf-8") as f:
+    contenido = f.read()
+
+print(contenido)
+```
+
+`with` garantiza que el archivo se cierra **aunque el bloque lance una excepción**. Sin `with`, un error a media lectura deja el descriptor abierto; con miles de archivos, el proceso se queda sin descriptores y muere con un error que no dice nada.
+
+::: {.callout-important}
+## `encoding="utf-8"` siempre
+
+El encoding por defecto depende del sistema operativo. Tu código funcionará en tu Mac y fallará en el servidor de la empresa con `UnicodeDecodeError` en la primera tilde. Escríbelo explícito, siempre.
+:::
+
+Leer línea por línea, sin cargar todo (Lección 3: el objeto archivo es un generador):
+
+```{pyodide}
+with open("ventas.csv", encoding="utf-8") as f:
+    encabezado = next(f).strip().split(",")
+    filas = [dict(zip(encabezado, linea.strip().split(","))) for linea in f]
+
+for fila in filas:
+    print(fila)
+```
+
+Para CSV real usa el módulo `csv` o pandas — manejan comas dentro de comillas, saltos de línea en campos y encodings raros. Lo de arriba es para entender qué hacen por dentro.
+
+```{pyodide}
+import csv, io
+
+crudo = 'sucursal,nota\n"costa del este","vende cafe, te y pan"\n'
+
+for fila in csv.DictReader(io.StringIO(crudo)):
+    print(fila)
+# La coma dentro de las comillas NO partió el campo.
+```
+
+## Rutas: `pathlib`, no concatenar strings
+
+```{pyodide}
+from pathlib import Path
+
+base = Path("datos")
+archivo = base / "2026" / "ventas.csv"     # el / funciona como separador
+
+print("ruta:", archivo)
+print("nombre:", archivo.name)
+print("extensión:", archivo.suffix)
+print("carpeta padre:", archivo.parent)
+print("cambiar extensión:", archivo.with_suffix(".parquet"))
+```
+
+`Path` resuelve solo la diferencia entre `/` de macOS y `\` de Windows. Concatenar strings con `+` o con `os.path.join` funciona, pero `pathlib` se lee mejor y trae `.exists()`, `.mkdir(parents=True)`, `.glob()` y `.read_text()` incluidos.
+
+## Errores: capturar lo específico
+
+```{pyodide}
+def dividir(a, b):
+    try:
+        return a / b
+    except ZeroDivisionError:
+        print("  -> división por cero, devuelvo None")
+        return None
+    except TypeError as e:
+        print(f"  -> tipo incorrecto: {e}")
+        return None
+    finally:
+        print("  (finally corre siempre)")
+
+print("10/2 =", dividir(10, 2))
+print("10/0 =", dividir(10, 0))
+print("10/'a' =", dividir(10, "a"))
+```
+
+::: {.callout-warning}
+## Nunca `except:` pelado
+
+```python
+try:
+    hacer_algo()
+except:          # ← captura TODO, incluido Ctrl-C y errores de memoria
+    pass         # ← y lo tira a la basura en silencio
+```
+
+Eso convierte un bug en un misterio. Captura la excepción **específica** que sabes que puede ocurrir, y si de verdad necesitas capturar amplio, usa `except Exception as e:` y **registra** `e`.
+:::
+
+Lanzar tus propios errores, con mensaje útil:
+
+```{pyodide}
+def ticket_promedio(venta, trx):
+    if trx <= 0:
+        raise ValueError(f"trx debe ser positivo, recibí {trx}")
+    return venta / trx
+
+print(ticket_promedio(4200, 140))
+
+try:
+    ticket_promedio(4200, 0)
+except ValueError as e:
+    print("capturado:", e)
+```
+
+Un mensaje que incluye **el valor que causó el problema** te ahorra media hora de debugging. `"trx inválido"` no sirve; `"trx debe ser positivo, recibí 0"` sí.
+
+## Módulos y el guardián `__main__`
+
+Cuando escribes `mi_script.py` y alguien hace `import mi_script`, **todo el archivo se ejecuta**. Si tenía código suelto al final, ese código corre en el import — casi nunca es lo que quieres.
+
+```{pyodide}
+codigo = '''
+def ticket(venta, trx):
+    return venta / trx
+
+if __name__ == "__main__":
+    # Esto SOLO corre si ejecutas el archivo directamente:
+    #   python analisis.py
+    # No corre si alguien hace: import analisis
+    print("ticket de prueba:", ticket(4200, 140))
+'''
+
+with open("analisis.py", "w", encoding="utf-8") as f:
+    f.write(codigo)
+
+import analisis
+print("importado sin ejecutar el bloque de prueba")
+print("uso la función:", analisis.ticket(3100, 100))
+```
+
+`__name__` vale `"__main__"` cuando el archivo se ejecuta directamente, y el nombre del módulo cuando se importa. Ese `if` es la línea que separa un script de una librería reutilizable — y es lo que vas a usar en cada archivo de `scratch/`.
+
+## Ejercicio 1 — Leer con manejo de error
+
+Completa la función para que devuelva el contenido del archivo, o la cadena `"no existe"` si el archivo no está, sin dejar que la excepción se propague.
+
+```{pyodide}
+#| exercise: ex_leer
+from pathlib import Path
+
+Path("existe.txt").write_text("hola", encoding="utf-8")
+
+def leer_seguro(ruta):
+    try:
+        ______
+    except ______:
+        return "no existe"
+
+print(leer_seguro("existe.txt"))
+print(leer_seguro("fantasma.txt"))
+leer_seguro("fantasma.txt")
+```
+
+::: {.hint exercise="ex_leer"}
+La excepción que lanza `open()` cuando el archivo no está es `FileNotFoundError`. Para leer, usa `with open(ruta, encoding="utf-8") as f: return f.read()`.
+:::
+
+::: {.solution exercise="ex_leer"}
+```{pyodide}
+from pathlib import Path
+
+Path("existe.txt").write_text("hola", encoding="utf-8")
+
+def leer_seguro(ruta):
+    try:
+        with open(ruta, encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return "no existe"
+
+print(leer_seguro("existe.txt"))
+print(leer_seguro("fantasma.txt"))
+leer_seguro("fantasma.txt")
+```
+:::
+
+```{pyodide}
+#| exercise: ex_leer
+#| check: true
+if result == "no existe":
+    feedback = {"correct": True, "message": "Correcto: capturaste FileNotFoundError sin tragarte otros errores.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 'no existe' y obtuve {result!r}.", "type": "error"}
+feedback
+```
+
+## Ejercicio 2 — Validar con `raise`
+
+Escribe la validación: si alguna venta es negativa, lanza `ValueError` con un mensaje que incluya el valor ofensor.
+
+```{pyodide}
+#| exercise: ex_raise
+def total_ventas(ventas):
+    for v in ventas:
+        if ______:
+            raise ______
+    return sum(ventas)
+
+print(total_ventas([100, 200, 50]))
+
+try:
+    total_ventas([100, -30, 50])
+except ValueError as e:
+    print("capturado:", e)
+    mensaje = str(e)
+
+mensaje
+```
+
+::: {.hint exercise="ex_raise"}
+La condición es `v < 0`. El mensaje debe contener el número: usa un f-string, por ejemplo `f"venta negativa: {v}"`.
+:::
+
+::: {.solution exercise="ex_raise"}
+```{pyodide}
+def total_ventas(ventas):
+    for v in ventas:
+        if v < 0:
+            raise ValueError(f"venta negativa: {v}")
+    return sum(ventas)
+
+print(total_ventas([100, 200, 50]))
+
+try:
+    total_ventas([100, -30, 50])
+except ValueError as e:
+    print("capturado:", e)
+    mensaje = str(e)
+
+mensaje
+```
+:::
+
+```{pyodide}
+#| exercise: ex_raise
+#| check: true
+if isinstance(result, str) and "-30" in result:
+    feedback = {"correct": True, "message": "Correcto: el mensaje incluye el valor que causó el problema.", "type": "success"}
+elif isinstance(result, str):
+    feedback = {"correct": False, "message": "Lanzaste el error, pero el mensaje no incluye el valor (-30). Ese dato es lo que ahorra tiempo al depurar.", "type": "warning"}
+else:
+    feedback = {"correct": False, "message": "No se capturó un ValueError con mensaje.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En tu notebook:
+
+1. Escribe `cargar_ventas(ruta)` que lea un CSV con `csv.DictReader`, convierta `venta` a `float` y `trx` a `int`, y lance `ValueError` con el **número de línea** si alguna fila tiene datos inválidos.
+2. Crea `scratch/io_utils.py` con esa función y su bloque `if __name__ == "__main__":` de prueba. Impórtala desde un notebook y confirma que el bloque de prueba no corre.
+3. Escribe un `context manager` propio con `contextlib.contextmanager` que cronometre el bloque: `with cronometro("carga"): ...` debe imprimir cuánto tardó.
+
+## Para el Cerebro
+
+Lee **McKinney cap. 3** (archivos y excepciones) con estas preguntas escritas antes:
+
+1. ¿Qué diferencia hay entre abrir un archivo en modo `"w"`, `"a"` y `"x"`?
+2. ¿Qué es un *context manager* y qué dos métodos debe implementar?
+3. ¿Qué hace `else` en un `try/except/else/finally` y cuándo sirve?
+
+```
+¿Qué garantiza `with` al abrir un archivo?::Que se cierra aunque el bloque lance una excepción
+¿Por qué escribir encoding="utf-8" explícito?::El default depende del SO; sin él, el código rompe en otra máquina
+¿Por qué nunca usar `except:` pelado?::Captura todo, incluido Ctrl-C, y esconde bugs
+¿Qué debe incluir un buen mensaje de error?::El valor concreto que causó el problema
+¿Qué vale __name__ al ejecutar un archivo directamente?::"__main__"; al importarlo vale el nombre del módulo
+¿Por qué pathlib y no concatenar strings?::Resuelve separadores por SO y trae exists, mkdir, glob y read_text
+```
+
+→ Siguiente: [Entorno: uv, git y el repo](05-entorno-uv-git.qmd)

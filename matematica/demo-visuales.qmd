@@ -1,0 +1,417 @@
+---
+title: "Cómo se animan los visuales"
+subtitle: "Matemática · Referencia técnica"
+nivel: L1
+modulo: matematica
+fase: F0
+prereqs: []
+siguientes: []
+libro: "—"
+pyodide:
+  packages:
+    - numpy
+    - matplotlib
+---
+
+::: {.meta-leccion}
+[[L1]{.nivel .nivel-L1} **Referencia**]{.item}
+[**Para** entender qué técnica usa cada visual del sitio]{.item}
+:::
+
+## Las cuatro técnicas
+
+| Técnica | Cuándo usarla | Costo |
+|---|---|---|
+| **SVG + JS reactivo** | Relación entre variables: mueves un parámetro, la geometría responde | Bajo. Sin librerías |
+| **Canvas + requestAnimationFrame** | Proceso en el tiempo: convergencia, muestreo, trayectorias | Medio. Más código, control total |
+| **Pyodide + matplotlib** | El estudiante edita el código y vuelve a graficar | Bajo. Es Python, no JS |
+| **Manim → MP4** | Explicación cinematográfica tipo 3Blue1Brown | Alto. Render offline, video versionado |
+
+::: {.callout-important}
+## Interactivo gana a animado
+
+Para aprender matemática, un *slider* casi siempre enseña más que una animación. Una animación la miras pasar; un control te obliga a formar una hipótesis ("si subo λ, el coeficiente debería…") y verla confirmada o rota en el mismo segundo.
+
+Usa animación solo cuando **el proceso en el tiempo es el punto**: un optimizador convergiendo, una distribución muestral construyéndose, boosting sumando residuos.
+:::
+
+---
+
+## 1. SVG + JS reactivo — Regularización L1 vs L2
+
+Este es el visual que explica en diez segundos lo que ESL tarda cuatro páginas en decir. Las elipses son las curvas de nivel del error cuadrático; la región coloreada es la restricción. La solución es el punto donde la elipse más chica **toca** la región.
+
+Mueve el tamaño de la restricción y observa el punto azul (lasso) contra el verde (ridge).
+
+<div class="viz-l1l2">
+  <div class="controles">
+    <label>Tamaño de la restricción <i>t</i>
+      <input type="range" id="t-slider" min="0.2" max="3.2" step="0.05" value="2.80">
+      <output id="t-val">2.80</output>
+    </label>
+    <label><input type="checkbox" id="ver-l1" checked> Lasso (L1)</label>
+    <label><input type="checkbox" id="ver-l2" checked> Ridge (L2)</label>
+  </div>
+  <svg id="svg-l1l2" viewBox="0 0 560 420" role="img" aria-label="Contornos de error con restricciones L1 y L2"></svg>
+  <p class="lectura" id="lectura-l1l2"></p>
+</div>
+
+<style>
+.viz-l1l2, .viz-gd {
+  border: 1px solid var(--bs-border-color, #ddd);
+  border-radius: 8px;
+  padding: 1rem 1.1rem;
+  margin: 1.5rem 0;
+}
+.viz-l1l2 .controles, .viz-gd .controles {
+  display: flex; flex-wrap: wrap; gap: .5rem 1.5rem;
+  align-items: center; margin-bottom: .75rem; font-size: .88rem;
+}
+.viz-l1l2 label, .viz-gd label { display: flex; align-items: center; gap: .45rem; }
+.viz-l1l2 input[type=range], .viz-gd input[type=range] { width: 150px; }
+.viz-l1l2 output, .viz-gd output {
+  font-family: var(--bs-font-monospace); font-variant-numeric: tabular-nums;
+  min-width: 3.2em; display: inline-block;
+}
+.viz-l1l2 svg, .viz-gd canvas { width: 100%; height: auto; display: block; }
+.lectura { font-size: .88rem; margin-top: .6rem; min-height: 2.6em; }
+.lectura b { font-family: var(--bs-font-monospace); }
+.viz-gd canvas { border-radius: 6px; }
+.viz-gd .botones button {
+  font-size: .85rem; padding: .3rem .9rem; border-radius: 6px;
+  border: 1px solid var(--bs-border-color, #ccc); background: transparent;
+  color: inherit; cursor: pointer;
+}
+.viz-gd .botones button:hover { background: rgba(31,138,132,.12); }
+</style>
+
+<script>
+(function () {
+  // RSS(b) = (b - bhat)' A (b - bhat).  A define la forma de las elipses.
+  const A = [[2.0, 0.85], [0.85, 1.0]];
+  const BHAT = [2.25, 1.35];               // solución de mínimos cuadrados sin restricción
+  const LASSO = "#2563EB", RIDGE = "#1F8A84", OLS = "#B45309";
+
+  const X0 = -0.6, X1 = 3.4, Y0 = -0.5, Y1 = 2.6;
+  const W = 560, H = 420, M = { t: 18, r: 18, b: 38, l: 46 };
+  const sx = (x) => M.l + ((x - X0) / (X1 - X0)) * (W - M.l - M.r);
+  const sy = (y) => H - M.b - ((y - Y0) / (Y1 - Y0)) * (H - M.t - M.b);
+
+  const rss = (b) => {
+    const d0 = b[0] - BHAT[0], d1 = b[1] - BHAT[1];
+    return A[0][0]*d0*d0 + 2*A[0][1]*d0*d1 + A[1][1]*d1*d1;
+  };
+
+  // Curva de nivel RSS = c: para cada dirección u, el radio cumple r^2 u'Au = c
+  function elipse(c) {
+    const pts = [];
+    for (let i = 0; i <= 120; i++) {
+      const th = (i / 120) * 2 * Math.PI;
+      const u0 = Math.cos(th), u1 = Math.sin(th);
+      const q = A[0][0]*u0*u0 + 2*A[0][1]*u0*u1 + A[1][1]*u1*u1;
+      const r = Math.sqrt(c / q);
+      pts.push([sx(BHAT[0] + r*u0), sy(BHAT[1] + r*u1)]);
+    }
+    return "M" + pts.map((p) => p[0].toFixed(1) + "," + p[1].toFixed(1)).join("L") + "Z";
+  }
+
+  // Mínimo de RSS sobre la FRONTERA de la restricción.
+  // Si bhat cae fuera de la región, el óptimo está en la frontera: buscarlo ahí es exacto.
+  function optimoEnFrontera(t, tipo) {
+    let mejor = null, mejorV = Infinity;
+    const N = 4000;
+    for (let i = 0; i < N; i++) {
+      let b;
+      if (tipo === "l2") {
+        const th = (i / N) * 2 * Math.PI;
+        b = [t * Math.cos(th), t * Math.sin(th)];
+      } else {
+        // rombo |b0| + |b1| = t, recorrido por sus cuatro aristas
+        const s = (i / N) * 4, lado = Math.floor(s), f = s - lado;
+        const v = [[t,0],[0,t],[-t,0],[0,-t]];
+        const p = v[lado % 4], q = v[(lado + 1) % 4];
+        b = [p[0] + f*(q[0]-p[0]), p[1] + f*(q[1]-p[1])];
+      }
+      const val = rss(b);
+      if (val < mejorV) { mejorV = val; mejor = b; }
+    }
+    return mejor;
+  }
+
+  const svg = document.getElementById("svg-l1l2");
+  const slider = document.getElementById("t-slider");
+  const out = document.getElementById("t-val");
+  const verL1 = document.getElementById("ver-l1");
+  const verL2 = document.getElementById("ver-l2");
+  const lectura = document.getElementById("lectura-l1l2");
+
+  const el = (tag, attrs, texto) => {
+    const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (texto !== undefined) n.textContent = texto;
+    return n;
+  };
+
+  function dibujar() {
+    const t = parseFloat(slider.value);
+    out.textContent = t.toFixed(2);
+    svg.textContent = "";
+
+    // ejes
+    svg.appendChild(el("line", { x1: sx(X0), y1: sy(0), x2: sx(X1), y2: sy(0), stroke: "currentColor", "stroke-width": 1, opacity: .35 }));
+    svg.appendChild(el("line", { x1: sx(0), y1: sy(Y0), x2: sx(0), y2: sy(Y1), stroke: "currentColor", "stroke-width": 1, opacity: .35 }));
+    svg.appendChild(el("text", { x: sx(X1) - 6, y: sy(0) + 20, "text-anchor": "end", "font-size": 13, fill: "currentColor", opacity: .7, "font-style": "italic" }, "β₁"));
+    svg.appendChild(el("text", { x: sx(0) - 10, y: sy(Y1) + 12, "text-anchor": "end", "font-size": 13, fill: "currentColor", opacity: .7, "font-style": "italic" }, "β₂"));
+
+    // curvas de nivel del error
+    [0.25, 0.9, 2.0, 3.6, 5.8, 8.6].forEach((c, i) => {
+      svg.appendChild(el("path", { d: elipse(c), fill: "none", stroke: "currentColor", "stroke-width": 1, opacity: 0.14 + i * 0.035 }));
+    });
+
+    // regiones de restricción
+    if (verL2.checked) {
+      svg.appendChild(el("circle", { cx: sx(0), cy: sy(0),
+        r: Math.abs(sx(t) - sx(0)), fill: RIDGE, "fill-opacity": .1, stroke: RIDGE, "stroke-width": 1.8 }));
+    }
+    if (verL1.checked) {
+      const d = `M${sx(t)},${sy(0)}L${sx(0)},${sy(t)}L${sx(-t)},${sy(0)}L${sx(0)},${sy(-t)}Z`;
+      svg.appendChild(el("path", { d, fill: LASSO, "fill-opacity": .1, stroke: LASSO, "stroke-width": 1.8 }));
+    }
+
+    // solución sin restricción
+    svg.appendChild(el("circle", { cx: sx(BHAT[0]), cy: sy(BHAT[1]), r: 5, fill: OLS }));
+    svg.appendChild(el("text", { x: sx(BHAT[0]) + 10, y: sy(BHAT[1]) + 4, "font-size": 12, fill: OLS }, "β̂ sin penalizar"));
+
+    let msg = "";
+    if (verL2.checked) {
+      const b = optimoEnFrontera(t, "l2");
+      svg.appendChild(el("circle", { cx: sx(b[0]), cy: sy(b[1]), r: 6, fill: RIDGE, stroke: "#fff", "stroke-width": 2 }));
+      msg += `<b style="color:${RIDGE}">Ridge</b>: β₁=${b[0].toFixed(2)}, β₂=${b[1].toFixed(2)}. `;
+    }
+    if (verL1.checked) {
+      const b = optimoEnFrontera(t, "l1");
+      svg.appendChild(el("circle", { cx: sx(b[0]), cy: sy(b[1]), r: 6, fill: LASSO, stroke: "#fff", "stroke-width": 2 }));
+      const enEsquina = Math.abs(b[1]) < 0.035 || Math.abs(b[0]) < 0.035;
+      msg += `<b style="color:${LASSO}">Lasso</b>: β₁=${b[0].toFixed(2)}, β₂=${b[1].toFixed(2)}`;
+      msg += enEsquina
+        ? ` — <b>tocó la esquina: β₂ es exactamente cero</b>. Eso es selección de variables.`
+        : `.`;
+    }
+    lectura.innerHTML = msg;
+  }
+
+  [slider, verL1, verL2].forEach((c) => c.addEventListener("input", dibujar));
+  dibujar();
+})();
+</script>
+
+::: {.callout-tip}
+## Qué acabas de ver
+
+Baja *t* desde 2.80. Cerca de **t = 2.15** el punto azul salta al eje y se queda ahí. El rombo tiene **esquinas sobre los ejes**; el círculo no. Cuando la elipse crece hasta tocar la región, lo más probable es que toque al rombo en una esquina — y en una esquina, una coordenada vale exactamente cero.
+
+Ese es todo el argumento geométrico de por qué **lasso selecciona variables y ridge no**. En la Fase 2 lo vas a derivar algebraicamente y a implementar con *coordinate descent*.
+:::
+
+**Cómo está hecho:** SVG generado con JavaScript plano, sin librerías. Cada `input` dispara un redibujado completo. Las elipses salen de resolver el radio para cada dirección: si $\text{RSS} = r^2 u^\top A u = c$, entonces $r = \sqrt{c / (u^\top A u)}$. El óptimo se busca numéricamente sobre la frontera, que es exacto porque $\hat\beta$ cae fuera de la región.
+
+---
+
+## 2. Canvas + requestAnimationFrame — Descenso de gradiente
+
+Aquí el punto **sí** es el proceso en el tiempo: cómo el optimizador se acerca, y cómo diverge si el paso es muy grande.
+
+<div class="viz-gd">
+  <div class="controles">
+    <label>Learning rate α
+      <input type="range" id="lr" min="0.01" max="0.62" step="0.005" value="0.12">
+      <output id="lr-val">0.120</output>
+    </label>
+    <span class="botones">
+      <button id="gd-run">Reiniciar animación</button>
+    </span>
+  </div>
+  <canvas id="gd-canvas" width="1120" height="620" style="width:100%;height:auto"></canvas>
+  <p class="lectura" id="gd-lectura"></p>
+</div>
+
+<script>
+(function () {
+  const A = [[2.6, 0.0], [0.0, 0.35]];     // valle alargado: el caso que hace sufrir a GD
+  const MIN = [0, 0];
+  const cv = document.getElementById("gd-canvas");
+  const ctx = cv.getContext("2d");
+  const lr = document.getElementById("lr");
+  const lrVal = document.getElementById("lr-val");
+  const lectura = document.getElementById("gd-lectura");
+  const btn = document.getElementById("gd-run");
+
+  const DPR = 2, W = cv.width / DPR, H = cv.height / DPR;
+  ctx.scale(DPR, DPR);
+
+  const X0 = -3.2, X1 = 3.2, Y0 = -3.4, Y1 = 3.4;
+  const sx = (x) => 40 + ((x - X0) / (X1 - X0)) * (W - 60);
+  const sy = (y) => H - 32 - ((y - Y0) / (Y1 - Y0)) * (H - 52);
+
+  const f = (p) => A[0][0]*p[0]*p[0] + A[1][1]*p[1]*p[1];
+  const grad = (p) => [2*A[0][0]*p[0], 2*A[1][1]*p[1]];
+
+  const tinta = () => getComputedStyle(cv).color;
+
+  function fondo() {
+    ctx.clearRect(0, 0, W, H);
+    const color = tinta();
+    // curvas de nivel
+    for (let i = 1; i <= 9; i++) {
+      const c = i * i * 0.42;
+      ctx.beginPath();
+      for (let k = 0; k <= 160; k++) {
+        const th = (k / 160) * 2 * Math.PI;
+        const u0 = Math.cos(th), u1 = Math.sin(th);
+        const q = A[0][0]*u0*u0 + A[1][1]*u1*u1;
+        const r = Math.sqrt(c / q);
+        const px = sx(r*u0), py = sy(r*u1);
+        k === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.globalAlpha = 0.10 + i * 0.022;
+      ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    // mínimo
+    ctx.beginPath(); ctx.arc(sx(MIN[0]), sy(MIN[1]), 5, 0, 2*Math.PI);
+    ctx.fillStyle = "#B45309"; ctx.fill();
+    ctx.font = "12px system-ui"; ctx.fillStyle = "#B45309";
+    ctx.fillText("mínimo", sx(MIN[0]) + 10, sy(MIN[1]) + 4);
+  }
+
+  let anim = null;
+
+  function correr() {
+    if (anim) cancelAnimationFrame(anim);
+    const alpha = parseFloat(lr.value);
+    let p = [-2.6, 2.9];
+    const camino = [p.slice()];
+    let paso = 0, divergio = false;
+
+    function frame() {
+      if (paso < 60 && !divergio) {
+        const g = grad(p);
+        p = [p[0] - alpha*g[0], p[1] - alpha*g[1]];
+        if (!isFinite(p[0]) || Math.abs(p[0]) > 12 || Math.abs(p[1]) > 12) divergio = true;
+        else camino.push(p.slice());
+        paso++;
+      }
+
+      fondo();
+      ctx.beginPath();
+      camino.forEach((q, i) => {
+        const px = sx(q[0]), py = sy(q[1]);
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      });
+      ctx.strokeStyle = divergio ? "#DC2626" : "#1F8A84";
+      ctx.lineWidth = 2; ctx.stroke();
+
+      camino.forEach((q, i) => {
+        ctx.beginPath();
+        ctx.arc(sx(q[0]), sy(q[1]), i === camino.length - 1 ? 5.5 : 2.6, 0, 2*Math.PI);
+        ctx.fillStyle = divergio ? "#DC2626" : "#1F8A84";
+        ctx.globalAlpha = i === camino.length - 1 ? 1 : 0.55;
+        ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+
+      const ultimo = camino[camino.length - 1];
+      if (divergio) {
+        lectura.innerHTML = `<b style="color:#DC2626">Divergió</b> con α=${alpha.toFixed(3)} en ${paso} pasos. ` +
+          `El paso es mayor que 2/λ_máx: cada iteración sobrepasa el mínimo y lo sobrepasa más que la anterior.`;
+      } else {
+        lectura.innerHTML = `α=${alpha.toFixed(3)} · paso ${paso}/60 · ` +
+          `posición (<b>${ultimo[0].toFixed(3)}</b>, <b>${ultimo[1].toFixed(3)}</b>) · ` +
+          `costo <b>${f(ultimo).toFixed(4)}</b>`;
+      }
+
+      if (paso < 60 && !divergio) anim = requestAnimationFrame(frame);
+    }
+    frame();
+  }
+
+  lr.addEventListener("input", () => { lrVal.textContent = parseFloat(lr.value).toFixed(3); correr(); });
+  btn.addEventListener("click", correr);
+  correr();
+})();
+</script>
+
+::: {.callout-tip}
+## Qué acabas de ver
+
+El valle es **alargado**: la curvatura en β₁ es mucho mayor que en β₂. Sube α poco a poco.
+
+- Con α chico converge, pero zigzaguea y tarda: el gradiente apunta casi perpendicular al valle, no hacia el mínimo.
+- Pasado cierto umbral, **diverge**. Ese umbral es $\alpha < 2/\lambda_{\max}$, donde $\lambda_{\max}$ es el eigenvalor más grande de la Hessiana. Aquí la Hessiana es $2A$, así que $\lambda_{\max} = 5.2$ y el umbral está cerca de $0.385$.
+
+Que la velocidad de convergencia dependa del **número de condición** $\lambda_{\max}/\lambda_{\min}$ es exactamente el motivo por el que se escalan los predictores antes de entrenar casi cualquier modelo. Lo vas a derivar en Fase 1.
+:::
+
+**Cómo está hecho:** `requestAnimationFrame` avanza una iteración por frame y redibuja el camino completo. Canvas en vez de SVG porque son cientos de trazos por frame y SVG crearía cientos de nodos en el DOM.
+
+---
+
+## 3. Pyodide + matplotlib — el estudiante grafica
+
+Cuando lo importante es que **tú** cambies el código, no que muevas un slider. Corre esto, luego cambia `sigma` o `n` y vuelve a ejecutarlo.
+
+```{pyodide}
+import numpy as np
+import matplotlib.pyplot as plt
+
+rng = np.random.default_rng(7)
+n, sigma = 60, 1.4
+
+x = np.linspace(0, 10, n)
+y = 2.1 * x + 3 + rng.normal(0, sigma, n)
+
+# Ajuste por mínimos cuadrados, con la solución cerrada
+X = np.column_stack([np.ones(n), x])
+beta = np.linalg.solve(X.T @ X, X.T @ y)
+
+fig, ax = plt.subplots(figsize=(7, 4))
+ax.scatter(x, y, s=22, alpha=.7, label="datos")
+ax.plot(x, X @ beta, color="#1F8A84", lw=2.2,
+        label=f"ajuste: y = {beta[1]:.2f}x + {beta[0]:.2f}")
+ax.vlines(x, y, X @ beta, color="#DC2626", alpha=.28, lw=1)
+ax.set_xlabel("x"); ax.set_ylabel("y")
+ax.legend(); ax.set_title("Mínimos cuadrados y sus residuos")
+plt.show()
+
+print("beta =", beta.round(3))
+print("RSS  =", float(((y - X @ beta) ** 2).sum()).__round__(3))
+```
+
+Las líneas rojas son los residuos. Mínimos cuadrados es exactamente el ajuste que minimiza la **suma de sus cuadrados** — lo vas a derivar geométricamente en el módulo de álgebra lineal.
+
+---
+
+## 4. Manim — cuando hace falta cine
+
+[Manim](https://www.manim.community/) es el motor con el que 3Blue1Brown hace sus videos. Produce MP4 de calidad editorial, con transformaciones de ecuaciones, cámara móvil y narración sincronizada.
+
+**La contra:** necesita LaTeX, ffmpeg y Cairo instalados, y renderiza offline en minutos. No corre en el navegador.
+
+**Cómo lo usaríamos:** rendero el MP4 una vez, lo comprimo, lo versiono en `assets/video/`, y lo embebo:
+
+```markdown
+{{< video assets/video/svd.mp4 >}}
+```
+
+Reservado para dos o tres conceptos donde la transformación visual **es** la explicación: la SVD descomponiendo una matriz en rotación, escala y rotación; backpropagation propagando el gradiente hacia atrás. Para todo lo demás, las técnicas 1 y 2 enseñan más porque el control lo tienes tú.
+
+---
+
+## Cómo pedir un visual
+
+Cuando un concepto se resista, escríbeme qué quieres manipular y qué deberías ver. Por ejemplo:
+
+> "Visual de sesgo-varianza: slider del grado del polinomio, que muestre las dos curvas y la descomposición numérica debajo."
+
+Yo elijo la técnica, lo escribo, y en el próximo push está online.

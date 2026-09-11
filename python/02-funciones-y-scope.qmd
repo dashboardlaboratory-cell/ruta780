@@ -1,0 +1,284 @@
+---
+title: "Funciones, scope y argumentos"
+subtitle: "Python · Lección 2"
+nivel: L2
+modulo: python
+fase: F0
+prereqs: [python/01-tipos-y-estructuras]
+siguientes: [python/03-comprehensions]
+libro: "McKinney 3E, cap. 3"
+---
+
+::: {.meta-leccion}
+[[L2]{.nivel .nivel-L2} **Derivación**]{.item}
+[**Fase** F0]{.item}
+[**Libro** McKinney cap. 3]{.item}
+[**Prereqs** [Tipos y estructuras](01-tipos-y-estructuras.qmd)]{.item}
+:::
+
+## La idea
+
+Una función en Python es un **objeto** como cualquier otro: se guarda en variables, se pasa como argumento, se devuelve desde otra función. Eso es lo que hace posible `df.apply(mi_funcion)` y todo el estilo funcional de pandas.
+
+Y hay una regla de resolución de nombres — **LEGB** — que decide de dónde sale cada variable que una función menciona.
+
+## LEGB: dónde busca Python un nombre
+
+Cuando dentro de una función escribes `x`, Python busca en este orden y se detiene en el primero que encuentre:
+
+| Sigla | Ámbito | Qué es |
+|---|---|---|
+| **L** | Local | Dentro de la función actual |
+| **E** | Enclosing | En la función que la contiene, si está anidada |
+| **G** | Global | A nivel del módulo/archivo |
+| **B** | Built-in | `len`, `sum`, `print`… |
+
+```{pyodide}
+x = "global"
+
+def externa():
+    x = "enclosing"
+    def interna():
+        x = "local"
+        print("dentro de interna:", x)
+    interna()
+    print("dentro de externa:", x)
+
+externa()
+print("a nivel módulo:", x)
+```
+
+Quita la línea `x = "local"` y vuelve a correr: `interna` ya no encuentra `x` localmente y sube al ámbito *enclosing*.
+
+::: {.callout-warning}
+## El error que todos cometen
+
+Asignar a un nombre dentro de una función lo vuelve **local para toda la función**, incluso antes de la línea de asignación.
+
+```{pyodide}
+contador = 0
+
+def incrementar_mal():
+    try:
+        contador = contador + 1   # UnboundLocalError
+    except UnboundLocalError as e:
+        print("UnboundLocalError:", e)
+
+incrementar_mal()
+```
+
+Python ve la asignación, marca `contador` como local, y al intentar leerlo del lado derecho todavía no existe. La solución no es `global` — es **devolver el valor** y reasignarlo fuera. Las funciones que mutan estado global son la fuente número uno de bugs irreproducibles en notebooks.
+:::
+
+## Argumentos: los cuatro tipos
+
+```{pyodide}
+def reporte(sucursal, mes, *extras, moneda="USD", **opciones):
+    print("sucursal:", sucursal)
+    print("mes:", mes)
+    print("extras (posicionales sobrantes):", extras)
+    print("moneda (por defecto):", moneda)
+    print("opciones (nombradas sobrantes):", opciones)
+
+reporte("multiplaza", 9, "ticket", "trx", moneda="PAB", incluir_iva=True)
+```
+
+- **Posicionales**: `sucursal`, `mes` — obligatorios, por orden.
+- **`*extras`**: recoge los posicionales de más en una tupla.
+- **Por defecto**: `moneda="USD"` — opcional.
+- **`**opciones`**: recoge los nombrados de más en un diccionario.
+
+## La trampa del argumento mutable por defecto
+
+Este es un clásico de entrevista, y algo que vas a ver en código real.
+
+```{pyodide}
+def agregar_mal(item, bolsa=[]):
+    bolsa.append(item)
+    return bolsa
+
+print(agregar_mal("a"))
+print(agregar_mal("b"))    # esperabas ['b'] y obtienes ['a', 'b']
+print(agregar_mal("c"))
+```
+
+::: {.derivacion}
+**Por qué la lista se acumula entre llamadas**
+
+::: {.paso}
+El `def` se ejecuta **una sola vez**, cuando Python lee el archivo — no en cada llamada. En ese momento evalúa las expresiones de los valores por defecto.
+:::
+::: {.paso}
+`[]` se evalúa entonces y produce **un** objeto lista. Ese objeto se guarda en el atributo `__defaults__` de la función.
+:::
+::: {.paso}
+Cada llamada sin el argumento `bolsa` no crea una lista nueva: reutiliza **ese mismo objeto** guardado.
+:::
+::: {.paso}
+`bolsa.append(item)` es un método mutador sobre un objeto mutable (Lección 1): modifica el objeto compartido en su lugar. Por eso persiste entre llamadas.
+:::
+
+Compruébalo:
+:::
+
+```{pyodide}
+def agregar_mal(item, bolsa=[]):
+    bolsa.append(item)
+    return bolsa
+
+print("defaults guardados:", agregar_mal.__defaults__)
+agregar_mal("x")
+print("defaults después de llamar:", agregar_mal.__defaults__)
+```
+
+El patrón correcto usa `None` como centinela:
+
+```{pyodide}
+def agregar_bien(item, bolsa=None):
+    if bolsa is None:
+        bolsa = []          # lista nueva en CADA llamada
+    bolsa.append(item)
+    return bolsa
+
+print(agregar_bien("a"))
+print(agregar_bien("b"))
+```
+
+Nota que aquí sí se usa `is None` y no `== None` — exactamente la regla de la Lección 1.
+
+## Funciones como objetos
+
+```{pyodide}
+def aplicar_dos_veces(f, valor):
+    return f(f(valor))
+
+def doblar(x):
+    return x * 2
+
+print(aplicar_dos_veces(doblar, 5))
+print(aplicar_dos_veces(lambda x: x + 3, 5))
+
+operaciones = {"doblar": doblar, "cuadrado": lambda x: x ** 2}
+print(operaciones["cuadrado"](7))
+```
+
+`lambda` es solo una función anónima de una expresión. Úsala para funciones de una línea que se pasan como argumento; para cualquier otra cosa, `def` con nombre es más legible.
+
+## Ejercicio 1 — Arreglar el default mutable
+
+Corrige la función para que cada llamada sin `registro` arranque con un diccionario vacío.
+
+```{pyodide}
+#| exercise: ex_default
+def registrar(evento, registro=______):
+    ______
+    registro[evento] = registro.get(evento, 0) + 1
+    return registro
+
+primera  = registrar("venta")
+segunda  = registrar("venta")
+print("primera:", primera, "| segunda:", segunda)
+segunda
+```
+
+::: {.hint exercise="ex_default"}
+Usa `None` como valor por defecto y, en la primera línea del cuerpo, crea el diccionario si el argumento llegó como `None`. Recuerda comparar con `is`, no con `==`.
+:::
+
+::: {.solution exercise="ex_default"}
+```{pyodide}
+def registrar(evento, registro=None):
+    if registro is None:
+        registro = {}
+    registro[evento] = registro.get(evento, 0) + 1
+    return registro
+
+primera  = registrar("venta")
+segunda  = registrar("venta")
+print("primera:", primera, "| segunda:", segunda)
+segunda
+```
+:::
+
+```{pyodide}
+#| exercise: ex_default
+#| check: true
+if result == {"venta": 1}:
+    feedback = {"correct": True, "message": "Correcto: cada llamada arranca limpia.", "type": "success"}
+elif result == {"venta": 2}:
+    feedback = {"correct": False, "message": "Se está acumulando: el diccionario por defecto se comparte entre llamadas.", "type": "error"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba {{'venta': 1}} y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Ejercicio 2 — Sin estado global
+
+Reescribe esta función para que no dependa de una variable global: debe recibir el total actual y devolver el nuevo.
+
+```{pyodide}
+#| exercise: ex_puro
+def acumular(______):
+    ______
+
+total = 0
+for venta in [120.5, 89.0, 240.25]:
+    total = acumular(total, venta)
+
+print("total:", total)
+round(total, 2)
+```
+
+::: {.hint exercise="ex_puro"}
+La función debe recibir dos parámetros (el acumulado y el nuevo valor) y devolver su suma. No debe asignar a ninguna variable de fuera.
+:::
+
+::: {.solution exercise="ex_puro"}
+```{pyodide}
+def acumular(total, valor):
+    return total + valor
+
+total = 0
+for venta in [120.5, 89.0, 240.25]:
+    total = acumular(total, venta)
+
+print("total:", total)
+round(total, 2)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_puro
+#| check: true
+if abs(result - 449.75) < 1e-9:
+    feedback = {"correct": True, "message": "Correcto. Una función que solo depende de sus argumentos es reproducible y testeable.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 449.75 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En tu notebook:
+
+1. Escribe un decorador `@cronometrar` que imprima cuánto tardó la función que envuelve. Necesitarás `time.perf_counter` y `functools.wraps`.
+2. Escribe `componer(f, g)` que devuelva una función nueva equivalente a `f(g(x))`. Verifica que `componer(doblar, incrementar)(5)` da 12.
+3. Explica, en dos líneas, por qué `sorted(lista, key=lambda x: x[1])` ordena por el segundo elemento. ¿Qué recibe `key` y qué hace `sorted` con lo que devuelve?
+
+## Para el Cerebro
+
+Lee **McKinney cap. 3** (secciones de funciones) con estas preguntas escritas antes:
+
+1. ¿Qué devuelve una función que no tiene `return`?
+2. ¿Puede una función devolver varios valores? ¿Qué está pasando realmente?
+3. ¿Qué es un *closure* y por qué una función anidada puede leer variables de la de afuera después de que esta terminó?
+
+```
+¿Qué significa LEGB?::Local, Enclosing, Global, Built-in — el orden en que Python resuelve un nombre
+¿Cuándo se evalúan los valores por defecto de una función?::Una sola vez, al definir la función, no en cada llamada
+¿Cuál es el patrón correcto para un default mutable?::Usar None como centinela y crear el objeto dentro del cuerpo
+¿Qué recoge *args y qué recoge **kwargs?::*args los posicionales sobrantes en una tupla; **kwargs los nombrados en un dict
+¿Por qué asignar a un nombre dentro de una función puede dar UnboundLocalError?::La asignación lo marca local para toda la función, incluso antes de esa línea
+```
+
+→ Siguiente: [Comprehensions e iteradores](03-comprehensions.qmd)

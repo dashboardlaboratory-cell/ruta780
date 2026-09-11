@@ -1,0 +1,358 @@
+---
+title: "NumPy: primer contacto"
+subtitle: "Python · Lección 6"
+nivel: L3
+modulo: python
+fase: F0
+prereqs: [python/05-entorno-uv-git]
+siguientes: [matematica/01-vectores-y-espacios]
+libro: "McKinney 3E, cap. 4"
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F0]{.item}
+[**Libro** McKinney cap. 4]{.item}
+[**Prereqs** [Entorno](05-entorno-uv-git.qmd)]{.item}
+:::
+
+## La idea
+
+Una lista de Python guarda **punteros** a objetos dispersos en memoria. Un array de NumPy guarda **los números mismos**, contiguos, todos del mismo tipo. De esa sola diferencia sale todo: la velocidad, el broadcasting, y la razón por la que toda la ciencia de datos en Python se apoya en NumPy.
+
+Esta es la última lección de la Fase 0 y el puente hacia la matemática: a partir de la semana 3, cada cosa que derives la vas a implementar aquí.
+
+## Vectorización: por qué es rápido
+
+```{pyodide}
+import numpy as np
+import time
+
+n = 1_000_000
+lista = list(range(n))
+array = np.arange(n)
+
+t0 = time.perf_counter()
+res_lista = [x * 2 for x in lista]
+t_lista = time.perf_counter() - t0
+
+t0 = time.perf_counter()
+res_array = array * 2
+t_array = time.perf_counter() - t0
+
+print(f"lista (comprehension): {t_lista*1000:7.1f} ms")
+print(f"array  (vectorizado):  {t_array*1000:7.1f} ms")
+print(f"NumPy es ~{t_lista/t_array:.0f}x más rápido")
+```
+
+::: {.derivacion}
+**De dónde sale la diferencia**
+
+::: {.paso}
+En la lista, cada elemento es un objeto `int` de Python completo: un encabezado con el tipo, un contador de referencias y el valor. Están esparcidos por la memoria, y la lista guarda punteros a ellos.
+:::
+::: {.paso}
+Multiplicar recorre la lista elemento por elemento. En cada paso el intérprete tiene que: seguir el puntero, mirar el tipo, decidir qué `__mul__` llamar, crear un objeto nuevo. Ese despacho por tipo ocurre **un millón de veces**.
+:::
+::: {.paso}
+El array guarda un millón de `int64` pegados, en un solo bloque contiguo, con el tipo declarado **una vez** en el array, no en cada elemento.
+:::
+::: {.paso}
+`array * 2` baja a un bucle en C que ya sabe el tipo: sin despacho, sin objetos intermedios, y con los datos contiguos la CPU los trae en bloque a la caché y usa instrucciones SIMD que procesan varios números por ciclo.
+:::
+
+La lección práctica: **si escribes un `for` sobre un array de NumPy, casi siempre hay una forma vectorizada, y es de 10 a 100 veces más rápida.**
+:::
+
+## El array y sus atributos
+
+```{pyodide}
+import numpy as np
+
+a = np.array([[1.0, 2.0, 3.0],
+              [4.0, 5.0, 6.0]])
+
+print("array:\n", a)
+print("shape (filas, columnas):", a.shape)
+print("ndim (dimensiones):", a.ndim)
+print("dtype (tipo):", a.dtype)
+print("size (total de elementos):", a.size)
+```
+
+`shape` es lo que vas a mirar mil veces cuando algo no cuadre. El 90 % de los errores en NumPy y en cualquier framework de ML son errores de forma.
+
+```{pyodide}
+import numpy as np
+
+print("ceros:\n", np.zeros((2, 3)))
+print("\nidentidad:\n", np.eye(3))
+print("\nrango:", np.arange(0, 10, 2))
+print("\n5 puntos entre 0 y 1:", np.linspace(0, 1, 5))
+
+rng = np.random.default_rng(42)      # generador con semilla: reproducible
+print("\nnormales:", rng.normal(size=4).round(3))
+```
+
+::: {.callout-tip}
+## Usa `default_rng`, no `np.random.seed`
+
+`np.random.default_rng(semilla)` crea un generador independiente. La API vieja (`np.random.seed` + `np.random.normal`) usa estado global: dos partes de tu código pueden pisarse el estado sin que te enteres, y tus resultados dejan de ser reproducibles.
+:::
+
+## Indexado: vistas y máscaras
+
+```{pyodide}
+import numpy as np
+
+a = np.arange(12).reshape(3, 4)
+print("a:\n", a)
+print("\nfila 1:", a[1])
+print("columna 2:", a[:, 2])
+print("submatriz [0:2, 1:3]:\n", a[0:2, 1:3])
+```
+
+::: {.callout-warning}
+## Una rebanada es una VISTA, no una copia
+
+Esto conecta directo con la Lección 1, pero con un giro: en listas, `lista[:]` **copia**. En NumPy, `array[:]` **no copia** — te da una ventana al mismo bloque de memoria.
+:::
+
+```{pyodide}
+import numpy as np
+
+original = np.arange(6)
+vista = original[2:5]
+vista[0] = 999                  # modifico la vista...
+
+print("vista:", vista)
+print("original:", original, " <- ¡también cambió!")
+print("¿comparte memoria?", np.shares_memory(original, vista))
+
+copia = original[2:5].copy()    # copia explícita
+copia[0] = -1
+print("\ntras modificar la copia, original:", original)
+```
+
+Indexado booleano — la herramienta que más vas a usar:
+
+```{pyodide}
+import numpy as np
+
+ventas = np.array([4200.0, 1800.0, 3100.0, 950.0, 5400.0])
+trx    = np.array([140, 45, 100, 30, 160])
+
+mascara = trx > 50
+print("máscara:", mascara)
+print("ventas de sucursales con más de 50 trx:", ventas[mascara])
+print("ticket promedio de esas:", (ventas[mascara] / trx[mascara]).round(2))
+print("\ncuántas cumplen:", mascara.sum())      # True suma 1
+print("¿alguna?", mascara.any(), "| ¿todas?", mascara.all())
+```
+
+## Broadcasting
+
+Cuando operas dos arrays de formas distintas, NumPy intenta **estirar** el más chico. La regla: compara las formas de derecha a izquierda; dos dimensiones son compatibles si son iguales o si una de ellas es 1.
+
+```{pyodide}
+import numpy as np
+
+ventas = np.array([[4200.0, 3100.0],      # sucursal 1: ene, feb
+                   [1800.0,  950.0]])      # sucursal 2: ene, feb
+
+# Restar el promedio de cada COLUMNA (mes)
+promedio_mes = ventas.mean(axis=0)          # shape (2,)
+print("promedio por mes:", promedio_mes)
+print("centrado por mes:\n", ventas - promedio_mes)
+
+# Restar el promedio de cada FILA (sucursal) — hay que ajustar la forma
+promedio_suc = ventas.mean(axis=1, keepdims=True)   # shape (2, 1)
+print("\npromedio por sucursal:\n", promedio_suc)
+print("centrado por sucursal:\n", ventas - promedio_suc)
+```
+
+`axis=0` recorre **hacia abajo** (colapsa filas, deja una por columna). `axis=1` recorre **a lo ancho**. `keepdims=True` conserva la dimensión como 1 en vez de eliminarla, que es lo que permite el broadcasting por filas. Memoriza esos tres: son la fuente eterna de confusión.
+
+## Ejercicio 1 — Vectorizar un bucle
+
+Reescribe el cálculo sin ningún `for`, usando operaciones de NumPy.
+
+```{pyodide}
+#| exercise: ex_vect
+import numpy as np
+
+ventas = np.array([4200.0, 1800.0, 3100.0, 950.0])
+trx    = np.array([140, 45, 100, 30])
+
+# Versión con bucle (la que hay que reemplazar):
+# tickets = []
+# for v, t in zip(ventas, trx):
+#     tickets.append(v / t)
+
+tickets = ______
+
+print(tickets.round(2))
+tickets.round(2)
+```
+
+::: {.hint exercise="ex_vect"}
+La división entre dos arrays del mismo shape es elemento a elemento. No necesitas zip ni bucle: es una sola operación.
+:::
+
+::: {.solution exercise="ex_vect"}
+```{pyodide}
+import numpy as np
+
+ventas = np.array([4200.0, 1800.0, 3100.0, 950.0])
+trx    = np.array([140, 45, 100, 30])
+
+tickets = ventas / trx
+
+print(tickets.round(2))
+tickets.round(2)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_vect
+#| check: true
+import numpy as np
+esperado = np.array([30.0, 40.0, 31.0, 31.67])
+if isinstance(result, np.ndarray) and result.shape == (4,) and np.allclose(result, esperado, atol=0.01):
+    feedback = {"correct": True, "message": "Correcto: una sola operación vectorizada reemplaza el bucle entero.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba {esperado} y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Ejercicio 2 — Máscara booleana
+
+Calcula la venta **total** de las sucursales cuyo ticket promedio supera 32, sin usar bucles.
+
+```{pyodide}
+#| exercise: ex_mask
+import numpy as np
+
+ventas = np.array([4200.0, 1800.0, 3100.0, 950.0])
+trx    = np.array([140, 45, 100, 30])
+
+total = ______
+
+print(total)
+float(total)
+```
+
+::: {.hint exercise="ex_mask"}
+Primero construye la máscara: `(ventas / trx) > 32`. Después úsala para indexar `ventas` y suma el resultado con `.sum()`.
+:::
+
+::: {.solution exercise="ex_mask"}
+```{pyodide}
+import numpy as np
+
+ventas = np.array([4200.0, 1800.0, 3100.0, 950.0])
+trx    = np.array([140, 45, 100, 30])
+
+total = ventas[(ventas / trx) > 32].sum()
+
+print(total)
+float(total)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_mask
+#| check: true
+if abs(result - 1800.0) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: los tickets son 30.0, 40.0, 31.0 y 31.67 — solo el segundo supera 32, así que el total es su venta.", "type": "success"}
+elif abs(result - 10050.0) < 1e-6:
+    feedback = {"correct": False, "message": "Sumaste todas las ventas: falta aplicar la máscara al indexar.", "type": "warning"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 1800.0 y obtuve {result}. Tickets: 30.0, 40.0, 31.0, 31.67 — solo uno supera 32.", "type": "error"}
+feedback
+```
+
+## Ejercicio 3 — Broadcasting con `keepdims`
+
+Centra la matriz **por filas**: a cada elemento réstale el promedio de su propia fila.
+
+```{pyodide}
+#| exercise: ex_bcast
+import numpy as np
+
+m = np.array([[10.0, 20.0, 30.0],
+              [40.0, 50.0, 60.0]])
+
+centrada = ______
+
+print(centrada)
+centrada
+```
+
+::: {.hint exercise="ex_bcast"}
+`m.mean(axis=1)` da shape `(2,)`, que no alinea para restar por filas. Necesitas `keepdims=True` para obtener shape `(2, 1)`, que sí hace broadcasting a lo ancho.
+:::
+
+::: {.solution exercise="ex_bcast"}
+```{pyodide}
+import numpy as np
+
+m = np.array([[10.0, 20.0, 30.0],
+              [40.0, 50.0, 60.0]])
+
+centrada = m - m.mean(axis=1, keepdims=True)
+
+print(centrada)
+centrada
+```
+:::
+
+```{pyodide}
+#| exercise: ex_bcast
+#| check: true
+import numpy as np
+esperado = np.array([[-10.0, 0.0, 10.0], [-10.0, 0.0, 10.0]])
+if isinstance(result, np.ndarray) and result.shape == (2, 3) and np.allclose(result, esperado):
+    feedback = {"correct": True, "message": "Correcto. keepdims=True es lo que hace que el broadcasting alinee por filas.", "type": "success"}
+elif isinstance(result, np.ndarray):
+    feedback = {"correct": False, "message": f"Shape {result.shape}. Sin keepdims restaste por columnas en vez de por filas.", "type": "warning"}
+else:
+    feedback = {"correct": False, "message": "Esperaba un array de NumPy.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En tu notebook, este es el primer archivo de `scratch/`:
+
+1. Crea `scratch/distancias.py` con `distancias_pares(X)`, que reciba una matriz `(n, d)` de `n` puntos en `d` dimensiones y devuelva la matriz `(n, n)` de distancias euclidianas entre todos los pares — **sin ningún bucle**, solo broadcasting. Pista: `X[:, None, :] - X[None, :, :]` tiene shape `(n, n, d)`.
+2. Escribe el test que la compara contra `scipy.spatial.distance.cdist` y falla si difieren en más de `1e-9`.
+3. Mide cuánto tarda tu versión contra una con dos `for` anidados para `n = 500`. Anota la razón en tu nota.
+
+Esto es exactamente el patrón de todo el resto del plan: derivar, implementar sin librería, verificar contra la librería.
+
+## Para el Cerebro
+
+Lee **McKinney cap. 4** completo con estas preguntas escritas antes:
+
+1. ¿Qué es el `strides` de un array y cómo permite que `reshape` y la transpuesta no copien datos?
+2. ¿Qué diferencia hay entre *fancy indexing* (con una lista de índices) y una rebanada, en cuanto a copias?
+3. ¿Qué hace `np.where` y por qué reemplaza un `if/else` dentro de un bucle?
+
+```
+¿Por qué un array de NumPy es más rápido que una lista?::Datos contiguos de un solo tipo; el bucle baja a C sin despacho por tipo ni objetos intermedios
+¿Una rebanada de array de NumPy es copia o vista?::Vista: comparte memoria con el original
+¿Cómo se fuerza una copia en NumPy?::Con el método .copy()
+¿Qué recorre axis=0 y qué recorre axis=1?::axis=0 colapsa filas (resultado por columna); axis=1 colapsa columnas (resultado por fila)
+¿Para qué sirve keepdims=True?::Conserva la dimensión colapsada como 1, permitiendo broadcasting por filas
+Regla de broadcasting::Comparar shapes de derecha a izquierda; compatibles si son iguales o si una es 1
+¿Por qué default_rng y no np.random.seed?::default_rng crea un generador independiente; la API vieja usa estado global compartido
+```
+
+::: {.callout-note}
+## Fin de la Fase 0
+
+Con esto cierra el refresco de Python. La semana 3 arranca [Matemática · Álgebra lineal](../matematica/index.qmd) y [Estadística](../estadistica/index.qmd), intercaladas. Pídelas el viernes.
+:::
