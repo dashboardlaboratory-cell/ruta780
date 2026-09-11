@@ -1,0 +1,423 @@
+---
+title: "PMF, CDF y funciones de distribución"
+subtitle: "Estadística · Lección 2"
+nivel: L2
+modulo: estadistica
+fase: F1
+prereqs: [estadistica/01-variables-aleatorias]
+siguientes: [estadistica/03-distribuciones-analiticas]
+libro: "Think Stats 3e, cap. 3–4"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="estadistica/02-pmf-cdf"}
+[[L2]{.nivel .nivel-L2} **Derivación**]{.item}
+[**Fase** F1]{.item}
+[**Libro** Think Stats 3–4]{.item}
+[**Prereqs** [Variables aleatorias](01-variables-aleatorias.qmd)]{.item}
+:::
+
+## La idea
+
+Hay tres maneras de describir una distribución, y solo una funciona siempre.
+
+| | Qué responde | Discretas | Continuas |
+|---|---|---|---|
+| **PMF** $p(x)$ | $P(X = x)$ | sí | inútil: siempre 0 |
+| **PDF** $f(x)$ | densidad, no probabilidad | no aplica | sí |
+| **CDF** $F(x)$ | $P(X \le x)$ | sí | sí |
+
+La **CDF es la fundamental**: existe para cualquier variable aleatoria, siempre va de 0 a 1, nunca baja, y de ella se recuperan las otras dos. Think Stats insiste en esto por una razón práctica: los histogramas mienten según el ancho del bin que elijas, y las CDF no tienen ese parámetro que manipular.
+
+## Visual: la CDF acumula el área
+
+Arriba la densidad; abajo su acumulada. Arrastra la línea vertical: el área sombreada arriba es exactamente la altura de la curva abajo.
+
+```{=html}
+<div class="viz-cdf">
+  <div class="controles">
+    <label>Distribución
+      <select id="cd-tipo">
+        <option value="normal">Normal(0,1)</option>
+        <option value="exponencial">Exponencial(1)</option>
+        <option value="lognormal">Log-normal — el ticket</option>
+        <option value="bimodal">Bimodal</option>
+      </select>
+    </label>
+    <span style="font-size:.8rem;opacity:.7">arrastra la línea vertical</span>
+  </div>
+  <svg id="cd-svg" viewBox="0 0 560 420" role="img" aria-label="Densidad y función de distribución acumulada"></svg>
+  <p class="lectura" id="cd-lectura"></p>
+</div>
+```
+
+```{=html}
+<style>
+.viz-cdf {
+  border: 1px solid var(--r-linea, #ddd);
+  border-radius: 6px; padding: 1rem 1.1rem; margin: 1.6rem 0;
+}
+.viz-cdf .controles {
+  display: flex; flex-wrap: wrap; gap: .5rem 1.3rem; align-items: center;
+  margin-bottom: .8rem; font-size: .85rem;
+}
+.viz-cdf label { display: flex; align-items: center; gap: .4rem; }
+.viz-cdf select {
+  font-size: .85rem; padding: .2rem .4rem; border-radius: 4px;
+  border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit;
+}
+.viz-cdf svg { width: 100%; height: auto; display: block; touch-action: none; cursor: ew-resize; }
+.viz-cdf .lectura { font-size: .85rem; margin-top: .7rem; min-height: 3em; }
+</style>
+```
+
+```{=html}
+<script>
+(function () {
+  var DEN = "#0F6E68", ACU = "#4B3A7A", MARCA = "#B45309";
+  var W_ = 560, H_ = 420, ML = 46, MR = 16;
+  var TOP_Y = 16, TOP_H = 168, BOT_Y = 232, BOT_H = 150;
+
+  var DISTS = {
+    normal:      { a: -4, b: 4, nombre: "Normal(0, 1)",
+                   pdf: function (x) { return Math.exp(-x*x/2)/Math.sqrt(2*Math.PI); } },
+    exponencial: { a: 0, b: 6, nombre: "Exponencial(1)",
+                   pdf: function (x) { return x < 0 ? 0 : Math.exp(-x); } },
+    lognormal:   { a: 0, b: 9, nombre: "Log-normal(0, 0.7)",
+                   pdf: function (x) { var s = .7;
+                     return x <= 0 ? 0 : Math.exp(-Math.pow(Math.log(x),2)/(2*s*s))/(x*s*Math.sqrt(2*Math.PI)); } },
+    bimodal:     { a: -4, b: 7, nombre: "Mezcla de dos normales",
+                   pdf: function (x) {
+                     return .55*Math.exp(-Math.pow(x+1,2)/2)/Math.sqrt(2*Math.PI)
+                          + .45*Math.exp(-Math.pow(x-4,2)/(2*.64))/(.8*Math.sqrt(2*Math.PI)); } },
+  };
+
+  var svg = document.getElementById("cd-svg");
+  var sel = document.getElementById("cd-tipo");
+  var lec = document.getElementById("cd-lectura");
+  var corte = 0.5, arrastrando = false;
+
+  function el(t, at) {
+    var n = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) n.setAttribute(k, at[k]); return n;
+  }
+
+  // CDF por trapecios sobre una malla fina
+  function tabla(d) {
+    var N = 600, h = (d.b - d.a)/N, xs = [], pdf = [], cdf = [0], acum = 0;
+    for (var i = 0; i <= N; i++) { var x = d.a + i*h; xs.push(x); pdf.push(d.pdf(x)); }
+    for (var j = 1; j <= N; j++) { acum += (pdf[j] + pdf[j-1])/2 * h; cdf.push(acum); }
+    var total = cdf[N];
+    return { xs: xs, pdf: pdf.map(function (p) { return p/total; }),
+             cdf: cdf.map(function (c) { return c/total; }), N: N, h: h };
+  }
+
+  function dibujar() {
+    var d = DISTS[sel.value], T = tabla(d);
+    corte = Math.max(d.a, Math.min(d.b, corte));
+    svg.textContent = "";
+
+    var sx = function (x) { return ML + ((x - d.a)/(d.b - d.a))*(W_ - ML - MR); };
+    var maxP = Math.max.apply(null, T.pdf) * 1.12;
+    var syP = function (p) { return TOP_Y + TOP_H - (p/maxP)*TOP_H; };
+    var syC = function (c) { return BOT_Y + BOT_H - c*BOT_H; };
+
+    var idx = Math.round((corte - d.a)/T.h);
+    var valorCdf = T.cdf[Math.max(0, Math.min(T.N, idx))];
+
+    // --- panel superior: densidad ---
+    var area = ["M" + sx(d.a) + "," + syP(0)];
+    for (var i = 0; i <= idx; i++) area.push("L" + sx(T.xs[i]).toFixed(1) + "," + syP(T.pdf[i]).toFixed(1));
+    area.push("L" + sx(T.xs[Math.max(0,idx)]).toFixed(1) + "," + syP(0) + "Z");
+    svg.appendChild(el("path", { d: area.join(""), fill: DEN, "fill-opacity": .22 }));
+
+    var curva = [];
+    for (var k = 0; k <= T.N; k++) curva.push(sx(T.xs[k]).toFixed(1) + "," + syP(T.pdf[k]).toFixed(1));
+    svg.appendChild(el("path", { d: "M" + curva.join("L"), fill: "none", stroke: DEN, "stroke-width": 2.3 }));
+    svg.appendChild(el("line", { x1: ML, y1: syP(0), x2: W_-MR, y2: syP(0), stroke: "currentColor", opacity: .35 }));
+
+    var t1 = el("text", { x: ML, y: TOP_Y - 3, "font-size": 11, fill: DEN });
+    t1.textContent = "densidad f(x)"; svg.appendChild(t1);
+
+    // --- panel inferior: acumulada ---
+    var cc = [];
+    for (var m = 0; m <= T.N; m++) cc.push(sx(T.xs[m]).toFixed(1) + "," + syC(T.cdf[m]).toFixed(1));
+    svg.appendChild(el("path", { d: "M" + cc.join("L"), fill: "none", stroke: ACU, "stroke-width": 2.3 }));
+    [0, .5, 1].forEach(function (v) {
+      svg.appendChild(el("line", { x1: ML, y1: syC(v), x2: W_-MR, y2: syC(v),
+        stroke: "currentColor", "stroke-width": 1, opacity: v === 0 ? .35 : .14,
+        "stroke-dasharray": v === 0 ? null : "3,3" }));
+      var tv = el("text", { x: ML-8, y: syC(v)+4, "text-anchor": "end", "font-size": 10,
+        fill: "currentColor", opacity: .6 });
+      tv.textContent = v.toFixed(1); svg.appendChild(tv);
+    });
+    var t2 = el("text", { x: ML, y: BOT_Y - 5, "font-size": 11, fill: ACU });
+    t2.textContent = "acumulada F(x) = P(X ≤ x)"; svg.appendChild(t2);
+
+    // eje x
+    for (var q = 0; q <= 4; q++) {
+      var xv = d.a + (d.b-d.a)*q/4;
+      var tx = el("text", { x: sx(xv), y: BOT_Y + BOT_H + 17, "text-anchor": "middle",
+        "font-size": 11, fill: "currentColor", opacity: .65 });
+      tx.textContent = xv.toFixed(1); svg.appendChild(tx);
+    }
+
+    // la marca que une los dos paneles
+    svg.appendChild(el("line", { x1: sx(corte), y1: TOP_Y, x2: sx(corte), y2: BOT_Y + BOT_H,
+      stroke: MARCA, "stroke-width": 1.8, "stroke-dasharray": "5,4" }));
+    svg.appendChild(el("circle", { cx: sx(corte), cy: syC(valorCdf), r: 6,
+      fill: MARCA, stroke: "#fff", "stroke-width": 2 }));
+    svg.appendChild(el("line", { x1: ML, y1: syC(valorCdf), x2: sx(corte), y2: syC(valorCdf),
+      stroke: MARCA, "stroke-width": 1.2, opacity: .6 }));
+
+    lec.innerHTML =
+      '<b>' + d.nombre + '</b> · corte en x = <b>' + corte.toFixed(2) + '</b><br>' +
+      'Área sombreada arriba = <b style="color:' + DEN + '">' + valorCdf.toFixed(4) + '</b>' +
+      ' = altura de la acumulada abajo = <b style="color:' + ACU + '">F(' + corte.toFixed(2) + ')</b>' +
+      ' · P(X > x) = ' + (1 - valorCdf).toFixed(4) +
+      '<br><span style="opacity:.75">Es decir: el ' + (valorCdf*100).toFixed(1) +
+      ' % de la masa queda a la izquierda. Ese número es el percentil de x.</span>';
+  }
+
+  function mover(e) {
+    var caja = svg.getBoundingClientRect();
+    var px = (e.clientX - caja.left) * (W_ / caja.width);
+    var d = DISTS[sel.value];
+    corte = d.a + ((px - ML) / (W_ - ML - MR)) * (d.b - d.a);
+    dibujar();
+  }
+  svg.addEventListener("pointerdown", function (e) {
+    arrastrando = true; svg.setPointerCapture(e.pointerId); mover(e);
+  });
+  svg.addEventListener("pointermove", function (e) { if (arrastrando) mover(e); });
+  svg.addEventListener("pointerup", function () { arrastrando = false; });
+  svg.addEventListener("pointerleave", function () { arrastrando = false; });
+  sel.addEventListener("change", function () {
+    var d = DISTS[sel.value]; corte = (d.a + d.b)/2 * .6; dibujar();
+  });
+  dibujar();
+})();
+</script>
+```
+
+::: {.callout-tip}
+## Qué acabas de ver
+
+La acumulada nunca baja. Sube rápido donde la densidad es alta y se aplana donde la densidad es casi cero. Esas dos frases son toda la relación entre ambas: **la CDF es la integral de la densidad, y la densidad es la derivada de la CDF.**
+
+Prueba la **bimodal**. La densidad tiene dos jorobas; la acumulada tiene dos tramos empinados con una meseta en medio. Esa meseta es un hueco donde casi no hay datos — y en un histograma podrías taparla del todo eligiendo bins anchos. La CDF no te deja esconderla.
+
+Prueba la **log-normal**. Arrastra hasta $F(x) = 0.5$: esa $x$ es la mediana. Ahora nota cuánta cola queda a la derecha. La media está bastante más allá.
+:::
+
+## Derivación: la transformada integral de probabilidad
+
+Este resultado parece un truco y es la base de la simulación, de los QQ-plots y de los p-valores.
+
+::: {.derivacion}
+**Afirmación.** Si $X$ es continua con CDF $F$ estrictamente creciente, entonces $U = F(X)$ se distribuye **uniforme en $(0,1)$**, sea cual sea $F$.
+
+::: {.paso}
+Para caracterizar la distribución de $U$ basta con calcular su CDF: $P(U \le u)$ para $u \in (0,1)$.
+:::
+::: {.paso}
+Sustituye la definición de $U$:
+$$P(U \le u) = P\big(F(X) \le u\big)$$
+:::
+::: {.paso}
+Como $F$ es estrictamente creciente, tiene inversa $F^{-1}$ y aplicarla a ambos lados **preserva la desigualdad**:
+$$P\big(F(X) \le u\big) = P\big(X \le F^{-1}(u)\big)$$
+:::
+::: {.paso}
+Pero $P(X \le t)$ es justo la definición de $F(t)$. Con $t = F^{-1}(u)$:
+$$P\big(X \le F^{-1}(u)\big) = F\big(F^{-1}(u)\big) = u$$
+Y $P(U \le u) = u$ en $(0,1)$ es exactamente la CDF de una uniforme. $\blacksquare$
+:::
+
+**El recíproco es cómo se simula cualquier distribución.** Si $U \sim \text{Uniforme}(0,1)$, entonces $X = F^{-1}(U)$ tiene CDF $F$. Con eso puedes generar muestras de cualquier distribución de la que sepas invertir la acumulada, teniendo solo un generador de números uniformes.
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(0)
+
+# Exponencial(λ): F(x) = 1 - e^(-λx)  →  F⁻¹(u) = -ln(1-u)/λ
+lam = 2.5
+u = rng.random(200_000)
+x_inversa = -np.log(1 - u) / lam
+x_numpy   = rng.exponential(1/lam, 200_000)
+
+print("Simulación por inversión de la CDF")
+print(f"  media mía   = {x_inversa.mean():.4f}   numpy = {x_numpy.mean():.4f}   teórica = {1/lam:.4f}")
+print(f"  p90 mía     = {np.percentile(x_inversa, 90):.4f}   numpy = {np.percentile(x_numpy, 90):.4f}")
+print()
+
+# y la transformada al revés: F(X) debe salir uniforme
+u_recuperado = 1 - np.exp(-lam * x_inversa)
+print("F(X) debería ser Uniforme(0,1):")
+print(f"  media = {u_recuperado.mean():.4f}  (teórica 0.5)")
+print(f"  sd    = {u_recuperado.std():.4f}  (teórica {np.sqrt(1/12):.4f})")
+```
+
+## La CDF empírica: la que sí calculas con datos
+
+```{pyodide}
+import numpy as np
+
+def cdf_empirica(datos):
+    """Devuelve (xs ordenados, F(xs)). Sin bins, sin parámetros que elegir."""
+    xs = np.sort(datos)
+    fs = np.arange(1, len(xs) + 1) / len(xs)
+    return xs, fs
+
+rng = np.random.default_rng(4)
+ticket = rng.lognormal(mean=np.log(31), sigma=0.45, size=2000)
+
+xs, fs = cdf_empirica(ticket)
+
+print(f"mediana (F = 0.50): {np.interp(0.50, fs, xs):7.2f}")
+print(f"p90     (F = 0.90): {np.interp(0.90, fs, xs):7.2f}")
+print(f"p99     (F = 0.99): {np.interp(0.99, fs, xs):7.2f}")
+print(f"media             : {ticket.mean():7.2f}   ← arrastrada por la cola")
+print()
+print(f"P(ticket ≤ 40) = {np.interp(40, xs, fs):.4f}")
+print(f"P(ticket > 60) = {1 - np.interp(60, xs, fs):.4f}")
+```
+
+Un percentil es **la CDF leída al revés**: en vez de preguntar "¿qué fracción queda debajo de 40?", preguntas "¿debajo de qué valor queda el 90 %?". Es la misma curva, mirada desde el otro eje.
+
+## Ejercicio 1 — CDF empírica
+
+Completa la función que calcula $P(X \le umbral)$ a partir de una muestra, sin usar histogramas.
+
+```{pyodide}
+#| exercise: ex_cdf
+import numpy as np
+
+def p_menor_igual(datos, umbral):
+    return ______
+
+rng = np.random.default_rng(1)
+muestra = rng.normal(0, 1, 100_000)
+
+print(f"P(X ≤ 0)    = {p_menor_igual(muestra, 0.0):.4f}   (teórica 0.5)")
+print(f"P(X ≤ 1.96) = {p_menor_igual(muestra, 1.96):.4f}   (teórica 0.975)")
+round(float(p_menor_igual(muestra, 0.0)), 2)
+```
+
+::: {.hint exercise="ex_cdf"}
+`datos <= umbral` da un arreglo de booleanos. En NumPy, `True` cuenta como 1, así que el promedio de ese arreglo es directamente la fracción que cumple.
+:::
+
+::: {.solution exercise="ex_cdf"}
+```{pyodide}
+import numpy as np
+
+def p_menor_igual(datos, umbral):
+    return (datos <= umbral).mean()
+
+rng = np.random.default_rng(1)
+muestra = rng.normal(0, 1, 100_000)
+
+print(f"P(X ≤ 0)    = {p_menor_igual(muestra, 0.0):.4f}   (teórica 0.5)")
+print(f"P(X ≤ 1.96) = {p_menor_igual(muestra, 1.96):.4f}   (teórica 0.975)")
+round(float(p_menor_igual(muestra, 0.0)), 2)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_cdf
+#| check: true
+if isinstance(result, float) and abs(result - 0.5) < 0.02:
+    feedback = {"correct": True, "message": "Correcto. La media de un arreglo booleano es la proporción — el idiom que más vas a usar en estadística computacional.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba algo cerca de 0.5 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Ejercicio 2 — Simular invirtiendo la CDF
+
+Genera muestras exponenciales usando solo números uniformes y la inversa de la acumulada.
+
+```{pyodide}
+#| exercise: ex_inversa
+import numpy as np
+
+rng = np.random.default_rng(7)
+lam = 0.5
+u = rng.random(100_000)
+
+# F(x) = 1 - e^(-λx)   →   despeja x
+x = ______
+
+print(f"media  = {x.mean():.4f}   (teórica {1/lam})")
+print(f"sd     = {x.std():.4f}   (teórica {1/lam})")
+round(float(x.mean()), 2)
+```
+
+::: {.hint exercise="ex_inversa"}
+De $u = 1 - e^{-\lambda x}$ despeja: $e^{-\lambda x} = 1 - u$, así que $-\lambda x = \ln(1-u)$ y por tanto $x = -\ln(1-u)/\lambda$.
+:::
+
+::: {.solution exercise="ex_inversa"}
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(7)
+lam = 0.5
+u = rng.random(100_000)
+
+x = -np.log(1 - u) / lam
+
+print(f"media  = {x.mean():.4f}   (teórica {1/lam})")
+print(f"sd     = {x.std():.4f}   (teórica {1/lam})")
+round(float(x.mean()), 2)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_inversa
+#| check: true
+if isinstance(result, float) and abs(result - 2.0) < 0.05:
+    feedback = {"correct": True, "message": "Correcto: media 2.0 = 1/λ. Acabas de simular una exponencial con nada más que uniformes y un logaritmo.", "type": "success"}
+elif isinstance(result, float) and abs(result - 0.5) < 0.05:
+    feedback = {"correct": False, "message": "Salió 0.5 = λ. La media de una exponencial es 1/λ: revisa si dividiste o multiplicaste.", "type": "warning"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 2.0 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`:
+
+1. Escribe `cdf_empirica` y `percentil(datos, p)` en `scratch/distribuciones.py`, sin usar `np.percentile`. Compara contra NumPy en 5 distribuciones distintas. Cuidado: existen varias convenciones de interpolación para percentiles — averigua cuál usa NumPy por defecto y documéntala.
+2. Toma dos muestras del mismo tamaño de distribuciones distintas y grafica ambas CDF empíricas en los mismos ejes. Después grafica los histogramas. ¿Cuál de las dos representaciones deja más claro en qué se diferencian?
+3. Haz un **QQ-plot** a mano: ordena tu muestra, calcula los cuantiles teóricos de una normal en las mismas posiciones, y grafica uno contra otro. Con datos normales sale una recta. Prueba con datos log-normales y describe la curvatura — eso es lo que vas a mirar para diagnosticar residuos en regresión.
+
+## Para el Cerebro
+
+Lee **Think Stats 3e cap. 3–4** con estas tres preguntas escritas antes:
+
+1. ¿Por qué Downey prefiere las CDF a los histogramas para comparar distribuciones?
+2. ¿Qué es el sesgo de tamaño (*size-biased sampling*) y cómo se corrige?
+3. ¿Qué distribución tienen los tiempos entre llegadas si las llegadas son Poisson?
+
+Nota nueva en `10-Conceptos/cdf.md` y `20-Metodos/simulacion-por-inversion.md`.
+
+```
+¿Qué responde la CDF?::P(X ≤ x) — la fracción de masa que queda a la izquierda
+¿Por qué la CDF es más fundamental que la PMF?::Existe para discretas y continuas, y no depende de un ancho de bin elegido
+Relación entre densidad y CDF::La CDF es la integral de la densidad; la densidad es la derivada de la CDF
+¿Qué dice la transformada integral de probabilidad?::Si X es continua con CDF F, entonces F(X) es Uniforme(0,1)
+¿Cómo se simula una distribución con solo uniformes?::X = F⁻¹(U): se invierte la acumulada
+¿Cómo se invierte la CDF de una exponencial?::x = −ln(1−u)/λ
+¿Qué es un percentil?::La CDF leída al revés: el valor bajo el cual queda una fracción dada
+¿Por qué un histograma puede esconder una distribución bimodal?::Con bins anchos las dos jorobas se funden; la CDF muestra la meseta igual
+```
+
+→ Siguiente: [Distribuciones analíticas y sus derivaciones](03-distribuciones-analiticas.qmd)
