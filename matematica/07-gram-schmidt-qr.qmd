@@ -1,0 +1,531 @@
+---
+title: "Gram-Schmidt y descomposición QR"
+subtitle: "Matemática · Lección 7"
+nivel: L3
+modulo: matematica
+fase: F1
+prereqs: [matematica/06-minimos-cuadrados, matematica/04-producto-interno]
+siguientes: [matematica/08-determinante, matematica/11-svd]
+libro: "MML 3.8 · Trefethen & Bau 7–8"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="matematica/07-gram-schmidt-qr"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F1]{.item}
+[**Libro** MML 3.8]{.item}
+[**Prereqs** [Mínimos cuadrados](06-minimos-cuadrados.qmd) · [Producto interno](04-producto-interno.qmd)]{.item}
+:::
+
+## La idea
+
+La lección anterior terminó con una advertencia sin resolver: las ecuaciones normales son correctas pero frágiles, porque $\kappa(A^\top A) = \kappa(A)^2$. Esta lección la resuelve.
+
+La causa de toda la fragilidad es que las columnas de $A$ están torcidas entre sí. Si fueran **ortonormales** —perpendiculares dos a dos y de longitud 1— la proyección sería trivial: sin inversa, sin sistema que resolver, solo productos internos.
+
+$$\text{Si } Q^\top Q = I, \quad\text{entonces}\quad P = Q(Q^\top Q)^{-1}Q^\top = QQ^\top$$
+
+Esa inversa que desaparece es toda la ganancia. Gram-Schmidt es el procedimiento que endereza las columnas sin cambiar el espacio que generan, y **QR** es el nombre del resultado: $A = QR$, con $Q$ ortonormal y $R$ triangular superior guardando la contabilidad de lo que se enderezó.
+
+## Enderezar dos vectores
+
+Arrastra las puntas. $q_1$ es $a_1$ normalizado. Para $q_2$ se le quita a $a_2$ su sombra sobre $q_1$ —eso es la proyección de la lección 5— y lo que sobra se normaliza. Las entradas de $R$ **son** los coeficientes de esas sombras.
+
+```{=html}
+<div class="viz-gs">
+  <div class="controles">
+    <button type="button" data-caso="tipico">Caso típico</button>
+    <button type="button" data-caso="casi">Casi paralelos</button>
+    <button type="button" data-caso="orto">Ya ortogonales</button>
+    <label style="margin-left:auto"><input type="checkbox" id="gs-circulo" checked> Círculo unitario</label>
+  </div>
+  <svg id="gs-svg" viewBox="0 0 540 400" role="img" aria-label="Construcción de una base ortonormal a partir de dos vectores"></svg>
+  <p class="lectura" id="gs-lectura"></p>
+</div>
+<style>
+.viz-gs {
+  border: 1px solid var(--r-linea, #ddd);
+  border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0;
+}
+.viz-gs .controles {
+  display: flex; flex-wrap: wrap; gap: .45rem .7rem;
+  align-items: center; margin-bottom: .85rem; font-size: .85rem;
+}
+.viz-gs button {
+  font-size: .8rem; padding: .28rem .75rem; border-radius: 6px;
+  border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; cursor: pointer;
+  transition: border-color 160ms cubic-bezier(0.22,1,0.36,1), transform 160ms cubic-bezier(0.22,1,0.36,1);
+}
+.viz-gs button:hover { border-color: var(--r-acento, #0F6E68); }
+.viz-gs button:active { transform: scale(.97); }
+.viz-gs label { display: flex; align-items: center; gap: .4rem; }
+.viz-gs svg { width: 100%; height: auto; display: block; touch-action: none; }
+.viz-gs .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.2em; line-height: 1.6; }
+.viz-gs .lectura code { font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_A1 = "#2563EB", C_A2 = "#7C3AED", C_Q = "#0F6E68", C_E = "#B91C1C", C_S = "#9A9AA8";
+  var X0 = -1.2, X1 = 4.2, Y0 = -1.2, Y1 = 3.2, W_ = 540, H_ = 400, M_ = 26;
+  var sx = function (x) { return M_ + ((x - X0) / (X1 - X0)) * (W_ - 2 * M_); };
+  var sy = function (y) { return H_ - M_ - ((y - Y0) / (Y1 - Y0)) * (H_ - 2 * M_); };
+  var ix = function (p) { return X0 + ((p - M_) / (W_ - 2 * M_)) * (X1 - X0); };
+  var iy = function (p) { return Y0 + ((H_ - M_ - p) / (H_ - 2 * M_)) * (Y1 - Y0); };
+
+  var CASOS = {
+    tipico: [[2.8, 0.9], [1.2, 2.2]],
+    casi:   [[2.8, 0.9], [2.6, 0.90]],
+    orto:   [[2.8, 0.9], [-0.6, 1.87]]
+  };
+  var a1 = [2.8, 0.9], a2 = [1.2, 2.2], arrastrando = null;
+  var svg = document.getElementById("gs-svg");
+  var lec = document.getElementById("gs-lectura");
+  var verCirc = document.getElementById("gs-circulo");
+
+  function el(t, at) {
+    var n = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) n.setAttribute(k, at[k]);
+    return n;
+  }
+  var dot = function (u, v) { return u[0] * v[0] + u[1] * v[1]; };
+  var nrm = function (u) { return Math.hypot(u[0], u[1]); };
+
+  function flecha(g, v, color, ancho, guion, etiqueta, desde) {
+    var o = desde || [0, 0];
+    var l = el("line", {
+      x1: sx(o[0]), y1: sy(o[1]), x2: sx(o[0] + v[0]), y2: sy(o[1] + v[1]),
+      stroke: color, "stroke-width": ancho, "stroke-linecap": "round"
+    });
+    if (guion) l.setAttribute("stroke-dasharray", guion);
+    g.appendChild(l);
+    // punta
+    var ang = Math.atan2(-(v[1]), v[0]);
+    var px = sx(o[0] + v[0]), py = sy(o[1] + v[1]), L = 9;
+    g.appendChild(el("path", {
+      d: "M" + px + "," + py +
+         " L" + (px - L * Math.cos(ang - 0.4)) + "," + (py + L * Math.sin(ang - 0.4)) +
+         " L" + (px - L * Math.cos(ang + 0.4)) + "," + (py + L * Math.sin(ang + 0.4)) + " Z",
+      fill: color
+    }));
+    if (etiqueta) {
+      var t = el("text", {
+        x: px + 11, y: py - 7, "font-size": 13, fill: color,
+        "font-style": "italic", "font-weight": 600
+      });
+      t.textContent = etiqueta;
+      g.appendChild(t);
+    }
+  }
+
+  function dibujar() {
+    svg.textContent = "";
+
+    // ejes
+    svg.appendChild(el("line", { x1: sx(X0), y1: sy(0), x2: sx(X1), y2: sy(0), stroke: "var(--r-linea,#ddd)", "stroke-width": 1 }));
+    svg.appendChild(el("line", { x1: sx(0), y1: sy(Y0), x2: sx(0), y2: sy(Y1), stroke: "var(--r-linea,#ddd)", "stroke-width": 1 }));
+
+    var g = el("g", {});
+
+    var n1 = nrm(a1);
+    var q1 = [a1[0] / n1, a1[1] / n1];
+    var r11 = n1;
+    var r12 = dot(q1, a2);
+    var proy = [r12 * q1[0], r12 * q1[1]];
+    var v2 = [a2[0] - proy[0], a2[1] - proy[1]];
+    var r22 = nrm(v2);
+    var q2 = r22 > 1e-12 ? [v2[0] / r22, v2[1] / r22] : [0, 0];
+
+    if (verCirc.checked) {
+      g.appendChild(el("circle", {
+        cx: sx(0), cy: sy(0), r: Math.abs(sx(1) - sx(0)),
+        fill: "none", stroke: C_Q, "stroke-opacity": 0.22, "stroke-dasharray": "3 4"
+      }));
+    }
+
+    // sombra de a2 sobre q1, y el residuo que la levanta
+    flecha(g, proy, C_S, 1.6, "4 4", null);
+    g.appendChild(el("line", {
+      x1: sx(proy[0]), y1: sy(proy[1]), x2: sx(a2[0]), y2: sy(a2[1]),
+      stroke: C_E, "stroke-width": 1.6, "stroke-dasharray": "5 4"
+    }));
+
+    flecha(g, a1, C_A1, 2.2, null, "a₁");
+    flecha(g, a2, C_A2, 2.2, null, "a₂");
+    flecha(g, q1, C_Q, 3, null, "q₁");
+    if (r22 > 1e-9) flecha(g, q2, C_Q, 3, null, "q₂");
+
+    // asas
+    [[a1, C_A1, 0], [a2, C_A2, 1]].forEach(function (p) {
+      var c = el("circle", { cx: sx(p[0][0]), cy: sy(p[0][1]), r: 8, fill: p[1], "fill-opacity": 0.14, stroke: p[1], "stroke-width": 1.5, cursor: "grab" });
+      c.dataset.i = p[2];
+      g.appendChild(c);
+    });
+    svg.appendChild(g);
+
+    var orto = Math.abs(dot(q1, q2));
+    var casiSingular = r22 < 0.12 * r11;
+    lec.innerHTML =
+      "<code>R = [ " + r11.toFixed(4) + "&nbsp;&nbsp;" + r12.toFixed(4) +
+      " ; &nbsp;0&nbsp;&nbsp;" + r22.toFixed(4) + " ]</code>" +
+      " &nbsp;·&nbsp; r&#8321;&#8321; = ‖a&#8321;‖, &nbsp;r&#8321;&#8322; = q&#8321;&#7488;a&#8322; (la sombra), &nbsp;r&#8322;&#8322; = ‖a&#8322; &minus; sombra‖" +
+      "<br>‖q&#8321;‖ = " + nrm(q1).toFixed(6) + " &nbsp;·&nbsp; ‖q&#8322;‖ = " + nrm(q2).toFixed(6) +
+      " &nbsp;·&nbsp; q&#8321;&#7488;q&#8322; = " + orto.toExponential(2) +
+      (casiSingular
+        ? "<br><strong>r&#8322;&#8322; es diminuto:</strong> a&#8322; casi no aporta dirección nueva. Dividir entre ese número es exactamente donde Gram-Schmidt clásico pierde precisión."
+        : "");
+  }
+
+  function punteroA(ev) {
+    var r = svg.getBoundingClientRect();
+    var px = (ev.clientX - r.left) * (W_ / r.width);
+    var py = (ev.clientY - r.top) * (H_ / r.height);
+    return [ix(px), iy(py)];
+  }
+  svg.addEventListener("pointerdown", function (ev) {
+    if (ev.target.dataset && ev.target.dataset.i !== undefined) {
+      arrastrando = +ev.target.dataset.i;
+      svg.setPointerCapture(ev.pointerId);
+    }
+  });
+  svg.addEventListener("pointermove", function (ev) {
+    if (arrastrando === null) return;
+    var p = punteroA(ev);
+    if (arrastrando === 0) { if (nrm(p) > 0.25) a1 = p; } else { a2 = p; }
+    dibujar();
+  });
+  svg.addEventListener("pointerup", function () { arrastrando = null; });
+  svg.addEventListener("pointercancel", function () { arrastrando = null; });
+
+  document.querySelectorAll(".viz-gs [data-caso]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var c = CASOS[b.dataset.caso];
+      a1 = c[0].slice(); a2 = c[1].slice();
+      dibujar();
+    });
+  });
+  verCirc.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+Prueba **Casi paralelos**. $r_{22}$ se vuelve diminuto: $a_2$ apenas aporta dirección nueva, y $q_2$ se obtiene dividiendo entre ese número casi cero. Ahí es donde la aritmética de punto flotante se rompe, y más abajo lo vas a medir.
+
+## Derivación: Gram-Schmidt y por qué R sale triangular
+
+::: {.derivacion}
+**Afirmación.** Para $A$ de rango columna completo existen $Q$ con columnas ortonormales y $R$ triangular superior con diagonal positiva tales que $A = QR$.
+
+::: {.paso}
+**Primera columna.** No hay nada de qué enderezarla, solo normalizarla:
+$$r_{11} = \|a_1\|, \qquad q_1 = \frac{a_1}{r_{11}}$$
+Lee la relación al revés: $a_1 = r_{11}q_1$. La primera columna de $A$ se escribe usando **solo** $q_1$.
+:::
+::: {.paso}
+**Segunda columna.** Quítale a $a_2$ su componente en la dirección de $q_1$. Como $q_1$ es unitario, la proyección de la lección 5 se simplifica: $\dfrac{q_1^\top a_2}{q_1^\top q_1}q_1 = (q_1^\top a_2)\,q_1$. El denominador desaparece, y esa es la ventaja de normalizar.
+$$r_{12} = q_1^\top a_2, \qquad v_2 = a_2 - r_{12}\,q_1, \qquad r_{22} = \|v_2\|, \qquad q_2 = \frac{v_2}{r_{22}}$$
+:::
+::: {.paso}
+**$q_2$ es perpendicular a $q_1$ por construcción**, y se comprueba en una línea:
+$$q_1^\top v_2 = q_1^\top a_2 - r_{12}\,\underbrace{q_1^\top q_1}_{=1} = r_{12} - r_{12} = 0$$
+No es una coincidencia numérica: es la misma condición de residuo perpendicular de toda la lección 5.
+:::
+::: {.paso}
+**Paso general.** Para la columna $k$, resta las sombras sobre todos los $q_i$ anteriores:
+$$v_k = a_k - \sum_{i<k} \underbrace{(q_i^\top a_k)}_{r_{ik}}\,q_i, \qquad r_{kk} = \|v_k\|, \qquad q_k = \frac{v_k}{r_{kk}}$$
+:::
+::: {.paso}
+**De ahí sale la triangularidad.** Despejando, $a_k = \sum_{i \le k} r_{ik}\,q_i$: la columna $k$ de $A$ es combinación de las primeras $k$ columnas de $Q$ **y de ninguna posterior**. Escrito matricialmente eso es exactamente $A = QR$ con $r_{ik} = 0$ para $i > k$ — o sea, $R$ triangular superior.
+$$\boxed{A = QR, \qquad Q^\top Q = I, \qquad R \text{ triangular superior}}\;\;\blacksquare$$
+:::
+::: {.paso}
+**Corolario que importa.** $\text{span}(a_1,\dots,a_k) = \text{span}(q_1,\dots,q_k)$ para todo $k$: enderezar no cambió el espacio generado, solo la base. Por eso $\text{col}(A) = \text{col}(Q)$ y la proyección es la misma, pero ahora se calcula sin invertir nada.
+:::
+:::
+
+## Mínimos cuadrados por QR
+
+Aquí se cobra todo el trabajo. Sustituye $A = QR$ en las ecuaciones normales:
+
+$$A^\top A\,\hat{x} = A^\top b
+\;\Longrightarrow\;
+(QR)^\top (QR)\,\hat{x} = (QR)^\top b
+\;\Longrightarrow\;
+R^\top \underbrace{Q^\top Q}_{I} R\,\hat{x} = R^\top Q^\top b$$
+
+$R^\top$ es invertible (diagonal positiva), así que se cancela de los dos lados:
+
+$$\boxed{R\,\hat{x} = Q^\top b}$$
+
+Y $R$ es triangular: eso se resuelve por **sustitución hacia atrás**, de abajo hacia arriba, en $O(p^2)$ operaciones y sin formar $A^\top A$ ni una sola vez. El número de condición que gobierna el error es $\kappa(A)$, no $\kappa(A)^2$.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(0)
+A = rng.normal(size=(40, 4))
+b = rng.normal(size=40)
+
+Q, R = np.linalg.qr(A)
+
+print("QᵀQ = I ?", np.allclose(Q.T @ Q, np.eye(4)))
+print("A = QR  ?", np.allclose(Q @ R, A))
+print("R triangular superior ?", np.allclose(R, np.triu(R)))
+print()
+print("R =\n", R.round(4))
+print()
+
+# Rx̂ = Qᵀb, resuelto por sustitución hacia atrás
+x_qr = np.linalg.solve(R, Q.T @ b)          # solve reconoce la estructura triangular
+x_ls, *_ = np.linalg.lstsq(A, b, rcond=None)
+
+print("por QR   :", x_qr.round(8))
+print("por lstsq:", x_ls.round(8))
+```
+
+::: {.callout-note}
+Fíjate en la diagonal de `R`: algunas entradas salen negativas. La derivación pedía diagonal positiva, y con esa condición la factorización es **única**; sin ella, cada columna de $Q$ puede llevar el signo cambiado junto con su fila de $R$, y el producto $QR$ sigue dando $A$. `np.linalg.qr` no normaliza los signos porque no le hace falta. Si necesitas la forma canónica: multiplica cada columna de $Q$ y cada fila de $R$ por `np.sign(np.diag(R))`.
+:::
+
+## Clásico contra modificado: la misma fórmula, distinto orden
+
+Gram-Schmidt tiene dos versiones que en aritmética exacta dan lo mismo y en punto flotante no se parecen.
+
+- **Clásico**: cada $r_{ik} = q_i^\top a_k$ se calcula contra la columna **original** $a_k$.
+- **Modificado**: se resta una sombra a la vez y la siguiente se calcula contra el vector **ya actualizado**.
+
+La diferencia es solo dónde vive el redondeo, y el resultado es brutal.
+
+```{pyodide}
+import numpy as np
+
+def gs_clasico(A):
+    m, n = A.shape
+    Q = np.zeros((m, n)); R = np.zeros((n, n))
+    for j in range(n):
+        v = A[:, j].copy()
+        for i in range(j):
+            R[i, j] = Q[:, i] @ A[:, j]      # contra la columna ORIGINAL
+            v = v - R[i, j] * Q[:, i]
+        R[j, j] = np.linalg.norm(v)
+        Q[:, j] = v / R[j, j]
+    return Q, R
+
+def gs_modificado(A):
+    m, n = A.shape
+    Q = np.zeros((m, n)); R = np.zeros((n, n))
+    V = A.astype(float).copy()
+    for j in range(n):
+        R[j, j] = np.linalg.norm(V[:, j])
+        Q[:, j] = V[:, j] / R[j, j]
+        for k in range(j + 1, n):
+            R[j, k] = Q[:, j] @ V[:, k]      # contra el vector YA ACTUALIZADO
+            V[:, k] = V[:, k] - R[j, k] * Q[:, j]
+    return Q, R
+
+def desvio(Q):
+    n = Q.shape[1]
+    return np.linalg.norm(Q.T @ Q - np.eye(n))
+
+print(" n    cond(A)      clásico      modificado    householder")
+for n in [6, 8, 10, 12]:
+    A = np.vander(np.linspace(0, 1, 40), n, increasing=True)   # Vandermonde: pésima condición
+    Qc, _ = gs_clasico(A)
+    Qm, _ = gs_modificado(A)
+    Qh, _ = np.linalg.qr(A)
+    print(f"{n:2d}   {np.linalg.cond(A):.2e}   {desvio(Qc):.2e}     {desvio(Qm):.2e}      {desvio(Qh):.2e}")
+```
+
+Lee la última fila. Con $n = 12$ el clásico devuelve una $Q$ cuyo $Q^\top Q$ se desvía de la identidad en **1.7**: sus columnas ya no son ortogonales entre sí, ni de lejos. El modificado se queda en $10^{-9}$, y `np.linalg.qr` —que usa reflexiones de Householder, no Gram-Schmidt— en $10^{-15}$.
+
+::: {.callout-tip}
+Gram-Schmidt se estudia porque **explica** qué es QR; Householder se usa porque es estable. Implementa el modificado para entenderlo, usa `np.linalg.qr` para trabajar. Esa distinción entre "lo implemento para entenderlo" y "lo uso en producción" es la escalera L3 → L4 completa.
+:::
+
+## La proyección, ahora gratis
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(3)
+A = rng.normal(size=(8, 3))
+b = rng.normal(size=8)
+
+Q, R = np.linalg.qr(A)
+
+P_lento  = A @ np.linalg.solve(A.T @ A, A.T)   # la de la lección 6
+P_rapido = Q @ Q.T                             # con base ortonormal
+
+print("¿misma matriz de proyección?", np.allclose(P_lento, P_rapido))
+print("traza =", round(float(np.trace(P_rapido)), 6), " = rango = 3")
+print()
+
+p = Q @ (Q.T @ b)        # ni siquiera hace falta formar P: dos productos
+e = b - p
+print("residuo perpendicular a col(A)?", np.allclose(A.T @ e, 0, atol=1e-12))
+print("‖b‖² = ‖p‖² + ‖e‖² ?", np.allclose(b @ b, p @ p + e @ e))
+```
+
+Fíjate en `Q @ (Q.T @ b)`: los paréntesis importan. Así son dos productos matriz-vector, $O(np)$. Sin ellos formas la matriz $QQ^\top$ de $n\times n$ completa, que para $n$ grande es la diferencia entre correr y no correr.
+
+## Ejercicio 1 — Gram-Schmidt modificado
+
+Impleméntalo. Devuelve solo $Q$.
+
+```{pyodide}
+#| exercise: ex_gs
+import numpy as np
+
+def gram_schmidt(A):
+    m, n = A.shape
+    Q = np.zeros((m, n))
+    V = A.astype(float).copy()
+    for j in range(n):
+        ______
+    return Q
+
+A = np.array([[1., 1., 0.],
+              [1., 0., 1.],
+              [0., 1., 1.],
+              [1., 1., 1.]])
+Q = gram_schmidt(A)
+print("QᵀQ =\n", (Q.T @ Q).round(10))
+bool(np.allclose(Q.T @ Q, np.eye(3)))
+```
+
+::: {.hint exercise="ex_gs"}
+Dentro del bucle, en este orden: normaliza `V[:, j]` para obtener `Q[:, j]`, y después réstale a **cada** columna posterior `V[:, k]` su sombra `(Q[:, j] @ V[:, k]) * Q[:, j]`. La clave del modificado es que restas sobre `V`, que ya viene actualizado, no sobre `A`.
+:::
+
+::: {.solution exercise="ex_gs"}
+```{pyodide}
+import numpy as np
+
+def gram_schmidt(A):
+    m, n = A.shape
+    Q = np.zeros((m, n))
+    V = A.astype(float).copy()
+    for j in range(n):
+        Q[:, j] = V[:, j] / np.linalg.norm(V[:, j])
+        for k in range(j + 1, n):
+            V[:, k] = V[:, k] - (Q[:, j] @ V[:, k]) * Q[:, j]
+    return Q
+
+A = np.array([[1., 1., 0.],
+              [1., 0., 1.],
+              [0., 1., 1.],
+              [1., 1., 1.]])
+Q = gram_schmidt(A)
+print("QᵀQ =\n", (Q.T @ Q).round(10))
+bool(np.allclose(Q.T @ Q, np.eye(3)))
+```
+:::
+
+```{pyodide}
+#| exercise: ex_gs
+#| check: true
+if result is True:
+    feedback = {"correct": True, "message": "Correcto: QᵀQ = I. Las tres columnas quedaron unitarias y perpendiculares dos a dos, generando el mismo espacio que las de A.", "type": "success"}
+elif result is False:
+    feedback = {"correct": False, "message": "QᵀQ no dio la identidad. Revisa dos cosas: que normalices antes de restar, y que restes sobre V (actualizado) y no sobre A.", "type": "warning"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba True o False y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Ejercicio 2 — Mínimos cuadrados sin ecuaciones normales
+
+Resuelve $\min\|b - Ax\|$ usando QR. Nada de `AᵀA`, nada de `lstsq`.
+
+```{pyodide}
+#| exercise: ex_qrls
+import numpy as np
+
+rng = np.random.default_rng(11)
+A = rng.normal(size=(30, 3))
+b = rng.normal(size=30)
+
+Q, R = np.linalg.qr(A)
+
+x = ______
+
+print("x =", x.round(6))
+print("Aᵀ(b − Ax) ≈ 0 ?", np.allclose(A.T @ (b - A @ x), 0, atol=1e-10))
+x.round(6)
+```
+
+::: {.hint exercise="ex_qrls"}
+Las ecuaciones normales colapsan a $R\hat{x} = Q^\top b$. Eso es un sistema triangular: `np.linalg.solve(R, Q.T @ b)`.
+:::
+
+::: {.solution exercise="ex_qrls"}
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(11)
+A = rng.normal(size=(30, 3))
+b = rng.normal(size=30)
+
+Q, R = np.linalg.qr(A)
+
+x = np.linalg.solve(R, Q.T @ b)
+
+print("x =", x.round(6))
+print("Aᵀ(b − Ax) ≈ 0 ?", np.allclose(A.T @ (b - A @ x), 0, atol=1e-10))
+x.round(6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_qrls
+#| check: true
+import numpy as np
+rng_ = np.random.default_rng(11)
+A_ = rng_.normal(size=(30, 3))
+b_ = rng_.normal(size=30)
+esperado = np.linalg.lstsq(A_, b_, rcond=None)[0]
+if isinstance(result, np.ndarray) and result.shape == (3,) and np.allclose(result, esperado, atol=1e-5):
+    feedback = {"correct": True, "message": "Correcto. Resolviste mínimos cuadrados sin formar AᵀA ni una vez: el condicionamiento que gobierna el error es κ(A), no κ(A)².", "type": "success"}
+elif isinstance(result, np.ndarray) and result.shape == (3,) and np.allclose(result, 0, atol=1e-9):
+    feedback = {"correct": False, "message": "Salió el vector cero. Revisa el orden de los argumentos: es solve(R, Qᵀb).", "type": "warning"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba {esperado.round(6)} y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Mat 07**:
+
+1. Implementa las dos versiones de Gram-Schmidt y **reproduce la tabla de pérdida de ortogonalidad** con matrices de Vandermonde de $n = 4$ a $20$. Grafica $\|Q^\top Q - I\|$ contra $\kappa(A)$ en ejes log-log. ¿Qué pendiente tiene cada versión, y qué te dice esa pendiente?
+2. Implementa `sustitucion_atras(R, y)` que resuelva $Rx = y$ triangular, sin `np.linalg.solve`. Úsala para completar tu `ols` de la lección 6 y verifica contra `lstsq` en 200 casos.
+3. Ajusta un polinomio de grado 15 a 40 puntos, **una vez por ecuaciones normales y otra por QR**. Grafica las dos curvas ajustadas sobre los datos. Una de las dos se va a ver claramente mal: identifica cuál y explica por qué con lo que mediste en el punto 1.
+
+## Para el Cerebro
+
+Lee **Mathematics for ML 3.8** (proyecciones y bases ortonormales) con estas tres preguntas escritas antes:
+
+1. ¿Qué define a una matriz ortogonal, y por qué su inversa es su transpuesta?
+2. ¿Qué le hace una matriz ortogonal a las longitudes y a los ángulos? ¿Por qué eso la vuelve numéricamente segura?
+3. MML llama "base ortonormal" a lo que aquí construimos. ¿Qué se simplifica al escribir un vector en esa base frente a una base cualquiera?
+
+Nota nueva en `10-Conceptos/gram-schmidt-qr.md`, enlazada a [[minimos-cuadrados]], [[proyeccion-ortogonal]] y [[producto-interno]]. Anota en `50-Errores/` la regla: **nunca `inv(X.T @ X)`**.
+
+```
+¿Qué gana una base ortonormal frente a una base cualquiera?::Que P = QQᵀ: la proyección ya no necesita invertir nada
+¿Qué es r₁₁ en QR?::La norma de la primera columna de A
+¿Qué es r₁₂?::q₁ᵀa₂, el coeficiente de la sombra de a₂ sobre q₁
+¿Por qué R sale triangular superior?::Porque aₖ solo usa q₁…qₖ, nunca los posteriores
+¿Cómo quedan las ecuaciones normales al sustituir A = QR?::Rx̂ = Qᵀb, un sistema triangular
+¿Por qué QR es más estable que las ecuaciones normales?::Porque el error lo gobierna κ(A) y no κ(A)²
+¿En qué se diferencia Gram-Schmidt modificado del clásico?::En que cada coeficiente se calcula contra el vector ya actualizado, no contra la columna original
+¿Qué le pasa al clásico con matrices mal condicionadas?::Pierde la ortogonalidad de Q, hasta desviarse de la identidad en orden 1
+¿Qué usa np.linalg.qr por dentro?::Reflexiones de Householder, no Gram-Schmidt
+¿Cuánto vale QᵀQ para Q ortonormal?::La identidad, así que Q⁻¹ = Qᵀ
+¿Por qué Q @ (Q.T @ b) y no (Q @ Q.T) @ b?::Los paréntesis evitan formar la matriz n×n completa: dos productos matriz-vector en vez de uno enorme
+```
+
+→ Siguiente: [Determinante y qué mide](08-determinante.qmd)

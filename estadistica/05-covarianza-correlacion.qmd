@@ -1,0 +1,480 @@
+---
+title: "Covarianza y correlación"
+subtitle: "Estadística · Lección 5"
+nivel: L2
+modulo: estadistica
+fase: F1
+prereqs: [estadistica/04-esperanza-varianza-momentos, matematica/04-producto-interno]
+siguientes: [estadistica/06-normal-multivariante]
+libro: "Think Stats 3e, cap. 7"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="estadistica/05-covarianza-correlacion"}
+[[L2]{.nivel .nivel-L2} **Derivación**]{.item}
+[**Fase** F1]{.item}
+[**Libro** Think Stats 7]{.item}
+[**Prereqs** [Esperanza y momentos](04-esperanza-varianza-momentos.qmd) · [Producto interno](../matematica/04-producto-interno.qmd)]{.item}
+:::
+
+## La idea
+
+La lección anterior terminó con un término cruzado sin resolver: $\text{Var}(X+Y) = \text{Var}(X) + \text{Var}(Y) + 2\,\text{Cov}(X,Y)$. Esta lección es ese término.
+
+Y la sorpresa es que ya lo conoces con otro nombre. Si centras las dos variables restándoles su media, la covarianza **es un producto interno**:
+
+$$\text{Cov}(X,Y) = \frac{1}{n}\sum_i \tilde{x}_i\,\tilde{y}_i = \frac{1}{n}\,\tilde{x}^\top \tilde{y}, \qquad \tilde{x} = x - \bar{x}$$
+
+Con eso, todo lo de la lección 4 de matemática se traduce solo:
+
+| En geometría | En estadística |
+|---|---|
+| $u^\top v$ | covarianza |
+| $\|u\|^2 = u^\top u$ | varianza |
+| $\|u\|$ | desviación estándar |
+| $\cos\theta = \dfrac{u^\top v}{\|u\|\|v\|}$ | **correlación de Pearson** |
+| $u \perp v$ | covarianza cero |
+| Cauchy-Schwarz | $-1 \le r \le 1$ |
+
+La correlación no es una fórmula que memorizar: es el coseno del ángulo entre dos variables centradas. Y como todo coseno, solo ve una cosa — alineación en línea recta. Lo que no ve es el tema de la mitad de esta lección.
+
+## Cuatro nubes, un solo número
+
+Los cuatro conjuntos de Anscombe. Cambia entre ellos y **mira los números, no los puntos**: media, varianza, correlación y recta ajustada son idénticas hasta dos decimales.
+
+```{=html}
+<div class="viz-ans">
+  <div class="controles">
+    <button type="button" data-set="1" class="on">Anscombe I</button>
+    <button type="button" data-set="2">II</button>
+    <button type="button" data-set="3">III</button>
+    <button type="button" data-set="4">IV</button>
+    <button type="button" data-set="g">Nube gaussiana</button>
+    <label style="margin-left:auto">&rho; <input id="an-rho" type="range" min="-0.98" max="0.98" step="0.02" value="0.82"><output id="an-rho-v">0.82</output></label>
+  </div>
+  <svg id="an-svg" viewBox="0 0 500 340" role="img" aria-label="Dispersión con la recta de mínimos cuadrados y los estadísticos resumen"></svg>
+  <p class="lectura" id="an-lectura"></p>
+</div>
+<style>
+.viz-ans {
+  border: 1px solid var(--r-linea, #ddd);
+  border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0;
+}
+.viz-ans .controles {
+  display: flex; flex-wrap: wrap; gap: .4rem .7rem;
+  align-items: center; margin-bottom: .85rem; font-size: .85rem;
+}
+.viz-ans label { display: flex; align-items: center; gap: .4rem; }
+.viz-ans input[type=range] { width: 7rem; }
+.viz-ans output {
+  font-family: var(--bs-font-monospace, monospace); font-size: .8rem; min-width: 2.7rem;
+  color: var(--r-tinta-suave, #555);
+}
+.viz-ans button {
+  font-size: .78rem; padding: .26rem .7rem; border-radius: 6px;
+  border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; cursor: pointer;
+  transition: border-color 160ms cubic-bezier(0.22,1,0.36,1), background 160ms cubic-bezier(0.22,1,0.36,1), transform 160ms cubic-bezier(0.22,1,0.36,1);
+}
+.viz-ans button:hover { border-color: var(--r-acento, #0F6E68); }
+.viz-ans button:active { transform: scale(.97); }
+.viz-ans button.on {
+  border-color: var(--r-acento, #0F6E68);
+  background: color-mix(in srgb, var(--r-acento, #0F6E68) 10%, transparent);
+}
+.viz-ans svg { width: 100%; height: auto; display: block; }
+.viz-ans .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.2em; line-height: 1.65; }
+.viz-ans .lectura .fijo { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_PT = "#4B3A7A", C_LN = "#0F6E68";
+  var W_ = 500, H_ = 340, ML = 42, MR = 18, MT = 16, MB = 38;
+
+  var X1 = [10,8,13,9,11,14,6,4,12,7,5];
+  var X4 = [8,8,8,8,8,8,8,19,8,8,8];
+  var SETS = {
+    "1": { x: X1, y: [8.04,6.95,7.58,8.81,8.33,9.96,7.24,4.26,10.84,4.82,5.68],
+           nota: "Una relación lineal con ruido. El único caso en que la recta describe bien lo que pasa." },
+    "2": { x: X1, y: [9.14,8.14,8.74,8.77,9.26,8.10,6.13,3.10,9.13,7.26,4.74],
+           nota: "Una parábola perfecta. La relación es exacta y no es lineal: la recta pierde toda la estructura." },
+    "3": { x: X1, y: [7.46,6.77,12.74,7.11,7.81,8.84,6.08,5.39,8.15,6.42,5.73],
+           nota: "Diez puntos exactamente alineados y un atípico. Ese único punto inclina la recta y baja la correlación." },
+    "4": { x: X4, y: [6.58,5.76,7.71,8.84,8.47,7.04,5.25,12.50,5.56,7.91,6.89],
+           nota: "Toda la x vale 8 salvo un punto. La pendiente la decide UN dato: sin él no habría recta posible." }
+  };
+
+  var svg = document.getElementById("an-svg");
+  var lec = document.getElementById("an-lectura");
+  var sr = document.getElementById("an-rho"), srv = document.getElementById("an-rho-v");
+  var actual = "1";
+
+  function el(t, at) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    return e;
+  }
+  function rng32(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      var t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function gauss(r) {
+    var u1 = r() || 1e-12, u2 = r();
+    return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+  }
+  function nube(rho) {
+    var r = rng32(4242), xs = [], ys = [], i, z1, z2;
+    for (i = 0; i < 140; i++) {
+      z1 = gauss(r); z2 = gauss(r);
+      xs.push(9 + 3.3 * z1);
+      ys.push(7.5 + 2.03 * (rho * z1 + Math.sqrt(1 - rho * rho) * z2));
+    }
+    return { x: xs, y: ys, nota: "Datos generados con esa &rho; exacta. Aquí la recta sí resume la relación, porque la relación es lineal por construcción." };
+  }
+
+  function stats(x, y) {
+    var n = x.length, i, mx = 0, my = 0;
+    for (i = 0; i < n; i++) { mx += x[i]; my += y[i]; }
+    mx /= n; my /= n;
+    var sxx = 0, syy = 0, sxy = 0, dx, dy;
+    for (i = 0; i < n; i++) {
+      dx = x[i] - mx; dy = y[i] - my;
+      sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
+    }
+    var b1 = sxy / sxx, b0 = my - b1 * mx;
+    return { n: n, mx: mx, my: my, vx: sxx / (n - 1), vy: syy / (n - 1),
+             r: sxy / Math.sqrt(sxx * syy), b0: b0, b1: b1 };
+  }
+
+  function dibujar() {
+    var rho = parseFloat(sr.value);
+    srv.textContent = rho.toFixed(2);
+    var d = actual === "g" ? nube(rho) : SETS[actual];
+    var x = d.x, y = d.y, s = stats(x, y), i;
+
+    var xmin = Math.min.apply(null, x), xmax = Math.max.apply(null, x);
+    var ymin = Math.min.apply(null, y), ymax = Math.max.apply(null, y);
+    var px = (xmax - xmin) * 0.1, py = (ymax - ymin) * 0.12;
+    xmin -= px; xmax += px; ymin -= py; ymax += py;
+    function sx(v) { return ML + (v - xmin) / (xmax - xmin) * (W_ - ML - MR); }
+    function sy(v) { return H_ - MB - (v - ymin) / (ymax - ymin) * (H_ - MT - MB); }
+
+    svg.textContent = "";
+    var defs = el("defs", {});
+    var cp = el("clipPath", { id: "an-clip" });
+    cp.appendChild(el("rect", { x: ML, y: MT, width: W_ - ML - MR, height: H_ - MT - MB }));
+    defs.appendChild(cp); svg.appendChild(defs);
+
+    svg.appendChild(el("line", { x1: ML, y1: H_ - MB, x2: W_ - MR, y2: H_ - MB, stroke: "var(--r-linea,#ddd)", "stroke-width": 1 }));
+    svg.appendChild(el("line", { x1: ML, y1: MT, x2: ML, y2: H_ - MB, stroke: "var(--r-linea,#ddd)", "stroke-width": 1 }));
+    for (var k = 0; k <= 4; k++) {
+      var vx = xmin + (xmax - xmin) * k / 4, vy = ymin + (ymax - ymin) * k / 4;
+      var t1 = el("text", { x: sx(vx), y: H_ - MB + 15, "text-anchor": "middle", "font-size": 10, fill: "var(--r-tinta-suave,#666)" });
+      t1.textContent = vx.toFixed(1); svg.appendChild(t1);
+      var t2 = el("text", { x: ML - 7, y: sy(vy) + 3, "text-anchor": "end", "font-size": 10, fill: "var(--r-tinta-suave,#666)" });
+      t2.textContent = vy.toFixed(1); svg.appendChild(t2);
+    }
+
+    var g = el("g", { "clip-path": "url(#an-clip)" });
+    g.appendChild(el("line", {
+      x1: sx(xmin), y1: sy(s.b0 + s.b1 * xmin),
+      x2: sx(xmax), y2: sy(s.b0 + s.b1 * xmax),
+      stroke: C_LN, "stroke-width": 2, "stroke-dasharray": "6 4"
+    }));
+    var rad = x.length > 60 ? 2.6 : 4.6;
+    for (i = 0; i < x.length; i++) {
+      g.appendChild(el("circle", { cx: sx(x[i]), cy: sy(y[i]), r: rad, fill: C_PT, "fill-opacity": x.length > 60 ? 0.5 : 0.85 }));
+    }
+    svg.appendChild(g);
+
+    lec.innerHTML =
+      '<span class="fijo">n = ' + s.n +
+      " &nbsp; x&#772; = " + s.mx.toFixed(2) +
+      " &nbsp; var(x) = " + s.vx.toFixed(2) +
+      " &nbsp; y&#772; = " + s.my.toFixed(2) +
+      " &nbsp; var(y) = " + s.vy.toFixed(2) +
+      " &nbsp; r = " + s.r.toFixed(3) +
+      " &nbsp; y&#770; = " + s.b0.toFixed(2) + " + " + s.b1.toFixed(2) + "x</span>" +
+      "<br>" + d.nota;
+  }
+
+  document.querySelectorAll(".viz-ans [data-set]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll(".viz-ans [data-set]").forEach(function (o) { o.classList.remove("on"); });
+      b.classList.add("on");
+      actual = b.dataset.set;
+      dibujar();
+    });
+  });
+  sr.addEventListener("input", function () { actual = "g";
+    document.querySelectorAll(".viz-ans [data-set]").forEach(function (o) { o.classList.toggle("on", o.dataset.set === "g"); });
+    dibujar();
+  });
+  dibujar();
+})();
+</script>
+```
+
+Anscombe construyó esos cuatro conjuntos en 1973 para un artículo de una página titulado *Graphs in Statistical Analysis*. El argumento no ha envejecido: **los estadísticos resumen, y resumir es perder**. Ningún número te habría dicho que el conjunto II es una parábola o que en el IV la pendiente la decide un solo punto.
+
+## Derivación: covarianza es un producto interno
+
+::: {.derivacion}
+::: {.paso}
+**Definición y fórmula abreviada.** Con $\mu_X = E[X]$, $\mu_Y = E[Y]$:
+$$\text{Cov}(X,Y) = E\big[(X-\mu_X)(Y-\mu_Y)\big] = E[XY] - \mu_X\mu_Y$$
+La segunda forma sale de expandir el producto y usar linealidad, igual que la fórmula abreviada de la varianza — y carga exactamente el mismo riesgo de cancelación.
+:::
+::: {.paso}
+**Es un producto interno sobre las variables centradas.** Escribiendo $\tilde{x} = x - \bar{x}$, la versión muestral es $\text{Cov}(x,y) = \frac{1}{n}\tilde{x}^\top\tilde{y}$, que cumple las tres propiedades que definen un producto interno (lección 4 de matemática):
+
+- **Simetría**: $\text{Cov}(X,Y) = \text{Cov}(Y,X)$.
+- **Bilinealidad**: $\text{Cov}(aX + bZ,\, Y) = a\,\text{Cov}(X,Y) + b\,\text{Cov}(Z,Y)$.
+- **Definida positiva**: $\text{Cov}(X,X) = \text{Var}(X) \ge 0$, con igualdad solo si $X$ es constante.
+
+Esa tercera línea dice algo que conviene leer despacio: **la varianza es la norma al cuadrado**, $\text{Var}(X) = \|\tilde{x}\|^2/n$, y la desviación estándar es la longitud.
+:::
+::: {.paso}
+**Cauchy-Schwarz da la cota.** La desigualdad de la lección 4, $|u^\top v| \le \|u\|\|v\|$, aplicada a los vectores centrados:
+$$\big|\text{Cov}(X,Y)\big| \le \text{sd}(X)\,\text{sd}(Y)$$
+Dividiendo entre el lado derecho se define la correlación de Pearson y queda acotada de regalo:
+$$\boxed{\;r = \frac{\text{Cov}(X,Y)}{\text{sd}(X)\,\text{sd}(Y)} = \frac{\tilde{x}^\top\tilde{y}}{\|\tilde{x}\|\,\|\tilde{y}\|} = \cos\theta, \qquad -1 \le r \le 1\;}$$
+:::
+::: {.paso}
+**Cuándo se alcanza el extremo.** Cauchy-Schwarz da igualdad solo cuando los vectores son paralelos, o sea $\tilde{y} = c\,\tilde{x}$. Por lo tanto $|r| = 1$ **si y solo si** los puntos caen exactamente sobre una recta, con el signo de $c$. Cualquier otra cosa —una parábola perfecta incluida— da $|r| < 1$.
+:::
+::: {.paso}
+**Invariancia.** Como $\text{Cov}(aX+b,\,cY+d) = ac\,\text{Cov}(X,Y)$ y las desviaciones escalan con $|a|$ y $|c|$:
+$$r(aX+b,\;cY+d) = \text{signo}(ac)\cdot r(X,Y)$$
+La correlación no depende de las unidades. Cambiar de balboas a dólares, de °C a °F, de gramos a onzas: $r$ no se mueve. Por eso es comparable entre variables que no comparten escala, y por eso mismo **no te dice nada sobre la magnitud del efecto** — para eso está la pendiente, que sí tiene unidades.
+:::
+:::
+
+## Las dos pendientes y su media geométrica
+
+Un resultado que casi nunca se enseña y que deja la correlación transparente. Hay **dos** rectas de regresión, y no son la misma:
+
+$$b_{y|x} = \frac{S_{xy}}{S_{xx}} \quad (\text{predecir } y \text{ desde } x), \qquad b_{x|y} = \frac{S_{xy}}{S_{yy}} \quad (\text{predecir } x \text{ desde } y)$$
+
+Multiplícalas:
+
+$$b_{y|x} \cdot b_{x|y} = \frac{S_{xy}^2}{S_{xx}S_{yy}} = r^2$$
+
+$$\boxed{\;|r| = \sqrt{b_{y|x}\cdot b_{x|y}}\;}$$
+
+**La correlación es la media geométrica de las dos pendientes.** Y como $r^2 \le 1$, las dos rectas coinciden solo cuando $|r| = 1$; en cualquier otro caso forman una tijera alrededor del centroide. Esa tijera es la regresión a la media: predecir siempre encoge hacia el promedio, en las dos direcciones a la vez.
+
+```{pyodide}
+import numpy as np
+
+x = np.array([10.,8,13,9,11,14,6,4,12,7,5])
+y = np.array([8.04,6.95,7.58,8.81,8.33,9.96,7.24,4.26,10.84,4.82,5.68])
+
+xc, yc = x - x.mean(), y - y.mean()
+
+# Tres caminos al mismo número
+r_formula = (xc @ yc) / np.sqrt((xc @ xc) * (yc @ yc))
+r_coseno  = (xc @ yc) / (np.linalg.norm(xc) * np.linalg.norm(yc))
+r_numpy   = np.corrcoef(x, y)[0, 1]
+
+print(f"por la fórmula : {r_formula:.15f}")
+print(f"como coseno    : {r_coseno:.15f}")
+print(f"np.corrcoef    : {r_numpy:.15f}")
+print()
+
+b_yx = (xc @ yc) / (xc @ xc)
+b_xy = (xc @ yc) / (yc @ yc)
+print(f"pendiente y|x = {b_yx:.6f}")
+print(f"pendiente x|y = {b_xy:.6f}")
+print(f"media geométrica = {np.sqrt(b_yx * b_xy):.6f}   ← es |r|")
+print(f"ángulo entre las variables centradas = {np.degrees(np.arccos(r_formula)):.2f}°")
+```
+
+## Lo que la correlación no ve
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(0)
+
+# 1. Dependencia perfecta, correlación cero
+x = rng.uniform(-3, 3, size=100_000)
+y = x**2                                   # y está COMPLETAMENTE determinada por x
+print(f"y = x²  →  r = {np.corrcoef(x, y)[0,1]:+.4f}   ← y sin embargo conoces y exactamente")
+print()
+
+# 2. Monótona pero curva: Pearson se queda corto, Spearman no
+def spearman(a, b):
+    ra = np.argsort(np.argsort(a)).astype(float)   # rangos
+    rb = np.argsort(np.argsort(b)).astype(float)
+    return np.corrcoef(ra, rb)[0, 1]
+
+x = rng.uniform(0.1, 5, size=5_000)
+y = np.exp(2 * x)                          # creciente, muy curva, sin ruido
+print(f"y = e^(2x)  →  Pearson  = {np.corrcoef(x, y)[0,1]:.4f}")
+print(f"            →  Spearman = {spearman(x, y):.4f}   ← 1 exacto: el orden se preserva")
+```
+
+Dos lecciones que vas a usar en cada análisis:
+
+1. **$r = 0$ no significa independencia.** Significa "sin componente lineal". $y = x^2$ es dependencia total con correlación nula.
+2. **Pearson mide rectitud; Spearman mide monotonía.** Si sospechas una relación creciente pero curva, Spearman la ve y Pearson la subestima. Ninguna de las dos ve una relación en U.
+
+## Ejercicio 1 — Correlación desde el producto interno
+
+Sin `np.corrcoef` ni `np.cov`. Solo centrar y dividir.
+
+```{pyodide}
+#| exercise: ex_corr
+import numpy as np
+
+def correlacion(x, y):
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    xc, yc = x - x.mean(), y - y.mean()
+    return ______
+
+x = np.array([10.,8,13,9,11,14,6,4,12,7,5])
+y = np.array([8.04,6.95,7.58,8.81,8.33,9.96,7.24,4.26,10.84,4.82,5.68])
+
+print("mía   :", round(correlacion(x, y), 6))
+print("NumPy :", round(float(np.corrcoef(x, y)[0,1]), 6))
+round(float(correlacion(x, y)), 6)
+```
+
+::: {.hint exercise="ex_corr"}
+Es el coseno del ángulo entre `xc` y `yc`: el producto interno `xc @ yc` dividido entre el producto de las normas, `np.linalg.norm(xc) * np.linalg.norm(yc)`.
+:::
+
+::: {.solution exercise="ex_corr"}
+```{pyodide}
+import numpy as np
+
+def correlacion(x, y):
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    xc, yc = x - x.mean(), y - y.mean()
+    return float((xc @ yc) / (np.linalg.norm(xc) * np.linalg.norm(yc)))
+
+x = np.array([10.,8,13,9,11,14,6,4,12,7,5])
+y = np.array([8.04,6.95,7.58,8.81,8.33,9.96,7.24,4.26,10.84,4.82,5.68])
+
+print("mía   :", round(correlacion(x, y), 6))
+print("NumPy :", round(float(np.corrcoef(x, y)[0,1]), 6))
+round(float(correlacion(x, y)), 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_corr
+#| check: true
+if isinstance(result, (int, float)) and abs(result - 0.816421) < 1e-4:
+    feedback = {"correct": True, "message": "Correcto: r = 0.8164, que es cos(35.3°) entre las dos variables centradas. Los otros tres conjuntos de Anscombe dan exactamente el mismo número.", "type": "success"}
+elif isinstance(result, (int, float)) and abs(result - 5.501) < 0.5:
+    feedback = {"correct": False, "message": "Eso es la covarianza sin normalizar. Falta dividir entre el producto de las normas.", "type": "warning"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.816421 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Ejercicio 2 — La media geométrica de las pendientes
+
+Comprueba que $|r| = \sqrt{b_{y|x}\,b_{x|y}}$ y devuelve la diferencia absoluta entre los dos lados.
+
+```{pyodide}
+#| exercise: ex_pend
+import numpy as np
+
+rng = np.random.default_rng(9)
+x = rng.normal(size=400)
+y = 0.7 * x + rng.normal(size=400)
+
+xc, yc = x - x.mean(), y - y.mean()
+
+b_yx = ______
+b_xy = ______
+
+r = (xc @ yc) / np.sqrt((xc @ xc) * (yc @ yc))
+
+print(f"b(y|x) = {b_yx:.6f}   b(x|y) = {b_xy:.6f}")
+print(f"√(producto) = {np.sqrt(b_yx*b_xy):.6f}   |r| = {abs(r):.6f}")
+float(abs(np.sqrt(b_yx * b_xy) - abs(r)))
+```
+
+::: {.hint exercise="ex_pend"}
+$b_{y|x} = S_{xy}/S_{xx}$ y $b_{x|y} = S_{xy}/S_{yy}$. Con vectores centrados, $S_{xy}$ es `xc @ yc`, $S_{xx}$ es `xc @ xc` y $S_{yy}$ es `yc @ yc`.
+:::
+
+::: {.solution exercise="ex_pend"}
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(9)
+x = rng.normal(size=400)
+y = 0.7 * x + rng.normal(size=400)
+
+xc, yc = x - x.mean(), y - y.mean()
+
+b_yx = (xc @ yc) / (xc @ xc)
+b_xy = (xc @ yc) / (yc @ yc)
+
+r = (xc @ yc) / np.sqrt((xc @ xc) * (yc @ yc))
+
+print(f"b(y|x) = {b_yx:.6f}   b(x|y) = {b_xy:.6f}")
+print(f"√(producto) = {np.sqrt(b_yx*b_xy):.6f}   |r| = {abs(r):.6f}")
+float(abs(np.sqrt(b_yx * b_xy) - abs(r)))
+```
+:::
+
+```{pyodide}
+#| exercise: ex_pend
+#| check: true
+if isinstance(result, (int, float)) and abs(result) < 1e-9:
+    feedback = {"correct": True, "message": "Correcto: la diferencia es cero hasta el error de máquina. No es una aproximación, es una identidad algebraica: r² = b(y|x)·b(x|y).", "type": "success"}
+elif isinstance(result, (int, float)) and abs(result) < 0.2:
+    feedback = {"correct": False, "message": "Cerca pero no cero: revisa los denominadores. b(y|x) divide entre Sxx y b(x|y) entre Syy, no al revés.", "type": "warning"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba una diferencia de cero y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Est 05**:
+
+1. Escribe `matriz_corr(X)` para una matriz de datos, sin `np.corrcoef`: centra las columnas, normaliza a longitud 1 y devuelve $Z^\top Z$. Verifica que la diagonal es 1 y que coincide con NumPy a $10^{-12}$. **Explica por qué una matriz de correlación es siempre semidefinida positiva** usando que es una matriz de Gram.
+2. Construye tu propio cuarteto: cuatro conjuntos de 15 puntos con la misma media, varianza y $r \approx 0.7$ pero formas distintas (lineal, curva, con atípico, agrupado). No es fácil — usa optimización o prueba y error documentada. Grafícalos en una rejilla 2×2.
+3. Toma un dataset público de ventas o de transacciones y calcula Pearson y Spearman entre pares de variables numéricas. **Encuentra al menos un par donde difieran mucho** y explica la forma que lo causa. Ese contraste es el primer diagnóstico que deberías correr antes de creerte cualquier matriz de correlación.
+
+## Para el Cerebro
+
+Lee **Think Stats 3e, capítulo 7** con estas tres preguntas escritas antes:
+
+1. Downey insiste en que la correlación no distingue causalidad ni magnitud del efecto. ¿Qué ejemplo usa, y qué estadístico propone reportar en su lugar?
+2. ¿Cómo define la correlación de Spearman y en qué caso concreto recomienda preferirla?
+3. En su ejemplo de peso al nacer contra edad de la madre, ¿qué valor de $r$ obtiene y cómo interpreta un $r$ pequeño pero distinto de cero?
+
+Nota nueva en `10-Conceptos/covarianza-correlacion.md`, enlazada a [[producto-interno]], [[momentos]] y [[minimos-cuadrados]]. Escribe en tus palabras el puente completo: **producto interno → covarianza; norma → desviación; coseno → correlación; Cauchy-Schwarz → |r| ≤ 1**. En `50-Errores/`: *r = 0 no es independencia*.
+
+```
+¿Qué es la covarianza, geométricamente?::El producto interno de las dos variables centradas
+¿Qué es la varianza en ese lenguaje?::La norma al cuadrado del vector centrado: Cov(X,X)
+¿Qué es la correlación de Pearson?::El coseno del ángulo entre las dos variables centradas
+¿De dónde sale que −1 ≤ r ≤ 1?::De Cauchy-Schwarz aplicada a los vectores centrados
+¿Cuándo vale |r| = 1?::Solo si los puntos caen exactamente sobre una recta
+¿Cambia r si cambias de unidades?::No: r(aX+b, cY+d) = signo(ac)·r, es invariante a transformaciones afines
+¿Qué NO te dice la correlación?::La magnitud del efecto, que para eso está la pendiente, que sí tiene unidades
+¿Cuántas rectas de regresión hay entre dos variables?::Dos: y sobre x y x sobre y, y solo coinciden si |r| = 1
+¿Qué relación hay entre r y las dos pendientes?::|r| es su media geométrica: r² = b(y|x)·b(x|y)
+¿Qué significa r = 0?::Que no hay componente lineal, no que haya independencia: y = x² da r = 0
+¿Qué mide Spearman que Pearson no?::La monotonía: correlaciona los rangos, así que ve relaciones crecientes aunque sean curvas
+¿Qué demuestra el cuarteto de Anscombe?::Que cuatro nubes con forma radicalmente distinta pueden compartir media, varianza, r y recta ajustada
+```
+
+→ Siguiente: [Distribución normal multivariante](06-normal-multivariante.qmd)

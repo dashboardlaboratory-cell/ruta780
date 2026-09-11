@@ -1,0 +1,434 @@
+---
+title: "Esperanza, varianza y momentos"
+subtitle: "Estadística · Lección 4"
+nivel: L2
+modulo: estadistica
+fase: F1
+prereqs: [estadistica/03-distribuciones-analiticas]
+siguientes: [estadistica/05-covarianza-correlacion]
+libro: "Think Stats 3e, cap. 6"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="estadistica/04-esperanza-varianza-momentos"}
+[[L2]{.nivel .nivel-L2} **Derivación**]{.item}
+[**Fase** F1]{.item}
+[**Libro** Think Stats 6]{.item}
+[**Prereqs** [Distribuciones analíticas](03-distribuciones-analiticas.qmd)]{.item}
+:::
+
+## La idea
+
+Una distribución entera es un objeto infinito. Los momentos son el intento de resumirla en unos pocos números, y cada uno responde una pregunta distinta:
+
+| Momento | Nombre | Qué pregunta responde |
+|---|---|---|
+| 1º | media $\mu$ | ¿Dónde está? |
+| 2º central | varianza $\sigma^2$ | ¿Qué tan dispersa? |
+| 3º estandarizado | asimetría $\gamma_1$ | ¿Hacia qué lado se estira? |
+| 4º estandarizado | curtosis $\gamma_2$ | ¿Qué tan pesadas son las colas? |
+
+La imagen física es exacta, no una analogía: si recortaras la distribución en cartón, **la media es el punto donde se equilibra sobre un dedo** y la varianza es su momento de inercia. Por eso una cola larga arrastra la media aunque haya poquísimos datos ahí: pesan poco pero hacen mucha palanca.
+
+## El punto de equilibrio
+
+Mueve el peso y la posición de la segunda campana. El triángulo marca la media; la línea punteada, la mediana.
+
+```{=html}
+<div class="viz-mom">
+  <div class="controles">
+    <label>Peso de la cola <input id="mm-w" type="range" min="0" max="0.5" step="0.01" value="0.15"><output id="mm-w-v">0.15</output></label>
+    <label>Distancia <input id="mm-m" type="range" min="0" max="10" step="0.1" value="6"><output id="mm-m-v">6.0</output></label>
+    <button type="button" data-caso="sim">Simétrica</button>
+    <button type="button" data-caso="cola">Cola larga</button>
+    <button type="button" data-caso="bi">Bimodal</button>
+  </div>
+  <svg id="mm-svg" viewBox="0 0 540 320" role="img" aria-label="Densidad con la media marcada como punto de equilibrio y la mediana como línea"></svg>
+  <p class="lectura" id="mm-lectura"></p>
+</div>
+<style>
+.viz-mom {
+  border: 1px solid var(--r-linea, #ddd);
+  border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0;
+}
+.viz-mom .controles {
+  display: flex; flex-wrap: wrap; gap: .45rem .9rem;
+  align-items: center; margin-bottom: .85rem; font-size: .85rem;
+}
+.viz-mom label { display: flex; align-items: center; gap: .4rem; }
+.viz-mom input[type=range] { width: 7.5rem; }
+.viz-mom output {
+  font-family: var(--bs-font-monospace, monospace); font-size: .8rem;
+  min-width: 2.4rem; color: var(--r-tinta-suave, #555);
+}
+.viz-mom button {
+  font-size: .8rem; padding: .26rem .7rem; border-radius: 6px;
+  border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; cursor: pointer;
+  transition: border-color 160ms cubic-bezier(0.22,1,0.36,1), transform 160ms cubic-bezier(0.22,1,0.36,1);
+}
+.viz-mom button:hover { border-color: var(--r-acento, #0F6E68); }
+.viz-mom button:active { transform: scale(.97); }
+.viz-mom svg { width: 100%; height: auto; display: block; }
+.viz-mom .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_D = "#4B3A7A", C_MED = "#0F6E68", C_MDN = "#B45309";
+  var W_ = 540, H_ = 320, ML = 30, MR = 18, MT = 16, MB = 52;
+  var X0 = -4.5, X1 = 14, S2 = 1.5;
+  var N = 700, dx = (X1 - X0) / (N - 1);
+
+  var svg = document.getElementById("mm-svg");
+  var lec = document.getElementById("mm-lectura");
+  var sw = document.getElementById("mm-w"), sm = document.getElementById("mm-m");
+  var swv = document.getElementById("mm-w-v"), smv = document.getElementById("mm-m-v");
+
+  function el(t, at) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    return e;
+  }
+  function phi(z) { return Math.exp(-0.5 * z * z) / Math.sqrt(2 * Math.PI); }
+
+  function dibujar() {
+    var w = parseFloat(sw.value), m = parseFloat(sm.value);
+    swv.textContent = w.toFixed(2);
+    smv.textContent = m.toFixed(1);
+
+    var xs = [], fs = [], i, x, f, fmax = 0;
+    for (i = 0; i < N; i++) {
+      x = X0 + i * dx;
+      f = (1 - w) * phi(x) + w * phi((x - m) / S2) / S2;
+      xs.push(x); fs.push(f);
+      if (f > fmax) fmax = f;
+    }
+
+    var mu = 0, m2 = 0, m3 = 0, m4 = 0, area = 0;
+    for (i = 0; i < N; i++) { mu += xs[i] * fs[i] * dx; area += fs[i] * dx; }
+    mu /= area;
+    for (i = 0; i < N; i++) {
+      var d = xs[i] - mu, p = fs[i] * dx / area;
+      m2 += d * d * p; m3 += d * d * d * p; m4 += d * d * d * d * p;
+    }
+    var sd = Math.sqrt(m2);
+    var g1 = m3 / Math.pow(sd, 3);
+    var g2 = m4 / Math.pow(sd, 4) - 3;
+
+    var acum = 0, mediana = xs[0];
+    for (i = 0; i < N; i++) {
+      var prev = acum;
+      acum += fs[i] * dx / area;
+      if (prev < 0.5 && acum >= 0.5) {
+        mediana = xs[i] - dx * (acum - 0.5) / (acum - prev);
+        break;
+      }
+    }
+
+    function sx(v) { return ML + (v - X0) / (X1 - X0) * (W_ - ML - MR); }
+    function sy(v) { return H_ - MB - (v / (fmax * 1.08)) * (H_ - MT - MB); }
+
+    svg.textContent = "";
+    // área bajo la densidad
+    var d = "M" + sx(xs[0]) + "," + sy(0);
+    for (i = 0; i < N; i++) d += " L" + sx(xs[i]).toFixed(2) + "," + sy(fs[i]).toFixed(2);
+    d += " L" + sx(xs[N - 1]) + "," + sy(0) + " Z";
+    svg.appendChild(el("path", { d: d, fill: C_D, "fill-opacity": 0.13, stroke: C_D, "stroke-width": 1.8 }));
+
+    // eje
+    svg.appendChild(el("line", { x1: ML, y1: sy(0), x2: W_ - MR, y2: sy(0), stroke: "var(--r-linea,#ddd)", "stroke-width": 1 }));
+    for (var t = -4; t <= 14; t += 2) {
+      var tx = el("text", { x: sx(t), y: sy(0) + 15, "text-anchor": "middle", "font-size": 10, fill: "var(--r-tinta-suave,#666)" });
+      tx.textContent = t; svg.appendChild(tx);
+    }
+
+    // ±1 desviación
+    svg.appendChild(el("line", {
+      x1: sx(mu - sd), y1: sy(0) + 26, x2: sx(mu + sd), y2: sy(0) + 26,
+      stroke: C_MED, "stroke-width": 1.4, "stroke-opacity": 0.55
+    }));
+    [mu - sd, mu + sd].forEach(function (v) {
+      svg.appendChild(el("line", { x1: sx(v), y1: sy(0) + 22, x2: sx(v), y2: sy(0) + 30, stroke: C_MED, "stroke-width": 1.4, "stroke-opacity": 0.55 }));
+    });
+    var ts = el("text", { x: sx(mu), y: sy(0) + 41, "text-anchor": "middle", "font-size": 10, fill: C_MED });
+    ts.textContent = "± 1 σ"; svg.appendChild(ts);
+
+    // mediana
+    svg.appendChild(el("line", {
+      x1: sx(mediana), y1: MT, x2: sx(mediana), y2: sy(0),
+      stroke: C_MDN, "stroke-width": 1.6, "stroke-dasharray": "5 4"
+    }));
+    var tm = el("text", { x: sx(mediana), y: MT + 10, "text-anchor": "middle", "font-size": 11, fill: C_MDN });
+    tm.textContent = "mediana"; svg.appendChild(tm);
+
+    // fulcro en la media
+    var fx = sx(mu), fy = sy(0);
+    svg.appendChild(el("path", {
+      d: "M" + fx + "," + (fy + 1) + " L" + (fx - 8) + "," + (fy + 15) + " L" + (fx + 8) + "," + (fy + 15) + " Z",
+      fill: C_MED
+    }));
+    svg.appendChild(el("line", { x1: sx(mu), y1: MT, x2: sx(mu), y2: sy(0), stroke: C_MED, "stroke-width": 1.6, "stroke-opacity": 0.45 }));
+
+    var sep = (mu - mediana) / sd;
+    lec.innerHTML =
+      "media = <strong>" + mu.toFixed(3) + "</strong> &nbsp;·&nbsp; mediana = " + mediana.toFixed(3) +
+      " &nbsp;·&nbsp; &sigma; = " + sd.toFixed(3) +
+      "<br>asimetría &gamma;&#8321; = " + g1.toFixed(3) + " &nbsp;·&nbsp; curtosis en exceso &gamma;&#8322; = " + g2.toFixed(3) +
+      "<br>" + (Math.abs(sep) < 0.02
+        ? "Simétrica: media y mediana coinciden."
+        : "La media está <strong>" + Math.abs(sep).toFixed(2) + " &sigma;</strong> a la " +
+          (sep > 0 ? "derecha" : "izquierda") + " de la mediana. Esa distancia la produce la cola, no el grueso de los datos.");
+  }
+
+  sw.addEventListener("input", dibujar);
+  sm.addEventListener("input", dibujar);
+  var CASOS = { sim: [0, 6], cola: [0.12, 8], bi: [0.45, 7] };
+  document.querySelectorAll(".viz-mom [data-caso]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var c = CASOS[b.dataset.caso];
+      sw.value = c[0]; sm.value = c[1]; dibujar();
+    });
+  });
+  dibujar();
+})();
+</script>
+```
+
+Con **Cola larga**, el 12% de la masa que vive lejos arrastra la media casi un tercio de $\sigma$ por encima de la mediana. Ese es el motivo por el que el ingreso promedio y el ingreso mediano cuentan historias distintas, y por el que reportar el ticket promedio sin la mediana es una decisión, no un detalle.
+
+## Derivación: las tres reglas que se usan todos los días
+
+::: {.derivacion}
+::: {.paso}
+**La esperanza es lineal, siempre.** Con $E[X] = \int x f(x)\,dx$ y la linealidad de la integral:
+$$E[aX + b] = \int (ax + b) f(x)\,dx = a\int x f(x)\,dx + b\int f(x)\,dx = a\,E[X] + b$$
+usando que $\int f = 1$. Y para una suma:
+$$E[X + Y] = E[X] + E[Y]$$
+**sin ninguna hipótesis de independencia.** Esto es más fuerte de lo que parece: la esperanza de un total siempre es la suma de esperanzas, por muy enredadas que estén las variables.
+:::
+::: {.paso}
+**La varianza ignora la posición y eleva la escala al cuadrado.** Sea $Y = aX + b$, con $E[Y] = a\mu + b$:
+$$\text{Var}(Y) = E\big[(Y - E[Y])^2\big] = E\big[(aX + b - a\mu - b)^2\big] = E\big[a^2(X-\mu)^2\big] = a^2\,\text{Var}(X)$$
+El $b$ se cancela antes de elevar al cuadrado: **desplazar no cambia la dispersión.** Y como la escala entra al cuadrado, $\text{sd}(aX+b) = |a|\,\text{sd}(X)$.
+:::
+::: {.paso}
+**La fórmula abreviada.** Expande el cuadrado y usa linealidad:
+$$\text{Var}(X) = E[(X-\mu)^2] = E[X^2 - 2\mu X + \mu^2] = E[X^2] - 2\mu E[X] + \mu^2$$
+$$\boxed{\text{Var}(X) = E[X^2] - \big(E[X]\big)^2}$$
+Es correcta en matemáticas y **peligrosa en punto flotante**, como vas a ver en un momento.
+:::
+::: {.paso}
+**La varianza de una suma NO es la suma de varianzas.** Con $\mu_X, \mu_Y$ las medias:
+$$\text{Var}(X+Y) = E\big[((X-\mu_X) + (Y-\mu_Y))^2\big] = \text{Var}(X) + \text{Var}(Y) + 2\underbrace{E[(X-\mu_X)(Y-\mu_Y)]}_{\text{Cov}(X,Y)}$$
+Solo si la covarianza es cero se suman. Ese término cruzado es el tema de la lección siguiente, y es el mismo término cruzado que desaparecía en Pitágoras cuando el residuo era perpendicular. No es casualidad: **covarianza cero y perpendicularidad son la misma cosa.**
+:::
+:::
+
+## Por qué n − 1 y no n
+
+La corrección de Bessel no es una convención: se deriva, y la derivación cabe en cuatro líneas.
+
+::: {.derivacion}
+::: {.paso}
+Queremos $E\big[\sum_i (x_i - \bar{x})^2\big]$ con $x_i$ independientes de media $\mu$ y varianza $\sigma^2$. Primero, la identidad algebraica:
+$$\sum_i (x_i - \bar{x})^2 = \sum_i x_i^2 - n\bar{x}^2$$
+:::
+::: {.paso}
+Toma esperanza término a término. Para cada $x_i$, de la fórmula abreviada: $E[x_i^2] = \sigma^2 + \mu^2$. Y para el promedio, que tiene varianza $\sigma^2/n$: $E[\bar{x}^2] = \dfrac{\sigma^2}{n} + \mu^2$.
+:::
+::: {.paso}
+Sustituye:
+$$E\Big[\sum_i (x_i-\bar{x})^2\Big] = n(\sigma^2 + \mu^2) - n\left(\frac{\sigma^2}{n} + \mu^2\right) = n\sigma^2 + n\mu^2 - \sigma^2 - n\mu^2 = (n-1)\sigma^2$$
+:::
+::: {.paso}
+Por lo tanto dividir entre $n$ da un estimador **sesgado hacia abajo** por un factor $\frac{n-1}{n}$, y dividir entre $n-1$ lo corrige:
+$$\boxed{s^2 = \frac{1}{n-1}\sum_i (x_i - \bar{x})^2}$$
+La intuición detrás del álgebra: $\bar{x}$ se calculó **con los mismos datos**, así que está más cerca de ellos que el verdadero $\mu$. Las desviaciones respecto a $\bar{x}$ salen sistemáticamente cortas. Gastaste un grado de libertad al estimar la media — el mismo $n - p$ de la matriz sombrero, con $p = 1$.
+:::
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(0)
+sigma2, n, repeticiones = 4.0, 5, 200_000
+
+# 200 000 muestras de tamaño 5, de un solo golpe: en el navegador un bucle
+# de Python de ese tamaño tardaría medio minuto; esto es instantáneo.
+X = rng.normal(10, np.sqrt(sigma2), size=(repeticiones, n))
+d2 = ((X - X.mean(axis=1, keepdims=True))**2).sum(axis=1)
+
+print(f"σ² verdadera            = {sigma2:.4f}")
+print(f"promedio dividiendo n   = {(d2 / n).mean():.4f}   ← sesgado hacia abajo")
+print(f"promedio dividiendo n−1 = {(d2 / (n - 1)).mean():.4f}   ← insesgado")
+print()
+print(f"sesgo predicho por la derivación: (n−1)/n = {(n - 1) / n:.4f}")
+print(f"sesgo observado:                          {(d2 / n).mean() / sigma2:.4f}")
+```
+
+## La trampa de la fórmula abreviada
+
+$E[X^2] - (E[X])^2$ resta dos números enormes para obtener uno pequeño. Eso es **cancelación catastrófica**: los dígitos significativos se destruyen entre sí.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(0)
+
+print("   media de los datos      E[X²] − E[X]²        centrada        verdadera")
+for mu in [0, 1e3, 1e6, 1e8, 1e9]:
+    x = rng.normal(mu, 1.0, size=10_000)
+    abreviada = (x**2).mean() - x.mean()**2
+    centrada  = ((x - x.mean())**2).mean()
+    print(f"   {mu:>10.0e}        {abreviada:>14.6f}      {centrada:>10.6f}          1.000000")
+```
+
+Con datos centrados en $10^8$ la fórmula abreviada devuelve **4** en vez de 1. Con $10^9$ devuelve **640**. No es un error del programa: es que `float64` tiene unos 16 dígitos significativos, y al elevar $10^9$ al cuadrado te quedan cero dígitos para la parte que importaba.
+
+::: {.callout-important}
+Esto no es un caso de laboratorio. Marcas de tiempo Unix, coordenadas UTM, IDs numéricos, montos acumulados: cualquier columna con media grande y variación pequeña cae aquí. **Centra siempre antes de elevar al cuadrado.** `np.var` ya lo hace; tu código a mano puede que no.
+:::
+
+## Ejercicio 1 — Varianza que no se rompe
+
+Implementa la varianza muestral centrando primero. `ddof=1` significa dividir entre $n - 1$.
+
+```{pyodide}
+#| exercise: ex_var
+import numpy as np
+
+def varianza(x, ddof=1):
+    x = np.asarray(x, dtype=float)
+    n = len(x)
+    return ______
+
+datos = np.array([2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0])
+print("mía   :", round(varianza(datos), 10))
+print("NumPy :", round(float(np.var(datos, ddof=1)), 10))
+round(varianza(datos), 10)
+```
+
+::: {.hint exercise="ex_var"}
+Resta la media, eleva al cuadrado, suma, y divide entre `n - ddof`. En NumPy: `((x - x.mean())**2).sum() / (n - ddof)`. No uses `(x**2).mean() - x.mean()**2`.
+:::
+
+::: {.solution exercise="ex_var"}
+```{pyodide}
+import numpy as np
+
+def varianza(x, ddof=1):
+    x = np.asarray(x, dtype=float)
+    n = len(x)
+    return ((x - x.mean())**2).sum() / (n - ddof)
+
+datos = np.array([2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0])
+print("mía   :", round(varianza(datos), 10))
+print("NumPy :", round(float(np.var(datos, ddof=1)), 10))
+round(varianza(datos), 10)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_var
+#| check: true
+if isinstance(result, (int, float)) and abs(result - 4.5714285714) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: s² = 32/7 = 4.5714. Dividiendo entre n habrías obtenido 4.0, que es 7/8 de eso.", "type": "success"}
+elif isinstance(result, (int, float)) and abs(result - 4.0) < 1e-6:
+    feedback = {"correct": False, "message": "Dividiste entre n en vez de n − ddof. Con ddof=1 el denominador es 7, no 8.", "type": "warning"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 4.5714285714 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Ejercicio 2 — Asimetría
+
+El tercer momento estandarizado: $\gamma_1 = \dfrac{1}{n}\sum_i \left(\dfrac{x_i - \bar{x}}{s}\right)^3$, con $s$ la desviación poblacional (`ddof=0`).
+
+```{pyodide}
+#| exercise: ex_asim
+import numpy as np
+
+def asimetria(x):
+    x = np.asarray(x, dtype=float)
+    z = ______
+    return float((z**3).mean())
+
+rng = np.random.default_rng(1)
+simetrica = rng.normal(0, 1, size=200_000)
+sesgada   = rng.exponential(1.0, size=200_000)
+
+print(f"normal      γ₁ = {asimetria(simetrica):+.3f}   (teórica  0)")
+print(f"exponencial γ₁ = {asimetria(sesgada):+.3f}   (teórica  2)")
+round(asimetria(sesgada), 2)
+```
+
+::: {.hint exercise="ex_asim"}
+`z` es la estandarización: restar la media y dividir entre la desviación estándar poblacional, `x.std()` (que en NumPy usa `ddof=0` por defecto).
+:::
+
+::: {.solution exercise="ex_asim"}
+```{pyodide}
+import numpy as np
+
+def asimetria(x):
+    x = np.asarray(x, dtype=float)
+    z = (x - x.mean()) / x.std()
+    return float((z**3).mean())
+
+rng = np.random.default_rng(1)
+simetrica = rng.normal(0, 1, size=200_000)
+sesgada   = rng.exponential(1.0, size=200_000)
+
+print(f"normal      γ₁ = {asimetria(simetrica):+.3f}   (teórica  0)")
+print(f"exponencial γ₁ = {asimetria(sesgada):+.3f}   (teórica  2)")
+round(asimetria(sesgada), 2)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_asim
+#| check: true
+if isinstance(result, (int, float)) and abs(result - 2.0) < 0.12:
+    feedback = {"correct": True, "message": "Correcto: la exponencial tiene asimetría teórica 2, independiente de λ. Estandarizar borra la escala y deja solo la forma.", "type": "success"}
+elif isinstance(result, (int, float)) and abs(result) < 0.1:
+    feedback = {"correct": False, "message": "Te dio ~0 para la exponencial, que sí es asimétrica. Probablemente estandarizaste la muestra equivocada o el signo se canceló: revisa que eleves al cubo y no al cuadrado.", "type": "warning"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba algo cerca de 2.0 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Est 04**:
+
+1. Implementa `resumen(x)` en `scratch/distribuciones.py` con media, mediana, varianza (ddof configurable), asimetría y curtosis en exceso, **todo en una sola pasada** por los datos (algoritmo de Welford). Compara contra NumPy en 5 distribuciones y mide el tiempo frente a la versión de varias pasadas.
+2. Reproduce la tabla de cancelación catastrófica pero **variando `n`** además de la media. ¿A partir de qué combinación de media y `n` la fórmula abreviada empieza a fallar? Grafica la frontera.
+3. Toma una distribución con cola pesada (Pareto $\alpha = 1.5$) y calcula la media muestral para $n = 10, 10^2, \dots, 10^6$, repitiendo 200 veces por cada $n$. Grafica la dispersión de esas medias. **Con $\alpha < 2$ la varianza teórica es infinita**: describe qué le pasa a la convergencia y qué implica para reportar promedios de ingresos por cliente.
+
+## Para el Cerebro
+
+Lee **Think Stats 3e, capítulo 6** con estas tres preguntas escritas antes:
+
+1. Downey define la asimetría de Pearson como alternativa a $\gamma_1$. ¿Cuál es la fórmula y por qué dice que es más robusta?
+2. En su ejemplo de ingresos, ¿qué pasa con la media cuando el último intervalo está truncado, y cómo lo resuelve?
+3. ¿Por qué recomienda reportar mediana y percentiles en vez de media y desviación para distribuciones con cola?
+
+Nota nueva en `10-Conceptos/momentos.md`, enlazada a [[distribuciones-analiticas]] y [[minimos-cuadrados]] — el $n-1$ de aquí y el $n-p$ de la matriz sombrero son el mismo argumento. En `50-Errores/`, la regla: **centrar antes de elevar al cuadrado**.
+
+```
+¿Qué es la media, físicamente?::El punto donde la distribución se equilibra
+¿Por qué una cola larga arrastra la media?::Porque los puntos lejanos pesan poco pero hacen mucha palanca
+¿Es lineal la esperanza?::Sí, siempre: E[aX+b] = aE[X]+b y E[X+Y] = E[X]+E[Y], sin necesidad de independencia
+¿Cómo se comporta la varianza ante aX+b?::Var(aX+b) = a²Var(X): el desplazamiento no cuenta, la escala entra al cuadrado
+¿Cuál es la fórmula abreviada de la varianza?::Var(X) = E[X²] − (E[X])²
+¿Por qué es peligrosa esa fórmula?::Cancelación catastrófica: resta dos números enormes para obtener uno pequeño
+¿Cuándo Var(X+Y) = Var(X) + Var(Y)?::Solo si Cov(X,Y) = 0
+¿Por qué se divide entre n−1?::Porque E[Σ(xᵢ−x̄)²] = (n−1)σ²: x̄ se estimó con los mismos datos
+¿Qué mide la asimetría γ₁?::El tercer momento estandarizado: hacia qué lado se estira la distribución
+¿Qué mide la curtosis en exceso γ₂?::El cuarto momento estandarizado menos 3: qué tan pesadas son las colas frente a una normal
+¿Cuál es la asimetría de una exponencial?::2, sin importar λ
+```
+
+→ Siguiente: [Covarianza y correlación](05-covarianza-correlacion.qmd)
