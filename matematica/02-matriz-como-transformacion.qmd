@@ -1,0 +1,443 @@
+---
+title: "La matriz como transformación"
+subtitle: "Matemática · Lección 2"
+nivel: L2
+modulo: matematica
+fase: F1
+prereqs: [matematica/01-vectores-y-espacios]
+siguientes: [matematica/03-espacio-columna]
+libro: "Mathematics for ML, cap. 2.6–2.7"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="matematica/02-matriz-como-transformacion"}
+[[L2]{.nivel .nivel-L2} **Derivación**]{.item}
+[**Fase** F1]{.item}
+[**Libro** MML 2.6–2.7]{.item}
+[**Prereqs** [Vectores y espacios](01-vectores-y-espacios.qmd)]{.item}
+:::
+
+## La idea
+
+Una matriz no es una tabla de números. Es una **función que mueve el plano**, y lo mueve de una forma muy particular: las rectas siguen siendo rectas, el origen se queda quieto, y las líneas paralelas siguen paralelas.
+
+Y hay un solo hecho que necesitas recordar de esta lección:
+
+> **Las columnas de $M$ son a dónde van a parar los vectores base.**
+
+La primera columna es la imagen de $\hat{\imath} = (1,0)$. La segunda es la imagen de $\hat{\jmath} = (0,1)$. Eso es todo. Si sabes dónde caen esos dos, sabes dónde cae cualquier otro punto del plano — y en la derivación de abajo verás por qué.
+
+## Visual: arrastra las columnas
+
+La cuadrícula gris clara es el plano original. La coloreada es el plano después de aplicar $M$. Arrastra las puntas de las flechas: estás editando directamente las columnas de la matriz.
+
+```{=html}
+<div class="viz-trans">
+  <div class="controles">
+    <button type="button" data-preset="identidad">Identidad</button>
+    <button type="button" data-preset="rotacion">Rotar 30°</button>
+    <button type="button" data-preset="escala">Escalar</button>
+    <button type="button" data-preset="corte">Corte</button>
+    <button type="button" data-preset="singular">Singular</button>
+    <label style="margin-left:auto"><input type="checkbox" id="tr-cuadrado" checked> Cuadrado unitario</label>
+  </div>
+  <svg id="tr-svg" viewBox="0 0 560 440" role="img" aria-label="Transformación lineal del plano"></svg>
+  <div class="matriz-viva" id="tr-matriz"></div>
+  <p class="lectura" id="tr-lectura"></p>
+</div>
+```
+
+```{=html}
+<style>
+.viz-trans {
+  border: 1px solid var(--r-linea, #ddd);
+  border-radius: 6px; padding: 1rem 1.1rem; margin: 1.6rem 0;
+}
+.viz-trans .controles {
+  display: flex; flex-wrap: wrap; gap: .45rem .6rem;
+  align-items: center; margin-bottom: .8rem; font-size: .85rem;
+}
+.viz-trans button {
+  font-size: .8rem; padding: .25rem .7rem; border-radius: 5px;
+  border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; cursor: pointer;
+}
+.viz-trans button:hover { border-color: var(--r-acento, #0F6E68); }
+.viz-trans label { display: flex; align-items: center; gap: .4rem; }
+.viz-trans svg { width: 100%; height: auto; display: block; touch-action: none; }
+.matriz-viva {
+  font-family: var(--bs-font-monospace); font-size: .92rem;
+  font-variant-numeric: tabular-nums; margin-top: .8rem;
+  display: flex; align-items: center; gap: .7rem;
+}
+.matriz-viva .corchete { font-size: 2.7rem; line-height: .85; font-weight: 200; }
+.matriz-viva .cols { display: grid; grid-template-columns: auto auto; gap: .1rem 1.2rem; }
+.matriz-viva .c1 { color: #2563EB; }
+.matriz-viva .c2 { color: #C2410C; }
+.viz-trans .lectura { font-size: .85rem; margin-top: .7rem; min-height: 2.4em; }
+</style>
+```
+
+```{=html}
+<script>
+(function () {
+  var C1 = "#2563EB", C2 = "#C2410C";
+  var X0 = -4, X1 = 4, Y0 = -3.2, Y1 = 3.2, W_ = 560, H_ = 440, M_ = 24;
+  var sx = function (x) { return M_ + ((x - X0) / (X1 - X0)) * (W_ - 2 * M_); };
+  var sy = function (y) { return H_ - M_ - ((y - Y0) / (Y1 - Y0)) * (H_ - 2 * M_); };
+  var ix = function (px) { return X0 + ((px - M_) / (W_ - 2 * M_)) * (X1 - X0); };
+  var iy = function (py) { return Y0 + ((H_ - M_ - py) / (H_ - 2 * M_)) * (Y1 - Y0); };
+
+  var PRESETS = {
+    identidad: [[1, 0], [0, 1]],
+    rotacion:  [[Math.cos(Math.PI/6), -Math.sin(Math.PI/6)], [Math.sin(Math.PI/6), Math.cos(Math.PI/6)]],
+    escala:    [[1.8, 0], [0, 0.55]],
+    corte:     [[1, 1.2], [0, 1]],
+    singular:  [[2, 1], [4, 2]],
+  };
+
+  // c1 y c2 son las COLUMNAS de M
+  var c1 = [1.6, 0.5], c2 = [-0.6, 1.4], arrastrando = null;
+  var svg = document.getElementById("tr-svg");
+  var cajaMatriz = document.getElementById("tr-matriz");
+  var lec = document.getElementById("tr-lectura");
+  var verCuadrado = document.getElementById("tr-cuadrado");
+
+  function el(t, at) {
+    var n = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) n.setAttribute(k, at[k]);
+    return n;
+  }
+  function aplicar(p) { return [c1[0]*p[0] + c2[0]*p[1], c1[1]*p[0] + c2[1]*p[1]]; }
+  function det() { return c1[0]*c2[1] - c1[1]*c2[0]; }
+
+  function dibujar() {
+    svg.textContent = "";
+    var defs = el("defs", {});
+    [[C1, "c1"], [C2, "c2"]].forEach(function (c) {
+      var m = el("marker", { id: "tp-" + c[1], viewBox: "0 -5 10 10", refX: 8,
+        markerWidth: 5, markerHeight: 5, orient: "auto" });
+      m.appendChild(el("path", { d: "M0,-4L9,0L0,4", fill: c[0] }));
+      defs.appendChild(m);
+    });
+    svg.appendChild(defs);
+
+    // cuadrícula original, tenue
+    for (var g = -5; g <= 5; g++) {
+      svg.appendChild(el("line", { x1: sx(g), y1: sy(Y0), x2: sx(g), y2: sy(Y1),
+        stroke: "currentColor", "stroke-width": .5, opacity: .11 }));
+      svg.appendChild(el("line", { x1: sx(X0), y1: sy(g), x2: sx(X1), y2: sy(g),
+        stroke: "currentColor", "stroke-width": .5, opacity: .11 }));
+    }
+
+    var d = det(), singular = Math.abs(d) < 0.05;
+
+    // cuadrícula transformada: una recta va a una recta, así que basta con los extremos
+    var lim = 6;
+    for (var k = -lim; k <= lim; k++) {
+      var a1 = aplicar([k, -lim]), b1 = aplicar([k, lim]);
+      var a2 = aplicar([-lim, k]), b2 = aplicar([lim, k]);
+      var grueso = k === 0 ? 1.7 : .7, op = k === 0 ? .5 : .26;
+      svg.appendChild(el("line", { x1: sx(a1[0]), y1: sy(a1[1]), x2: sx(b1[0]), y2: sy(b1[1]),
+        stroke: C1, "stroke-width": grueso, opacity: op }));
+      svg.appendChild(el("line", { x1: sx(a2[0]), y1: sy(a2[1]), x2: sx(b2[0]), y2: sy(b2[1]),
+        stroke: C2, "stroke-width": grueso, opacity: op }));
+    }
+
+    // el cuadrado unitario convertido en paralelogramo
+    if (verCuadrado.checked) {
+      var o = [0, 0], e1 = c1, e12 = [c1[0]+c2[0], c1[1]+c2[1]], e2 = c2;
+      svg.appendChild(el("path", {
+        d: "M"+sx(o[0])+","+sy(o[1])+"L"+sx(e1[0])+","+sy(e1[1])+
+           "L"+sx(e12[0])+","+sy(e12[1])+"L"+sx(e2[0])+","+sy(e2[1])+"Z",
+        fill: d >= 0 ? "#0F6E68" : "#B91C1C", "fill-opacity": .16,
+        stroke: d >= 0 ? "#0F6E68" : "#B91C1C", "stroke-width": 1.2 }));
+    }
+
+    // las dos columnas
+    [[c1, C1, "c1"], [c2, C2, "c2"]].forEach(function (par) {
+      svg.appendChild(el("line", { x1: sx(0), y1: sy(0), x2: sx(par[0][0]), y2: sy(par[0][1]),
+        stroke: par[1], "stroke-width": 2.6, "marker-end": "url(#tp-" + par[2] + ")" }));
+      var c = el("circle", { cx: sx(par[0][0]), cy: sy(par[0][1]), r: 9,
+        fill: par[1], "fill-opacity": .22, stroke: par[1], "stroke-width": 1.6, cursor: "grab" });
+      c.addEventListener("pointerdown", function (e) {
+        arrastrando = par[2]; svg.setPointerCapture(e.pointerId); e.preventDefault();
+      });
+      svg.appendChild(c);
+    });
+
+    var f = function (x) { return (x >= 0 ? " " : "") + x.toFixed(2); };
+    cajaMatriz.innerHTML =
+      '<span class="corchete">[</span><span class="cols">' +
+      '<span class="c1">' + f(c1[0]) + '</span><span class="c2">' + f(c2[0]) + '</span>' +
+      '<span class="c1">' + f(c1[1]) + '</span><span class="c2">' + f(c2[1]) + '</span>' +
+      '</span><span class="corchete">]</span>' +
+      '<span style="color:var(--r-tinta-suave,#666);margin-left:.6rem">det = ' + f(d) + '</span>';
+
+    lec.innerHTML = singular
+      ? '<b style="color:#B91C1C">Matriz singular.</b> El determinante es ' + d.toFixed(3) +
+        ': las dos columnas son dependientes y el plano entero se aplasta sobre una recta. ' +
+        'Se perdió una dimensión, y eso es irreversible — no existe M⁻¹.'
+      : 'El área del cuadrado unitario pasó de 1 a <b>' + Math.abs(d).toFixed(3) + '</b>. ' +
+        'Eso <i>es</i> el determinante.' +
+        (d < 0 ? ' Es negativo: la transformación además <b>voltea la orientación</b>, como un espejo.' : '');
+  }
+
+  svg.addEventListener("pointermove", function (e) {
+    if (!arrastrando) return;
+    var caja = svg.getBoundingClientRect();
+    var px = (e.clientX - caja.left) * (W_ / caja.width);
+    var py = (e.clientY - caja.top) * (H_ / caja.height);
+    var nuevo = [Math.max(X0, Math.min(X1, ix(px))), Math.max(Y0, Math.min(Y1, iy(py)))];
+    if (arrastrando === "c1") c1 = nuevo; else c2 = nuevo;
+    dibujar();
+  });
+  svg.addEventListener("pointerup", function () { arrastrando = null; });
+  svg.addEventListener("pointerleave", function () { arrastrando = null; });
+  verCuadrado.addEventListener("change", dibujar);
+
+  document.querySelectorAll(".viz-trans [data-preset]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var m = PRESETS[b.dataset.preset];
+      c1 = [m[0][0], m[1][0]];   // primera COLUMNA
+      c2 = [m[0][1], m[1][1]];   // segunda COLUMNA
+      dibujar();
+    });
+  });
+  dibujar();
+})();
+</script>
+```
+
+::: {.callout-tip}
+## Qué acabas de ver
+
+Dale a **Singular**. Las dos columnas quedan alineadas, el determinante se va a cero, y toda la cuadrícula se aplasta sobre una recta. Infinitos puntos distintos del plano terminan en el mismo sitio — por eso no hay forma de deshacerlo, y por eso $M^{-1}$ no existe.
+
+Después arrastra una columna hasta cruzar la otra. El determinante cambia de signo y el paralelogramo se pone rojo: la transformación volteó la orientación del plano, como un espejo.
+
+El **corte** es el caso que engaña: el determinante vale 1 exacto, el área no cambia, pero la figura sí. Determinante 1 no quiere decir "no pasó nada".
+:::
+
+## Derivación: por qué las columnas son las imágenes de la base
+
+::: {.derivacion}
+**Afirmación.** Si $T$ es lineal y $M$ es su matriz, entonces la columna $j$ de $M$ es $T(e_j)$, donde $e_j$ es el $j$-ésimo vector base.
+
+::: {.paso}
+Que $T$ sea **lineal** significa exactamente dos cosas: $T(u + v) = T(u) + T(v)$ y $T(\alpha u) = \alpha\,T(u)$. No hay más. Toda la lección sale de ahí.
+:::
+::: {.paso}
+Cualquier vector se escribe en la base canónica: $v = v_1 e_1 + v_2 e_2$, con $e_1 = (1,0)$ y $e_2 = (0,1)$. Esto es una combinación lineal — la Lección 1.
+:::
+::: {.paso}
+Aplica $T$ y usa las dos propiedades:
+$$T(v) = T(v_1 e_1 + v_2 e_2) = v_1\,T(e_1) + v_2\,T(e_2)$$
+Detente aquí. Esto dice que **$T(v)$ es una combinación lineal de $T(e_1)$ y $T(e_2)$, con los coeficientes originales de $v$.** Si conoces esas dos imágenes, conoces $T$ por completo.
+:::
+::: {.paso}
+Escribe $T(e_1) = \begin{pmatrix}m_{11}\\m_{21}\end{pmatrix}$ y $T(e_2) = \begin{pmatrix}m_{12}\\m_{22}\end{pmatrix}$. Entonces
+$$T(v) = v_1\begin{pmatrix}m_{11}\\m_{21}\end{pmatrix} + v_2\begin{pmatrix}m_{12}\\m_{22}\end{pmatrix} = \begin{pmatrix} m_{11}v_1 + m_{12}v_2 \\ m_{21}v_1 + m_{22}v_2\end{pmatrix}$$
+que es justo la definición del producto $Mv$. Las columnas de $M$ son $T(e_1)$ y $T(e_2)$. $\blacksquare$
+:::
+
+**La consecuencia que vas a usar mil veces:** $Mv$ es una **combinación lineal de las columnas de $M$**, con pesos $v_1, v_2, \dots$. No es "filas por vector" — eso es el truco de cálculo. La estructura es por columnas.
+:::
+
+```{pyodide}
+import numpy as np
+
+M = np.array([[1.6, -0.6],
+              [0.5,  1.4]])
+v = np.array([2.0, 3.0])
+
+por_columnas = v[0] * M[:, 0] + v[1] * M[:, 1]
+
+print("M @ v          =", M @ v)
+print("combinación de columnas =", por_columnas)
+print("¿iguales?", np.allclose(M @ v, por_columnas))
+print()
+print("M @ e1 =", M @ np.array([1.0, 0.0]), " = primera columna:", M[:, 0])
+print("M @ e2 =", M @ np.array([0.0, 1.0]), " = segunda columna:", M[:, 1])
+```
+
+## Componer transformaciones es multiplicar matrices
+
+Si primero aplicas $B$ y después $A$, el resultado es la matriz $AB$. El orden importa, y el orden de lectura es **de derecha a izquierda** — porque así se escribe $A(Bv)$.
+
+```{pyodide}
+import numpy as np
+
+th = np.pi / 6
+rotar   = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
+escalar = np.array([[2.0, 0.0], [0.0, 0.5]])
+
+v = np.array([1.0, 1.0])
+
+print("rotar y luego escalar :", (escalar @ rotar) @ v)
+print("escalar y luego rotar :", (rotar @ escalar) @ v)
+print("¿conmuta?", np.allclose(escalar @ rotar, rotar @ escalar))
+print()
+print("det(escalar @ rotar) =", round(float(np.linalg.det(escalar @ rotar)), 6))
+print("det(escalar)·det(rotar) =", round(float(np.linalg.det(escalar) * np.linalg.det(rotar)), 6))
+```
+
+Los determinantes se multiplican, y tiene sentido geométrico: si una transformación multiplica el área por 2 y la otra por 0.5, la composición la deja igual.
+
+## From scratch
+
+Implementa el producto matriz-vector **como combinación de columnas**, no con bucles de filas. Es la misma cuenta, pero la estructura correcta.
+
+```{pyodide}
+import numpy as np
+
+def matvec(M, v):
+    """M @ v construido como combinación lineal de las columnas de M."""
+    salida = np.zeros(M.shape[0])
+    for j in range(M.shape[1]):
+        salida = salida + v[j] * M[:, j]
+    return salida
+
+def matmul(A, B):
+    """A @ B: la columna j del resultado es A por la columna j de B."""
+    salida = np.zeros((A.shape[0], B.shape[1]))
+    for j in range(B.shape[1]):
+        salida[:, j] = matvec(A, B[:, j])
+    return salida
+
+rng = np.random.default_rng(3)
+A = rng.normal(size=(4, 3))
+B = rng.normal(size=(3, 5))
+v = rng.normal(size=3)
+
+print("matvec empata:", np.allclose(matvec(A, v), A @ v))
+print("matmul empata:", np.allclose(matmul(A, B), A @ B))
+print("error máximo :", float(np.abs(matmul(A, B) - A @ B).max()))
+```
+
+## Ejercicio 1 — Construir la matriz desde las imágenes
+
+Te dicen a dónde van los vectores base. Arma la matriz.
+
+```{pyodide}
+#| exercise: ex_matriz
+import numpy as np
+
+imagen_e1 = np.array([3.0, 1.0])    # a dónde va (1, 0)
+imagen_e2 = np.array([-2.0, 2.0])   # a dónde va (0, 1)
+
+M = ______
+
+print(M)
+print("chequeo e1:", M @ np.array([1.0, 0.0]))
+print("chequeo e2:", M @ np.array([0.0, 1.0]))
+M
+```
+
+::: {.hint exercise="ex_matriz"}
+Las imágenes de la base son las **columnas** de la matriz, no las filas. `np.column_stack` las apila en esa orientación.
+:::
+
+::: {.solution exercise="ex_matriz"}
+```{pyodide}
+import numpy as np
+
+imagen_e1 = np.array([3.0, 1.0])
+imagen_e2 = np.array([-2.0, 2.0])
+
+M = np.column_stack([imagen_e1, imagen_e2])
+
+print(M)
+print("chequeo e1:", M @ np.array([1.0, 0.0]))
+print("chequeo e2:", M @ np.array([0.0, 1.0]))
+M
+```
+:::
+
+```{pyodide}
+#| exercise: ex_matriz
+#| check: true
+import numpy as np
+esperado = np.array([[3.0, -2.0], [1.0, 2.0]])
+if isinstance(result, np.ndarray) and result.shape == (2, 2) and np.allclose(result, esperado):
+    feedback = {"correct": True, "message": "Correcto. Columnas, no filas: si usas np.array([imagen_e1, imagen_e2]) obtienes la transpuesta.", "type": "success"}
+elif isinstance(result, np.ndarray) and np.allclose(result, esperado.T):
+    feedback = {"correct": False, "message": "Esa es la transpuesta: apilaste las imágenes como filas. Deben ser columnas.", "type": "warning"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba {esperado.tolist()} y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Ejercicio 2 — Detectar el aplastamiento
+
+Escribe una función que diga si una matriz cuadrada colapsa el espacio, es decir, si es singular.
+
+```{pyodide}
+#| exercise: ex_singular
+import numpy as np
+
+def aplasta_el_espacio(M, tol=1e-10):
+    return ______
+
+print(aplasta_el_espacio(np.array([[2.0, 1.0], [4.0, 2.0]])))   # True
+print(aplasta_el_espacio(np.array([[1.6, -0.6], [0.5, 1.4]])))  # False
+aplasta_el_espacio(np.array([[2.0, 1.0], [4.0, 2.0]]))
+```
+
+::: {.hint exercise="ex_singular"}
+Colapsa exactamente cuando el determinante es cero. `np.linalg.det(M)` lo calcula; compara su valor absoluto contra `tol`, nunca contra cero exacto.
+:::
+
+::: {.solution exercise="ex_singular"}
+```{pyodide}
+import numpy as np
+
+def aplasta_el_espacio(M, tol=1e-10):
+    return abs(np.linalg.det(M)) < tol
+
+print(aplasta_el_espacio(np.array([[2.0, 1.0], [4.0, 2.0]])))
+print(aplasta_el_espacio(np.array([[1.6, -0.6], [0.5, 1.4]])))
+aplasta_el_espacio(np.array([[2.0, 1.0], [4.0, 2.0]]))
+```
+:::
+
+```{pyodide}
+#| exercise: ex_singular
+#| check: true
+if result is True or result == True:
+    feedback = {"correct": True, "message": "Correcto. La segunda fila es el doble de la primera, así que el área colapsa a cero.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba True: [[2,1],[4,2]] tiene determinante 2·2 − 1·4 = 0. Obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`:
+
+1. Escribe `matvec` y `matmul` desde cero como arriba, y agrégalas a `scratch/lineal.py` con un test que las compare contra `@` con tolerancia $10^{-12}$.
+2. Construye la matriz de **reflexión sobre la recta $y = x$** razonando solo con las imágenes de la base: ¿a dónde va $(1,0)$? ¿y $(0,1)$? Verifica que su determinante sea $-1$ y explica el signo.
+3. Toma una matriz de rotación de ángulo $\theta$ y compruébalo numéricamente para 10 ángulos: su determinante siempre vale 1, y $R^\top R = I$. ¿Qué dice eso sobre las longitudes? Esa propiedad es la definición de matriz **ortogonal**, y reaparece en QR, en PCA y en la SVD.
+
+## Para el Cerebro
+
+Lee **Mathematics for ML 2.6–2.7** con estas tres preguntas escritas antes:
+
+1. ¿Qué es una matriz de cambio de base y en qué se diferencia de una transformación?
+2. Si $A$ es $3\times2$, ¿de qué espacio a qué espacio va la transformación?
+3. ¿Por qué el producto de matrices no conmuta, si la multiplicación de números sí?
+
+Nota nueva en `20-Metodos/matriz-como-transformacion.md`, enlazada a [[span]] e [[independencia-lineal]].
+
+```
+¿Qué representan las columnas de una matriz?::Las imágenes de los vectores base: columna j = T(e_j)
+¿Qué es Mv, estructuralmente?::Una combinación lineal de las columnas de M con pesos v_1, v_2, ...
+¿Qué mide el determinante en 2D?::El factor por el que se multiplica el área; su signo indica si se voltea la orientación
+¿Qué significa det(M) = 0?::La matriz aplasta el espacio a una dimensión menor y no tiene inversa
+¿Qué hace AB sobre un vector?::Aplica primero B y después A — se lee de derecha a izquierda
+¿Qué define a una matriz ortogonal?::RᵀR = I; preserva longitudes y ángulos, y su determinante es ±1
+```
+
+→ Siguiente: [Espacio columna, rango e independencia](03-espacio-columna.qmd)

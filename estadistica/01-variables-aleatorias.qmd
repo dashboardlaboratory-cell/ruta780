@@ -1,0 +1,414 @@
+---
+title: "Variables aleatorias y distribuciones"
+subtitle: "Estadística · Lección 1"
+nivel: L2
+modulo: estadistica
+fase: F1
+prereqs: [python/06-numpy-primer-contacto]
+siguientes: [estadistica/02-pmf-cdf]
+libro: "Think Stats 3e, cap. 1–2"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - matplotlib
+---
+
+::: {.meta-leccion data-leccion="estadistica/01-variables-aleatorias"}
+[[L2]{.nivel .nivel-L2} **Derivación**]{.item}
+[**Fase** F1]{.item}
+[**Libro** Think Stats 1–2]{.item}
+[**Prereqs** [NumPy: primer contacto](../python/06-numpy-primer-contacto.qmd)]{.item}
+:::
+
+## La idea
+
+Una variable aleatoria no es una variable, y tampoco es aleatoria en el sentido de "impredecible". Es una **función** que le asigna un número a cada resultado posible de un experimento.
+
+Cuando dices "la venta diaria de Multiplaza", estás nombrando una función que toma un día y devuelve un número. Lo que no sabes es qué día te va a tocar.
+
+Y de ahí sale la distinción que más confusión causa en todo el curso:
+
+| | Qué es | Lo conoces? |
+|---|---|---|
+| **Distribución poblacional** | La regla completa: qué valores puede tomar y con qué probabilidad | Casi nunca |
+| **Muestra** | Los valores que efectivamente observaste | Siempre |
+
+Toda la inferencia estadística es una sola pregunta: **¿qué puedo decir de la primera viendo solo la segunda?**
+
+## Visual: la muestra converge a la población
+
+La curva oscura es la distribución real — la verdad que nunca ves. Las barras son tu muestra. Sube el tamaño y observa cómo el histograma se acomoda encima de la curva; bájalo y mira cuánto ruido hay con pocos datos.
+
+```{=html}
+<div class="viz-dist">
+  <div class="controles">
+    <label>Distribución
+      <select id="di-tipo">
+        <option value="normal">Normal</option>
+        <option value="exponencial">Exponencial</option>
+        <option value="uniforme">Uniforme</option>
+        <option value="lognormal">Log-normal</option>
+      </select>
+    </label>
+    <label>n = <input type="range" id="di-n" min="10" max="5000" step="10" value="200"><output id="di-n-val">200</output></label>
+    <button id="di-remuestrear" type="button">Nueva muestra</button>
+  </div>
+  <svg id="di-svg" viewBox="0 0 560 340" role="img" aria-label="Histograma de una muestra contra la densidad poblacional"></svg>
+  <p class="lectura" id="di-lectura"></p>
+</div>
+```
+
+```{=html}
+<style>
+.viz-dist {
+  border: 1px solid var(--r-linea, #ddd);
+  border-radius: 6px; padding: 1rem 1.1rem; margin: 1.6rem 0;
+}
+.viz-dist .controles {
+  display: flex; flex-wrap: wrap; gap: .5rem 1.4rem;
+  align-items: center; margin-bottom: .8rem; font-size: .85rem;
+}
+.viz-dist label { display: flex; align-items: center; gap: .4rem; }
+.viz-dist input[type=range] { width: 150px; }
+.viz-dist select {
+  font-size: .85rem; padding: .2rem .4rem; border-radius: 4px;
+  border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit;
+}
+.viz-dist output { font-family: var(--bs-font-monospace); font-variant-numeric: tabular-nums; min-width: 3.4em; }
+.viz-dist button {
+  font-size: .8rem; padding: .25rem .7rem; border-radius: 5px;
+  border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; cursor: pointer;
+}
+.viz-dist button:hover { border-color: var(--r-acento, #0F6E68); }
+.viz-dist svg { width: 100%; height: auto; display: block; }
+.viz-dist .lectura { font-size: .85rem; margin-top: .6rem; min-height: 2.6em; }
+</style>
+```
+
+```{=html}
+<script>
+(function () {
+  var ACENTO = "#0F6E68", BARRA = "#93B8C4";
+  var W_ = 560, H_ = 340, ML = 44, MR = 16, MT = 16, MB = 34;
+
+  // generador con semilla, para que "Nueva muestra" sea reproducible al recargar
+  var semilla = 12345;
+  function rnd() { semilla = (semilla * 1664525 + 1013904223) % 4294967296; return semilla / 4294967296; }
+  function normal() {
+    var u = Math.max(rnd(), 1e-12), v = rnd();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+
+  var DISTS = {
+    normal:      { rango: [-4, 4],  media: 0, sd: 1,
+                   pdf: function (x) { return Math.exp(-x*x/2) / Math.sqrt(2*Math.PI); },
+                   muestra: function () { return normal(); },
+                   nombre: "Normal(0, 1)", mu: 0, sigma: 1 },
+    exponencial: { rango: [0, 6],
+                   pdf: function (x) { return x < 0 ? 0 : Math.exp(-x); },
+                   muestra: function () { return -Math.log(Math.max(rnd(), 1e-12)); },
+                   nombre: "Exponencial(1)", mu: 1, sigma: 1 },
+    uniforme:    { rango: [0, 1],
+                   pdf: function (x) { return (x >= 0 && x <= 1) ? 1 : 0; },
+                   muestra: function () { return rnd(); },
+                   nombre: "Uniforme(0, 1)", mu: 0.5, sigma: Math.sqrt(1/12) },
+    lognormal:   { rango: [0, 8],
+                   pdf: function (x) { return x <= 0 ? 0 : Math.exp(-Math.pow(Math.log(x), 2)/2) / (x * Math.sqrt(2*Math.PI)); },
+                   muestra: function () { return Math.exp(normal()); },
+                   nombre: "Log-normal(0, 1)", mu: Math.exp(0.5), sigma: Math.sqrt((Math.E - 1) * Math.E) },
+  };
+
+  var svg = document.getElementById("di-svg");
+  var selTipo = document.getElementById("di-tipo");
+  var slN = document.getElementById("di-n"), outN = document.getElementById("di-n-val");
+  var lec = document.getElementById("di-lectura");
+  var datos = [];
+
+  function el(t, at) {
+    var n = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) n.setAttribute(k, at[k]);
+    return n;
+  }
+
+  function muestrear() {
+    var d = DISTS[selTipo.value], n = parseInt(slN.value, 10);
+    datos = [];
+    for (var i = 0; i < n; i++) datos.push(d.muestra());
+    dibujar();
+  }
+
+  function dibujar() {
+    var d = DISTS[selTipo.value], n = datos.length;
+    outN.textContent = n;
+    svg.textContent = "";
+
+    var a = d.rango[0], b = d.rango[1], nbins = 28, ancho = (b - a) / nbins;
+    var conteo = new Array(nbins).fill(0), dentro = 0;
+    datos.forEach(function (x) {
+      var k = Math.floor((x - a) / ancho);
+      if (k >= 0 && k < nbins) { conteo[k]++; dentro++; }
+    });
+    // densidad empírica: frecuencia relativa dividida por el ancho del bin
+    var dens = conteo.map(function (c) { return n ? c / (n * ancho) : 0; });
+
+    var maxPdf = 0;
+    for (var t = 0; t <= 200; t++) maxPdf = Math.max(maxPdf, d.pdf(a + (b - a) * t / 200));
+    var yMax = Math.max(maxPdf, Math.max.apply(null, dens)) * 1.15 || 1;
+
+    var sx = function (x) { return ML + ((x - a) / (b - a)) * (W_ - ML - MR); };
+    var sy = function (y) { return H_ - MB - (y / yMax) * (H_ - MT - MB); };
+
+    // ejes
+    svg.appendChild(el("line", { x1: ML, y1: sy(0), x2: W_ - MR, y2: sy(0), stroke: "currentColor", opacity: .4 }));
+    svg.appendChild(el("line", { x1: ML, y1: MT, x2: ML, y2: sy(0), stroke: "currentColor", opacity: .4 }));
+    for (var k2 = 0; k2 <= 4; k2++) {
+      var xv = a + (b - a) * k2 / 4;
+      var tx = el("text", { x: sx(xv), y: sy(0) + 17, "text-anchor": "middle",
+        "font-size": 11, fill: "currentColor", opacity: .65 });
+      tx.textContent = xv.toFixed(1);
+      svg.appendChild(tx);
+    }
+    var ty = el("text", { x: 8, y: MT + 10, "font-size": 11, fill: "currentColor", opacity: .65 });
+    ty.textContent = "densidad";
+    svg.appendChild(ty);
+
+    // barras: la muestra
+    dens.forEach(function (h, i) {
+      if (h <= 0) return;
+      var x0 = sx(a + i * ancho), x1 = sx(a + (i + 1) * ancho);
+      svg.appendChild(el("rect", { x: x0 + .5, y: sy(h), width: Math.max(x1 - x0 - 1, .5),
+        height: sy(0) - sy(h), fill: BARRA, "fill-opacity": .75 }));
+    });
+
+    // curva: la población
+    var pts = [];
+    for (var t2 = 0; t2 <= 300; t2++) {
+      var x = a + (b - a) * t2 / 300;
+      pts.push(sx(x).toFixed(1) + "," + sy(d.pdf(x)).toFixed(1));
+    }
+    svg.appendChild(el("path", { d: "M" + pts.join("L"), fill: "none",
+      stroke: ACENTO, "stroke-width": 2.4 }));
+
+    // media muestral vs media poblacional
+    var mediaMuestral = n ? datos.reduce(function (s, x) { return s + x; }, 0) / n : 0;
+    svg.appendChild(el("line", { x1: sx(d.mu), y1: MT, x2: sx(d.mu), y2: sy(0),
+      stroke: ACENTO, "stroke-width": 1.4, "stroke-dasharray": "5,4", opacity: .8 }));
+    svg.appendChild(el("line", { x1: sx(mediaMuestral), y1: MT, x2: sx(mediaMuestral), y2: sy(0),
+      stroke: "#B45309", "stroke-width": 1.4, "stroke-dasharray": "5,4", opacity: .9 }));
+
+    var err = Math.abs(mediaMuestral - d.mu);
+    var fuera = n - dentro;
+    lec.innerHTML =
+      '<b style="color:' + ACENTO + '">' + d.nombre + '</b> · media poblacional μ = ' + d.mu.toFixed(3) +
+      ' · <span style="color:#B45309">media muestral x̄ = ' + mediaMuestral.toFixed(3) + '</span>' +
+      ' · error = <b>' + err.toFixed(3) + '</b>' +
+      (fuera ? ' · ' + fuera + ' valores fuera del rango dibujado' : '') +
+      '<br><span style="opacity:.75">Error esperado con n = ' + n + ': σ/√n ≈ ' +
+      (d.sigma / Math.sqrt(n)).toFixed(3) + '</span>';
+  }
+
+  selTipo.addEventListener("change", muestrear);
+  slN.addEventListener("input", muestrear);
+  document.getElementById("di-remuestrear").addEventListener("click", muestrear);
+  muestrear();
+})();
+</script>
+```
+
+::: {.callout-tip}
+## Qué acabas de ver
+
+Baja $n$ a 10 y dale varias veces a **Nueva muestra**. El histograma salta por todos lados y la media muestral se aleja de la poblacional. Súbelo a 5000 y las barras se pegan a la curva.
+
+Fíjate en el número de abajo: **el error típico es $\sigma/\sqrt{n}$**. Para partirlo a la mitad no necesitas el doble de datos, necesitas **cuatro veces más**. Esa raíz es la razón de que medir bien sea caro, y la vas a derivar en la Lección 7.
+
+Prueba también la **log-normal**. Su media poblacional queda a la derecha de la joroba, porque la cola larga arrastra el promedio. Eso es exactamente el ticket de compra: unos pocos tickets enormes mueven el promedio y la mediana ni se entera.
+:::
+
+## Derivación: el valor esperado y por qué la media muestral lo estima
+
+::: {.derivacion}
+**Afirmación.** Si $X_1, \dots, X_n$ son independientes con la misma distribución y media $\mu$, entonces $\mathbb{E}[\bar{X}] = \mu$ y $\operatorname{Var}(\bar{X}) = \sigma^2/n$.
+
+::: {.paso}
+Definición de media muestral: $\displaystyle \bar{X} = \frac{1}{n}\sum_{i=1}^{n} X_i$. Ojo: $\bar{X}$ es **una variable aleatoria**, no un número. Cambia con cada muestra — es lo que acabas de ver saltando en el visual.
+:::
+::: {.paso}
+La esperanza es lineal, sin necesitar independencia:
+$$\mathbb{E}[\bar{X}] = \mathbb{E}\!\left[\frac{1}{n}\sum_i X_i\right] = \frac{1}{n}\sum_i \mathbb{E}[X_i] = \frac{1}{n} \cdot n\mu = \mu$$
+Eso significa que $\bar{X}$ es un estimador **insesgado**: en promedio sobre todas las muestras posibles, acierta.
+:::
+::: {.paso}
+Para la varianza sí hace falta independencia, porque solo entonces la varianza de una suma es la suma de las varianzas:
+$$\operatorname{Var}\!\left(\sum_i X_i\right) = \sum_i \operatorname{Var}(X_i) = n\sigma^2$$
+:::
+::: {.paso}
+Y la varianza saca constantes al cuadrado, $\operatorname{Var}(aY) = a^2\operatorname{Var}(Y)$, con $a = 1/n$:
+$$\operatorname{Var}(\bar{X}) = \frac{1}{n^2} \cdot n\sigma^2 = \frac{\sigma^2}{n}
+\quad\Longrightarrow\quad
+\operatorname{sd}(\bar{X}) = \frac{\sigma}{\sqrt{n}} \;\;\blacksquare$$
+:::
+
+**Lo que esto te compra en el trabajo.** Si la venta diaria de una sucursal tiene $\sigma = 400$, el promedio de una semana tiene error típico $400/\sqrt{7} \approx 151$, y el de un mes $400/\sqrt{30} \approx 73$. Una diferencia de 100 entre dos semanas no significa nada; entre dos meses, empieza a significar algo.
+:::
+
+Compruébalo simulando: repite el experimento 2000 veces y mira la desviación de las medias.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(42)
+mu, sigma = 0.0, 1.0
+
+for n in [5, 20, 100, 500]:
+    medias = rng.normal(mu, sigma, size=(2000, n)).mean(axis=1)
+    print(f"n = {n:4d} | sd observada de x̄ = {medias.std():.4f} "
+          f"| teórica σ/√n = {sigma/np.sqrt(n):.4f}")
+```
+
+## Discretas y continuas
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(7)
+
+# Discreta: cuenta cosas. ¿Cuántos clientes entran en una hora?
+clientes = rng.poisson(lam=12, size=10)
+print("Poisson(12):", clientes)
+print("P(exactamente 12) =", round(float((rng.poisson(12, 100_000) == 12).mean()), 4))
+
+# Continua: mide cosas. ¿Cuánto tarda en despacharse un pedido?
+minutos = rng.exponential(scale=4.0, size=10)
+print("\nExponencial(4):", minutos.round(2))
+print("P(exactamente 4.0 min) = 0  ← en una continua, cualquier punto exacto tiene probabilidad cero")
+print("P(entre 3.9 y 4.1)     =", round(float(((rng.exponential(4, 100_000) > 3.9) &
+                                               (rng.exponential(4, 100_000) < 4.1)).mean()), 4))
+```
+
+Esa es la diferencia que importa: en una variable continua **la probabilidad de un valor exacto es cero**, y solo tienen sentido los intervalos. Por eso las continuas se describen con una densidad y no con probabilidades punto a punto — la Lección 2.
+
+## Ejercicio 1 — Error típico de la media
+
+Calcula el error típico teórico de la media muestral.
+
+```{pyodide}
+#| exercise: ex_se
+import numpy as np
+
+sigma = 400.0     # desviación de la venta diaria
+n = 30            # días
+
+error_tipico = ______
+
+print(f"error típico = {error_tipico:.4f}")
+round(error_tipico, 4)
+```
+
+::: {.hint exercise="ex_se"}
+Es $\sigma/\sqrt{n}$. En NumPy, la raíz es `np.sqrt`.
+:::
+
+::: {.solution exercise="ex_se"}
+```{pyodide}
+import numpy as np
+
+sigma = 400.0
+n = 30
+
+error_tipico = sigma / np.sqrt(n)
+
+print(f"error típico = {error_tipico:.4f}")
+round(error_tipico, 4)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_se
+#| check: true
+if abs(result - 73.0297) < 0.01:
+    feedback = {"correct": True, "message": "Correcto. Para bajarlo a 36.5 necesitarías 120 días, no 60.", "type": "success"}
+elif abs(result - 13.3333) < 0.01:
+    feedback = {"correct": False, "message": "Dividiste entre n en vez de entre la raíz de n.", "type": "warning"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 73.0297 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Ejercicio 2 — Insesgadez por simulación
+
+Comprueba que la media muestral es insesgada: simula 5000 muestras de tamaño 8 y compara el promedio de las medias contra μ.
+
+```{pyodide}
+#| exercise: ex_insesgado
+import numpy as np
+
+rng = np.random.default_rng(0)
+mu, sigma, n, repeticiones = 50.0, 12.0, 8, 5000
+
+muestras = rng.normal(mu, sigma, size=(repeticiones, n))
+medias = ______
+
+print(f"promedio de las medias = {medias.mean():.4f}   (μ = {mu})")
+round(float(medias.mean()), 2)
+```
+
+::: {.hint exercise="ex_insesgado"}
+`muestras` tiene forma `(5000, 8)`: cada fila es una muestra. Quieres la media **de cada fila**, así que colapsa el eje de las columnas con `axis=1`.
+:::
+
+::: {.solution exercise="ex_insesgado"}
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(0)
+mu, sigma, n, repeticiones = 50.0, 12.0, 8, 5000
+
+muestras = rng.normal(mu, sigma, size=(repeticiones, n))
+medias = muestras.mean(axis=1)
+
+print(f"promedio de las medias = {medias.mean():.4f}   (μ = {mu})")
+round(float(medias.mean()), 2)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_insesgado
+#| check: true
+if isinstance(result, float) and abs(result - 50.0) < 0.5:
+    feedback = {"correct": True, "message": "Correcto: cae sobre 50. Cada media individual falla, pero el promedio de todas acierta — eso es insesgadez.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba algo cerca de 50.0 y obtuve {result}. ¿Usaste axis=1?", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`:
+
+1. Simula la venta diaria de una sucursal como log-normal con mediana 3000 y $\sigma_{\log} = 0.4$. Calcula media y mediana de 100 000 días simulados. ¿Cuál es mayor y por qué? ¿Cuál reportarías a gerencia y cuál usarías para presupuestar?
+2. Para $n \in \{5, 10, 20, 50, 100, 200, 500\}$ estima por simulación la desviación de $\bar{X}$ y grafica contra $\sigma/\sqrt{n}$ en escala log-log. Deberías ver una recta de pendiente $-1/2$. Explica por qué.
+3. La media muestral es insesgada. Comprueba por simulación que la **varianza muestral con denominador $n$** NO lo es, y que con $n-1$ sí. Ese $-1$ tiene nombre —corrección de Bessel— y lo derivas en la Lección 7.
+
+## Para el Cerebro
+
+Lee **Think Stats 3e cap. 1–2** con estas tres preguntas escritas antes:
+
+1. ¿Qué es un estudio observacional y por qué la muestra de la NSFG está sesgada por diseño?
+2. ¿Qué es la paradoja de la clase, y dónde aparecería en tus datos de CBTL?
+3. ¿Cuándo la media es una peor descripción que la mediana?
+
+Nota nueva en `10-Conceptos/variable-aleatoria.md` y `10-Conceptos/error-tipico.md`.
+
+```
+¿Qué es una variable aleatoria?::Una función que asigna un número a cada resultado posible de un experimento
+Diferencia entre distribución poblacional y muestra::La poblacional es la regla completa que casi nunca conoces; la muestra son los valores que observaste
+¿Cuánto vale E[x̄]?::μ — la media muestral es un estimador insesgado
+¿Cuánto vale sd(x̄)?::σ/√n — el error típico
+¿Cuántos datos hacen falta para partir el error a la mitad?::Cuatro veces más, por la raíz cuadrada
+¿Cuál es la probabilidad de un valor exacto en una variable continua?::Cero; solo los intervalos tienen probabilidad positiva
+¿Por qué en una log-normal la media supera a la mediana?::La cola larga a la derecha arrastra el promedio
+```
+
+→ Siguiente: [PMF, CDF y funciones de distribución](02-pmf-cdf.qmd)
