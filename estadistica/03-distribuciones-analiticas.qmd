@@ -1,0 +1,635 @@
+---
+title: "Distribuciones analíticas y sus derivaciones"
+subtitle: "Estadística · Lección 3"
+nivel: L2
+modulo: estadistica
+fase: F1
+prereqs: [estadistica/02-pmf-cdf]
+siguientes: [estadistica/04-esperanza-varianza-momentos]
+libro: "Think Stats 3e, cap. 5"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="estadistica/03-distribuciones-analiticas"}
+[[L2]{.nivel .nivel-L2} **Derivación**]{.item}
+[**Fase** F1]{.item}
+[**Libro** Think Stats 5]{.item}
+[**Prereqs** [PMF, CDF y funciones de distribución](02-pmf-cdf.qmd)]{.item}
+:::
+
+## La idea
+
+Una distribución analítica es una CDF con fórmula. Sirve para tres cosas: resumir miles de datos en dos números, extrapolar a la cola donde no tienes observaciones, y —la más útil— **decirte qué proceso generó los datos**.
+
+Lo que casi nadie te enseña es que reconocer la familia no requiere ojo clínico. Requiere **papel**.
+
+> Cada familia se vuelve una línea recta en algún sistema de coordenadas. Si eliges el papel correcto, la familia se delata sola.
+
+Eso es literal: antes de las computadoras se vendía papel milimetrado especial —papel semilogarítmico, papel probabilístico normal, papel log-log— y el analista graficaba sus datos en cada uno hasta que salía recta. La técnica sigue siendo la mejor que existe, solo que ahora el papel lo cambias con un clic.
+
+## Cambia el papel, encuentra la familia
+
+Elige una familia, elige un papel, y mira el $R^2$ del ajuste a una recta. La línea de abajo compara los cinco papeles a la vez: **el papel ganador nombra la familia.**
+
+```{=html}
+<div class="viz-papel">
+  <div class="controles">
+    <span class="grupo">Familia:</span>
+    <button type="button" data-fam="exponencial" class="on">exponencial</button>
+    <button type="button" data-fam="normal">normal</button>
+    <button type="button" data-fam="lognormal">lognormal</button>
+    <button type="button" data-fam="pareto">Pareto</button>
+  </div>
+  <div class="controles">
+    <span class="grupo">Papel:</span>
+    <button type="button" data-pap="lineal">CCDF lineal</button>
+    <button type="button" data-pap="logy" class="on">CCDF log y</button>
+    <button type="button" data-pap="probit">probit</button>
+    <button type="button" data-pap="probitlog">probit vs log x</button>
+    <button type="button" data-pap="loglog">CCDF log-log</button>
+    <label style="margin-left:auto">n <input id="pa-n" type="range" min="50" max="3000" step="50" value="600"><output id="pa-n-v">600</output></label>
+  </div>
+  <svg id="pa-svg" viewBox="0 0 520 360" role="img" aria-label="Muestra graficada en distintas escalas, con el ajuste a una recta"></svg>
+  <p class="lectura" id="pa-lectura"></p>
+</div>
+<style>
+.viz-papel {
+  border: 1px solid var(--r-linea, #ddd);
+  border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0;
+}
+.viz-papel .controles {
+  display: flex; flex-wrap: wrap; gap: .4rem .6rem;
+  align-items: center; margin-bottom: .6rem; font-size: .85rem;
+}
+.viz-papel .grupo { color: var(--r-tinta-suave, #555); min-width: 4.2rem; }
+.viz-papel label { display: flex; align-items: center; gap: .4rem; }
+.viz-papel input[type=range] { width: 7rem; }
+.viz-papel output { font-family: var(--bs-font-monospace, monospace); font-size: .8rem; min-width: 2.6rem; }
+.viz-papel button {
+  font-size: .78rem; padding: .26rem .68rem; border-radius: 6px;
+  border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; cursor: pointer;
+  transition: border-color 160ms cubic-bezier(0.22,1,0.36,1), background 160ms cubic-bezier(0.22,1,0.36,1), transform 160ms cubic-bezier(0.22,1,0.36,1);
+}
+.viz-papel button:hover { border-color: var(--r-acento, #0F6E68); }
+.viz-papel button:active { transform: scale(.97); }
+.viz-papel button.on {
+  border-color: var(--r-acento, #0F6E68);
+  background: color-mix(in srgb, var(--r-acento, #0F6E68) 10%, transparent);
+}
+.viz-papel svg { width: 100%; height: auto; display: block; }
+.viz-papel .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4em; line-height: 1.6; }
+.viz-papel .lectura .gana { color: var(--r-acento, #0F6E68); font-weight: 600; }
+</style>
+<script>
+(function () {
+  var W_ = 520, H_ = 360, ML = 56, MR = 16, MT = 16, MB = 42;
+  var C_PT = "#4B3A7A", C_LN = "#0F6E68";
+  var svg = document.getElementById("pa-svg");
+  var lec = document.getElementById("pa-lectura");
+  var sn  = document.getElementById("pa-n");
+  var snv = document.getElementById("pa-n-v");
+  var familia = "exponencial", papel = "logy";
+
+  var PARAM = {
+    exponencial: "&lambda; = 0.8",
+    normal: "&mu; = 5, &sigma; = 1.5",
+    lognormal: "&mu; = 1, &sigma; = 0.6 (en logs)",
+    pareto: "x&#8344; = 1, &alpha; = 2"
+  };
+  var ESPERADO = { exponencial: "logy", normal: "probit", lognormal: "probitlog", pareto: "loglog" };
+
+  function el(t, at) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]); return e;
+  }
+
+  function rng32(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      var t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+
+  function probit(p) {
+    var a = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
+             1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00];
+    var b = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
+             6.680131188771972e+01, -1.328068155288572e+01];
+    var c = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
+             -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00];
+    var d = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00, 3.754408661907416e+00];
+    var pl = 0.02425, q, r;
+    if (p < pl) {
+      q = Math.sqrt(-2 * Math.log(p));
+      return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
+    }
+    if (p > 1 - pl) {
+      q = Math.sqrt(-2 * Math.log(1 - p));
+      return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
+    }
+    q = p - 0.5; r = q * q;
+    return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5]) * q /
+           (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1);
+  }
+
+  function muestra(fam, n) {
+    var r = rng32(20260911), out = [], i, u;
+    function norm() {
+      var u1 = r() || 1e-12, u2 = r();
+      return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    }
+    for (i = 0; i < n; i++) {
+      if (fam === "exponencial") { u = r() || 1e-12; out.push(-Math.log(u) / 0.8); }
+      else if (fam === "normal") out.push(5 + 1.5 * norm());
+      else if (fam === "lognormal") out.push(Math.exp(1 + 0.6 * norm()));
+      else { u = r() || 1e-12; out.push(1 / Math.pow(u, 1 / 2)); }
+    }
+    return out.sort(function (p, q) { return p - q; });
+  }
+
+  var PAPELES = {
+    lineal:    { et: "CCDF lineal",     logx: false, y: function (p) { return 1 - p; },          ex: "x",     ey: "1 − F(x)" },
+    logy:      { et: "CCDF log y",      logx: false, y: function (p) { return Math.log(1 - p); }, ex: "x",     ey: "log(1 − F(x))" },
+    probit:    { et: "probit",          logx: false, y: function (p) { return probit(p); },       ex: "x",     ey: "Φ⁻¹(F(x))" },
+    probitlog: { et: "probit vs log x", logx: true,  y: function (p) { return probit(p); },       ex: "log x", ey: "Φ⁻¹(F(x))" },
+    loglog:    { et: "CCDF log-log",    logx: true,  y: function (p) { return Math.log(1 - p); }, ex: "log x", ey: "log(1 − F(x))" }
+  };
+  var ORDEN = ["lineal", "logy", "probit", "probitlog", "loglog"];
+
+  function puntos(vals, clave) {
+    var pap = PAPELES[clave], n = vals.length, pts = [], i, p, X, Y;
+    for (i = 0; i < n; i++) {
+      if (pap.logx && vals[i] <= 0) continue;
+      p = (i + 0.5) / n;
+      X = pap.logx ? Math.log(vals[i]) : vals[i];
+      Y = pap.y(p);
+      if (isFinite(X) && isFinite(Y)) pts.push([X, Y]);
+    }
+    return pts;
+  }
+
+  function ajustar(pts) {
+    var n = pts.length, i, mx = 0, my = 0;
+    if (n < 3) return { r2: 0, b0: 0, b1: 0 };
+    for (i = 0; i < n; i++) { mx += pts[i][0]; my += pts[i][1]; }
+    mx /= n; my /= n;
+    var sxy = 0, sxx = 0, syy = 0, dx, dy;
+    for (i = 0; i < n; i++) {
+      dx = pts[i][0] - mx; dy = pts[i][1] - my;
+      sxy += dx * dy; sxx += dx * dx; syy += dy * dy;
+    }
+    if (sxx <= 0 || syy <= 0) return { r2: 0, b0: my, b1: 0 };
+    var b1 = sxy / sxx;
+    return { r2: (sxy * sxy) / (sxx * syy), b1: b1, b0: my - b1 * mx };
+  }
+
+  function dibujar() {
+    var n = parseInt(sn.value, 10);
+    snv.textContent = n;
+    var vals = muestra(familia, n);
+    var pts = puntos(vals, papel);
+    var fit = ajustar(pts);
+    var pap = PAPELES[papel];
+
+    var xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity, i;
+    for (i = 0; i < pts.length; i++) {
+      if (pts[i][0] < xmin) xmin = pts[i][0];
+      if (pts[i][0] > xmax) xmax = pts[i][0];
+      if (pts[i][1] < ymin) ymin = pts[i][1];
+      if (pts[i][1] > ymax) ymax = pts[i][1];
+    }
+    var px = (xmax - xmin) * 0.04 || 1, py = (ymax - ymin) * 0.05 || 1;
+    xmin -= px; xmax += px; ymin -= py; ymax += py;
+    function sx(v) { return ML + (v - xmin) / (xmax - xmin) * (W_ - ML - MR); }
+    function sy(v) { return H_ - MB - (v - ymin) / (ymax - ymin) * (H_ - MT - MB); }
+
+    svg.textContent = "";
+    var defs = el("defs", {});
+    var cp = el("clipPath", { id: "pa-clip" });
+    cp.appendChild(el("rect", { x: ML, y: MT, width: W_ - ML - MR, height: H_ - MT - MB }));
+    defs.appendChild(cp); svg.appendChild(defs);
+
+    svg.appendChild(el("line", { x1: ML, y1: H_ - MB, x2: W_ - MR, y2: H_ - MB, stroke: "var(--r-linea,#ddd)", "stroke-width": 1 }));
+    svg.appendChild(el("line", { x1: ML, y1: MT, x2: ML, y2: H_ - MB, stroke: "var(--r-linea,#ddd)", "stroke-width": 1 }));
+
+    var k, tv, tn;
+    for (k = 0; k <= 4; k++) {
+      tv = xmin + (xmax - xmin) * k / 4;
+      tn = el("text", { x: sx(tv), y: H_ - MB + 15, "text-anchor": "middle", "font-size": 10, fill: "var(--r-tinta-suave,#666)" });
+      tn.textContent = Math.abs(tv) < 100 ? tv.toFixed(2) : tv.toFixed(0);
+      svg.appendChild(tn);
+      tv = ymin + (ymax - ymin) * k / 4;
+      tn = el("text", { x: ML - 7, y: sy(tv) + 3, "text-anchor": "end", "font-size": 10, fill: "var(--r-tinta-suave,#666)" });
+      tn.textContent = tv.toFixed(2);
+      svg.appendChild(tn);
+    }
+    var lx = el("text", { x: (ML + W_ - MR) / 2, y: H_ - 8, "text-anchor": "middle", "font-size": 11, fill: "var(--r-tinta-suave,#666)" });
+    lx.textContent = pap.ex; svg.appendChild(lx);
+    var ly = el("text", { x: 13, y: (MT + H_ - MB) / 2, "text-anchor": "middle", "font-size": 11, fill: "var(--r-tinta-suave,#666)",
+      transform: "rotate(-90 13 " + ((MT + H_ - MB) / 2) + ")" });
+    ly.textContent = pap.ey; svg.appendChild(ly);
+
+    var g = el("g", { "clip-path": "url(#pa-clip)" });
+    var r = pts.length > 1200 ? 1.3 : (pts.length > 500 ? 1.8 : 2.4);
+    for (i = 0; i < pts.length; i++) {
+      g.appendChild(el("circle", { cx: sx(pts[i][0]), cy: sy(pts[i][1]), r: r, fill: C_PT, "fill-opacity": 0.5 }));
+    }
+    g.appendChild(el("line", {
+      x1: sx(xmin), y1: sy(fit.b0 + fit.b1 * xmin),
+      x2: sx(xmax), y2: sy(fit.b0 + fit.b1 * xmax),
+      stroke: C_LN, "stroke-width": 2, "stroke-dasharray": "6 4"
+    }));
+    svg.appendChild(g);
+
+    var todos = ORDEN.map(function (c) { return { c: c, r2: ajustar(puntos(vals, c)).r2 }; });
+    var mejor = todos.reduce(function (a, b) { return b.r2 > a.r2 ? b : a; });
+    var linea = todos.map(function (o) {
+      var txt = PAPELES[o.c].et + " " + o.r2.toFixed(4);
+      return o.c === mejor.c ? '<span class="gana">' + txt + '</span>' : txt;
+    }).join(" &nbsp;·&nbsp; ");
+
+    lec.innerHTML =
+      "<strong>" + familia + "</strong> (" + PARAM[familia] + "), n = " + n +
+      " &nbsp;·&nbsp; papel actual: <strong>" + pap.et + "</strong>, R&sup2; = " + fit.r2.toFixed(4) +
+      ", pendiente = " + fit.b1.toFixed(4) +
+      "<br>" + linea +
+      "<br>Mejor papel: <span class=\"gana\">" + PAPELES[mejor.c].et + "</span>" +
+      (mejor.c === ESPERADO[familia]
+        ? " &mdash; es el que la teor&iacute;a predice para esta familia."
+        : " &mdash; ojo: no es el que predice la teor&iacute;a (" + PAPELES[ESPERADO[familia]].et + "). Sube n y mira si se corrige.");
+  }
+
+  document.querySelectorAll(".viz-papel [data-fam]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll(".viz-papel [data-fam]").forEach(function (o) { o.classList.remove("on"); });
+      b.classList.add("on"); familia = b.dataset.fam; dibujar();
+    });
+  });
+  document.querySelectorAll(".viz-papel [data-pap]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll(".viz-papel [data-pap]").forEach(function (o) { o.classList.remove("on"); });
+      b.classList.add("on"); papel = b.dataset.pap; dibujar();
+    });
+  });
+  sn.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+Prueba esto antes de seguir: pon **lognormal** y compara los papeles `probit vs log x` (el correcto) y `CCDF log-log` (el de Pareto). Los dos dan $R^2$ alto. Esa ambigüedad es real y ha producido décadas de artículos discutiendo si algo es lognormal o power law. La cola de una lognormal con $\sigma$ grande es indistinguible de una Pareto si solo miras la cola.
+
+## Las cuatro derivaciones
+
+Cada una es la misma jugada: escribir la CCDF, tomar logaritmos, y ver qué queda lineal contra qué.
+
+::: {.derivacion}
+**1. Exponencial: recta en log y.**
+
+::: {.paso}
+Parte de la propiedad que la define, la **falta de memoria**: si llevas esperando $s$ minutos, la probabilidad de esperar $t$ más es la misma que al principio.
+$$P(X > s+t \mid X > s) = P(X > t)$$
+Escribiendo $G(x) = P(X > x)$ y usando la definición de probabilidad condicional, $\dfrac{G(s+t)}{G(s)} = G(t)$, o sea:
+$$G(s+t) = G(s)\,G(t)$$
+:::
+::: {.paso}
+Esa ecuación funcional, con $G$ monótona y $G(0)=1$, tiene una sola familia de soluciones: la exponencial. Escribiendo $G(1) = e^{-\lambda}$ se obtiene $G(x) = e^{-\lambda x}$ para todo $x \ge 0$, y por tanto
+$$F(x) = 1 - e^{-\lambda x}, \qquad f(x) = \lambda e^{-\lambda x}$$
+:::
+::: {.paso}
+Toma logaritmo de la CCDF:
+$$\log\big(1 - F(x)\big) = -\lambda x$$
+**Recta con intercepto 0 y pendiente $-\lambda$**, graficando $\log(1-F)$ contra $x$. Ese es el papel "CCDF log y", y la pendiente te da $\lambda$ directo.
+:::
+:::
+
+::: {.derivacion}
+**2. Pareto: recta en log-log.**
+
+::: {.paso}
+La CCDF se define directamente como una potencia, para $x \ge x_m$:
+$$G(x) = P(X > x) = \left(\frac{x}{x_m}\right)^{-\alpha}$$
+:::
+::: {.paso}
+Logaritmo a los dos lados:
+$$\log G(x) = -\alpha\,\log x + \alpha \log x_m$$
+**Recta de pendiente $-\alpha$** graficando $\log(1-F)$ contra $\log x$. El intercepto te da $x_m$.
+:::
+::: {.paso}
+La consecuencia práctica: una Pareto es **invariante de escala**. Multiplicar todos los valores por 10 solo desplaza la recta, no cambia la pendiente. Por eso el 20% superior se lleva el 80% *dentro de cualquier subconjunto de la cola*, y no solo globalmente: la regla 80/20 es autosemejante.
+:::
+:::
+
+::: {.derivacion}
+**3. Normal: recta en papel probit.**
+
+::: {.paso}
+Si $X \sim \mathcal{N}(\mu, \sigma^2)$, su CDF se escribe con la normal estándar $\Phi$:
+$$F(x) = \Phi\!\left(\frac{x - \mu}{\sigma}\right)$$
+:::
+::: {.paso}
+Aplica $\Phi^{-1}$ (la función probit) a los dos lados:
+$$\Phi^{-1}\big(F(x)\big) = \frac{x - \mu}{\sigma} = \frac{1}{\sigma}\,x \;-\; \frac{\mu}{\sigma}$$
+**Recta de pendiente $1/\sigma$ e intercepto $-\mu/\sigma$.** Ese es el *normal probability plot*, y de sus dos coeficientes recuperas $\mu$ y $\sigma$ sin calcular ni media ni desviación.
+:::
+::: {.paso}
+Bonus de diagnóstico: si los datos se curvan **hacia arriba** en los extremos, las colas son más pesadas que normales. Si se curvan hacia abajo, más ligeras. La forma de la desviación te dice en qué dirección falla el supuesto, cosa que un test de normalidad no hace.
+:::
+:::
+
+::: {.derivacion}
+**4. Lognormal: la misma recta, contra $\log x$.**
+
+::: {.paso}
+$X$ es lognormal si $\log X \sim \mathcal{N}(\mu, \sigma^2)$. Entonces
+$$F(x) = P(X \le x) = P(\log X \le \log x) = \Phi\!\left(\frac{\log x - \mu}{\sigma}\right)$$
+:::
+::: {.paso}
+Probit a los dos lados:
+$$\Phi^{-1}\big(F(x)\big) = \frac{1}{\sigma}\,\log x \;-\; \frac{\mu}{\sigma}$$
+Misma recta que la normal, pero **contra $\log x$**. Único cambio en todo el argumento.
+:::
+::: {.paso}
+Por qué aparece tanto: el TCL dice que **sumas** de muchos efectos tienden a normal. Tomando exponencial, **productos** de muchos factores tienden a lognormal. Cualquier cosa que se forme multiplicando —un ticket que es precio × cantidad × promoción, un ingreso que crece por porcentajes— tiende a lognormal, no a normal.
+:::
+:::
+
+## Qué proceso genera cada una
+
+La tabla que realmente importa, porque convierte un gráfico en una hipótesis sobre el negocio:
+
+| Familia | Se genera cuando | Dónde la vas a ver |
+|---|---|---|
+| **Normal** | Se **suman** muchos efectos pequeños e independientes | Promedios, errores de medición, totales de muchas unidades |
+| **Lognormal** | Se **multiplican** muchos factores | Ticket promedio, ingresos, tiempos de proceso, tamaños de archivo |
+| **Exponencial** | Eventos llegan a tasa constante sin memoria | Tiempo entre llegadas de clientes, entre fallas, entre transacciones |
+| **Pareto** | Crecimiento proporcional con reinicio ("el rico se hace más rico") | Ventas por SKU, valor por cliente, tráfico por sucursal, tamaño de ciudades |
+
+::: {.callout-note}
+Esto es directamente aplicable a datos de retail: los **tiempos entre tickets** suelen ser exponenciales por tramo horario, los **montos de ticket** suelen ser lognormales, y el **ingreso por SKU** suele ser Pareto. Si tus datos no siguen la familia esperada, eso *es* el hallazgo: significa que el proceso tiene estructura adicional —tramos horarios mezclados, promociones, un cliente institucional— y acabas de encontrar dónde mirar.
+:::
+
+## En código
+
+Todo lo anterior con quince líneas y sin `scipy`: la función probit vive en la biblioteca estándar, dentro de `statistics`.
+
+```{pyodide}
+import numpy as np
+from statistics import NormalDist
+
+def ccdf(muestra):
+    """Devuelve (valores ordenados, CCDF empírica)."""
+    v = np.sort(np.asarray(muestra, dtype=float))
+    n = len(v)
+    p = (np.arange(n) + 0.5) / n      # posiciones de graficación
+    return v, 1 - p
+
+def probit(p):
+    nd = NormalDist()
+    return np.array([nd.inv_cdf(float(q)) for q in np.atleast_1d(p)])
+
+rng = np.random.default_rng(11)
+x = rng.exponential(scale=1/0.8, size=4000)      # λ = 0.8
+
+v, g = ccdf(x)
+pendiente, intercepto = np.polyfit(v, np.log(g), 1)
+
+print(f"λ verdadero  = 0.8")
+print(f"λ estimado   = {-pendiente:.4f}   ← menos la pendiente del log-CCDF")
+print(f"intercepto   = {intercepto:.4f}   ← debería ser ≈ 0")
+```
+
+```{pyodide}
+import numpy as np
+from statistics import NormalDist
+
+def ccdf(muestra):
+    v = np.sort(np.asarray(muestra, dtype=float))
+    n = len(v)
+    return v, 1 - (np.arange(n) + 0.5) / n
+
+nd = NormalDist()
+rng = np.random.default_rng(3)
+
+# Normal: probit contra x. Pendiente = 1/σ, intercepto = −μ/σ
+x = rng.normal(5, 1.5, size=4000)
+v, g = ccdf(x)
+z = np.array([nd.inv_cdf(float(q)) for q in 1 - g])
+m, b = np.polyfit(v, z, 1)
+print(f"normal    → σ = {1/m:.4f} (real 1.5), μ = {-b/m:.4f} (real 5.0)")
+
+# Lognormal: probit contra log x. Mismo ajuste, otra abscisa
+y = rng.lognormal(1.0, 0.6, size=4000)
+v, g = ccdf(y)
+z = np.array([nd.inv_cdf(float(q)) for q in 1 - g])
+m, b = np.polyfit(np.log(v), z, 1)
+print(f"lognormal → σ = {1/m:.4f} (real 0.6), μ = {-b/m:.4f} (real 1.0)")
+
+# Pareto: log-CCDF contra log x. Pendiente = −α
+p = (rng.pareto(2.0, size=4000) + 1) * 1.0
+v, g = ccdf(p)
+m, b = np.polyfit(np.log(v), np.log(g), 1)
+print(f"Pareto    → α = {-m:.4f} (real 2.0)")
+```
+
+### La trampa: lognormal contra Pareto
+
+Este experimento vale más que cualquier test de bondad de ajuste, y el resultado probablemente no es el que esperas.
+
+```{pyodide}
+import numpy as np
+from statistics import NormalDist
+
+def ccdf(muestra):
+    v = np.sort(np.asarray(muestra, dtype=float))
+    n = len(v)
+    return v, 1 - (np.arange(n) + 0.5) / n
+
+def r2(xs, ys):
+    xs, ys = np.asarray(xs), np.asarray(ys)
+    dx, dy = xs - xs.mean(), ys - ys.mean()
+    return (dx @ dy)**2 / ((dx @ dx) * (dy @ dy))
+
+nd = NormalDist()
+rng = np.random.default_rng(5)
+
+print("  σ    papel Pareto   papel Pareto   papel correcto")
+print("        (todo)         (5% cola)      probit/log x")
+for sigma in [0.4, 0.8, 1.5, 2.5]:
+    y = rng.lognormal(0.0, sigma, size=6000)
+    v, g = ccdf(y)
+    z = np.array([nd.inv_cdf(float(q)) for q in 1 - g])
+    todo = r2(np.log(v), np.log(g))
+    cola = r2(np.log(v[-300:]), np.log(g[-300:]))
+    bien = r2(np.log(v), z)
+    print(f"{sigma:5.1f}   {todo:^12.4f}   {cola:^12.4f}   {bien:^12.4f}")
+```
+
+Tres lecturas, en orden de importancia:
+
+1. **La cola miente, y miente siempre.** En papel Pareto, recortando al 5% superior, el $R^2$ sale ≈ 0.98 para **toda** $\sigma$, incluso 0.4. No es que las lognormales con cola pesada engañen: es que recortar deja tan pocos puntos y tan poco rango que casi cualquier cosa sale recta. Ese recorte es exactamente el procedimiento que produjo buena parte de las *power laws* publicadas.
+2. **El rango completo no miente.** En el mismo papel Pareto, sobre todos los datos, el $R^2$ se queda clavado en ≈ 0.81 sin importar $\sigma$. La familia equivocada no logra pasar de ahí.
+3. **El papel correcto gana por paliza.** Probit contra $\log x$ da ≈ 0.9997 en los cuatro casos. Cuando aciertas la familia, no hay duda razonable.
+
+::: {.callout-warning}
+Regla que te vas a llevar: **compara familias sobre el rango completo, cada una en su papel.** Si una familia solo gana después de recortar la cola, no ganó. Un $R^2$ alto sobre 300 puntos seleccionados por ser los más grandes no es evidencia de nada.
+:::
+
+## Ejercicio 1 — La CCDF empírica
+
+Escribe la función que todo lo anterior usa. Devuelve los valores ordenados y la CCDF empírica con posiciones de graficación $(i + 0.5)/n$.
+
+```{pyodide}
+#| exercise: ex_ccdf
+import numpy as np
+
+def ccdf(muestra):
+    v = np.sort(np.asarray(muestra, dtype=float))
+    n = len(v)
+    g = ______
+    return v, g
+
+v, g = ccdf([3.0, 1.0, 2.0, 4.0])
+print("valores:", v)
+print("ccdf:   ", g)
+np.round(g, 6)
+```
+
+::: {.hint exercise="ex_ccdf"}
+La CDF empírica en la posición $i$ (contando desde 0) es $p_i = (i + 0.5)/n$, y la CCDF es $1 - p_i$. En NumPy, `np.arange(n)` te da los índices de golpe.
+:::
+
+::: {.solution exercise="ex_ccdf"}
+```{pyodide}
+import numpy as np
+
+def ccdf(muestra):
+    v = np.sort(np.asarray(muestra, dtype=float))
+    n = len(v)
+    g = 1 - (np.arange(n) + 0.5) / n
+    return v, g
+
+v, g = ccdf([3.0, 1.0, 2.0, 4.0])
+print("valores:", v)
+print("ccdf:   ", g)
+np.round(g, 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_ccdf
+#| check: true
+import numpy as np
+esperado = np.array([0.875, 0.625, 0.375, 0.125])
+if isinstance(result, np.ndarray) and result.shape == (4,) and np.allclose(result, esperado, atol=1e-6):
+    feedback = {"correct": True, "message": "Correcto. La CCDF baja de 0.875 a 0.125: nunca toca 0 ni 1, que es justo lo que permite tomar logaritmos sin explotar.", "type": "success"}
+elif isinstance(result, np.ndarray) and np.allclose(result, np.array([0.125, 0.375, 0.625, 0.875]), atol=1e-6):
+    feedback = {"correct": False, "message": "Devolviste la CDF, no la CCDF. Te falta el 1 − p.", "type": "warning"}
+elif isinstance(result, np.ndarray) and np.allclose(result, np.array([1.0, 0.75, 0.5, 0.25]), atol=1e-6):
+    feedback = {"correct": False, "message": "Usaste i/n en vez de (i + 0.5)/n. Con esa versión el primer punto da CCDF = 1 y log(1) = 0 arruina el ajuste en la cola izquierda.", "type": "warning"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba {esperado} y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Ejercicio 2 — Estimar λ desde la pendiente
+
+Tienes una muestra exponencial. Estima $\lambda$ **sin usar la media**: ajusta una recta al log-CCDF y lee la pendiente.
+
+```{pyodide}
+#| exercise: ex_lambda
+import numpy as np
+
+rng = np.random.default_rng(42)
+x = rng.exponential(scale=1/1.8, size=5000)     # λ real = 1.8
+
+v = np.sort(x)
+g = 1 - (np.arange(len(v)) + 0.5) / len(v)
+
+lam = ______
+
+print(f"λ estimado = {lam:.4f}")
+print(f"λ por la media = {1/x.mean():.4f}   ← el estimador de máxima verosimilitud")
+round(float(lam), 4)
+```
+
+::: {.hint exercise="ex_lambda"}
+$\log(1-F(x)) = -\lambda x$, así que la pendiente del ajuste de `np.log(g)` contra `v` es $-\lambda$. Con `np.polyfit(v, np.log(g), 1)` obtienes `[pendiente, intercepto]`; $\lambda$ es menos la pendiente.
+:::
+
+::: {.solution exercise="ex_lambda"}
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(42)
+x = rng.exponential(scale=1/1.8, size=5000)
+
+v = np.sort(x)
+g = 1 - (np.arange(len(v)) + 0.5) / len(v)
+
+lam = -np.polyfit(v, np.log(g), 1)[0]
+
+print(f"λ estimado = {lam:.4f}")
+print(f"λ por la media = {1/x.mean():.4f}   ← el estimador de máxima verosimilitud")
+round(float(lam), 4)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_lambda
+#| check: true
+import numpy as np
+rng_ = np.random.default_rng(42)
+x_ = rng_.exponential(scale=1/1.8, size=5000)
+v_ = np.sort(x_)
+g_ = 1 - (np.arange(len(v_)) + 0.5) / len(v_)
+esperado = float(-np.polyfit(v_, np.log(g_), 1)[0])
+if isinstance(result, (int, float)) and abs(result - esperado) < 0.05:
+    feedback = {"correct": True, "message": f"Correcto: λ ≈ {esperado:.4f} contra 1.8 real. Los dos estimadores son insesgados, pero no igual de precisos: repitiendo con 500 muestras, la pendiente tiene desviación estándar 0.037 y 1/media tiene 0.026. El ajuste por mínimos cuadrados pierde eficiencia porque los puntos de la cola tienen muchísima más varianza y aun así pesan igual que los del centro.", "type": "success"}
+elif isinstance(result, (int, float)) and abs(result + esperado) < 0.05:
+    feedback = {"correct": False, "message": "Te quedó el signo al revés: la pendiente es −λ, así que λ = −pendiente.", "type": "warning"}
+elif isinstance(result, (int, float)) and abs(result - 1/float(x_.mean())) < 0.02:
+    feedback = {"correct": False, "message": "Eso es 1/media, que es correcto como estimador pero no es lo que pedía el ejercicio: quiero la pendiente del log-CCDF.", "type": "warning"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba algo cerca de {esperado:.4f} y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Est 03**:
+
+1. Escribe `elegir_familia(muestra)` que calcule $R^2$ en los cinco papeles y devuelva un ranking. Pruébala con 200 muestras de cada familia y construye la **matriz de confusión**: ¿cuántas veces acierta, y qué confunde con qué? Reporta cómo cambia con $n = 100, 1000, 10000$.
+2. Baja un dataset público de montos de transacción o de tiempos entre eventos (por ejemplo el de taxis de NYC, o cualquiera de [data.gov](https://data.gov)) y pásalo por tu función. **Escribe el párrafo que le entregarías a un gerente**: qué familia es, qué proceso implica, y qué decisión cambia.
+3. Implementa el estimador de Hill para $\alpha$ de una Pareto y compáralo con el de la pendiente log-log en 500 simulaciones. Grafica las dos distribuciones de estimaciones. ¿Cuál tiene menos varianza? Los dos son insesgados: la diferencia está en la eficiencia, y la explicación está en cómo pesa cada punto de la cola.
+
+## Para el Cerebro
+
+Lee **Think Stats 3e, capítulo 5** con estas tres preguntas escritas antes:
+
+1. Downey grafica la distribución de pesos al nacer en papel probit. ¿Qué anomalía encuentra en la cola izquierda, y qué explicación propone?
+2. ¿Qué argumento da para preferir la CDF sobre el histograma al comparar con una distribución analítica?
+3. En su ejemplo de tamaños de ciudades, ¿por qué concluye que la lognormal describe mejor los datos que la Pareto, si la Pareto es la hipótesis famosa?
+
+Nota nueva en `10-Conceptos/distribuciones-analiticas.md`, enlazada a [[pmf-cdf]] y a la que escribirás sobre el TCL. Incluye **tu propia tabla** familia → papel → pendiente, escrita de memoria sin mirar esta página. Esa tabla es la que vas a usar el resto del curso.
+
+```
+¿Qué significa que una familia "se vea recta" en cierto papel?::Que su CDF transformada es lineal en esas coordenadas, así que la recta identifica la familia
+¿En qué papel es recta la exponencial?::log(1−F) contra x, con pendiente −λ
+¿En qué papel es recta la Pareto?::log(1−F) contra log x, con pendiente −α
+¿En qué papel es recta la normal?::Φ⁻¹(F) contra x, pendiente 1/σ e intercepto −μ/σ
+¿En qué papel es recta la lognormal?::Φ⁻¹(F) contra log x, misma recta que la normal pero en escala log
+¿De qué propiedad se deriva la exponencial?::De la falta de memoria: P(X>s+t | X>s) = P(X>t)
+¿Qué ecuación funcional cumple la CCDF exponencial?::G(s+t) = G(s)G(t), cuya única solución monótona es e^(−λx)
+¿Qué proceso genera una lognormal?::El producto de muchos factores independientes; el TCL aplicado a los logaritmos
+¿Qué proceso genera una Pareto?::Crecimiento proporcional con reinicio: el rico se hace más rico
+¿Por qué (i+0.5)/n y no i/n en las posiciones de graficación?::Para que la CCDF nunca valga 0 ni 1 y se pueda tomar logaritmo en las dos colas
+¿Cuál es el error clásico al declarar una power law?::Ajustar solo la cola: una lognormal con σ grande da R² altísimo en log-log mirando solo la cola
+```
+
+→ Siguiente: [Esperanza, varianza y momentos](04-esperanza-varianza-momentos.qmd)

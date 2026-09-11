@@ -1,0 +1,436 @@
+---
+title: "Proyección ortogonal"
+subtitle: "Matemática · Lección 5"
+nivel: L2
+modulo: matematica
+fase: F1
+prereqs: [matematica/04-producto-interno]
+siguientes: [matematica/06-minimos-cuadrados]
+libro: "Mathematics for ML, cap. 3.7–3.8"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="matematica/05-proyeccion-ortogonal"}
+[[L2]{.nivel .nivel-L2} **Derivación**]{.item}
+[**Fase** F1]{.item}
+[**Libro** MML 3.7–3.8]{.item}
+[**Prereqs** [Producto interno](04-producto-interno.qmd)]{.item}
+:::
+
+## La idea
+
+En la Lección 3 viste que $Ax = b$ no tiene solución cuando $b$ se sale de $\operatorname{col}(A)$. La pregunta natural es: **¿cuál es el punto de $\operatorname{col}(A)$ más cercano a $b$?**
+
+La respuesta es la **proyección ortogonal**, y se define por una sola condición geométrica:
+
+> El residuo $e = b - p$ debe ser **perpendicular** al subespacio.
+
+Esa frase es toda la lección. De ella sale la fórmula, sale la matriz de proyección, y en la lección siguiente salen las ecuaciones normales de la regresión.
+
+Por qué perpendicular y no otra cosa: si el residuo tuviera alguna componente *dentro* del subespacio, podrías moverte un poquito en esa dirección y acercarte más. Solo cuando no queda nada que aprovechar estás en el mínimo.
+
+## Visual: la sombra y su residuo
+
+Arrastra $b$ (morado) y también la dirección $a$ (azul). La sombra verde es la proyección; la línea roja es el residuo, y siempre cae en ángulo recto.
+
+```{=html}
+<div class="viz-proy">
+  <div class="controles">
+    <button type="button" data-caso="tipico">Caso típico</button>
+    <button type="button" data-caso="alineado">b sobre la recta</button>
+    <button type="button" data-caso="perp">b perpendicular</button>
+    <label style="margin-left:auto"><input type="checkbox" id="pr-angulo" checked> Marcar ángulo recto</label>
+  </div>
+  <svg id="pr-svg" viewBox="0 0 560 400" role="img" aria-label="Proyección ortogonal de un vector sobre una recta"></svg>
+  <p class="lectura" id="pr-lectura"></p>
+</div>
+```
+
+```{=html}
+<style>
+.viz-proy {
+  border: 1px solid var(--r-linea, #ddd);
+  border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0;
+}
+.viz-proy .controles {
+  display: flex; flex-wrap: wrap; gap: .45rem .7rem;
+  align-items: center; margin-bottom: .85rem; font-size: .85rem;
+}
+.viz-proy button {
+  font-size: .8rem; padding: .28rem .75rem; border-radius: 6px;
+  border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; cursor: pointer;
+  transition: border-color 160ms cubic-bezier(0.22,1,0.36,1), transform 160ms cubic-bezier(0.22,1,0.36,1);
+}
+.viz-proy button:hover { border-color: var(--r-acento, #0F6E68); }
+.viz-proy button:active { transform: scale(.97); }
+.viz-proy label { display: flex; align-items: center; gap: .4rem; }
+.viz-proy svg { width: 100%; height: auto; display: block; touch-action: none; }
+.viz-proy .lectura { font-size: .85rem; margin-top: .75rem; min-height: 3.2em; }
+</style>
+```
+
+```{=html}
+<script>
+(function () {
+  var A = "#2563EB", B = "#7C3AED", P = "#0F6E68", E = "#B91C1C";
+  var X0 = -4, X1 = 4, Y0 = -2.8, Y1 = 2.8, W_ = 560, H_ = 400, M_ = 24;
+  var sx = function (x) { return M_ + ((x-X0)/(X1-X0))*(W_-2*M_); };
+  var sy = function (y) { return H_-M_ - ((y-Y0)/(Y1-Y0))*(H_-2*M_); };
+  var ix = function (px) { return X0 + ((px-M_)/(W_-2*M_))*(X1-X0); };
+  var iy = function (py) { return Y0 + ((H_-M_-py)/(H_-2*M_))*(Y1-Y0); };
+
+  var CASOS = { tipico: [[2.6,0.7],[1.1,2.1]], alineado: [[2.6,0.7],[1.857,0.5]], perp: [[2.6,0.7],[-0.7,2.6]] };
+  var a = [2.6, 0.7], b = [1.1, 2.1], arrastrando = null;
+  var svg = document.getElementById("pr-svg");
+  var lec = document.getElementById("pr-lectura");
+  var verAng = document.getElementById("pr-angulo");
+
+  function el(t, at) {
+    var n = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) n.setAttribute(k, at[k]); return n;
+  }
+  var dot = function (u, v) { return u[0]*v[0] + u[1]*v[1]; };
+  var nrm = function (u) { return Math.hypot(u[0], u[1]); };
+
+  function dibujar() {
+    svg.textContent = "";
+    var defs = el("defs", {});
+    [[A,"pa"],[B,"pb"],[P,"pp"]].forEach(function (c) {
+      var m = el("marker", { id: c[1], viewBox: "0 -5 10 10", refX: 8,
+        markerWidth: 5, markerHeight: 5, orient: "auto" });
+      m.appendChild(el("path", { d: "M0,-4L9,0L0,4", fill: c[0] })); defs.appendChild(m);
+    });
+    svg.appendChild(defs);
+
+    for (var g = -4; g <= 4; g++) {
+      svg.appendChild(el("line", { x1: sx(g), y1: sy(Y0), x2: sx(g), y2: sy(Y1),
+        stroke: "currentColor", "stroke-width": g===0?1.2:.5, opacity: g===0?.38:.1 }));
+      svg.appendChild(el("line", { x1: sx(X0), y1: sy(g), x2: sx(X1), y2: sy(g),
+        stroke: "currentColor", "stroke-width": g===0?1.2:.5, opacity: g===0?.38:.1 }));
+    }
+
+    var aa = dot(a, a), ab = dot(a, b);
+    var t = aa > 1e-12 ? ab/aa : 0;
+    var p = [t*a[0], t*a[1]];
+    var e = [b[0]-p[0], b[1]-p[1]];
+
+    // el subespacio: la recta generada por a
+    var k = 12 / (nrm(a) || 1);
+    svg.appendChild(el("line", { x1: sx(-k*a[0]), y1: sy(-k*a[1]), x2: sx(k*a[0]), y2: sy(k*a[1]),
+      stroke: P, "stroke-width": 8, opacity: .16 }));
+
+    // residuo
+    svg.appendChild(el("line", { x1: sx(p[0]), y1: sy(p[1]), x2: sx(b[0]), y2: sy(b[1]),
+      stroke: E, "stroke-width": 1.8, "stroke-dasharray": "5,4" }));
+
+    // marca de ángulo recto en la base del residuo
+    if (verAng.checked && nrm(e) > 0.12 && nrm(a) > 1e-6) {
+      var ua = [a[0]/nrm(a), a[1]/nrm(a)];
+      var ue = [e[0]/nrm(e), e[1]/nrm(e)];
+      var s = 0.34;
+      var q1 = [p[0]+s*ua[0], p[1]+s*ua[1]];
+      var q2 = [q1[0]+s*ue[0], q1[1]+s*ue[1]];
+      var q3 = [p[0]+s*ue[0], p[1]+s*ue[1]];
+      svg.appendChild(el("path", {
+        d: "M"+sx(q1[0])+","+sy(q1[1])+"L"+sx(q2[0])+","+sy(q2[1])+"L"+sx(q3[0])+","+sy(q3[1]),
+        fill: "none", stroke: E, "stroke-width": 1.2, opacity: .85 }));
+    }
+
+    // vectores
+    svg.appendChild(el("line", { x1: sx(0), y1: sy(0), x2: sx(p[0]), y2: sy(p[1]),
+      stroke: P, "stroke-width": 3.4, "marker-end": "url(#pp)" }));
+    [[a,A,"pa","a"],[b,B,"pb","b"]].forEach(function (par) {
+      svg.appendChild(el("line", { x1: sx(0), y1: sy(0), x2: sx(par[0][0]), y2: sy(par[0][1]),
+        stroke: par[1], "stroke-width": 2.4, "marker-end": "url(#"+par[2]+")" }));
+      var c = el("circle", { cx: sx(par[0][0]), cy: sy(par[0][1]), r: 9, fill: par[1],
+        "fill-opacity": .22, stroke: par[1], "stroke-width": 1.6, cursor: "grab" });
+      c.addEventListener("pointerdown", function (ev) {
+        arrastrando = par[3]; svg.setPointerCapture(ev.pointerId); ev.preventDefault();
+      });
+      svg.appendChild(c);
+      var tx = el("text", { x: sx(par[0][0])+12, y: sy(par[0][1])-8, fill: par[1],
+        "font-size": 14, "font-style": "italic" });
+      tx.textContent = par[3]; svg.appendChild(tx);
+    });
+    var tp = el("text", { x: sx(p[0])+10, y: sy(p[1])+18, fill: P, "font-size": 13, "font-style": "italic" });
+    tp.textContent = "p"; svg.appendChild(tp);
+
+    var comprobacion = Math.abs(dot(e, a));
+    var dist = nrm(e);
+    lec.innerHTML =
+      't = aᵀb / aᵀa = ' + ab.toFixed(3) + ' / ' + aa.toFixed(3) + ' = <b>' + t.toFixed(4) + '</b>' +
+      ' · p = t·a = (' + p[0].toFixed(3) + ', ' + p[1].toFixed(3) + ')' +
+      ' · ‖e‖ = <b>' + dist.toFixed(4) + '</b><br>' +
+      '<b style="color:' + E + '">eᵀa = ' + comprobacion.toExponential(2) + '</b>' +
+      ' — cero hasta el error de máquina, siempre, muevas lo que muevas. ' +
+      (dist < 0.02
+        ? 'Aquí b <b>ya estaba</b> sobre la recta: el residuo se anuló y la proyección es el propio b.'
+        : Math.abs(t) < 0.02
+          ? 'Aquí b es <b>perpendicular</b> a la recta: su sombra es el origen y no se puede aprovechar nada de a.'
+          : '');
+  }
+
+  svg.addEventListener("pointermove", function (ev) {
+    if (!arrastrando) return;
+    var caja = svg.getBoundingClientRect();
+    var nuevo = [Math.max(X0, Math.min(X1, ix((ev.clientX-caja.left)*(W_/caja.width)))),
+                 Math.max(Y0, Math.min(Y1, iy((ev.clientY-caja.top)*(H_/caja.height))))];
+    if (arrastrando === "a") a = nuevo; else b = nuevo;
+    dibujar();
+  });
+  svg.addEventListener("pointerup", function () { arrastrando = null; });
+  svg.addEventListener("pointerleave", function () { arrastrando = null; });
+  verAng.addEventListener("change", dibujar);
+  document.querySelectorAll(".viz-proy [data-caso]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var c = CASOS[btn.dataset.caso]; a = c[0].slice(); b = c[1].slice(); dibujar();
+    });
+  });
+  dibujar();
+})();
+</script>
+```
+
+::: {.callout-tip}
+## Qué acabas de ver
+
+Mira el número $e^\top a$: es cero a nivel de error de máquina **sin importar** dónde pongas $b$ o $a$. No es una coincidencia numérica, es la definición de la proyección.
+
+Los dos extremos valen la pena:
+
+- **b sobre la recta** — el residuo se anula. La proyección no hace nada porque no hay nada que arreglar. En regresión: el modelo explica los datos perfectamente.
+- **b perpendicular** — la sombra colapsa al origen. El predictor no explica absolutamente nada de la respuesta; en regresión, el coeficiente saldría cero.
+:::
+
+## Derivación: la fórmula sale de una sola condición
+
+::: {.derivacion}
+**Afirmación.** La proyección de $b$ sobre la recta generada por $a \neq 0$ es $p = \dfrac{a^\top b}{a^\top a}\,a$.
+
+::: {.paso}
+Cualquier punto de la recta es un múltiplo de $a$, así que escribimos $p = t\,a$ para algún escalar $t$ desconocido. Toda la tarea es encontrar ese $t$.
+:::
+::: {.paso}
+Impón la condición geométrica: el residuo $e = b - p = b - ta$ debe ser perpendicular a $a$, es decir $a^\top e = 0$:
+$$a^\top (b - t a) = 0$$
+:::
+::: {.paso}
+El producto interno es lineal, así que se distribuye y el escalar $t$ sale fuera:
+$$a^\top b - t\,(a^\top a) = 0 \quad\Longrightarrow\quad t = \frac{a^\top b}{a^\top a}$$
+Nota que $a^\top a = \|a\|^2 > 0$ porque $a \neq 0$: la división siempre es legal.
+:::
+::: {.paso}
+Sustituyendo de vuelta:
+$$p = t\,a = \frac{a^\top b}{a^\top a}\,a
+\quad\Longrightarrow\quad
+p = \underbrace{\frac{a\,a^\top}{a^\top a}}_{P}\;b \;\;\blacksquare$$
+Fíjate en el último paso: $\dfrac{a^\top b}{a^\top a}a = \dfrac{a (a^\top b)}{a^\top a} = \dfrac{(a\,a^\top) b}{a^\top a}$ por asociatividad. Eso convierte la proyección en **multiplicar por una matriz fija** $P$, independiente de $b$.
+:::
+
+**Por qué es el punto más cercano, y no solo "uno perpendicular".** Toma cualquier otro punto $ta$ de la recta. Entonces
+$$\|b - ta\|^2 = \|(b-p) + (p-ta)\|^2 = \|e\|^2 + \|p-ta\|^2$$
+donde el término cruzado $2\,e^\top(p-ta)$ desaparece porque $e$ es perpendicular a la recta y $p - ta$ vive en ella. Como $\|p-ta\|^2 \ge 0$, la distancia es mínima exactamente cuando $ta = p$. Ese es el teorema de Pitágoras haciendo el trabajo.
+:::
+
+```{pyodide}
+import numpy as np
+
+a = np.array([2.6, 0.7])
+b = np.array([1.1, 2.1])
+
+t = (a @ b) / (a @ a)
+p = t * a
+e = b - p
+
+print(f"t = {t:.6f}")
+print(f"p = {p.round(6)}")
+print(f"e = {e.round(6)}")
+print()
+print(f"eᵀa = {e @ a:.2e}   ← cero: el residuo es perpendicular")
+print(f"‖b‖² = {b @ b:.6f}")
+print(f"‖p‖² + ‖e‖² = {p @ p + e @ e:.6f}   ← Pitágoras, exacto")
+```
+
+## La matriz de proyección y su propiedad definitoria
+
+```{pyodide}
+import numpy as np
+
+a = np.array([2.6, 0.7])
+
+# P = a aᵀ / (aᵀa).  np.outer construye el producto exterior a aᵀ
+P = np.outer(a, a) / (a @ a)
+
+print("P =\n", P.round(6))
+print()
+print("P² = P ?", np.allclose(P @ P, P))          # idempotente
+print("Pᵀ = P ?", np.allclose(P.T, P))            # simétrica
+print("rango(P) =", np.linalg.matrix_rank(P), " ← aplasta el plano sobre una recta")
+print("eigenvalores:", np.linalg.eigvalsh(P).round(6), " ← siempre 0 y 1")
+```
+
+::: {.callout-important}
+## $P^2 = P$ no es un detalle técnico
+
+Proyectar dos veces es lo mismo que proyectar una. Tiene sentido: una vez que la sombra ya está sobre la recta, volver a proyectarla la deja donde está.
+
+Los eigenvalores lo dicen todo: **1** en la dirección que sobrevive (la recta) y **0** en la que se aniquila (la perpendicular). Una matriz cuyos eigenvalores son solo ceros y unos, y que es simétrica, *es* una proyección ortogonal. Vas a reencontrarte con esto en PCA y en la matriz sombrero de la regresión.
+:::
+
+## De una recta a un subespacio cualquiera
+
+El mismo razonamiento con $A$ en lugar de $a$: ahora el residuo debe ser perpendicular a **todas** las columnas a la vez, lo que se escribe $A^\top e = 0$.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(0)
+A = rng.normal(size=(6, 2))     # subespacio de dimensión 2 dentro de R^6
+b = rng.normal(size=6)
+
+# P = A (AᵀA)⁻¹ Aᵀ  — la generalización directa de a aᵀ/(aᵀa)
+P = A @ np.linalg.inv(A.T @ A) @ A.T
+p = P @ b
+e = b - p
+
+print("Aᵀe =", (A.T @ e).round(12), " ← perpendicular a TODAS las columnas")
+print("P² = P ?", np.allclose(P @ P, P))
+print("Pᵀ = P ?", np.allclose(P.T, P))
+print("traza(P) =", round(float(np.trace(P)), 6), " = rango =", np.linalg.matrix_rank(P))
+print()
+print(f"‖b‖² = {b @ b:.6f}")
+print(f"‖p‖² + ‖e‖² = {p @ p + e @ e:.6f}")
+```
+
+La traza de una matriz de proyección es igual a su rango, porque sus eigenvalores son unos y ceros y la traza los suma. Ese número aparecerá como "grados de libertad del modelo" en la Lección 6.
+
+## Ejercicio 1 — Proyectar sobre una recta
+
+Calcula la proyección de `b` sobre la dirección de `a`.
+
+```{pyodide}
+#| exercise: ex_proy
+import numpy as np
+
+a = np.array([3.0, 4.0])
+b = np.array([5.0, 0.0])
+
+p = ______
+
+print("p =", p.round(4))
+print("residuo perpendicular?", abs((b - p) @ a) < 1e-10)
+p.round(4)
+```
+
+::: {.hint exercise="ex_proy"}
+La fórmula es $p = \dfrac{a^\top b}{a^\top a}\,a$. En NumPy el producto interno es `a @ b`, y el resultado se multiplica por el vector `a` completo.
+:::
+
+::: {.solution exercise="ex_proy"}
+```{pyodide}
+import numpy as np
+
+a = np.array([3.0, 4.0])
+b = np.array([5.0, 0.0])
+
+p = ((a @ b) / (a @ a)) * a
+
+print("p =", p.round(4))
+print("residuo perpendicular?", abs((b - p) @ a) < 1e-10)
+p.round(4)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_proy
+#| check: true
+import numpy as np
+esperado = np.array([1.8, 2.4])
+if isinstance(result, np.ndarray) and result.shape == (2,) and np.allclose(result, esperado, atol=1e-3):
+    feedback = {"correct": True, "message": "Correcto: t = 15/25 = 0.6, así que p = 0.6·(3,4) = (1.8, 2.4).", "type": "success"}
+elif isinstance(result, np.ndarray) and np.allclose(result, np.array([0.6, 0.6]), atol=1e-3):
+    feedback = {"correct": False, "message": "Calculaste el escalar t pero no lo multiplicaste por el vector a.", "type": "warning"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba {esperado} y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Ejercicio 2 — La matriz de proyección
+
+Construye $P$ y comprueba que es idempotente.
+
+```{pyodide}
+#| exercise: ex_matP
+import numpy as np
+
+a = np.array([1.0, 1.0, 0.0])
+
+P = ______
+
+print("P =\n", P.round(4))
+print("P² = P ?", np.allclose(P @ P, P))
+bool(np.allclose(P @ P, P))
+```
+
+::: {.hint exercise="ex_matP"}
+$P = \dfrac{a\,a^\top}{a^\top a}$. El producto exterior $a\,a^\top$ es `np.outer(a, a)`; el denominador es el escalar `a @ a`.
+:::
+
+::: {.solution exercise="ex_matP"}
+```{pyodide}
+import numpy as np
+
+a = np.array([1.0, 1.0, 0.0])
+
+P = np.outer(a, a) / (a @ a)
+
+print("P =\n", P.round(4))
+print("P² = P ?", np.allclose(P @ P, P))
+bool(np.allclose(P @ P, P))
+```
+:::
+
+```{pyodide}
+#| exercise: ex_matP
+#| check: true
+if result is True:
+    feedback = {"correct": True, "message": "Correcto. Ojo con la diferencia: np.outer(a,a) da una matriz 3×3; a @ a da el escalar 2.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba True. Revisa que uses np.outer en el numerador y el escalar a @ a en el denominador. Obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`:
+
+1. Agrega `proyectar(b, A)` a `scratch/lineal.py`, que funcione tanto si `A` es un vector como si es una matriz. Devuelve `(p, e)`. Testea que `Aᵀe ≈ 0` y que `P² = P` en 100 casos aleatorios de dimensiones variadas.
+2. Construye $P = A(A^\top A)^{-1}A^\top$ para una $A$ de rango **deficiente** y observa qué pasa. Después usa `np.linalg.pinv` en lugar de `inv` y compara. ¿Qué hace la pseudoinversa que la inversa no puede? Anótalo en `50-Errores/`.
+3. La matriz $I - P$ también es una proyección: sobre el complemento ortogonal. Compruébalo numéricamente ($({I-P})^2 = I-P$, simétrica) y verifica que $P(I-P) = 0$. Explica geométricamente por qué ese producto es la matriz cero.
+
+## Para el Cerebro
+
+Lee **Mathematics for ML 3.7–3.8** con estas tres preguntas escritas antes:
+
+1. ¿Qué es el complemento ortogonal de un subespacio y qué dimensión tiene?
+2. ¿Por qué la proyección sobre una base **ortonormal** es más simple de calcular?
+3. ¿Qué relación hay entre proyección y el proceso de Gram-Schmidt?
+
+Nota nueva en `20-Metodos/proyeccion-ortogonal.md`, enlazada a [[producto-interno]] y [[espacio-columna]].
+
+```
+¿Qué condición define la proyección ortogonal?::Que el residuo e = b − p sea perpendicular al subespacio
+¿Cuál es la fórmula de proyección sobre la recta generada por a?::p = (aᵀb / aᵀa)·a
+¿Cuál es la matriz de proyección sobre esa recta?::P = a aᵀ / (aᵀa)
+¿Qué significa P² = P?::Es idempotente: proyectar dos veces es lo mismo que proyectar una
+¿Cuáles son los eigenvalores de una matriz de proyección?::Solo ceros y unos; 1 en lo que sobrevive, 0 en lo que se aniquila
+¿Cuál es la matriz de proyección sobre col(A)?::P = A(AᵀA)⁻¹Aᵀ
+¿Qué condición cumple el residuo al proyectar sobre col(A)?::Aᵀe = 0, perpendicular a todas las columnas a la vez
+¿Por qué la proyección minimiza la distancia?::Por Pitágoras: ‖b−ta‖² = ‖e‖² + ‖p−ta‖², mínimo cuando ta = p
+¿A qué es igual la traza de una matriz de proyección?::A su rango, porque sus eigenvalores son unos y ceros
+```
+
+→ Siguiente: [Mínimos cuadrados, geométricamente](06-minimos-cuadrados.qmd)

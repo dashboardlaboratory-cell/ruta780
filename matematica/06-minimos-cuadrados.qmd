@@ -1,0 +1,540 @@
+---
+title: "Mínimos cuadrados, geométricamente"
+subtitle: "Matemática · Lección 6"
+nivel: L3
+modulo: matematica
+fase: F1
+prereqs: [matematica/05-proyeccion-ortogonal, matematica/03-espacio-columna]
+siguientes: [matematica/07-gram-schmidt-qr, estadistica/13-regresion-primeros-principios]
+libro: "MML 3.8 · ISLP 3.1"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="matematica/06-minimos-cuadrados"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F1]{.item}
+[**Libro** MML 3.8 · ISLP 3.1]{.item}
+[**Prereqs** [Proyección ortogonal](05-proyeccion-ortogonal.qmd) · [Espacio columna](03-espacio-columna.qmd)]{.item}
+:::
+
+## La idea
+
+Aquí cae la regresión lineal, y cae sin estadística de por medio.
+
+Tienes un sistema $Ax = b$ que **no tiene solución**: más ecuaciones que incógnitas, $b$ fuera del espacio columna de $A$. La lección 3 te dijo por qué: $\text{col}(A)$ es un plano dentro de $\mathbb{R}^n$ y $b$ está flotando fuera de él. No hay ningún $x$ que lo alcance.
+
+Entonces cambias la pregunta. En vez de *"¿qué $x$ da exactamente $b$?"* preguntas *"¿qué $x$ da el punto de $\text{col}(A)$ más cercano a $b$?"*. Y esa pregunta ya la resolviste en la lección anterior: el punto más cercano es la **proyección ortogonal** de $b$ sobre $\text{col}(A)$.
+
+$$\hat{x} = \arg\min_x \; \|b - Ax\|^2$$
+
+Todo lo demás —las ecuaciones normales, la fórmula de la pendiente que memorizaste alguna vez, la matriz sombrero, los grados de libertad— sale de esa única frase: **el residuo tiene que ser perpendicular al espacio columna.**
+
+::: {.callout-note}
+Vocabulario: en regresión, $A$ es la **matriz de diseño** $X$, $b$ es el vector de respuestas $y$, y $\hat{x}$ son los coeficientes $\hat{\beta}$. Es la misma ecuación con otros nombres. Aquí uso $A, b, \hat{x}$ mientras hablamos de geometría y cambio a $X, y, \hat{\beta}$ cuando hablamos de regresión.
+:::
+
+## El problema, dibujado
+
+Nueve puntos. Una recta que puedes mover. Cada residuo dibuja un cuadrado cuyo lado es el error; **RSS es el área total de esos cuadrados**. De ahí el nombre: mínimos cuadrados busca la recta que hace el área más pequeña posible.
+
+```{=html}
+<div class="viz-mc">
+  <div class="controles">
+    <label>Pendiente <input id="mc-pend" type="range" min="0.2" max="1.6" step="0.01" value="1.05"><output id="mc-pend-v">1.05</output></label>
+    <label>Intercepto <input id="mc-inter" type="range" min="-1" max="4" step="0.01" value="0.60"><output id="mc-inter-v">0.60</output></label>
+    <button type="button" id="mc-opt">Poner la óptima</button>
+    <label style="margin-left:auto"><input type="checkbox" id="mc-cuadrados" checked> Ver cuadrados</label>
+  </div>
+  <svg id="mc-svg" viewBox="0 0 470 360" role="img" aria-label="Recta ajustable sobre nueve puntos, con los cuadrados de los residuos"></svg>
+  <p class="lectura" id="mc-lectura"></p>
+</div>
+<style>
+.viz-mc {
+  border: 1px solid var(--r-linea, #ddd);
+  border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0;
+}
+.viz-mc .controles {
+  display: flex; flex-wrap: wrap; gap: .45rem .9rem;
+  align-items: center; margin-bottom: .85rem; font-size: .85rem;
+}
+.viz-mc label { display: flex; align-items: center; gap: .4rem; }
+.viz-mc input[type=range] { width: 8.5rem; }
+.viz-mc output {
+  font-family: var(--bs-font-monospace, monospace); font-size: .8rem;
+  min-width: 2.6rem; color: var(--r-tinta-suave, #555);
+}
+.viz-mc button {
+  font-size: .8rem; padding: .28rem .75rem; border-radius: 6px;
+  border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; cursor: pointer;
+  transition: border-color 160ms cubic-bezier(0.22,1,0.36,1), transform 160ms cubic-bezier(0.22,1,0.36,1);
+}
+.viz-mc button:hover { border-color: var(--r-acento, #0F6E68); }
+.viz-mc button:active { transform: scale(.97); }
+.viz-mc svg { width: 100%; height: auto; display: block; }
+.viz-mc .lectura { font-size: .85rem; margin-top: .75rem; min-height: 3.4em; }
+</style>
+<script>
+(function () {
+  var C_PT = "#1A1A21", C_USER = "#7C3AED", C_OLS = "#0F6E68", C_SQ = "#B91C1C";
+  var W_ = 470, H_ = 360, ML = 42, MR = 16, MT = 16, MB = 34;
+  var X0 = 0, X1 = 10, Y0 = 0, Y1 = 11;
+  var XS = [1,2,3,4,5,6,7,8,9];
+  var YS = [2.3,2.6,3.9,4.2,5.4,5.6,7.1,7.4,8.0];
+  var n = XS.length, i;
+
+  function sx(x) { return ML + (x-X0)/(X1-X0)*(W_-ML-MR); }
+  function sy(y) { return H_-MB - (y-Y0)/(Y1-Y0)*(H_-MT-MB); }
+
+  var mx = 0, my = 0;
+  for (i=0;i<n;i++) { mx += XS[i]; my += YS[i]; }
+  mx /= n; my /= n;
+  var Sxy = 0, Sxx = 0;
+  for (i=0;i<n;i++) { Sxy += (XS[i]-mx)*(YS[i]-my); Sxx += (XS[i]-mx)*(XS[i]-mx); }
+  var B1 = Sxy/Sxx, B0 = my - B1*mx;
+
+  function rss(b0, b1) { var s = 0, e; for (var k=0;k<n;k++) { e = YS[k]-(b0+b1*XS[k]); s += e*e; } return s; }
+  var RSSmin = rss(B0, B1);
+
+  var svg = document.getElementById("mc-svg");
+  var lec = document.getElementById("mc-lectura");
+  var sp  = document.getElementById("mc-pend");
+  var si  = document.getElementById("mc-inter");
+  var spv = document.getElementById("mc-pend-v");
+  var siv = document.getElementById("mc-inter-v");
+  var sq  = document.getElementById("mc-cuadrados");
+
+  function el(t, at) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]); return e;
+  }
+
+  function dibujar() {
+    var b1 = parseFloat(sp.value), b0 = parseFloat(si.value);
+    spv.textContent = b1.toFixed(2);
+    siv.textContent = b0.toFixed(2);
+    svg.textContent = "";
+
+    var defs = el("defs", {});
+    var cp = el("clipPath", { id: "mc-clip" });
+    cp.appendChild(el("rect", { x: ML, y: MT, width: W_-ML-MR, height: H_-MT-MB }));
+    defs.appendChild(cp);
+    svg.appendChild(defs);
+
+    svg.appendChild(el("line", { x1: ML, y1: sy(Y0), x2: W_-MR, y2: sy(Y0), stroke: "var(--r-linea,#ddd)", "stroke-width": 1 }));
+    svg.appendChild(el("line", { x1: ML, y1: MT, x2: ML, y2: sy(Y0), stroke: "var(--r-linea,#ddd)", "stroke-width": 1 }));
+    for (var t=0; t<=10; t+=2) {
+      var tx = el("text", { x: sx(t), y: H_-MB+16, "text-anchor": "middle", "font-size": 10, fill: "var(--r-tinta-suave,#666)" });
+      tx.textContent = t; svg.appendChild(tx);
+      var ty = el("text", { x: ML-8, y: sy(t)+3, "text-anchor": "end", "font-size": 10, fill: "var(--r-tinta-suave,#666)" });
+      ty.textContent = t; svg.appendChild(ty);
+    }
+
+    var g = el("g", { "clip-path": "url(#mc-clip)" });
+
+    if (sq.checked) {
+      for (i=0;i<n;i++) {
+        var yh = b0 + b1*XS[i], e = YS[i] - yh;
+        var lado = Math.abs(sy(0) - sy(Math.abs(e)));
+        if (lado < 0.7) continue;
+        g.appendChild(el("rect", {
+          x: sx(XS[i]), y: Math.min(sy(YS[i]), sy(yh)), width: lado, height: lado,
+          fill: C_SQ, "fill-opacity": 0.10, stroke: C_SQ, "stroke-opacity": 0.32, "stroke-width": 1
+        }));
+      }
+    }
+
+    for (i=0;i<n;i++) {
+      var yh2 = b0 + b1*XS[i];
+      g.appendChild(el("line", { x1: sx(XS[i]), y1: sy(YS[i]), x2: sx(XS[i]), y2: sy(yh2),
+        stroke: C_SQ, "stroke-width": 1.6, "stroke-opacity": 0.8 }));
+    }
+
+    g.appendChild(el("line", { x1: sx(X0), y1: sy(B0+B1*X0), x2: sx(X1), y2: sy(B0+B1*X1),
+      stroke: C_OLS, "stroke-width": 1.6, "stroke-dasharray": "5 4", "stroke-opacity": 0.7 }));
+
+    var R = rss(b0, b1);
+    var cerca = (R - RSSmin) < 3e-3;
+    g.appendChild(el("line", { x1: sx(X0), y1: sy(b0+b1*X0), x2: sx(X1), y2: sy(b0+b1*X1),
+      stroke: cerca ? C_OLS : C_USER, "stroke-width": 2.6 }));
+
+    for (i=0;i<n;i++) g.appendChild(el("circle", { cx: sx(XS[i]), cy: sy(YS[i]), r: 4.2, fill: C_PT }));
+    svg.appendChild(g);
+
+    lec.innerHTML =
+      'RSS(tu recta) = <strong>' + R.toFixed(4) + '</strong> &nbsp;·&nbsp; RSS m&iacute;nimo = ' + RSSmin.toFixed(4) +
+      ' &nbsp;·&nbsp; exceso = ' + ((R/RSSmin - 1)*100).toFixed(1) + '%' +
+      '<br>&Oacute;ptima: &beta;&#8320; = ' + B0.toFixed(4) + ', &beta;&#8321; = ' + B1.toFixed(4) +
+      (cerca
+        ? ' &mdash; <strong>est&aacute;s en el m&iacute;nimo.</strong> Cualquier movimiento aumenta el &aacute;rea.'
+        : ' &mdash; todav&iacute;a hay &aacute;rea que sobra.');
+  }
+
+  sp.addEventListener("input", dibujar);
+  si.addEventListener("input", dibujar);
+  sq.addEventListener("change", dibujar);
+  document.getElementById("mc-opt").addEventListener("click", function () {
+    sp.value = B1.toFixed(2); si.value = B0.toFixed(2); dibujar();
+  });
+  dibujar();
+})();
+</script>
+```
+
+Dos cosas que ver antes de seguir:
+
+1. **El mínimo es plano.** Cerca de la óptima puedes mover bastante la recta y RSS sube poco. Lejos, sube rapidísimo. RSS es una parábola (en varias variables, un paraboloide), y esa curvatura es literalmente $2A^\top A$ — la vas a volver a encontrar como el error estándar de $\hat{\beta}$.
+2. **Los residuos de la recta óptima no son todos pequeños.** Hay uno grande y varios diminutos. Mínimos cuadrados no minimiza el error máximo; minimiza la suma de cuadrados, y por eso un punto lejano pesa desproporcionadamente. Ese es el origen de toda la discusión sobre outliers y regresión robusta.
+
+## Derivación: las ecuaciones normales, por dos caminos
+
+Que las dos derivaciones den lo mismo no es casualidad: es el puente entre álgebra lineal y optimización, y lo vas a cruzar en los dos sentidos el resto del curso.
+
+::: {.derivacion}
+**Afirmación.** El minimizador de $\|b - Ax\|^2$ cumple $A^\top A\,\hat{x} = A^\top b$.
+
+::: {.paso}
+**Camino geométrico.** El punto de $\text{col}(A)$ más cercano a $b$ es su proyección $p$, y la lección 5 dice cuál es la condición que la define: el residuo $e = b - p$ es perpendicular al subespacio. Escribiendo $p = A\hat{x}$:
+$$e = b - A\hat{x} \perp \text{col}(A)$$
+:::
+::: {.paso}
+"Perpendicular al espacio columna" significa perpendicular a **cada columna** $a_j$ de $A$, es decir $a_j^\top e = 0$ para todo $j$. Apilar esas $p$ ecuaciones es exactamente multiplicar por $A^\top$:
+$$A^\top e = 0 \quad\Longleftrightarrow\quad A^\top(b - A\hat{x}) = 0$$
+:::
+::: {.paso}
+Distribuyendo y pasando términos:
+$$A^\top b - A^\top A \hat{x} = 0 \quad\Longrightarrow\quad \boxed{A^\top A\,\hat{x} = A^\top b}$$
+Estas son las **ecuaciones normales**. Se llaman así porque salen de una condición de normalidad, que es la palabra vieja para perpendicularidad.
+:::
+::: {.paso}
+**Camino de cálculo.** Sin geometría: expande la función objetivo usando que $x^\top A^\top b$ es un escalar y por tanto igual a su transpuesta $b^\top A x$:
+$$\text{RSS}(x) = (b - Ax)^\top(b - Ax) = b^\top b - 2\,x^\top A^\top b + x^\top A^\top A\,x$$
+:::
+::: {.paso}
+Deriva respecto al vector $x$. Los dos gradientes que necesitas (los derivarás con calma en la lección 13) son $\nabla_x (x^\top c) = c$ y $\nabla_x (x^\top M x) = 2Mx$ cuando $M$ es simétrica — y $A^\top A$ siempre lo es:
+$$\nabla_x \text{RSS} = -2A^\top b + 2A^\top A\,x \;=\; 0 \quad\Longrightarrow\quad A^\top A\,\hat{x} = A^\top b \;\;\blacksquare$$
+:::
+::: {.paso}
+**Es un mínimo, no un máximo ni una silla.** La Hessiana es $2A^\top A$, y para cualquier $v \neq 0$:
+$$v^\top (A^\top A) v = (Av)^\top(Av) = \|Av\|^2 \ge 0$$
+Siempre semidefinida positiva. Y es **estrictamente** positiva —por tanto el mínimo es único— exactamente cuando $Av \neq 0$ para todo $v\neq 0$, o sea cuando $A$ tiene rango columna completo. Si dos predictores son colineales, $A^\top A$ es singular y hay infinitas soluciones: el valle tiene fondo plano en una dirección.
+:::
+:::
+
+::: {.callout-important}
+$\hat{x} = (A^\top A)^{-1}A^\top b$ es cierto y es la fórmula que verás escrita en todos lados, pero **no es cómo se calcula**. Más abajo vas a ver por qué invertir $A^\top A$ destruye precisión, y qué se hace en su lugar.
+:::
+
+## De las ecuaciones normales a la fórmula que ya conocías
+
+Con una sola variable y un intercepto, la matriz de diseño es $X = [\,\mathbf{1} \;\; x\,]$ y las ecuaciones normales son un sistema $2\times 2$ que se puede resolver a mano.
+
+::: {.derivacion}
+::: {.paso}
+Arma las dos piezas. Con $\mathbf{1}$ la columna de unos:
+$$X^\top X = \begin{bmatrix} \mathbf{1}^\top\mathbf{1} & \mathbf{1}^\top x \\ x^\top \mathbf{1} & x^\top x\end{bmatrix} = \begin{bmatrix} n & \sum x_i \\ \sum x_i & \sum x_i^2\end{bmatrix}, \qquad X^\top y = \begin{bmatrix} \sum y_i \\ \sum x_i y_i\end{bmatrix}$$
+:::
+::: {.paso}
+La primera ecuación del sistema es $n\beta_0 + \left(\sum x_i\right)\beta_1 = \sum y_i$. Divide entre $n$:
+$$\beta_0 + \beta_1 \bar{x} = \bar{y} \quad\Longrightarrow\quad \boxed{\hat{\beta}_0 = \bar{y} - \hat{\beta}_1 \bar{x}}$$
+Léelo: **la recta pasa siempre por el centroide** $(\bar{x}, \bar{y})$. Eso es consecuencia directa de tener columna de unos, y de nada más.
+:::
+::: {.paso}
+Sustituye $\beta_0$ en la segunda ecuación $\left(\sum x_i\right)\beta_0 + \left(\sum x_i^2\right)\beta_1 = \sum x_i y_i$ y agrupa:
+$$\hat{\beta}_1 = \frac{n\sum x_i y_i - \sum x_i \sum y_i}{n \sum x_i^2 - \left(\sum x_i\right)^2}$$
+:::
+::: {.paso}
+Esa expresión es fea hasta que la centras. Dividiendo arriba y abajo entre $n$ aparecen las sumas centradas:
+$$\hat{\beta}_1 = \frac{\sum (x_i - \bar{x})(y_i - \bar{y})}{\sum (x_i - \bar{x})^2} = \frac{S_{xy}}{S_{xx}} = \frac{\text{Cov}(x,y)}{\text{Var}(x)} = r_{xy}\,\frac{s_y}{s_x}$$
+La pendiente **es** la correlación reescalada por la razón de desviaciones. Y como $r_{xy}$ era el coseno del ángulo entre las variables centradas (lección 4), el círculo se cierra: la pendiente de la regresión es un coseno con unidades puestas.
+:::
+:::
+
+```{pyodide}
+import numpy as np
+
+x = np.array([1., 2, 3, 4, 5, 6, 7, 8, 9])
+y = np.array([2.3, 2.6, 3.9, 4.2, 5.4, 5.6, 7.1, 7.4, 8.0])
+
+# Matriz de diseño: columna de unos + la variable
+X = np.column_stack([np.ones_like(x), x])
+
+# Ecuaciones normales, resueltas como sistema (nunca con inv)
+beta = np.linalg.solve(X.T @ X, X.T @ y)
+print("beta por ecuaciones normales:", beta.round(6))
+
+# Fórmula cerrada centrada
+b1 = ((x - x.mean()) * (y - y.mean())).sum() / ((x - x.mean())**2).sum()
+b0 = y.mean() - b1 * x.mean()
+print("beta por fórmula cerrada:   ", np.array([b0, b1]).round(6))
+
+# Lo que usarías en la vida real
+beta_ls, *_ = np.linalg.lstsq(X, y, rcond=None)
+print("beta por lstsq:             ", beta_ls.round(6))
+```
+
+## Lo que el residuo garantiza
+
+$A^\top e = 0$ no es un adorno: son $p$ ecuaciones exactas que se cumplen **siempre**, con cualquier dato, sin supuestos estadísticos de ningún tipo. Vale la pena leer qué dice cada fila.
+
+| Fila de $A^\top e = 0$ | Qué dice | Consecuencia |
+|---|---|---|
+| Columna de unos | $\sum e_i = 0$ | Los residuos suman cero, siempre que haya intercepto |
+| Columna $x_j$ | $\sum x_{ij} e_i = 0$ | Cada predictor está **descorrelacionado** con el residuo |
+| Combinación $\hat{y} = A\hat{x}$ | $\hat{y}^\top e = 0$ | El ajuste y el residuo son ortogonales |
+
+Esa última da el teorema de Pitágoras de la regresión, que es de donde sale $R^2$:
+
+$$\|y\|^2 = \|\hat{y}\|^2 + \|e\|^2 \qquad\text{y, centrando,}\qquad \underbrace{\sum(y_i-\bar{y})^2}_{\text{TSS}} = \underbrace{\sum(\hat{y}_i-\bar{y})^2}_{\text{ESS}} + \underbrace{\sum e_i^2}_{\text{RSS}}$$
+
+$$R^2 = \frac{\text{ESS}}{\text{TSS}} = 1 - \frac{\text{RSS}}{\text{TSS}} = \cos^2\theta$$
+
+$R^2$ es el coseno cuadrado del ángulo entre $y$ centrado y su proyección. No es una medida misteriosa de "bondad": es cuánto de $y$ apunta hacia el espacio columna.
+
+```{pyodide}
+import numpy as np
+
+x = np.array([1., 2, 3, 4, 5, 6, 7, 8, 9])
+y = np.array([2.3, 2.6, 3.9, 4.2, 5.4, 5.6, 7.1, 7.4, 8.0])
+X = np.column_stack([np.ones_like(x), x])
+
+beta = np.linalg.solve(X.T @ X, X.T @ y)
+y_hat = X @ beta
+e = y - y_hat
+
+print("Xᵀe =", (X.T @ e).round(12), "  ← las dos filas son cero")
+print("Σe  =", f"{e.sum():.2e}")
+print("ŷᵀe =", f"{y_hat @ e:.2e}")
+print()
+
+TSS = ((y - y.mean())**2).sum()
+RSS = (e**2).sum()
+ESS = ((y_hat - y.mean())**2).sum()
+print(f"TSS = {TSS:.4f}   ESS + RSS = {ESS + RSS:.4f}")
+print(f"R² = {1 - RSS/TSS:.6f}")
+
+# R² como coseno cuadrado del ángulo entre y centrado y ŷ centrado
+yc, yhc = y - y.mean(), y_hat - y.mean()
+cos = (yc @ yhc) / (np.linalg.norm(yc) * np.linalg.norm(yhc))
+print(f"cos²θ = {cos**2:.6f}")
+```
+
+## La matriz sombrero
+
+Si sustituyes $\hat{x} = (A^\top A)^{-1}A^\top b$ en $\hat{y} = A\hat{x}$, aparece la matriz que convierte $y$ en $\hat{y}$ de un solo golpe:
+
+$$\hat{y} = \underbrace{A(A^\top A)^{-1}A^\top}_{H} \, y$$
+
+$H$ es la matriz de proyección de la lección 5, escrita para un subespacio de dimensión $p$ en vez de una recta. Le dicen **matriz sombrero** porque le pone el sombrero a $y$. Cumple todo lo que cumplía $P$:
+
+- $H^2 = H$ — proyectar dos veces es proyectar una vez.
+- $H^\top = H$ — es simétrica.
+- Sus eigenvalores son 0 y 1, y $\text{traza}(H) = \text{rango}(H) = p$.
+
+Esa traza es la definición operativa de **grados de libertad del modelo**: cuántas dimensiones de $y$ se consumieron al ajustar. Con $p$ columnas gastas $p$, y a los residuos les quedan $n - p$. De ahí sale el $n-p$ en el denominador de $\hat{\sigma}^2$, y de ahí sale la penalización de AIC, $C_p$ y todo lo que verás en ISLP 6.
+
+Y la diagonal $h_{ii}$ mide cuánto influye el punto $i$ sobre su propia predicción: es el **leverage**, la base del diagnóstico de outliers.
+
+```{pyodide}
+import numpy as np
+
+x = np.array([1., 2, 3, 4, 5, 6, 7, 8, 9])
+y = np.array([2.3, 2.6, 3.9, 4.2, 5.4, 5.6, 7.1, 7.4, 8.0])
+X = np.column_stack([np.ones_like(x), x])
+
+H = X @ np.linalg.solve(X.T @ X, X.T)      # A (AᵀA)⁻¹ Aᵀ sin invertir explícitamente
+
+print("H² = H ?      ", np.allclose(H @ H, H))
+print("Hᵀ = H ?      ", np.allclose(H.T, H))
+print("eigenvalores: ", np.round(np.linalg.eigvalsh(H), 10))
+print(f"traza(H) = {np.trace(H):.6f}  = p = {X.shape[1]}")
+print()
+print("leverage hᵢᵢ:", H.diagonal().round(4))
+print("Σhᵢᵢ =", round(H.diagonal().sum(), 6), " ← la traza otra vez")
+```
+
+Fíjate en el leverage: los puntos de los extremos ($x=1$ y $x=9$) tienen el doble de influencia que el del medio. No es una propiedad de los datos, es una propiedad de **dónde pusiste las $x$**.
+
+## Por qué nunca se invierte $A^\top A$
+
+Las ecuaciones normales son correctas en matemáticas exactas y frágiles en punto flotante. La razón cabe en una línea: el número de condición se eleva al cuadrado.
+
+$$\kappa(A^\top A) = \kappa(A)^2$$
+
+Si $A$ ya viene mal condicionada —dos predictores casi colineales, variables en escalas muy distintas— $A^\top A$ viene al cuadrado de mal, y pierdes el doble de dígitos. La alternativa es no formar nunca $A^\top A$: factorizar $A$ directamente con QR (lección 7) o con SVD (lección 11), que es lo que hace `lstsq` por dentro.
+
+```{pyodide}
+import numpy as np
+
+# Diseño casi colineal: la segunda columna es la primera más un ruido minúsculo
+rng = np.random.default_rng(0)
+n = 200
+x1 = rng.normal(size=n)
+x2 = x1 + 1e-7 * rng.normal(size=n)
+A = np.column_stack([np.ones(n), x1, x2])
+
+beta_real = np.array([1.0, 2.0, -1.0])
+b = A @ beta_real + 1e-10 * rng.normal(size=n)
+
+print(f"cond(A)    = {np.linalg.cond(A):.3e}")
+print(f"cond(AᵀA)  = {np.linalg.cond(A.T @ A):.3e}   ← el cuadrado")
+print()
+
+por_normales = np.linalg.solve(A.T @ A, A.T @ b)
+por_lstsq, *_ = np.linalg.lstsq(A, b, rcond=None)
+
+print("residuo con ecuaciones normales:", f"{np.linalg.norm(b - A @ por_normales):.3e}")
+print("residuo con lstsq (SVD):        ", f"{np.linalg.norm(b - A @ por_lstsq):.3e}")
+```
+
+::: {.callout-tip}
+Regla práctica para el resto del curso: `np.linalg.lstsq` o `scipy.linalg.lstsq`, nunca `np.linalg.inv(X.T @ X) @ X.T @ y`. Cuando veas esa segunda línea en un tutorial, sabes que el autor no llegó hasta aquí.
+:::
+
+## Ejercicio 1 — Resolver mínimos cuadrados a mano
+
+Ajusta un modelo con intercepto y dos predictores resolviendo las ecuaciones normales. Devuelve el vector de coeficientes.
+
+```{pyodide}
+#| exercise: ex_mc
+import numpy as np
+
+x1 = np.array([1., 2, 3, 4, 5, 6])
+x2 = np.array([2., 1, 4, 3, 6, 5])
+y  = np.array([5.1, 4.2, 9.3, 8.4, 14.1, 13.2])
+
+X = np.column_stack([np.ones_like(x1), x1, x2])
+
+beta = ______
+
+print("beta =", beta.round(4))
+print("Xᵀe ≈ 0 ?", np.allclose(X.T @ (y - X @ beta), 0, atol=1e-8))
+beta.round(4)
+```
+
+::: {.hint exercise="ex_mc"}
+Las ecuaciones normales son $X^\top X\,\hat\beta = X^\top y$. Eso es un sistema lineal cuadrado: `np.linalg.solve(A, b)` con `A = X.T @ X` y `b = X.T @ y`. No uses `inv`.
+:::
+
+::: {.solution exercise="ex_mc"}
+```{pyodide}
+import numpy as np
+
+x1 = np.array([1., 2, 3, 4, 5, 6])
+x2 = np.array([2., 1, 4, 3, 6, 5])
+y  = np.array([5.1, 4.2, 9.3, 8.4, 14.1, 13.2])
+
+X = np.column_stack([np.ones_like(x1), x1, x2])
+
+beta = np.linalg.solve(X.T @ X, X.T @ y)
+
+print("beta =", beta.round(4))
+print("Xᵀe ≈ 0 ?", np.allclose(X.T @ (y - X @ beta), 0, atol=1e-8))
+beta.round(4)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_mc
+#| check: true
+import numpy as np
+x1 = np.array([1., 2, 3, 4, 5, 6])
+x2 = np.array([2., 1, 4, 3, 6, 5])
+yy = np.array([5.1, 4.2, 9.3, 8.4, 14.1, 13.2])
+XX = np.column_stack([np.ones_like(x1), x1, x2])
+esperado = np.linalg.lstsq(XX, yy, rcond=None)[0]
+if isinstance(result, np.ndarray) and result.shape == (3,) and np.allclose(result, esperado, atol=1e-3):
+    feedback = {"correct": True, "message": "Correcto. Xᵀe = 0 en las tres filas: el residuo es perpendicular a las tres columnas del diseño.", "type": "success"}
+elif isinstance(result, np.ndarray) and result.shape == (2,):
+    feedback = {"correct": False, "message": "Devolviste 2 coeficientes. Con intercepto + 2 predictores el diseño tiene 3 columnas, así que β tiene 3 entradas.", "type": "warning"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba {esperado.round(4)} y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Ejercicio 2 — Grados de libertad desde la matriz sombrero
+
+Construye $H$ y devuelve su traza. Sin contar columnas: que te lo diga la matriz.
+
+```{pyodide}
+#| exercise: ex_hat
+import numpy as np
+
+rng = np.random.default_rng(7)
+X = np.column_stack([np.ones(50), rng.normal(size=(50, 3))])   # 50 filas, 4 columnas
+
+H = ______
+
+print("H² = H ?", np.allclose(H @ H, H))
+print("traza =", round(float(np.trace(H)), 6))
+round(float(np.trace(H)), 6)
+```
+
+::: {.hint exercise="ex_hat"}
+$H = X(X^\top X)^{-1}X^\top$. Para evitar `inv`, nota que $(X^\top X)^{-1}X^\top$ es la solución de $X^\top X\,M = X^\top$, o sea `np.linalg.solve(X.T @ X, X.T)`. Después multiplica por `X` a la izquierda.
+:::
+
+::: {.solution exercise="ex_hat"}
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(7)
+X = np.column_stack([np.ones(50), rng.normal(size=(50, 3))])
+
+H = X @ np.linalg.solve(X.T @ X, X.T)
+
+print("H² = H ?", np.allclose(H @ H, H))
+print("traza =", round(float(np.trace(H)), 6))
+round(float(np.trace(H)), 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_hat
+#| check: true
+if isinstance(result, (int, float)) and abs(result - 4.0) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: traza(H) = 4 = número de columnas. El modelo consume 4 grados de libertad y a los residuos les quedan 46.", "type": "success"}
+elif isinstance(result, (int, float)) and abs(result - 50.0) < 1e-6:
+    feedback = {"correct": False, "message": "Obtuviste 50: eso es la traza de la identidad. Probablemente construiste H con las dimensiones invertidas.", "type": "warning"}
+elif isinstance(result, (int, float)) and abs(result - 3.0) < 1e-6:
+    feedback = {"correct": False, "message": "Obtuviste 3: te faltó la columna de unos en el conteo. El diseño tiene 4 columnas.", "type": "warning"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 4.0 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Mat 06**:
+
+1. Escribe `ols(X, y)` que reciba una matriz de diseño **sin** columna de unos, le agregue el intercepto, resuelva por QR o SVD (no por ecuaciones normales) y devuelva un diccionario con `beta`, `y_hat`, `residuos`, `r2` y `leverage`. Pruébala contra `np.linalg.lstsq` en 200 conjuntos aleatorios.
+2. Toma los 9 puntos del visual y mueve el último punto ($x=9$) hacia arriba de 8.0 a 14.0 en 20 pasos. Grafica cómo cambian $\hat\beta_0$, $\hat\beta_1$ y $R^2$. Repite moviendo el punto del medio ($x=5$) la misma cantidad. **Compara las dos pendientes de cambio y explícalas con el leverage $h_{ii}$** que calculaste en el ejercicio 2.
+3. Construye un diseño con dos predictores cada vez más correlacionados ($\rho = 0.9, 0.99, 0.999, 0.9999$), simula $y$ con coeficientes conocidos, y ajusta 500 veces con ruido distinto. Grafica la **desviación estándar de $\hat\beta_1$** contra $\rho$. Eso es multicolinealidad, y lo vas a volver a ver como argumento para Ridge en ISLP 6.
+
+## Para el Cerebro
+
+Lee **Mathematics for ML 3.8** (proyecciones ortogonales) y **ISLP 3.1** (simple linear regression) con estas tres preguntas escritas antes:
+
+1. ISLP presenta $\hat\beta_1$ con una fórmula de sumas. ¿Puedes reconocer en ella la pendiente $S_{xy}/S_{xx}$ que derivaste aquí, sin mirar la derivación?
+2. ¿Qué es el error estándar de $\hat\beta_1$ según ISLP, y qué parte de esa fórmula corresponde a $S_{xx}$? ¿Por qué tener $x$ más dispersas hace la pendiente más precisa?
+3. MML llama a esto "proyección sobre subespacios generales". ¿Qué cambia respecto a la proyección sobre una recta, y qué se mantiene idéntico?
+
+Nota nueva en `10-Conceptos/minimos-cuadrados.md`, enlazada a [[proyeccion-ortogonal]], [[espacio-columna]] y [[producto-interno]]. Deja escrito en tus palabras el puente: *residuo perpendicular → ecuaciones normales → fórmula de la pendiente*.
+
+```
+¿Cuál es la única condición que define la solución de mínimos cuadrados?::Que el residuo sea perpendicular al espacio columna: Aᵀe = 0
+¿Cuáles son las ecuaciones normales?::AᵀA x̂ = Aᵀb
+¿De dónde salen las ecuaciones normales por cálculo?::De igualar a cero el gradiente de RSS: −2Aᵀb + 2AᵀAx = 0
+¿Cuándo es única la solución de mínimos cuadrados?::Cuando A tiene rango columna completo, así AᵀA es definida positiva e invertible
+¿Por qué la recta de regresión pasa por (x̄, ȳ)?::Porque la fila de la columna de unos exige Σeᵢ = 0, y eso da β₀ = ȳ − β₁x̄
+¿Cuál es la pendiente en forma centrada?::β₁ = Sxy/Sxx = Cov(x,y)/Var(x) = r·(sy/sx)
+¿Qué es la matriz sombrero?::H = A(AᵀA)⁻¹Aᵀ, la proyección sobre col(A): ŷ = Hy
+¿Qué mide traza(H)?::Los grados de libertad del modelo, iguales al rango = número de columnas
+¿Qué es el leverage hᵢᵢ?::La diagonal de H: cuánto influye el punto i sobre su propia predicción
+¿Qué es R² geométricamente?::El coseno cuadrado del ángulo entre y centrado y su proyección
+¿Por qué no se resuelve invirtiendo AᵀA?::Porque κ(AᵀA) = κ(A)², se pierde el doble de dígitos; se usa QR o SVD
+```
+
+→ Siguiente: [Gram-Schmidt y descomposición QR](07-gram-schmidt-qr.qmd)
