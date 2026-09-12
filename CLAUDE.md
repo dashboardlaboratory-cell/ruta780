@@ -36,6 +36,28 @@ ESL, Think Bayes, Causal Inference for the Brave and True, fast.ai.
 Para añadir un libro: traer su índice de la fuente publicada, meterlo en
 `indices.json` con su URL y la fecha, y recién entonces citarlo.
 
+## Reglas de escritura (crítica de Luis, 12-09-2026)
+
+14. **Registro de libro de texto, no de revista.** Definición numerada →
+    proposición → demostración → ejemplo. Sin títulos-golpe, sin "no es X,
+    es Y", sin "Fíjate", sin párrafos de una línea para efecto, sin
+    metáforas apiladas. El molde es `estadistica/04`.
+15. **Cero contexto de su empresa.** Nada de CBTL, tiendas, tickets,
+    sucursales, Multiplaza, café. Ejemplos neutros y clásicos: dados, pesos
+    al nacer, ingresos, los datasets que usan los propios libros.
+16. **Todo símbolo se declara** en la tabla `::: {.notacion}` al inicio y
+    en su primer uso. `n` = tamaño de la muestra, siempre.
+17. **Todo término técnico va al glosario** (`glosario/glosario.json`) y se
+    marca en el texto como `[término]{.g}` (o `[flexión]{.g data-t="clave"}`).
+18. **Hilo explícito** con `:::: {.hilo}`: *De dónde viene* (lecciones y
+    resultados concretos que usa) y *Para qué sirve después* (lecciones y
+    métodos concretos que lo necesitan). Nombrados, no vagos.
+19. **Citar textualmente, no parafrasear**, en `::: {.cita-libro}` con
+    sección y licencia. Think Stats es CC BY-NC-SA: se puede citar con
+    libertad. MML, ISLP y McKinney tienen copyright: solo definiciones de
+    una o dos frases, con atribución. Si no se puede extraer el texto de
+    forma verificable, no se cita y se dice.
+
 ## Reglas de números
 
 6. **Todo número que la prosa afirme se declara en `verificar/afirmaciones.json`.**
