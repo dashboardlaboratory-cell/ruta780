@@ -264,6 +264,20 @@ esperar. Vectorizada a arreglos `(reps, n)` baja a 0,4 s con los mismos
 resultados. Regla práctica: si una celda pasa de dos o tres segundos en local,
 hay que reescribirla antes de publicarla, porque en el navegador se abandona.
 
+**Heredar la prosa vieja al migrar una lección.** Al reescribir `matematica/01`
+se conservó casi literal la frase de entrada de la versión anterior —«un vector
+no es una lista de números: es un objeto que sabe hacer dos cosas…»—, que viola
+la regla 14 por dos vías: la construcción «no es X, es Y» está prohibida
+explícitamente, y el contenido es impreciso, porque las dos operaciones son del
+**espacio**, no de cada vector. Lo encontró Luis leyendo la página, no ningún
+gate. Migrar una lección es reescribir también sus párrafos de enlace, no solo
+envolver el contenido viejo en el molde nuevo.
+
+Barrido hecho el 12-09-2026 sobre las diez lecciones de esta tanda: ocho frases
+más con la misma forma de golpe, corregidas. Quedan instancias parecidas en
+lecciones migradas por sesiones anteriores —`estadistica/08`, `09`, `10` y
+`13`—, sin tocar.
+
 **El CI corre numpy 2 y esta máquina numpy 1.24: no fijar dígitos de un cero
 de punto flotante.** El 12-09-2026 el build murió en `salidas.py` con dos
 afirmaciones que pasaban en local: `error máximo : 0.0` salía `4.44e-16` con
