@@ -83,6 +83,7 @@ MIGRADAS = {
     "estadistica/17-p-hacking.qmd",
     "estadistica/18-teorema-de-bayes.qmd",
     "estadistica/19-priors-conjugados.qmd",
+    "estadistica/20-distribuciones-predictivas.qmd",
     "matematica/01-vectores-y-espacios.qmd",
     "matematica/02-matriz-como-transformacion.qmd",
     "matematica/03-espacio-columna.qmd",
