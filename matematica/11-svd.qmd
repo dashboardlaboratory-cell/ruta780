@@ -1,0 +1,622 @@
+---
+title: "Descomposición en valores singulares"
+subtitle: "Matemática · Lección 11"
+nivel: L3
+modulo: matematica
+fase: F1
+prereqs: [matematica/10-diagonalizacion, matematica/06-minimos-cuadrados]
+siguientes: [matematica/12-formas-cuadraticas]
+libro: "MML §4.5 Singular Value Decomposition · §4.6 Matrix Approximation"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="matematica/11-svd"}
+[[L3]{.nivel .nivel-L3} **Derivación**]{.item}
+[**Fase** F1]{.item}
+[**Libro** MML §4.5 · §4.6]{.item}
+[**Prereqs** [Diagonalización](10-diagonalizacion.qmd) · [Mínimos cuadrados](06-minimos-cuadrados.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir la [descomposición en valores singulares]{.g} y demostrar que los [valores singulares]{.g} son las raíces de los eigenvalores de $A^\top A$.
+2. Demostrar que $Av_i=\sigma_iu_i$ y leer en la descomposición el rango, el espacio columna y el núcleo de cualquier matriz, sea o no cuadrada.
+3. Demostrar que truncar la descomposición deja un error de $\sqrt{\sum_{i>k}\sigma_i^2}$, y usar eso para aproximar una matriz por otra de rango bajo.
+4. **Demostrar la deuda de la lección 6**: que $\kappa(A^\top A)=\kappa(A)^2$, y con ella por qué las ecuaciones normales pierden el doble de dígitos.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Matemática 10**: la diagonalización de matrices cuadradas y el caso simétrico ortogonal. La descomposición de esta lección se construye diagonalizando $A^\top A$, que siempre es simétrica.
+- **Matemática 6**: las ecuaciones normales y la advertencia sobre el condicionamiento, que aquí queda demostrada.
+- **Matemática 7**: la factorización QR, que resuelve el mismo problema con menos garantías y menos coste.
+- **Matemática 3**: rango, espacio columna y núcleo, que aquí se leen de un vistazo.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Matemática 12**: las formas cuadráticas y su clasificación por el signo de los eigenvalores.
+- **Estadística 12**: el análisis de componentes principales es esta descomposición aplicada a la matriz de datos centrada, y las varianzas explicadas son los $\sigma_i^2$.
+- **Aprendizaje automático**: compresión, sistemas de recomendación, reducción de dimensión y regularización por truncamiento salen todos de la Proposición 11.6.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Símbolo | Se lee | Significado |
+|---|---|---|
+| $A$ | A | Matriz $m\times n$, **no necesariamente cuadrada** |
+| $\sigma_i$ | sigma sub i | Los valores singulares, ordenados $\sigma_1\ge\sigma_2\ge\dots\ge0$ |
+| $u_i$, $v_i$ | u sub i, ve sub i | Los vectores singulares por la izquierda y por la derecha |
+| $U$, $V$ | U, V | Matrices de columnas ortonormales con esos vectores |
+| $\Sigma$ | sigma mayúscula | Matriz diagonal con los $\sigma_i$. **Aquí es eso**; en Estadística 12 es la matriz de covarianza |
+| $r$ | erre | El rango: cuántos $\sigma_i$ son no nulos |
+| $\|A\|_F$ | norma de Frobenius | $\sqrt{\sum_{ij}a_{ij}^2}$, la norma euclídea de la matriz vista como un vector largo |
+| $\kappa(A)$ | kappa de A | El número de condición, $\sigma_1/\sigma_r$ |
+:::
+
+## 1. Toda matriz hace lo mismo: rotar, estirar, rotar
+
+::: {.definicion}
+**Definición 11.1 (descomposición en valores singulares).** Una **SVD** de $A\in\mathbb{R}^{m\times n}$ es una factorización
+$$A = U\,\Sigma\,V^\top$$
+con $U$ de $m\times m$ ortogonal, $V$ de $n\times n$ ortogonal y $\Sigma$ de $m\times n$ diagonal con entradas $\sigma_1\ge\dots\ge\sigma_{\min(m,n)}\ge0$.
+:::
+
+La Definición 10.1 exigía que la matriz fuera cuadrada y tuviera base de eigenvectores; esta no exige nada. **Toda** matriz tiene descomposición en valores singulares, y eso es lo que la vuelve la herramienta de referencia.
+
+```{=html}
+<div class="viz-svd">
+  <div class="controles">
+    <label>Matriz <select id="sv-matriz">
+      <option value="general" selected>general</option>
+      <option value="casi">casi singular</option>
+      <option value="simetrica">simétrica</option>
+    </select></label>
+    <label>Etapa <input id="sv-etapa" type="range" min="0" max="3" step="1" value="3"> <span id="sv-etapa-v">A = U Σ Vᵀ</span></label>
+  </div>
+  <svg id="sv-svg" viewBox="0 0 620 300" role="img" aria-label="El circulo unitario transformado en tres pasos: primero una rotacion, despues un estirado por los valores singulares y por ultimo otra rotacion. El resultado es una elipse cuyos semiejes son los valores singulares."></svg>
+  <p class="lectura" id="sv-lectura"></p>
+</div>
+<style>
+.viz-svd { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-svd .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-svd label { display: flex; align-items: center; gap: .4rem; }
+.viz-svd select, .viz-svd input[type=range] { font-size: .85rem; padding: .2rem .4rem; border-radius: 5px; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-svd input[type=range] { width: 96px; padding: 0; }
+.viz-svd svg { width: 100%; height: auto; display: block; }
+.viz-svd .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5em; line-height: 1.6; }
+.viz-svd .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_A = "#0F6E68", C_B = "#B45309", C_TEO = "var(--r-tinta,#1f2430)";
+  var svg = document.getElementById("sv-svg"), lec = document.getElementById("sv-lectura");
+  var selM = document.getElementById("sv-matriz");
+  var ctlE = document.getElementById("sv-etapa"), etqE = document.getElementById("sv-etapa-v");
+
+  var MATRICES = { general: [[2, 1.4], [0.4, 1.8]], casi: [[2, 1.98], [1.98, 2]], simetrica: [[2.2, 0.9], [0.9, 1.3]] };
+  var CX = 300, CY = 150, ESC = 44;
+  var ETIQUETAS = ["el círculo unitario", "tras Vᵀ: rotar", "tras Σ Vᵀ: estirar los ejes", "A = U Σ Vᵀ: rotar otra vez"];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(v) { return CX + v[0] * ESC; }
+  function py(v) { return CY - v[1] * ESC; }
+
+  // SVD de una matriz 2x2 por el angulo que diagonaliza A^T A
+  function svd2(M) {
+    var a = M[0][0], b = M[0][1], c = M[1][0], d = M[1][1];
+    var e = (a * a + b * b + c * c + d * d) / 2;
+    var f = (a * a + b * b - c * c - d * d) / 2;
+    var g = a * c + b * d;
+    var s1 = Math.sqrt(e + Math.hypot(f, g)), s2 = Math.sqrt(Math.max(e - Math.hypot(f, g), 0));
+    var theta = 0.5 * Math.atan2(2 * (a * b + c * d), a * a - b * b + c * c - d * d);  // angulo de V
+    var phi = 0.5 * Math.atan2(2 * g, f);                                             // angulo de U
+    return { s1: s1, s2: s2, theta: theta, phi: phi };
+  }
+  function rot(ang, v) {
+    return [Math.cos(ang) * v[0] - Math.sin(ang) * v[1], Math.sin(ang) * v[0] + Math.cos(ang) * v[1]];
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var M = MATRICES[selM.value], e = svd2(M), etapa = +ctlE.value, i;
+    etqE.textContent = ETIQUETAS[etapa];
+
+    // ejes fijos
+    svg.appendChild(el("line", { x1: CX - 250, y1: CY, x2: CX + 250, y2: CY, stroke: "var(--r-linea,#eee)" }));
+    svg.appendChild(el("line", { x1: CX, y1: CY - 130, x2: CX, y2: CY + 130, stroke: "var(--r-linea,#eee)" }));
+    svg.appendChild(el("circle", { cx: CX, cy: CY, r: ESC, fill: "none", stroke: "var(--r-linea,#ddd)", "stroke-dasharray": "3 3" }));
+
+    function transformar(v) {
+      if (etapa === 0) return v;
+      var w = rot(-e.theta, v);                      // V^T
+      if (etapa === 1) return w;
+      w = [e.s1 * w[0], e.s2 * w[1]];                // Sigma
+      if (etapa === 2) return w;
+      return rot(e.phi, w);                          // U
+    }
+
+    var d = "", marcas = [];
+    for (i = 0; i <= 120; i++) {
+      var ang = 2 * Math.PI * i / 120;
+      var p = transformar([Math.cos(ang), Math.sin(ang)]);
+      d += (i ? " L" : "M") + px(p).toFixed(1) + "," + py(p).toFixed(1);
+      if (i % 15 === 0) marcas.push(p);
+    }
+    svg.appendChild(el("path", { d: d + " Z", fill: C_A, "fill-opacity": 0.12, stroke: C_A, "stroke-width": 2 }));
+    for (i = 0; i < marcas.length; i++) {
+      svg.appendChild(el("circle", { cx: px(marcas[i]).toFixed(1), cy: py(marcas[i]).toFixed(1), r: 2.6,
+        fill: C_A, "fill-opacity": 0.7 }));
+    }
+    // las direcciones singulares
+    var v1 = transformar([Math.cos(e.theta), Math.sin(e.theta)]);
+    var v2 = transformar([-Math.sin(e.theta), Math.cos(e.theta)]);
+    [[v1, "σ₁"], [v2, "σ₂"]].forEach(function (par) {
+      svg.appendChild(el("line", { x1: CX, y1: CY, x2: px(par[0]).toFixed(1), y2: py(par[0]).toFixed(1),
+        stroke: C_B, "stroke-width": 2.2 }));
+      svg.appendChild(el("text", { x: px(par[0]) + 8, y: py(par[0]) - 5, "font-size": 11, "font-weight": 600, fill: C_B }, par[1]));
+    });
+    svg.appendChild(el("text", { x: 24, y: 26, "font-size": 11, "font-weight": 600, fill: "var(--r-tinta,#222)" }, ETIQUETAS[etapa]));
+
+    lec.innerHTML = "<span class=\"fx\">σ₁ = " + e.s1.toFixed(4) + "   ·   σ₂ = " + e.s2.toFixed(4) +
+      "   ·   κ(A) = σ₁/σ₂ = " + (e.s1 / e.s2).toFixed(4) +
+      "   ·   |det A| = σ₁σ₂ = " + (e.s1 * e.s2).toFixed(4) + "</span><br>" +
+      "Toda matriz hace lo mismo en tres pasos: rotar, estirar cada eje por un valor singular, y rotar otra vez. " +
+      "El círculo acaba siempre en una elipse cuyos semiejes son σ₁ y σ₂. Cuando σ₂ se acerca a cero la elipse se " +
+      "aplasta, el número de condición se dispara y la matriz está cerca de no ser invertible.";
+  }
+
+  selM.addEventListener("change", dibujar);
+  ctlE.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+El visual muestra la lectura geométrica: $V^\top$ rota, $\Sigma$ estira cada eje por su valor singular y $U$ vuelve a rotar. El círculo unitario acaba siempre en una elipse cuyos semiejes son los $\sigma_i$, y cuando el menor se acerca a cero la elipse se aplasta: eso es estar cerca de no ser invertible.
+
+::: {.proposicion}
+**Proposición 11.2 (de dónde salen $\sigma$ y $V$).** Sea $A$ de $m\times n$. La matriz $A^\top A$ es simétrica y semidefinida positiva, de modo que tiene una base ortonormal de eigenvectores $v_1,\dots,v_n$ con eigenvalores $\lambda_1\ge\dots\ge\lambda_n\ge0$. Poniendo $\sigma_i=\sqrt{\lambda_i}$ y, para los $\sigma_i>0$,
+$$u_i = \frac{A v_i}{\sigma_i},$$
+los vectores $u_i$ son ortonormales y cumplen $Av_i=\sigma_iu_i$.
+:::
+
+::: {.demostracion}
+*Demostración.* $A^\top A$ es simétrica porque $(A^\top A)^\top = A^\top A$, y es semidefinida positiva porque $v^\top A^\top Av=\|Av\|^2\ge0$ —el mismo argumento de la Proposición 6.3—, así que sus eigenvalores no son negativos y las raíces existen. Por el teorema espectral de la lección 10 hay una base ortonormal de eigenvectores.
+
+Que los $u_i$ son ortonormales sale de la propia ecuación de eigenvectores:
+$$\langle u_i, u_j\rangle = \frac{(Av_i)^\top(Av_j)}{\sigma_i\sigma_j} = \frac{v_i^\top A^\top A v_j}{\sigma_i\sigma_j} = \frac{\lambda_j\,v_i^\top v_j}{\sigma_i\sigma_j},$$
+que vale $0$ si $i\ne j$ —porque los $v$ son ortogonales— y $\lambda_i/\sigma_i^2=1$ si $i=j$. La igualdad $Av_i=\sigma_iu_i$ es la definición de $u_i$ despejada. Completando $\{u_i\}$ a una base ortonormal de $\mathbb{R}^m$ y $\{v_i\}$ a una de $\mathbb{R}^n$ se obtiene $AV=U\Sigma$, es decir $A=U\Sigma V^\top$. [∎]{.fin-demo}
+:::
+
+::: {.proposicion}
+**Proposición 11.3 (qué se lee en la descomposición).** Con $r$ el número de valores singulares no nulos:
+
+1. $\operatorname{rango}(A)=r$;
+2. $\{u_1,\dots,u_r\}$ es una base ortonormal del espacio columna de $A$;
+3. $\{v_{r+1},\dots,v_n\}$ es una base ortonormal del núcleo de $A$;
+4. $A^\top A = V\Sigma^\top\Sigma V^\top$ y $AA^\top = U\Sigma\Sigma^\top U^\top$: los eigenvalores de ambas son los $\sigma_i^2$.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (3): si $i>r$ entonces $\sigma_i=0$ y $\|Av_i\|^2 = v_i^\top A^\top Av_i = \lambda_i = 0$, luego $Av_i=0$ y $v_i$ está en el núcleo; recíprocamente, si $Ax=0$, escribiendo $x=\sum_i c_iv_i$ se tiene $0=Ax=\sum_{i\le r}c_i\sigma_iu_i$, y por independencia de los $u_i$ todos los $c_i$ con $i\le r$ son nulos. Para (2): todo $Ax$ es $\sum_{i\le r}c_i\sigma_iu_i$, una combinación de los primeros $r$ vectores $u_i$, y cada $u_i$ está en el espacio columna por ser $Av_i/\sigma_i$. (1) sale de (2) contando dimensiones, y también del teorema del rango-nulidad de la lección 3 aplicado a (3). Para (4), sustitúyase $A=U\Sigma V^\top$ y úsese $U^\top U=I$. [∎]{.fin-demo}
+:::
+
+## 2. La mejor aproximación de rango bajo
+
+Escribiendo la descomposición por columnas, $A=\sum_{i=1}^{r}\sigma_i\,u_iv_i^\top$: una suma de matrices de rango uno, ordenadas de mayor a menor peso. Quedarse con las primeras es la forma natural de aproximar.
+
+::: {.proposicion}
+**Proposición 11.4 (error de truncar).** Sea $A_k=\sum_{i\le k}\sigma_iu_iv_i^\top$. Entonces
+$$\|A-A_k\|_F = \sqrt{\sum_{i>k}\sigma_i^2}.$$
+:::
+
+::: {.demostracion}
+*Demostración.* $A-A_k=\sum_{i>k}\sigma_iu_iv_i^\top$. La norma de Frobenius al cuadrado es la traza de $M^\top M$, y
+$$\Big(\sum_{i>k}\sigma_iu_iv_i^\top\Big)^\top\Big(\sum_{j>k}\sigma_ju_jv_j^\top\Big) = \sum_{i,j>k}\sigma_i\sigma_j\,v_i\underbrace{u_i^\top u_j}_{\delta_{ij}}v_j^\top = \sum_{i>k}\sigma_i^2\,v_iv_i^\top,$$
+cuya traza es $\sum_{i>k}\sigma_i^2$ porque $\operatorname{traza}(v_iv_i^\top)=\|v_i\|^2=1$. [∎]{.fin-demo}
+:::
+
+::: {.proposicion}
+**Teorema 11.5 (Eckart-Young, enunciado).** Entre **todas** las matrices de rango a lo sumo $k$, ninguna se acerca a $A$ más que $A_k$: para toda $B$ con $\operatorname{rango}(B)\le k$,
+$$\|A-B\|_F \;\ge\; \|A-A_k\|_F.$$
+:::
+
+La optimalidad **no se demuestra aquí**: necesita un argumento sobre subespacios que este plan no ha visto, y queda declarado en Fuentes. Lo que sí se puede hacer es comprobarla: la celda de abajo enfrenta la truncada contra dos mil matrices de rango $k$ generadas al azar, y ninguna la mejora.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(11)
+A = rng.normal(size=(6, 4))
+
+U, s, Vt = np.linalg.svd(A, full_matrices=False)
+print("formas:  U", U.shape, "  s", s.shape, "  V^T", Vt.shape)
+print("valores singulares:", s.round(6))
+print()
+print("A = U S V^T ?", bool(np.allclose(U @ np.diag(s) @ Vt, A)))
+print("U^T U = I  ?", bool(np.allclose(U.T @ U, np.eye(4))))
+print("V^T V = I  ?", bool(np.allclose(Vt @ Vt.T, np.eye(4))))
+print()
+# los valores singulares son las raices de los eigenvalores de A^T A
+lam = np.linalg.eigvalsh(A.T @ A)[::-1]
+print("eigenvalores de A^T A:", lam.round(6))
+print("sus raices           :", np.sqrt(np.maximum(lam, 0)).round(6))
+print("coinciden con s:", bool(np.allclose(np.sqrt(np.maximum(lam, 0)), s)))
+print()
+# y las columnas de V son sus eigenvectores: A v_i = s_i u_i
+V = Vt.T
+for i in range(4):
+    izq = A @ V[:, i]
+    der = s[i] * U[:, i]
+    print(f"  A v{i+1} = s{i+1} u{i+1} ?", bool(np.allclose(izq, der)))
+```
+
+```{=html}
+<div class="viz-rango">
+  <div class="controles">
+    <label>Componentes k <input id="rk-k" type="range" min="0" max="8" step="1" value="2"> <span id="rk-k-v">2</span> de 8</label>
+    <label>Caída de los σ <select id="rk-caida">
+      <option value="rapida" selected>rápida</option>
+      <option value="lenta">lenta</option>
+    </select></label>
+  </div>
+  <svg id="rk-svg" viewBox="0 0 620 290" role="img" aria-label="A la izquierda la matriz original dibujada como una cuadricula de grises, en el centro su reconstruccion con las primeras k componentes de la descomposicion, y a la derecha el espectro de valores singulares con los usados resaltados."></svg>
+  <p class="lectura" id="rk-lectura"></p>
+</div>
+<style>
+.viz-rango { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-rango .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-rango label { display: flex; align-items: center; gap: .4rem; }
+.viz-rango select, .viz-rango input[type=range] { font-size: .85rem; padding: .2rem .4rem; border-radius: 5px; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-rango input[type=range] { width: 120px; padding: 0; }
+.viz-rango svg { width: 100%; height: auto; display: block; }
+.viz-rango .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5em; line-height: 1.6; }
+.viz-rango .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_SP = "#0F6E68", C_OFF = "#c9ccd1";
+  var svg = document.getElementById("rk-svg"), lec = document.getElementById("rk-lectura");
+  var ctlK = document.getElementById("rk-k"), etqK = document.getElementById("rk-k-v");
+  var selC = document.getElementById("rk-caida");
+
+  // La matriz se CONSTRUYE como suma de ocho terminos de rango uno con vectores
+  // ortonormales, asi que su SVD se conoce de antemano y truncarla es exacto.
+  var N = 24, R = 8, CEL = 8.2;
+  var AX = 34, AY = 54, BX = 250, CX0 = 470, CX1 = 600, CY0 = 250, CY1 = 60;
+  var SIGMAS = { rapida: [10, 5, 2.5, 1.2, 0.6, 0.3, 0.15, 0.07],
+                 lenta:  [10, 8.5, 7, 5.8, 4.6, 3.6, 2.7, 2] };
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // base de cosenos: ortonormal por construccion
+  function base(i) {
+    var v = [], n, s = 0;
+    for (n = 0; n < N; n++) { var x = Math.cos(Math.PI * i * (n + 0.5) / N); v.push(x); s += x * x; }
+    s = Math.sqrt(s);
+    return v.map(function (x) { return x / s; });
+  }
+  var U = [], V = [], i;
+  for (i = 0; i < R; i++) { U.push(base(i)); V.push(base(i + 1)); }
+
+  function reconstruir(k, sig) {
+    var M = [], f, c, t;
+    for (f = 0; f < N; f++) { M.push(new Array(N).fill(0)); }
+    for (t = 0; t < k; t++) {
+      for (f = 0; f < N; f++) for (c = 0; c < N; c++) M[f][c] += sig[t] * U[t][f] * V[t][c];
+    }
+    return M;
+  }
+
+  function pintar(M, x0, y0, titulo) {
+    var f, c, maxv = 0;
+    for (f = 0; f < N; f++) for (c = 0; c < N; c++) maxv = Math.max(maxv, Math.abs(M[f][c]));
+    var ESCALA = 2.6;                     // escala FIJA, no depende de la matriz
+    for (f = 0; f < N; f++) {
+      for (c = 0; c < N; c++) {
+        var v = Math.max(-1, Math.min(1, M[f][c] / ESCALA));
+        var g = Math.round(255 - 210 * Math.abs(v));
+        var color = v >= 0 ? "rgb(" + g + "," + Math.round(g * 0.94 + 12) + "," + Math.round(g * 0.92 + 10) + ")"
+                           : "rgb(" + Math.round(g * 0.98 + 5) + "," + Math.round(g * 0.9) + "," + Math.round(g * 0.8) + ")";
+        svg.appendChild(el("rect", { x: (x0 + c * CEL).toFixed(1), y: (y0 + f * CEL).toFixed(1),
+          width: CEL, height: CEL, fill: color }));
+      }
+    }
+    svg.appendChild(el("rect", { x: x0, y: y0, width: N * CEL, height: N * CEL, fill: "none", stroke: "var(--r-linea,#ccc)" }));
+    svg.appendChild(el("text", { x: x0, y: y0 - 10, "font-size": 11, "font-weight": 600, fill: "var(--r-tinta,#222)" }, titulo));
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var k = +ctlK.value, sig = SIGMAS[selC.value], i;
+    etqK.textContent = k;
+    var A = reconstruir(R, sig), Ak = reconstruir(k, sig);
+    pintar(A, AX, AY, "la matriz completa");
+    pintar(Ak, BX, AY, k === 0 ? "reconstrucción con 0 componentes" : "con " + k + (k === 1 ? " componente" : " componentes"));
+
+    // espectro
+    var maxs = sig[0];
+    for (i = 0; i < R; i++) {
+      var h = (CY0 - CY1) * sig[i] / maxs;
+      svg.appendChild(el("rect", { x: (CX0 + i * 16).toFixed(1), y: (CY0 - h).toFixed(1), width: 12, height: h.toFixed(1),
+        fill: i < k ? C_SP : C_OFF, "fill-opacity": i < k ? 0.85 : 0.6 }));
+    }
+    svg.appendChild(el("line", { x1: CX0, y1: CY0, x2: CX1, y2: CY0, stroke: "var(--r-linea,#ccc)" }));
+    // la frontera entre lo que se guarda y lo que se tira: se mueve con k
+    svg.appendChild(el("line", { x1: (CX0 + k * 16 - 2).toFixed(1), y1: CY1 - 6, x2: (CX0 + k * 16 - 2).toFixed(1), y2: CY0 + 6,
+      stroke: "var(--r-tinta,#1f2430)", "stroke-width": 1.6, "stroke-dasharray": "4 3" }));
+    // curva del error al truncar, con el punto en la k elegida
+    var errs = [], acum = 0, tot2 = 0, j;
+    for (j = 0; j < R; j++) tot2 += sig[j] * sig[j];
+    for (j = R; j >= 0; j--) {
+      var e2 = 0, q;
+      for (q = j; q < R; q++) e2 += sig[q] * sig[q];
+      errs[j] = Math.sqrt(e2 / tot2);
+    }
+    var dcurva = "";
+    for (j = 0; j <= R; j++) {
+      dcurva += (j ? " L" : "M") + (CX0 + j * 16 - 2).toFixed(1) + "," + (CY0 + 34 - 26 * errs[j]).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: dcurva, fill: "none", stroke: "#B45309", "stroke-width": 1.8 }));
+    svg.appendChild(el("circle", { cx: (CX0 + k * 16 - 2).toFixed(1), cy: (CY0 + 34 - 26 * errs[k]).toFixed(1),
+      r: 4, fill: "#B45309" }));
+    svg.appendChild(el("text", { x: CX0, y: CY1 - 16, "font-size": 11, "font-weight": 600, fill: "var(--r-tinta,#222)" }, "valores singulares"));
+    svg.appendChild(el("text", { x: CX0, y: CY0 + 50, "font-size": 9, fill: "#B45309" }, "error relativo al truncar"));
+
+    var err2 = 0, tot = 0;
+    for (i = 0; i < R; i++) { tot += sig[i] * sig[i]; if (i >= k) err2 += sig[i] * sig[i]; }
+    lec.innerHTML = "<span class=\"fx\">k = " + k + " de " + R +
+      "   ·   error ‖A − A_k‖ = √(Σ_{i>k} σᵢ²) = " + Math.sqrt(err2).toFixed(4) +
+      "   ·   energía capturada " + ((1 - err2 / tot) * 100).toFixed(2) + " %" +
+      "   ·   números guardados " + (k * (2 * N + 1)) + " de " + (N * N) + "</span><br>" +
+      "Cada componente añade un término de rango uno, σᵢuᵢvᵢᵀ, y el error de quedarse con los k primeros es la raíz " +
+      "de la suma de los σ descartados. Con los valores singulares cayendo rápido, tres componentes bastan para que " +
+      "la reconstrucción sea indistinguible; con una caída lenta no hay atajo, y ahí la compresión no sirve de nada.";
+  }
+
+  ctlK.addEventListener("input", dibujar);
+  selC.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+```{pyodide}
+import numpy as np
+
+# Eckart-Young: truncar la SVD da la mejor aproximacion de rango k, y el error
+# es exactamente la raiz de la suma de los valores singulares descartados.
+rng = np.random.default_rng(110)
+A = rng.normal(size=(40, 25))
+U, s, Vt = np.linalg.svd(A, full_matrices=False)
+
+print(" k   error de truncar    raiz(suma de s_i^2 descartados)   ¿coinciden?")
+for k in [1, 3, 5, 10, 20]:
+    Ak = U[:, :k] @ np.diag(s[:k]) @ Vt[:k]
+    err = np.linalg.norm(A - Ak)                  # norma de Frobenius
+    formula = np.sqrt((s[k:] ** 2).sum())
+    print(f"{k:3d}      {err:12.8f}      {formula:20.8f}       {bool(abs(err-formula) < 1e-9)}")
+print()
+# ninguna otra matriz de rango k lo mejora: se prueban 2000 al azar
+k = 5
+Ak = U[:, :k] @ np.diag(s[:k]) @ Vt[:k]
+mejor = np.linalg.norm(A - Ak)
+peor_rival = np.inf
+for _ in range(2000):
+    B = rng.normal(size=(40, k)) @ rng.normal(size=(k, 25))
+    B *= (A * B).sum() / (B * B).sum()            # escalar al mejor multiplo
+    peor_rival = min(peor_rival, np.linalg.norm(A - B))
+print(f"error de la SVD truncada a rango {k}: {mejor:.6f}")
+print(f"mejor de 2000 matrices aleatorias de rango {k}: {peor_rival:.6f}")
+print(f"ninguna la mejora: {bool(peor_rival >= mejor - 1e-9)}")
+print()
+print(f"energia capturada por los {k} primeros: "
+      f"{(s[:k]**2).sum() / (s**2).sum():.4f} de la total")
+```
+
+## 3. La deuda de la lección 6, saldada
+
+La Proposición 6.8 afirmó sin demostración que formar $A^\top A$ eleva al cuadrado el número de condición. Con la descomposición en valores singulares la demostración cabe en tres líneas.
+
+::: {.definicion}
+**Definición 11.6 (número de condición).** Para $A$ de rango completo, $\kappa(A)=\sigma_1/\sigma_r$: cuánto separa la matriz la dirección que más estira de la que menos.
+:::
+
+::: {.proposicion}
+**Proposición 11.7 (el condicionamiento se eleva al cuadrado).** Para toda $A$ de rango columna completo,
+$$\kappa(A^\top A) = \kappa(A)^2.$$
+:::
+
+::: {.demostracion}
+*Demostración.* Por el apartado (4) de la Proposición 11.3, $A^\top A = V\Sigma^\top\Sigma V^\top$ es una diagonalización ortogonal cuyos eigenvalores son $\sigma_1^2,\dots,\sigma_n^2$. Como $A^\top A$ es simétrica, sus valores singulares coinciden con el valor absoluto de sus eigenvalores, de modo que
+$$\kappa(A^\top A) = \frac{\sigma_1^2}{\sigma_n^2} = \left(\frac{\sigma_1}{\sigma_n}\right)^2 = \kappa(A)^2.$$
+[∎]{.fin-demo}
+:::
+
+La consecuencia práctica ya estaba anunciada en la lección 6 y ahora tiene demostración: resolver mínimos cuadrados formando $A^\top A$ trabaja con un condicionamiento al cuadrado, y por eso se factoriza $A$ —con QR o con esta descomposición— en vez de multiplicarla por su traspuesta.
+
+```{pyodide}
+import numpy as np
+
+# La deuda de la leccion 6: por que kappa(A^T A) = kappa(A)^2.
+# Con la SVD es una linea: los valores singulares de A^T A son los de A al cuadrado.
+rng = np.random.default_rng(1101)
+
+print(" caso            cond(A)        cond(A^T A)      cond(A)^2      razon")
+for etiqueta, A in [
+    ("bien condicionada", rng.normal(size=(50, 5))),
+    ("dos columnas casi iguales", None),
+    ("escalas muy distintas", None),
+]:
+    if etiqueta == "dos columnas casi iguales":
+        x = rng.normal(size=50)
+        A = np.column_stack([x, x + 1e-5 * rng.normal(size=50), rng.normal(size=(50, 3))])
+    elif etiqueta == "escalas muy distintas":
+        A = rng.normal(size=(50, 5)) * np.array([1.0, 1e-3, 1e3, 1.0, 1e-2])
+    kA = np.linalg.cond(A)
+    kAtA = np.linalg.cond(A.T @ A)
+    print(f"{etiqueta:26s} {kA:.4e}   {kAtA:.4e}   {kA**2:.4e}   {kAtA/kA**2:.6f}")
+print()
+s = np.linalg.svd(A, compute_uv=False)
+print("valores singulares del ultimo caso:", s.round(8))
+print(f"cond(A) = s_max/s_min = {s.max()/s.min():.6e}")
+print(f"np.linalg.cond(A)     = {np.linalg.cond(A):.6e}")
+print(f"coinciden: {bool(abs(s.max()/s.min() - np.linalg.cond(A)) < 1e-6 * np.linalg.cond(A))}")
+print()
+print("los eigenvalores de A^T A son los s_i^2:")
+lam = np.linalg.eigvalsh(A.T @ A)[::-1]
+print("  eigenvalores:", lam.round(8))
+print("  s_i^2       :", (s ** 2).round(8))
+print("  coinciden:", bool(np.allclose(lam, s ** 2)))
+```
+
+La última columna da $1{,}000000$ en los tres casos, incluidos los dos diseños mal condicionados: la igualdad de la Proposición 11.7 es exacta, no aproximada.
+
+## Ejercicios
+
+### Ejercicio 1 — La pseudoinversa y el sistema sin solución
+
+Cuando $A$ no tiene rango completo, las ecuaciones normales no se pueden resolver porque $A^\top A$ no es invertible. La descomposición da la salida: invertir solo los valores singulares no nulos. Comprobar que la solución que se obtiene es la de **norma mínima** entre todas las que minimizan $\|b-Ax\|$.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(1102)
+B = rng.normal(size=(8, 2))
+A = np.column_stack([B, B @ np.array([[1.0], [2.0]])])    # tercera columna dependiente
+b = rng.normal(size=8)
+
+print("rango de A:", int(np.linalg.matrix_rank(A)), "de", A.shape[1], "columnas")
+U, s, Vt = np.linalg.svd(A, full_matrices=False)
+print("valores singulares:", s.round(8))
+print()
+
+tol = 1e-10
+s_inv = np.array([1 / si if si > tol else 0.0 for si in s])   # invertir solo los no nulos
+x_svd = (Vt.T * s_inv) @ (U.T @ b)
+x_pinv = np.linalg.pinv(A) @ b
+x_lstsq, *_ = np.linalg.lstsq(A, b, rcond=None)
+
+print("x por la SVD a mano:", x_svd.round(6))
+print("x por np.linalg.pinv:", x_pinv.round(6))
+print("x por lstsq         :", x_lstsq.round(6))
+print("coinciden:", bool(np.allclose(x_svd, x_pinv) and np.allclose(x_svd, x_lstsq)))
+print()
+# es la de norma minima entre las que dan el mismo residuo
+r0 = np.linalg.norm(b - A @ x_svd)
+nulo = Vt[-1]                                   # direccion del nucleo
+print(f"norma del residuo: {r0:.8f}   ·   norma de x: {np.linalg.norm(x_svd):.6f}")
+peor = True
+for t in [-2.0, -0.5, 0.5, 2.0]:
+    x2 = x_svd + t * nulo
+    r2 = np.linalg.norm(b - A @ x2)
+    peor = peor and (np.linalg.norm(x2) >= np.linalg.norm(x_svd) - 1e-12)
+    print(f"  x + {t:+.1f}·(vector del núcleo):  residuo {r2:.8f}   norma {np.linalg.norm(x2):.6f}")
+print("ninguna alternativa tiene norma menor con el mismo residuo:", bool(peor))
+```
+
+### Ejercicio 2 — Cuánto se puede comprimir
+
+Generar dos matrices $60\times60$: una con valores singulares que caen geométricamente y otra con ruido puro. Medir cuántas componentes hacen falta en cada una para capturar el 95 % de la energía, y explicar la diferencia.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(1103)
+
+def energia_hasta(s, objetivo=0.95):
+    acum = np.cumsum(s ** 2) / (s ** 2).sum()
+    return int(np.searchsorted(acum, objetivo) + 1)
+
+# estructura: suma de pocas componentes fuertes mas un poco de ruido
+U0 = np.linalg.qr(rng.normal(size=(60, 60)))[0]
+V0 = np.linalg.qr(rng.normal(size=(60, 60)))[0]
+s_estructura = np.array([10 * 0.6 ** i for i in range(60)])
+A_estr = U0 @ np.diag(s_estructura) @ V0.T + 0.01 * rng.normal(size=(60, 60))
+A_ruido = rng.normal(size=(60, 60))
+
+for nombre, M in [("con estructura", A_estr), ("ruido puro", A_ruido)]:
+    s = np.linalg.svd(M, compute_uv=False)
+    k95 = energia_hasta(s)
+    print(f"{nombre:16s}  s1 = {s[0]:8.4f}   s60 = {s[-1]:8.4f}   "
+          f"s1/s60 = {s[0]/s[-1]:10.2f}   componentes para el 95 %: {k95:3d} de 60")
+print()
+print("Con estructura, unas pocas componentes bastan: eso es lo que hace posible comprimir.")
+print("Con ruido puro el espectro es plano y no hay nada que truncar sin perder.")
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Mat 11**:
+
+1. Escribir `svd_por_eigen(A)` que construya la descomposición diagonalizando $A^\top A$ —tal como hace la Proposición 11.2— y compararla con `np.linalg.svd` en cien matrices aleatorias. Medir el error y explicar por qué esta ruta es **numéricamente peor** que la que usa LAPACK, con la Proposición 11.7 en la mano.
+2. Tomar una imagen en escala de grises, calcular su descomposición y graficar el error de reconstrucción y el número de valores guardados en función de $k$. Encontrar el $k$ donde la imagen deja de distinguirse a simple vista y compararlo con el que captura el 95 % de la energía.
+3. Comprobar que el análisis de componentes principales de un conjunto de datos centrado es la descomposición de la matriz de datos: las direcciones principales son las columnas de $V$ y las varianzas explicadas son $\sigma_i^2/(n-1)$. Contrastarlo con los eigenvalores de la matriz de covarianza de Estadística 12.
+
+## Del libro
+
+*Mathematics for Machine Learning* dedica §4.5 *Singular Value Decomposition* a la construcción y §4.6 *Matrix Approximation* a la aproximación de rango bajo y al teorema de Eckart-Young. El libro tiene copyright y no es descargable desde el entorno en que se escribió esta página, así que se cita número y título y no se le atribuye ninguna frase.
+
+**Preguntas para leer §4.5 y §4.6 con lápiz:**
+
+1. MML construye la descomposición igual que la Proposición 11.2, diagonalizando $A^\top A$. ¿En qué punto exacto de esa construcción se usa que los eigenvalores de $A^\top A$ no sean negativos?
+2. §4.6 enuncia Eckart-Young en norma espectral además de en Frobenius. ¿Cambia el minimizador al cambiar de norma, según el libro?
+3. El libro relaciona la descomposición con el análisis de componentes principales. ¿Qué matriz hay que descomponer para que las direcciones principales salgan en $V$, y por qué hay que centrar antes?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/svd.md`, enlazada a [[diagonalizacion]], [[minimos-cuadrados]] y [[matriz-de-covarianza]]. La Proposición 11.7 conviene rehacerla a mano: son tres líneas y salda una deuda que llevaba cinco lecciones abierta.
+
+```
+¿Qué es la SVD de una matriz?::A = U Σ Vᵀ con U y V ortogonales y Σ diagonal no negativa
+¿Qué matrices la tienen?::Todas, cuadradas o no; a diferencia de la diagonalización, no exige nada
+¿De dónde salen los valores singulares?::Son las raíces de los eigenvalores de AᵀA, que es simétrica y semidefinida positiva
+¿Qué relación hay entre uᵢ y vᵢ?::A vᵢ = σᵢ uᵢ: la matriz manda la base de la derecha a la de la izquierda, estirando
+¿Cómo se lee el rango en la SVD?::Es el número de valores singulares no nulos
+¿Dónde está el espacio columna?::En las primeras r columnas de U; el núcleo, en las últimas columnas de V
+¿Cuánto vale el error de truncar a rango k?::La raíz de la suma de los σᵢ² descartados (Proposición 11.4)
+¿Qué dice Eckart-Young?::Que ninguna matriz de rango k se acerca más que la SVD truncada
+¿Qué es el número de condición?::σ₁/σᵣ: cuánto separa la dirección que más estira de la que menos
+¿Por qué κ(AᵀA) = κ(A)²?::Porque los eigenvalores de AᵀA son los σᵢ², así que el cociente extremo se eleva al cuadrado
+¿Qué hace la pseudoinversa?::Invertir solo los valores singulares no nulos; da la solución de norma mínima
+¿Qué espectro permite comprimir?::Uno que cae rápido; con ruido puro el espectro es plano y no hay nada que truncar
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** Las Proposiciones 11.2, 11.3, 11.4 y 11.7 se demuestran aquí, a partir del teorema espectral de la lección 10 y de la ortonormalidad de la lección 7. Se comprueban además numéricamente: $A=U\Sigma V^\top$ con $U$ y $V$ ortonormales y $\sigma_i=\sqrt{\lambda_i(A^\top A)}$; las cuatro igualdades $Av_i=\sigma_iu_i$; el error de truncar contra $\sqrt{\sum_{i>k}\sigma_i^2}$ en cinco valores de $k$; la optimalidad de Eckart-Young contra 2 000 matrices de rango $k$ al azar; $\kappa(A^\top A)=\kappa(A)^2$ en tres diseños, incluidos dos mal condicionados; y la pseudoinversa dando la solución de norma mínima. Los dos visuales se contrastaron antes de publicarse: 3 matrices × 4 etapas para el primero, y 2 espectros × 9 truncamientos para el segundo, construido a partir de una matriz cuya descomposición se conoce de antemano por diseño.
+
+**Lo que se usa de otras lecciones sin repetir.** El teorema espectral y la diagonalización ortogonal son la lección 10. Que $v^\top A^\top Av=\|Av\|^2$ y la condición de rango columna completo, la lección 6. Rango, espacio columna y núcleo, la lección 3.
+
+**Lo que se enuncia sin demostrar.** El teorema de Eckart-Young, es decir la **optimalidad** de la truncada entre todas las matrices de rango $k$; aquí solo se demuestra el valor del error al truncar. La optimalidad se comprueba numéricamente contra 2 000 rivales, lo que no es una demostración.
+
+**Lo que viene de los libros.**
+
+- [*Mathematics for Machine Learning*](https://mml-book.github.io/book/mml-book.pdf) (Deisenroth, Faisal & Ong, Cambridge University Press, 2020), §4.5 *Singular Value Decomposition* y §4.6 *Matrix Approximation* — citadas por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La Proposición 11.7 presentada como el pago de una deuda concreta de la lección 6, con su comprobación numérica en tres diseños; y el visual de las tres etapas, que separa rotar, estirar y rotar en pasos que se pueden mirar de uno en uno.
+
+[Índices verificados el 12-09-2026 contra el índice publicado del PDF oficial.]{.sello}
+:::
+
+→ Siguiente: [Formas cuadráticas](12-formas-cuadraticas.qmd)
