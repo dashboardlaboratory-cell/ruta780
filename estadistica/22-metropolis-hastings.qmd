@@ -1,0 +1,667 @@
+---
+title: "Metropolis-Hastings desde cero"
+subtitle: "Estadística · Lección 22"
+nivel: L3
+modulo: estadistica
+fase: F5
+prereqs: [estadistica/19-priors-conjugados, estadistica/11-bootstrap]
+siguientes: [estadistica/23-gibbs-sampling]
+libro: "Think Bayes 2e §19 MCMC"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="estadistica/22-metropolis-hastings"}
+[[L3]{.nivel .nivel-L3} **Derivación**]{.item}
+[**Fase** F5]{.item}
+[**Libro** Think Bayes 2e §19]{.item}
+[**Prereqs** [Priors conjugados](19-priors-conjugados.qmd) · [Bootstrap](11-bootstrap.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir [cadena de Markov]{.g data-t="cadena de Markov"}, [distribución estacionaria]{.g data-t="distribución estacionaria"} y [balance detallado]{.g data-t="balance detallado"}, y demostrar que el balance detallado implica la estacionariedad.
+2. Demostrar que el núcleo de [Metropolis-Hastings]{.g data-t="Metropolis-Hastings"} cumple el balance detallado respecto del objetivo, y deducir que la constante de normalización se cancela: basta conocer el posterior salvo un factor.
+3. Escribir el algoritmo en diez líneas y verificarlo contra un posterior conjugado de respuesta conocida.
+4. Demostrar cómo la [autocorrelación]{.g data-t="autocorrelación"} de la cadena infla la varianza de sus promedios, calcular el [tamaño de muestra efectivo]{.g data-t="tamaño de muestra efectivo"} y usarlo para elegir el paso.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Estadística 21**: la verosimilitud marginal, la integral que no se sabe calcular. Este método existe porque no hace falta calcularla para muestrear el posterior.
+- **Estadística 19**: los casos conjugados. Aquí sirven de banco de pruebas: se aplica el método a un problema cuya respuesta ya se sabe y se comprueba que la reproduce.
+- **Estadística 11**: el bootstrap ya resolvía por simulación lo que no salía en forma cerrada. La idea es la misma; lo que cambia es que aquí las muestras están **correlacionadas**, y eso cuesta.
+- **Estadística 5**: la correlación entre observaciones sucesivas, que en la sección 4 es lo que decide cuántas muestras hacen falta.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Lección 23**: Gibbs es un caso particular en el que la propuesta es la condicional exacta y la aceptación vale siempre uno.
+- **Lección 24**: los diagnósticos de cadena responden a la pregunta que esta lección deja abierta, que es cuándo parar.
+- **Lección 25**: PyMC hace esto por dentro con propuestas mejores; saber qué hace evita tratarlo como una caja negra.
+- **Estadística 12**: en más de una dimensión la forma del posterior —su matriz de covarianza— decide cuánto cuesta recorrerlo, y ahí la lección 12 vuelve a hacer falta.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Símbolo | Se lee | Significado |
+|---|---|---|
+| $\pi(\theta)$ | pi de theta | La distribución **objetivo**, aquí el posterior; se conoce salvo constante |
+| $\tilde\pi(\theta)$ | pi tilde de theta | Una función con $\pi=\tilde\pi/Z$: el posterior sin normalizar |
+| $Z$ | zeta | La constante desconocida, $\int\tilde\pi$ |
+| $q(y\mid x)$ | cu de ye dado equis | La densidad de **propuesta**: desde dónde se salta y adónde |
+| $\alpha(x,y)$ | alfa | La probabilidad de aceptar el salto de $x$ a $y$ |
+| $P(x,y)$ | pe de equis, ye | El núcleo de transición de la cadena |
+| $\rho_k$ | rho sub ka | La autocorrelación de la cadena a retardo $k$ |
+| $\tau$ | tau | El factor de ineficiencia, $1+2\sum_k\rho_k$ |
+:::
+
+## 1. El problema
+
+Las lecciones 19 y 20 vivían de la conjugación. Fuera de ella, el posterior se conoce solo así:
+
+$$\pi(\theta\mid x)=\frac{p(x\mid\theta)\,\pi(\theta)}{Z},\qquad Z=\int p(x\mid\theta)\,\pi(\theta)\,d\theta,$$
+
+con $Z$ imposible de calcular en cuanto $\theta$ tiene más de dos o tres componentes: una rejilla de cien puntos por dimensión son $10^{10}$ evaluaciones en cinco dimensiones y $10^{20}$ en diez. El numerador, en cambio, se evalúa en un instante para cualquier $\theta$.
+
+La pregunta que resuelve esta lección es si eso basta. Y basta: se puede **muestrear** de $\pi$ conociendo solo $\tilde\pi=p(x\mid\theta)\pi(\theta)$, sin tocar $Z$. Con muestras, cualquier esperanza se aproxima por un promedio, y el posterior queda descrito.
+
+## 2. Cadenas y balance detallado
+
+::: {.definicion}
+**Definición 22.1 (cadena de Markov).** Una sucesión $\theta_0,\theta_1,\dots$ es una cadena de Markov con núcleo $P$ si la distribución de $\theta_{t+1}$ depende del pasado solo a través de $\theta_t$:
+$$P(x,A)=\Pr(\theta_{t+1}\in A\mid \theta_t=x).$$
+:::
+
+::: {.definicion}
+**Definición 22.2 (distribución estacionaria).** Una distribución $\pi$ es estacionaria para $P$ si al arrancar en $\pi$ se sigue en $\pi$: en el caso discreto, $\sum_x \pi(x)P(x,y)=\pi(y)$ para todo $y$.
+:::
+
+::: {.definicion}
+**Definición 22.3 (balance detallado).** El núcleo $P$ cumple el balance detallado respecto de $\pi$ si
+$$\pi(x)\,P(x,y)=\pi(y)\,P(y,x)\qquad\text{para todo par }x,y.$$
+Es decir, en equilibrio pasa tanta masa de $x$ a $y$ como de $y$ a $x$.
+:::
+
+::: {.proposicion}
+**Proposición 22.4 (el balance detallado basta).** Si $P$ cumple el balance detallado respecto de $\pi$, entonces $\pi$ es estacionaria para $P$.
+:::
+
+::: {.demostracion}
+*Demostración.* Sumando la igualdad del balance detallado sobre $x$,
+$$\sum_x \pi(x)P(x,y)=\sum_x \pi(y)P(y,x)=\pi(y)\sum_x P(y,x)=\pi(y),$$
+porque las probabilidades de transición desde $y$ suman uno. Eso es exactamente la Definición 22.2. [∎]{.fin-demo}
+:::
+
+El recíproco es falso, y conviene saberlo: hay cadenas con distribución estacionaria que no cumplen el balance detallado. Lo que la proposición ofrece es una condición **suficiente** y, sobre todo, **local**: se comprueba mirando pares de estados, sin sumar sobre nada. Eso es lo que hace posible diseñar un núcleo a medida.
+
+## 3. El algoritmo
+
+::: {.definicion}
+**Definición 22.5 (Metropolis-Hastings).** Dada una función $\tilde\pi>0$ proporcional al objetivo y una densidad de propuesta $q(\cdot\mid\cdot)$, desde el estado $x$:
+
+1. Proponer $y\sim q(\cdot\mid x)$.
+2. Calcular la razón de aceptación
+   $$\alpha(x,y)=\min\left(1,\;\frac{\tilde\pi(y)\,q(x\mid y)}{\tilde\pi(x)\,q(y\mid x)}\right).$$
+3. Con probabilidad $\alpha(x,y)$ moverse a $y$; en otro caso **quedarse en $x$ y anotar $x$ otra vez**.
+:::
+
+El tercer punto es donde se equivoca casi todo el que lo implementa por primera vez: un rechazo no se descarta, se repite. Si se descartara, la cadena no tendría la distribución estacionaria que la proposición siguiente le atribuye.
+
+::: {.proposicion}
+**Proposición 22.6 (Metropolis-Hastings cumple el balance detallado).** El núcleo de la Definición 22.5 cumple el balance detallado respecto de $\pi=\tilde\pi/Z$, cualquiera que sea $Z>0$.
+:::
+
+::: {.demostracion}
+*Demostración.* Para $x\ne y$ el núcleo es $P(x,y)=q(y\mid x)\,\alpha(x,y)$, porque llegar a $y$ exige proponerlo y aceptarlo. Sustituyendo esa expresión en la Definición 22.3, lo que hay que probar es
+$$\pi(x)\,q(y\mid x)\,\alpha(x,y)=\pi(y)\,q(x\mid y)\,\alpha(y,x).$$
+Escríbase $r=\dfrac{\pi(y)\,q(x\mid y)}{\pi(x)\,q(y\mid x)}$, de modo que $\alpha(x,y)=\min(1,r)$ y $\alpha(y,x)=\min(1,1/r)$. Se distinguen dos casos.
+
+Si $r\le1$: entonces $\alpha(x,y)=r$ y $\alpha(y,x)=1$, y el lado izquierdo vale
+$$\pi(x)\,q(y\mid x)\cdot\frac{\pi(y)q(x\mid y)}{\pi(x)q(y\mid x)}=\pi(y)\,q(x\mid y),$$
+que es el lado derecho.
+
+Si $r>1$: entonces $\alpha(x,y)=1$ y $\alpha(y,x)=1/r$, y ahora es el lado derecho el que vale
+$$\pi(y)\,q(x\mid y)\cdot\frac{\pi(x)q(y\mid x)}{\pi(y)q(x\mid y)}=\pi(x)\,q(y\mid x),$$
+que es el lado izquierdo. Para $x=y$ la igualdad es trivial. Por la Proposición 22.4, $\pi$ es estacionaria. [∎]{.fin-demo}
+:::
+
+::: {.proposicion}
+**Corolario 22.7 (la constante se cancela).** La razón $\alpha$ de la Definición 22.5 no cambia si se sustituye $\tilde\pi$ por $c\,\tilde\pi$ con $c>0$. En particular el algoritmo se puede correr con $\tilde\pi=p(x\mid\theta)\pi(\theta)$ sin conocer $Z$.
+:::
+
+::: {.demostracion}
+*Demostración.* $\tilde\pi$ aparece en $\alpha$ solo como el cociente $\tilde\pi(y)/\tilde\pi(x)$, y ese cociente es invariante al multiplicar por $c$. [∎]{.fin-demo}
+:::
+
+Ahí está todo. La integral de la lección 21, la que no se sabe hacer, entra en la fórmula dividida por sí misma. El método no la calcula: la evita.
+
+::: {.proposicion}
+**Proposición 22.8 (caso simétrico).** Si la propuesta es simétrica, $q(y\mid x)=q(x\mid y)$ —por ejemplo $y=x+\varepsilon$ con $\varepsilon$ de una densidad simétrica alrededor de cero—, entonces
+$$\alpha(x,y)=\min\left(1,\;\frac{\tilde\pi(y)}{\tilde\pi(x)}\right).$$
+:::
+
+::: {.demostracion}
+*Demostración.* Los factores $q$ del numerador y del denominador de la Definición 22.5 son iguales y se cancelan. [∎]{.fin-demo}
+:::
+
+Con eso la regla se lee sola: si la propuesta sube, se acepta siempre; si baja, se acepta con probabilidad igual a cuánto baja. La cadena sube sin condiciones y baja con reticencia, y ese desequilibrio es exactamente el que reproduce $\pi$.
+
+### Comprobarlo con la matriz entera
+
+En un espacio de estados pequeño no hace falta simular: el núcleo se puede escribir como matriz y verificar la Proposición 22.6 con álgebra lineal.
+
+```{pyodide}
+import numpy as np
+
+# Espacio de seis estados: se construye la matriz de transicion completa y se
+# comprueba balance detallado, estacionariedad y convergencia, sin simular.
+S = 6
+pi_sin_normalizar = np.array([3.0, 7.0, 2.0, 9.0, 4.0, 1.0])   # a proposito, sin normalizar
+pi = pi_sin_normalizar / pi_sin_normalizar.sum()
+
+Q = np.zeros((S, S))                    # propuesta: al vecino de la izquierda o de la derecha
+for i in range(S):
+    Q[i, (i - 1) % S] = 0.5
+    Q[i, (i + 1) % S] = 0.5
+
+P = np.zeros((S, S))
+for i in range(S):
+    for j in range(S):
+        if i != j and Q[i, j] > 0:
+            razon = (pi_sin_normalizar[j] * Q[j, i]) / (pi_sin_normalizar[i] * Q[i, j])
+            P[i, j] = Q[i, j] * min(1.0, razon)
+    P[i, i] = 1 - P[i].sum()            # lo rechazado se queda donde estaba
+
+DB = pi[:, None] * P
+print("cada fila suma uno                       :", bool(np.allclose(P.sum(1), 1)))
+print("balance detallado por debajo de 1e-12    :", bool(np.abs(DB - DB.T).max() < 1e-12))
+print("pi P = pi por debajo de 1e-12            :", bool(np.abs(pi @ P - pi).max() < 1e-12))
+
+w, v = np.linalg.eig(P.T)
+k = int(np.argmin(np.abs(w - 1)))
+estacionaria = np.real(v[:, k]); estacionaria /= estacionaria.sum()
+print("el autovector de autovalor 1 es pi       :", bool(np.allclose(estacionaria, pi)))
+print("P^400 tiene todas las filas iguales a pi :",
+      bool(np.allclose(np.linalg.matrix_power(P, 400), np.tile(pi, (S, 1)), atol=1e-10)))
+print()
+print("pi objetivo :", np.round(pi, 6).tolist())
+print("filas de P^400:", np.round(np.linalg.matrix_power(P, 400)[0], 6).tolist())
+```
+
+La cadena olvida dónde empezó —todas las filas de $P^{400}$ son iguales— y lo que recuerda es $\pi$. Y en ningún momento se usó la suma $26$ que normaliza el objetivo: solo cocientes.
+
+### El caso continuo, contra una respuesta conocida
+
+```{pyodide}
+import numpy as np
+
+# Metropolis con propuesta simetrica sobre un posterior Beta(9,5), cuya media y
+# desviacion se saben exactamente. Al algoritmo solo se le da el log del
+# numerador: nunca ve la constante de normalizacion.
+def log_objetivo(t):
+    if t <= 0 or t >= 1:
+        return -np.inf
+    return 8 * np.log(t) + 4 * np.log1p(-t)      # Beta(9,5) sin su constante
+
+def cadena(paso, n, semilla):
+    r = np.random.default_rng(semilla)
+    x = 0.5
+    lx = log_objetivo(x)
+    salida = np.empty(n)
+    u = np.log(r.random(n))
+    z = r.standard_normal(n)
+    aceptados = 0
+    for i in range(n):
+        y = x + paso * z[i]
+        ly = log_objetivo(y)
+        if u[i] < ly - lx:               # Proposicion 22.8, en logaritmos
+            x, lx = y, ly
+            aceptados += 1
+        salida[i] = x                    # aceptado o no, se anota el estado
+    return salida, aceptados / n
+
+a, b = 9.0, 5.0
+media_exacta = a / (a + b)
+sd_exacta = np.sqrt(a * b / ((a + b) ** 2 * (a + b + 1)))
+print("Beta(9,5) exacta:  media %.6f   sd %.6f" % (media_exacta, sd_exacta))
+print()
+
+m, acep = cadena(0.30, 60000, 5)
+m = m[5000:]                             # se descarta el arranque
+print("cadena de %d pasos, tasa de aceptacion %.3f" % (len(m), acep))
+print("media de la cadena  %.4f   (error %.4f)" % (m.mean(), abs(m.mean() - media_exacta)))
+print("sd de la cadena     %.4f   (error %.4f)" % (m.std(ddof=1), abs(m.std(ddof=1) - sd_exacta)))
+print("media y sd dentro de 0,005 del valor exacto:",
+      bool(abs(m.mean() - media_exacta) < 0.005 and abs(m.std(ddof=1) - sd_exacta) < 0.005))
+```
+
+El visual siguiente deja mover el paso de la propuesta y enseña las dos cosas que decide: el recorrido de la cadena y el histograma que produce, contra la densidad exacta. El marco no depende de la cadena: el eje del histograma es $[0,1]$ porque $\theta$ es una probabilidad, y la altura tope es constante.
+
+```{=html}
+<div class="viz-mh">
+  <div class="controles">
+    <label>Paso de la propuesta <input id="mh-p" type="range" min="1" max="120" step="1" value="30"> <span id="mh-p-v">0,30</span></label>
+    <label>Pasos de cadena <input id="mh-n" type="range" min="200" max="4000" step="200" value="1200"> <span id="mh-n-v">1200</span></label>
+    <button id="mh-otra" type="button">Otra cadena</button>
+  </div>
+  <svg id="mh-svg" viewBox="0 0 620 340" role="img" aria-label="A la izquierda el recorrido de la cadena, con el paso en el eje horizontal y el valor de theta en el vertical. A la derecha, girado, el histograma de los valores visitados contra la densidad Beta exacta dibujada a trazos."></svg>
+  <p class="lectura" id="mh-lectura"></p>
+</div>
+<style>
+.viz-mh { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-mh .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-mh label { display: flex; align-items: center; gap: .4rem; }
+.viz-mh input[type=range] { width: 110px; padding: 0; }
+.viz-mh button { font-size: .8rem; padding: .22rem .6rem; border-radius: 5px; cursor: pointer; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-mh svg { width: 100%; height: auto; display: block; }
+.viz-mh .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5.4em; line-height: 1.6; }
+.viz-mh .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_CAD = "#B45309", C_HIST = "#8fa9a6", C_EXA = "var(--r-tinta,#1f2430)";
+  var svg = document.getElementById("mh-svg"), lec = document.getElementById("mh-lectura");
+  var cP = document.getElementById("mh-p"), eP = document.getElementById("mh-p-v");
+  var cN = document.getElementById("mh-n"), eN = document.getElementById("mh-n-v");
+  var bt = document.getElementById("mh-otra");
+  var semilla = 20260912;
+
+  // Marco anclado: theta va de 0 a 1 siempre, y el histograma tiene altura tope
+  // fija en 4 de densidad. Nada del marco depende de la cadena que se dibuja.
+  var TX0 = 46, TX1 = 384, HX0 = 404, HX1 = 596, Y0 = 262, Y1 = 34, DMAX = 4.0;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function mulberry32(s) {
+    return function () {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  var lobj = function (t) { return (t <= 0 || t >= 1) ? -Infinity : 8 * Math.log(t) + 4 * Math.log(1 - t); };
+  var py = function (t) { return Y0 - (Y0 - Y1) * t; };
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var paso = +cP.value / 100, n = +cN.value;
+    eP.textContent = paso.toFixed(2).replace(".", ",");
+    eN.textContent = n;
+
+    var r = mulberry32(semilla), x = 0.5, lx = lobj(x), acep = 0, v = [];
+    for (var i = 0; i < n; i++) {
+      // normal por Box-Muller, para que la propuesta sea simetrica
+      var u1 = Math.max(r(), 1e-12), u2 = r();
+      var z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+      var y = x + paso * z, ly = lobj(y);
+      if (Math.log(Math.max(r(), 1e-300)) < ly - lx) { x = y; lx = ly; acep++; }
+      v.push(x);
+    }
+
+    // recorrido
+    var d = "";
+    for (var i = 0; i < n; i++)
+      d += (i ? "L" : "M") + (TX0 + (TX1 - TX0) * i / (n - 1)).toFixed(1) + " " + py(v[i]).toFixed(1);
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_CAD, "stroke-width": 0.8,
+      "stroke-opacity": 0.9, "stroke-linejoin": "round" }));
+    svg.appendChild(el("line", { x1: TX0, y1: Y0, x2: TX1, y2: Y0, stroke: "var(--r-linea,#ccc)" }));
+    svg.appendChild(el("line", { x1: TX0, y1: Y1, x2: TX0, y2: Y0, stroke: "var(--r-linea,#ccc)" }));
+    svg.appendChild(el("text", { x: TX0, y: 20, "font-size": 11, "font-weight": 600,
+      fill: "var(--r-tinta,#222)" }, "recorrido de la cadena"));
+    svg.appendChild(el("text", { x: HX0, y: 20, "font-size": 11, "font-weight": 600,
+      fill: "var(--r-tinta,#222)" }, "lo que visita"));
+
+    // histograma girado, con 40 cajas fijas
+    var B = 40, h = new Array(B).fill(0);
+    for (var i = 0; i < n; i++) h[Math.min(B - 1, Math.floor(v[i] * B))]++;
+    for (var k = 0; k < B; k++) {
+      var dens = h[k] / n * B;                       // densidad empirica
+      var w = (HX1 - HX0) * Math.min(dens, DMAX) / DMAX;
+      var yA = py((k + 1) / B), yB = py(k / B);
+      svg.appendChild(el("rect", { x: HX0, y: yA.toFixed(1), width: Math.max(w, 0).toFixed(1),
+        height: (yB - yA).toFixed(1), fill: C_HIST, "fill-opacity": 0.9 }));
+    }
+    // densidad Beta(9,5) exacta: constante 1/B(9,5) = 13!/(8!·4!) = 45045... se
+    // calcula como producto para no arrastrar factoriales grandes
+    var cte = 1;
+    for (var i = 1; i <= 13; i++) cte *= i;
+    for (var i = 1; i <= 8; i++) cte /= i;
+    for (var i = 1; i <= 4; i++) cte /= i;
+    var d2 = "";
+    for (var i = 0; i <= 200; i++) {
+      var t = i / 200, dd = cte * Math.pow(t, 8) * Math.pow(1 - t, 4);
+      d2 += (i ? "L" : "M") + (HX0 + (HX1 - HX0) * Math.min(dd, DMAX) / DMAX).toFixed(1) + " " + py(t).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: d2, fill: "none", stroke: C_EXA, "stroke-width": 1.8,
+      "stroke-dasharray": "4 3", "stroke-opacity": 0.8 }));
+
+    var suma = 0;
+    for (var i = 0; i < n; i++) suma += v[i];
+    lec.innerHTML = "Paso <span class='fx'>" + paso.toFixed(2).replace(".", ",") + "</span>, <span class='fx'>" +
+      n + "</span> iteraciones, tasa de aceptación <span class='fx'>" + (acep / n).toFixed(3).replace(".", ",") +
+      "</span>. La media de la cadena es <span class='fx'>" + (suma / n).toFixed(4).replace(".", ",") +
+      "</span> contra <span class='fx'>0,6429</span> exacto. Con el paso muy pequeño casi todo se acepta y " +
+      "el recorrido es un hilo lento que tarda en cubrir; con el paso muy grande casi todo se rechaza y el " +
+      "recorrido son escalones planos. En los dos extremos el histograma se aparta de la curva a trazos.";
+  }
+
+  [cP, cN].forEach(function (c) { c.addEventListener("input", dibujar); });
+  bt.addEventListener("click", function () { semilla = (semilla * 1664525 + 1013904223) >>> 0; dibujar(); });
+  dibujar();
+})();
+</script>
+```
+
+## 4. Lo que la Proposición 22.6 no promete
+
+La proposición dice que $\pi$ es estacionaria. No dice que la cadena llegue a $\pi$ desde donde se arranque —para eso hace falta que sea irreducible y aperiódica—, ni dice **cuándo**. Y, sobre todo, no dice que las muestras sean independientes. Lo son las del bootstrap de la lección 11; estas, no, y eso tiene un precio exacto.
+
+::: {.proposicion}
+**Proposición 22.9 (el precio de la correlación).** Sea $\theta_1,\dots,\theta_n$ una cadena estacionaria con varianza $\sigma^2$ y autocorrelaciones $\rho_k=\text{Corr}(\theta_t,\theta_{t+k})$. Entonces
+$$\text{Var}(\bar\theta_n)=\frac{\sigma^{2}}{n}\left(1+2\sum_{k=1}^{n-1}\Big(1-\frac{k}{n}\Big)\rho_k\right)\;\xrightarrow[n\to\infty]{}\;\frac{\sigma^{2}}{n}\,\tau,\qquad \tau=1+2\sum_{k=1}^{\infty}\rho_k,$$
+suponiendo que la serie converge. El **tamaño de muestra efectivo** es $n_{\text{ef}}=n/\tau$: la cadena da la misma precisión que $n_{\text{ef}}$ muestras independientes.
+:::
+
+::: {.demostracion}
+*Demostración.* Por bilinealidad de la covarianza,
+$$\text{Var}\Big(\frac1n\sum_{t=1}^n\theta_t\Big)=\frac{1}{n^{2}}\sum_{t=1}^{n}\sum_{s=1}^{n}\text{Cov}(\theta_t,\theta_s)
+=\frac{\sigma^{2}}{n^{2}}\sum_{t,s}\rho_{|t-s|}.$$
+En la matriz de índices, el retardo $k$ aparece exactamente $n-|k|$ veces para $k=-(n-1),\dots,n-1$. Agrupando por retardo y usando $\rho_{-k}=\rho_k$,
+$$\frac{\sigma^{2}}{n^{2}}\Big[n\rho_0+2\sum_{k=1}^{n-1}(n-k)\rho_k\Big]=\frac{\sigma^{2}}{n}\Big[1+2\sum_{k=1}^{n-1}\Big(1-\frac{k}{n}\Big)\rho_k\Big],$$
+que es el enunciado. El límite es convergencia dominada sobre la serie, y la definición de $n_{\text{ef}}$ sale de igualar $\sigma^2\tau/n$ con $\sigma^2/n_{\text{ef}}$. [∎]{.fin-demo}
+:::
+
+Con $\rho_k\ge0$ —lo habitual en una caminata aleatoria— se tiene $\tau\ge1$, y el tamaño efectivo nunca supera al nominal. Un $\tau$ de 150 significa que de cada 150 iteraciones se saca la información de una.
+
+El paso de la propuesta controla $\tau$, y lo hace por dos caminos opuestos. Un paso pequeño acepta casi siempre pero avanza poco, así que $\rho_1$ es alta; un paso grande propone lejos pero se rechaza casi siempre, y quedarse quieto también es correlación. El óptimo está en medio y se puede medir.
+
+```{pyodide}
+import numpy as np
+
+# El paso de la propuesta contra el tamano de muestra efectivo. Se corre la
+# misma cadena con cinco pasos distintos y se mide tau por la Proposicion 22.9.
+def log_objetivo(t):
+    if t <= 0 or t >= 1:
+        return -np.inf
+    return 8 * np.log(t) + 4 * np.log1p(-t)
+
+def cadena(paso, n, semilla):
+    r = np.random.default_rng(semilla)
+    x, lx, aceptados = 0.5, log_objetivo(0.5), 0
+    salida = np.empty(n)
+    u, z = np.log(r.random(n)), r.standard_normal(n)
+    for i in range(n):
+        y = x + paso * z[i]
+        ly = log_objetivo(y)
+        if u[i] < ly - lx:
+            x, lx = y, ly
+            aceptados += 1
+        salida[i] = x
+    return salida, aceptados / n
+
+def factor_ineficiencia(m, kmax=120):
+    """tau = 1 + 2·suma de las autocorrelaciones, cortando al primer rho no positivo."""
+    m = m - m.mean()
+    v = float((m * m).mean())
+    tau = 1.0
+    for k in range(1, kmax):
+        rho = float((m[:-k] * m[k:]).mean()) / v
+        if rho <= 0:
+            break
+        tau += 2 * rho
+    return tau
+
+a, b = 9.0, 5.0
+print("Beta(9,5) exacta: media %.6f  sd %.6f" % (a / (a + b),
+                                                 np.sqrt(a * b / ((a + b)**2 * (a + b + 1)))))
+print()
+print("paso   aceptacion    media       tau      n efectivo")
+mejor, paso_mejor = -1.0, None
+for paso in [0.02, 0.10, 0.30, 1.00, 3.00]:
+    m, acep = cadena(paso, 60000, 5)
+    m = m[5000:]
+    tau = factor_ineficiencia(m)
+    nef = len(m) / tau
+    if nef > mejor:
+        mejor, paso_mejor = nef, paso
+    print("%4.2f   %8.3f   %9.4f  %8.1f   %10.0f" % (paso, acep, m.mean(), tau, nef))
+print()
+print("el mejor paso de los cinco es:", paso_mejor)
+```
+
+El mejor de los cinco pasos es $0{,}30$, y su tasa de aceptación cae en $0{,}44$. No es casualidad: para una caminata aleatoria en una dimensión, la tasa de aceptación que maximiza el tamaño efectivo es conocida y vale aproximadamente $0{,}44$. Los dos extremos pierden por motivos opuestos: con paso $0{,}02$ se acepta el 95 % y $\tau$ pasa de cien; con paso $3{,}00$ se acepta el 5 % y $\tau$ vuelve a dispararse.
+
+El visual siguiente barre el paso entero en lugar de mirar cinco valores sueltos. Corre una cadena por cada paso del barrido y dibuja las dos curvas que importan: la fracción de muestra efectiva y la tasa de aceptación.
+
+```{=html}
+<div class="viz-ess">
+  <div class="controles">
+    <label>Pasos por cadena <input id="es-n" type="range" min="400" max="4000" step="200" value="1500"> <span id="es-n-v">1500</span></label>
+    <label>Forma del objetivo <select id="es-obj">
+      <option value="95" selected>Beta(9,5)</option>
+      <option value="22">Beta(2,2), ancha</option>
+      <option value="4020">Beta(40,20), estrecha</option>
+    </select></label>
+    <button id="es-otra" type="button">Otro barrido</button>
+  </div>
+  <svg id="es-svg" viewBox="0 0 620 330" role="img" aria-label="Dos curvas contra el paso de la propuesta en escala logaritmica: la fraccion de muestra efectiva en naranja, con un maximo en el medio, y la tasa de aceptacion en gris, que baja de uno a cero. Una linea vertical marca el paso que maximiza la fraccion efectiva."></svg>
+  <p class="lectura" id="es-lectura"></p>
+</div>
+<style>
+.viz-ess { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-ess .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-ess label { display: flex; align-items: center; gap: .4rem; }
+.viz-ess input[type=range] { width: 110px; padding: 0; }
+.viz-ess select { font-size: .85rem; padding: .2rem .4rem; border-radius: 5px; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-ess button { font-size: .8rem; padding: .22rem .6rem; border-radius: 5px; cursor: pointer; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-ess svg { width: 100%; height: auto; display: block; }
+.viz-ess .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5.4em; line-height: 1.6; }
+.viz-ess .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_ESS = "#B45309", C_ACE = "#9aa3ab", C_MAX = "#5f8a7d";
+  var svg = document.getElementById("es-svg"), lec = document.getElementById("es-lectura");
+  var cN = document.getElementById("es-n"), eN = document.getElementById("es-n-v");
+  var cO = document.getElementById("es-obj"), bt = document.getElementById("es-otra");
+  var semilla = 31415927;
+
+  // Marco fijo: log10(paso) de -2 a 1, y el eje vertical de 0 a 1 porque las
+  // dos curvas son fracciones. Nada del marco depende de las cadenas.
+  var X0 = 52, X1 = 596, Y0 = 246, Y1 = 32, L0 = -2, L1 = 1;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function mulberry32(s) {
+    return function () {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  var px = function (l) { return X0 + (X1 - X0) * (l - L0) / (L1 - L0); };
+  var py = function (v) { return Y0 - (Y0 - Y1) * Math.min(Math.max(v, 0), 1); };
+
+  function correr(paso, n, r, A, B) {
+    var lobj = function (t) {
+      return (t <= 0 || t >= 1) ? -Infinity : (A - 1) * Math.log(t) + (B - 1) * Math.log(1 - t);
+    };
+    var x = A / (A + B), lx = lobj(x), acep = 0, v = new Array(n);
+    for (var i = 0; i < n; i++) {
+      var u1 = Math.max(r(), 1e-12), u2 = r();
+      var z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+      var y = x + paso * z, ly = lobj(y);
+      if (Math.log(Math.max(r(), 1e-300)) < ly - lx) { x = y; lx = ly; acep++; }
+      v[i] = x;
+    }
+    // tau = 1 + 2·suma de autocorrelaciones, cortando al primer rho no positivo
+    var m = 0;
+    for (var i = 0; i < n; i++) m += v[i];
+    m /= n;
+    var s0 = 0;
+    for (var i = 0; i < n; i++) s0 += (v[i] - m) * (v[i] - m);
+    s0 /= n;
+    var tau = 1;
+    for (var k = 1; k < Math.min(200, n - 1); k++) {
+      var c = 0;
+      for (var i = 0; i + k < n; i++) c += (v[i] - m) * (v[i + k] - m);
+      var rho = (c / (n - k)) / s0;
+      if (!(rho > 0)) break;
+      tau += 2 * rho;
+    }
+    return { acep: acep / n, frac: 1 / tau };
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var n = +cN.value, cod = cO.value;
+    var A = cod === "22" ? 2 : cod === "4020" ? 40 : 9;
+    var B = cod === "22" ? 2 : cod === "4020" ? 20 : 5;
+    eN.textContent = n;
+
+    svg.appendChild(el("line", { x1: X0, y1: Y0, x2: X1, y2: Y0, stroke: "var(--r-linea,#ccc)" }));
+    for (var e2 = L0; e2 <= L1 + 1e-9; e2++) {
+      svg.appendChild(el("line", { x1: px(e2).toFixed(1), y1: Y0, x2: px(e2).toFixed(1), y2: (Y0 + 4).toFixed(1),
+        stroke: "var(--r-linea,#ccc)" }));
+      svg.appendChild(el("text", { x: px(e2).toFixed(1), y: Y0 + 17, "font-size": 9.5, "text-anchor": "middle",
+        fill: "var(--r-tinta-suave,#777)" }, e2 === 0 ? "1" : "10" + (e2 === -2 ? "⁻²" : e2 === -1 ? "⁻¹" : "¹")));
+    }
+    svg.appendChild(el("text", { x: X0, y: 20, "font-size": 11, "font-weight": 600,
+      fill: "var(--r-tinta,#222)" }, "fracción de muestra efectiva 1/τ (naranja) · tasa de aceptación (gris)"));
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y0 + 33, "font-size": 9.5, "text-anchor": "middle",
+      fill: "var(--r-tinta-suave,#777)" }, "paso de la propuesta"));
+
+    var J = 22, dE = "", dA = "", mejor = -1, lMejor = L0, aceMejor = 0;
+    for (var j = 0; j < J; j++) {
+      var l = L0 + (L1 - L0) * j / (J - 1), paso = Math.pow(10, l);
+      var r = mulberry32((semilla + j * 7919) >>> 0);
+      var out = correr(paso, n, r, A, B);
+      if (out.frac > mejor) { mejor = out.frac; lMejor = l; aceMejor = out.acep; }
+      dE += (j ? "L" : "M") + px(l).toFixed(1) + " " + py(out.frac).toFixed(1);
+      dA += (j ? "L" : "M") + px(l).toFixed(1) + " " + py(out.acep).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: dA, fill: "none", stroke: C_ACE, "stroke-width": 1.8,
+      "stroke-linejoin": "round" }));
+    svg.appendChild(el("path", { d: dE, fill: "none", stroke: C_ESS, "stroke-width": 2.4,
+      "stroke-linejoin": "round" }));
+    svg.appendChild(el("line", { x1: px(lMejor).toFixed(1), y1: Y1, x2: px(lMejor).toFixed(1), y2: Y0,
+      stroke: C_MAX, "stroke-width": 1.2, "stroke-dasharray": "3 3" }));
+    svg.appendChild(el("circle", { cx: px(lMejor).toFixed(1), cy: py(mejor).toFixed(1), r: 4, fill: C_MAX }));
+
+    lec.innerHTML = "Objetivo <span class='fx'>Beta(" + A + ", " + B + ")</span>, <span class='fx'>" + n +
+      "</span> pasos por cadena. La fracción efectiva se maximiza en un paso de <span class='fx'>" +
+      Math.pow(10, lMejor).toFixed(3).replace(".", ",") + "</span>, donde la aceptación vale <span class='fx'>" +
+      aceMejor.toFixed(2).replace(".", ",") + "</span> y cada iteración aporta <span class='fx'>" +
+      mejor.toFixed(3).replace(".", ",") + "</span> muestras independientes. " +
+      "Las dos curvas cuentan lo mismo desde lados opuestos: la gris baja siempre, y la naranja sube mientras " +
+      "el paso compra recorrido y se derrumba cuando empieza a comprar rechazos. " +
+      "Un objetivo más estrecho mueve el óptimo hacia la izquierda: el paso que conviene tiene la escala del posterior.";
+  }
+
+  [cN, cO].forEach(function (c) { c.addEventListener("input", dibujar); });
+  cO.addEventListener("change", dibujar);
+  bt.addEventListener("click", function () { semilla = (semilla * 1664525 + 1013904223) >>> 0; dibujar(); });
+  dibujar();
+})();
+</script>
+```
+
+## 5. Qué mirar antes de creerse una cadena
+
+Tres cosas, y la lección 24 las convierte en números.
+
+La primera es el arranque. La cadena empieza donde se la ponga y tarda en olvidarlo; los primeros estados no son muestras de $\pi$ y se descartan. En las celdas de arriba se tiraron cinco mil de sesenta mil, por exceso de prudencia y sin justificarlo.
+
+La segunda es la tasa de aceptación, que es gratis de calcular y detecta los dos desastres: cerca de uno significa paso demasiado corto, cerca de cero paso demasiado largo.
+
+La tercera es el tamaño efectivo. Una cadena de un millón de iteraciones con $\tau=10^4$ tiene cien muestras útiles, y reportar un intervalo como si tuviera un millón es la forma más común de mentir con MCMC sin querer.
+
+## Ejercicios
+
+1. Demostrar que si $q(y\mid x)>0$ siempre que $\pi(y)>0$, entonces la cadena de la Definición 22.5 es irreducible. ¿Qué pasa si la propuesta solo puede moverse dentro de un intervalo que no cubre todo el soporte?
+2. Comprobar que el algoritmo de Metropolis-Hastings con $q(y\mid x)=\pi(y)$ —proponer directamente del objetivo— acepta siempre. ¿Por qué no sirve eso de nada en la práctica?
+3. Demostrar que el balance detallado no es necesario: construir una cadena de tres estados con distribución estacionaria uniforme que lo viole. (Pista: un ciclo que gira siempre en el mismo sentido.)
+4. En la Proposición 22.9, suponer $\rho_k=\phi^{k}$ con $0<\phi<1$ y demostrar que $\tau=(1+\phi)/(1-\phi)$. Calcular el $\phi$ que corresponde a $\tau=150$.
+5. Demostrar que si se descartan los rechazos en vez de repetir el estado, la distribución estacionaria deja de ser $\pi$. Exhibir el sesgo en el ejemplo de seis estados de la sección 3.
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Est 22**:
+
+1. Escribir `metropolis(log_objetivo, x0, paso, n, semilla)` que devuelva la cadena y la tasa de aceptación, y `tau_ess(cadena)`. Verificar contra tres posteriores conjugados distintos —Beta, Gamma y normal— que la media y la desviación de la cadena caen dentro de tres errores estándar del valor exacto.
+2. Reproducir la tabla de la sección 4 con un barrido fino de pasos y localizar numéricamente el que maximiza el tamaño efectivo. Comprobar que la tasa de aceptación en ese punto se acerca a $0{,}44$, y repetir en dos dimensiones para ver hacia dónde se mueve.
+3. Implementar la comprobación del ejercicio 5: correr la versión incorrecta —descartar los rechazos— sobre el espacio de seis estados, estimar su distribución estacionaria y medir la distancia a $\pi$. Explicar con la Proposición 22.6 dónde se rompe la demostración.
+
+## Del libro
+
+*Think Bayes* se publica bajo licencia [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/), que permite citarlo textualmente. El capítulo de MCMC publica sus secciones sin numerar en la versión en línea, así que aquí se cita a nivel de capítulo.
+
+::: {.cita-libro}
+> MCMC, which stands for Markov chain Monte Carlo.
+>
+> [Downey, *Think Bayes* 2e, §19 *MCMC*]{.ref}
+:::
+
+El capítulo 19 usa PyMC desde la primera página y no escribe el algoritmo. Esa es la diferencia de camino: esta lección lo deriva del balance detallado y lo implementa en diez líneas, para que la lección 25 pueda usar PyMC sabiendo qué hay debajo.
+
+**Preguntas para leer §19 con lápiz:**
+
+1. El capítulo presenta MCMC como alternativa a la rejilla. ¿A partir de cuántas dimensiones deja de caber una rejilla de cien puntos por eje, y cómo se compara ese número con el coste de una cadena?
+2. PyMC pide especificar el modelo pero no la propuesta. ¿Qué parte de la Definición 22.5 está eligiendo la librería por su cuenta, y qué riesgo se corre al no verla?
+3. El capítulo muestra trazas de las cadenas. ¿Qué de lo que se ve en esas trazas corresponde al $\tau$ de la Proposición 22.9, y qué habría que medir para no depender del ojo?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/metropolis-hastings.md`, enlazada a [[comparacion-de-modelos]], [[cadena-de-markov]] y [[bootstrap]]. Conviene rehacer a mano la Proposición 22.6: son dos casos y cuatro líneas, y de ella sale el Corolario 22.7, que es la razón entera de que el método exista.
+
+```
+¿Qué problema resuelve MCMC?::Muestrear del posterior cuando la constante de normalización no se puede calcular
+¿Qué es el balance detallado?::π(x)P(x,y) = π(y)P(y,x): en equilibrio pasa tanta masa en un sentido como en el otro
+¿Qué garantiza el balance detallado?::Que π es estacionaria; es condición suficiente y local, no necesaria
+¿Cuál es la razón de aceptación de Metropolis-Hastings?::min(1, π̃(y)q(x|y) / π̃(x)q(y|x))
+¿Por qué no hace falta la constante Z?::Porque π̃ solo aparece como cociente π̃(y)/π̃(x), y la constante se cancela
+¿Qué se hace al rechazar una propuesta?::Quedarse en el estado actual y anotarlo otra vez; descartarlo rompe la estacionariedad
+¿Qué pasa con propuesta simétrica?::La razón se reduce a min(1, π̃(y)/π̃(x)): se sube siempre y se baja con reticencia
+¿Qué no garantiza la demostración?::Que la cadena converja desde cualquier arranque, ni cuándo, ni que las muestras sean independientes
+¿Cuánto vale la varianza de la media de una cadena?::σ²τ/n con τ = 1 + 2Σρₖ, en vez de σ²/n
+¿Qué es el tamaño de muestra efectivo?::n/τ: cuántas muestras independientes darían la misma precisión
+¿Qué tasa de aceptación conviene en una dimensión?::Alrededor de 0,44; en el ejemplo el mejor paso la dio en 0,44
+¿Cuáles son los dos desastres del paso?::Muy corto acepta casi todo y avanza poco; muy largo se rechaza casi todo y la cadena se queda quieta
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** Las Proposiciones 22.4, 22.6, 22.8 y 22.9 y el Corolario 22.7 se demuestran aquí, a partir de las definiciones. Se comprueban además numéricamente: sobre un espacio de seis estados se construye la matriz de transición entera y se verifica el balance detallado y la estacionariedad por debajo de $10^{-12}$, que el autovector de autovalor uno es $\pi$, y que todas las filas de $P^{400}$ coinciden con $\pi$ a $10^{-10}$; en el caso continuo, la cadena reproduce la media y la desviación de una $\text{Beta}(9,5)$ dentro de $0{,}005$; y la Proposición 22.9 se usa para medir $\tau$ en cinco pasos de propuesta. El visual se contrastó antes de publicarse contra la densidad exacta en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** La conjugación Beta–binomial, que aquí solo sirve de patrón de comparación, es la lección 19. La integral que se evita es la de la lección 21. La idea de responder por simulación lo que no sale en forma cerrada es la lección 11. La autocorrelación es la lección 5.
+
+**Lo que se enuncia sin demostrar.** Que irreducibilidad y aperiodicidad garantizan la convergencia desde cualquier arranque se enuncia y no se demuestra: es el teorema ergódico para cadenas de Markov, que excede el alcance de la página y queda señalado como tal en la sección 4. La convergencia dominada del límite de la Proposición 22.9 se invoca sin justificar las hipótesis. El valor $0{,}44$ como tasa de aceptación óptima en una dimensión se cita como resultado conocido y **se comprueba numéricamente**, pero no se deriva.
+
+**Lo que viene de los libros.**
+
+- [*Think Bayes* 2e](https://allendowney.github.io/ThinkBayes2/) (Downey, CC BY-NC-SA 4.0), §19 *MCMC* — citada textualmente una frase. El capítulo cubre el mismo terreno usando PyMC y sin escribir el algoritmo; publica sus secciones sin numerar, por lo que se cita a nivel de capítulo.
+
+**Lo que es mío, no del libro.** La derivación entera desde el balance detallado, y la Proposición 22.6 demostrada por los dos casos de la razón. La comprobación con la matriz de transición completa sobre seis estados, que permite verificar la teoría sin simular nada. La Proposición 22.9 enunciada con el término $(1-k/n)$ explícito y demostrada por conteo de retardos. Y la tabla de la sección 4, construida para que la tasa óptima aparezca sola en lugar de citarla.
+
+[Índice de Think Bayes 2e verificado el 12-09-2026: 193 secciones de los capítulos 1 a 18 y 20; el 19 publica sus secciones sin numerar.]{.sello}
+:::

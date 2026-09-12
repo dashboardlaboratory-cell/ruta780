@@ -85,6 +85,7 @@ MIGRADAS = {
     "estadistica/19-priors-conjugados.qmd",
     "estadistica/20-distribuciones-predictivas.qmd",
     "estadistica/21-comparacion-de-modelos.qmd",
+    "estadistica/22-metropolis-hastings.qmd",
     "matematica/01-vectores-y-espacios.qmd",
     "matematica/02-matriz-como-transformacion.qmd",
     "matematica/03-espacio-columna.qmd",
