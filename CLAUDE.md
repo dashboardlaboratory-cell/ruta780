@@ -27,11 +27,18 @@ cada build.** Contrasta el campo `libro:` de cada lección contra
 `verificar/indices.json` y falla si el libro no está verificado, si la sección
 no existe, o si el título escrito no coincide con el real.
 
-Índices ya verificados (11-09-2026): Think Stats 3e (capítulos + secciones de
-1, 5, 6 y 7), Mathematics for ML (completo, del frontmatter de Cambridge),
-McKinney 3E (capítulos), ISLP (solo capítulos: statlearning.com no publica los
-títulos de sección). Pendientes, y por tanto **no citables** hasta traerlos:
-ESL, Think Bayes, Causal Inference for the Brave and True, fast.ai.
+Índices ya verificados (12-09-2026): Think Stats 3e (14 capítulos + 60 secciones
+de los capítulos 1–8 y 14), Mathematics for ML (12 capítulos + las 80 secciones,
+del índice del PDF oficial), Think Bayes 2e (20 capítulos + las 7 secciones del
+cap. 2), McKinney 3E (capítulos), ISLP (solo capítulos: statlearning.com no
+publica los títulos de sección). Pendientes, y por tanto **no citables** hasta
+traerlos: ESL, Causal Inference for the Brave and True, fast.ai, y las secciones
+de los capítulos de Think Bayes distintos del 2.
+
+Tener el índice verificado permite citar **número y título**; no permite citar
+texto. Para lo segundo hay que poder extraer el texto de la fuente. Cuando no
+se puede —MML no es descargable desde este entorno— la lección lo dice en su
+bloque de Fuentes y no pone palabras en boca del libro. Ver `estadistica/08`.
 
 Para añadir un libro: traer su índice de la fuente publicada, meterlo en
 `indices.json` con su URL y la fecha, y recién entonces citarlo.
