@@ -1,0 +1,980 @@
+---
+title: "Regresión: de dónde salen los coeficientes"
+subtitle: "Estadística · Lección 13"
+nivel: L3
+modulo: estadistica
+fase: F1
+prereqs: [matematica/06-minimos-cuadrados, estadistica/05-covarianza-correlacion]
+siguientes: [estadistica/14-inferencia-coeficientes]
+libro: "Think Stats 3e §10 Least Squares"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="estadistica/13-regresion-primeros-principios"}
+[[L3]{.nivel .nivel-L3} **Derivación**]{.item}
+[**Fase** F1]{.item}
+[**Libro** TS 3e §10]{.item}
+[**Prereqs** [Mínimos cuadrados](../matematica/06-minimos-cuadrados.qmd) · [Covarianza y correlación](05-covarianza-correlacion.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Derivar los coeficientes de la [recta de regresión]{.g data-t="recta de regresión"} y reconocer que la pendiente es la covarianza normalizada.
+2. Demostrar que hay **dos** rectas de regresión, que no coinciden, y que el producto de sus pendientes es $r^2$.
+3. Demostrar la descomposición $\text{SCT} = \text{SCR} + \text{SCE}$ y que $R^2 = r^2$ en regresión simple.
+4. Explicar por qué un $R^2$ alto **no** garantiza que el modelo sea correcto, y qué hay que mirar en su lugar.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Matemática 5 y 6**: los mínimos cuadrados ya aparecieron como **proyección ortogonal**. Allí no había probabilidad; aquí se le añade un modelo. La Proposición 13.6 es la misma ortogonalidad, escrita en sumas.
+- **Estadística 5**: la covarianza y la correlación. La Proposición 13.2 dice que la pendiente es $\text{Cov}(x,y)/\text{Var}(x)$, y la Proposición 13.4 rescata la Proposición 5.9 —$|r|$ como media geométrica de dos pendientes— y la convierte en un enunciado sobre dos rectas.
+- **Estadística 8**: la Proposición 8.8 demostró que minimizar cuadrados **es** máxima verosimilitud bajo errores normales. Eso es lo que convierte el cálculo de esta lección en un modelo estadístico.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Lección 14**: los errores estándar de $\hat{\beta}_0$ y $\hat{\beta}_1$, sus intervalos y sus pruebas. Aquí se obtienen los números; allí, su incertidumbre.
+- **Lección 15**: qué pasa cuando faltan datos, y por qué el mecanismo de la falta cambia el resultado.
+- **ISLP cap. 3**: la regresión múltiple es esto con más columnas, y la geometría no cambia: sigue siendo una proyección.
+- **Aprendizaje automático**: es el modelo más simple que existe, y el patrón de referencia contra el que se mide cualquier otro.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Símbolo | Se lee | Significado |
+|---|---|---|
+| $\beta_0, \beta_1$ | beta cero, beta uno | Los coeficientes **verdaderos** del modelo, desconocidos |
+| $\hat{\beta}_0, \hat{\beta}_1$ | beta cero sombrero | Los **estimados** a partir de los datos |
+| $\hat{y}_i$ | ye sombrero sub i | El valor predicho, $\hat{\beta}_0 + \hat{\beta}_1 x_i$ |
+| $e_i$ | e sub i | El [residuo]{.g}, $y_i - \hat{y}_i$. No confundir con $\varepsilon_i$ |
+| $\varepsilon_i$ | épsilon sub i | El error **verdadero** del modelo, que nunca se observa |
+| $\text{SCT}$ | ese ce te | Suma de cuadrados total, $\sum_i (y_i-\bar{y})^2$ |
+| $\text{SCR}$ | ese ce erre | Suma de cuadrados de la regresión, $\sum_i (\hat{y}_i-\bar{y})^2$ |
+| $\text{SCE}$ | ese ce e | Suma de cuadrados del error, $\sum_i e_i^2$ |
+| $R^2$ | erre cuadrado | $\text{SCR}/\text{SCT}$, la fracción de varianza explicada |
+:::
+
+La distinción entre $e_i$ y $\varepsilon_i$ es la que más se pierde de vista y la que más importa. $\varepsilon_i$ es una variable aleatoria del modelo, que no se ve nunca; $e_i$ es un número calculado tras ajustar la recta. Se parecen, pero no son lo mismo: los $\varepsilon_i$ son independientes entre sí, y los $e_i$ no —suman cero por construcción, así que conocidos $n-2$ de ellos los otros dos quedan atados—.
+
+## 1. El modelo, y lo que no es
+
+::: {.definicion}
+**Definición 13.1 (modelo de regresión lineal simple).**
+$$y_i = \beta_0 + \beta_1 x_i + \varepsilon_i, \qquad i = 1,\dots,n,$$
+con los $\varepsilon_i$ independientes, de media cero y varianza $\sigma^2$ constante, y los $x_i$ tratados como fijos.
+:::
+
+Cuatro supuestos van escondidos ahí y conviene tenerlos a la vista, porque la sección 4 los pone a prueba uno a uno: que la relación es **lineal**, que los errores son **independientes**, que su varianza es **constante** —no crece con $x$—, y que su media es **cero para todo $x$**.
+
+Nada de eso se comprueba ajustando la recta. Ajustar es un cálculo que siempre da un número; los supuestos dicen si ese número significa algo.
+
+::: {.cita-libro}
+> A line that minimizes the sum of squared residuals.
+>
+> [Downey, *Think Stats* 3e, §10.7 *Glossary*, definición de *linear least squares fit*]{.ref}
+:::
+
+## 2. Los coeficientes
+
+::: {.proposicion}
+**Proposición 13.2.** Los valores de $b_0$ y $b_1$ que minimizan
+$$S(b_0,b_1) = \sum_{i=1}^{n}\big(y_i - b_0 - b_1 x_i\big)^2$$
+son
+$$\hat{\beta}_1 = \frac{\sum_i (x_i-\bar{x})(y_i-\bar{y})}{\sum_i (x_i-\bar{x})^2} = \frac{\text{Cov}(x,y)}{\text{Var}(x)} = r\,\frac{s_y}{s_x},
+\qquad \hat{\beta}_0 = \bar{y} - \hat{\beta}_1\bar{x}.$$
+:::
+
+::: {.demostracion}
+*Demostración.* $S$ es una suma de cuadrados, luego es no negativa, y es un polinomio de segundo grado en $(b_0,b_1)$ con coeficientes principales positivos: tiene un único mínimo, y se alcanza donde las dos derivadas parciales se anulan.
+
+*Primera ecuación.* Derivando respecto a $b_0$ y usando la regla de la cadena:
+$$\frac{\partial S}{\partial b_0} = \sum_i 2\big(y_i - b_0 - b_1x_i\big)(-1) = 0
+\;\Longleftrightarrow\; \sum_i y_i = n b_0 + b_1\sum_i x_i.$$
+Dividiendo entre $n$ queda $\bar{y} = b_0 + b_1\bar{x}$, es decir, **la recta pasa por el punto $(\bar{x},\bar{y})$**, y despejando, $b_0 = \bar{y}-b_1\bar{x}$.
+
+*Segunda ecuación.* Derivando respecto a $b_1$:
+$$\frac{\partial S}{\partial b_1} = \sum_i 2\big(y_i - b_0 - b_1x_i\big)(-x_i) = 0
+\;\Longleftrightarrow\; \sum_i x_i y_i = b_0\sum_i x_i + b_1\sum_i x_i^2.$$
+Sustituyendo $b_0 = \bar{y}-b_1\bar{x}$ y agrupando los términos en $b_1$:
+$$\sum_i x_iy_i - n\bar{x}\bar{y} = b_1\Big(\sum_i x_i^2 - n\bar{x}^2\Big).$$
+Los dos lados son formas conocidas: $\sum_i x_iy_i - n\bar{x}\bar{y} = \sum_i (x_i-\bar{x})(y_i-\bar{y})$ y $\sum_i x_i^2 - n\bar{x}^2 = \sum_i (x_i-\bar{x})^2$, las dos por la Proposición 5.5. Despejando $b_1$ se obtiene la fórmula del enunciado; la tercera forma sale de dividir numerador y denominador entre $n$ y aplicar la Definición 5.6 de correlación. [∎]{.fin-demo}
+:::
+
+Dos lecturas que la fórmula regala.
+
+La primera: **la pendiente es la covarianza normalizada por la varianza de $x$**. Todo lo que la lección 5 dijo sobre la covarianza vale aquí sin traducción: si $\text{Cov}(x,y) = 0$ la pendiente es cero, y si se cambia la escala de $x$ la pendiente se reescala en consecuencia.
+
+La segunda: en la forma $\hat{\beta}_1 = r\,s_y/s_x$, si las dos variables se estandarizan —media cero y desviación uno— entonces $s_y = s_x = 1$ y **la pendiente es exactamente $r$**. La correlación es la pendiente en unidades estandarizadas.
+
+```{=html}
+<div class="viz-mc">
+  <div class="controles">
+    <label>pendiente b₁ <input id="mc-b1" type="range" min="-0.4" max="2.4" step="any" value="0.4"><output id="mc-b1-v">0.40</output></label>
+    <label>ordenada b₀ <input id="mc-b0" type="range" min="-3" max="5" step="any" value="2.5"><output id="mc-b0-v">2.50</output></label>
+    <button id="mc-opt" type="button">Llevar al mínimo</button>
+    <label><input id="mc-cuad" type="checkbox" checked> ver los cuadrados</label>
+  </div>
+  <svg id="mc-svg" viewBox="0 0 560 330" role="img" aria-label="Una nube de puntos con una recta ajustable y los cuadrados de los residuos dibujados como cuadrados de verdad"></svg>
+  <p class="lectura" id="mc-lectura"></p>
+</div>
+<style>
+.viz-mc {
+  border: 1px solid var(--r-linea, #ddd);
+  border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0;
+}
+.viz-mc .controles {
+  display: flex; flex-wrap: wrap; gap: .45rem 1.1rem;
+  align-items: center; margin-bottom: .85rem; font-size: .85rem;
+}
+.viz-mc label { display: flex; align-items: center; gap: .4rem; }
+.viz-mc input[type=range] { width: 7rem; }
+.viz-mc output {
+  font-family: var(--bs-font-monospace, monospace); font-size: .8rem;
+  min-width: 2.6rem; color: var(--r-tinta-suave, #555);
+}
+.viz-mc button {
+  font-size: .8rem; padding: .22rem .6rem; border-radius: 5px; cursor: pointer;
+  border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit;
+}
+.viz-mc button:hover { border-color: var(--r-acento, #0F6E68); color: var(--r-acento, #0F6E68); }
+.viz-mc svg { width: 100%; height: auto; display: block; }
+.viz-mc .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5em; line-height: 1.6; }
+.viz-mc .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_PT = "#1f2430", C_REC = "#0F6E68", C_CUAD = "#B45309", C_OPT = "#B91C1C";
+  var svg = document.getElementById("mc-svg"), lec = document.getElementById("mc-lectura");
+  var s1 = document.getElementById("mc-b1"), s0 = document.getElementById("mc-b0");
+  var o1 = document.getElementById("mc-b1-v"), o0 = document.getElementById("mc-b0-v");
+  var btn = document.getElementById("mc-opt"), sc = document.getElementById("mc-cuad");
+  // MARCO FIJO y datos FIJOS: no se reescala nada (regla 19b)
+  var X0 = 44, X1 = 356, Y0 = 292, Y1 = 26, E = 26;
+  var XL = 0, XH = 11, YL = 0, YH = 11;
+  // doce puntos escritos a mano, para que el ejemplo sea siempre el mismo
+  var DX = [1.0, 1.6, 2.3, 3.1, 3.6, 4.4, 5.2, 6.0, 6.8, 7.5, 8.6, 9.4];
+  var DY = [2.9, 3.9, 3.4, 5.1, 4.6, 6.2, 5.8, 7.4, 6.9, 8.6, 8.1, 9.6];
+  var n = DX.length;
+
+  // coeficientes optimos, por la Proposicion 13.2
+  var mx = 0, my = 0, i;
+  for (i = 0; i < n; i++) { mx += DX[i]; my += DY[i]; }
+  mx /= n; my /= n;
+  var sxy = 0, sxx = 0, syy = 0;
+  for (i = 0; i < n; i++) {
+    sxy += (DX[i] - mx) * (DY[i] - my);
+    sxx += (DX[i] - mx) * (DX[i] - mx);
+    syy += (DY[i] - my) * (DY[i] - my);
+  }
+  var B1 = sxy / sxx, B0 = my - B1 * mx;
+  function sce(b0, b1) {
+    var s = 0, k;
+    for (k = 0; k < n; k++) { var e = DY[k] - b0 - b1 * DX[k]; s += e * e; }
+    return s;
+  }
+  var SCE_MIN = sce(B0, B1);
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(x) { return X0 + (x - XL) / (XH - XL) * (X1 - X0); }
+  function py(y) { return Y0 - (y - YL) / (YH - YL) * (Y0 - Y1); }
+
+  function dibujar() {
+    var b1 = +s1.value, b0 = +s0.value;
+    o1.textContent = b1.toFixed(2); o0.textContent = b0.toFixed(2);
+    var S = sce(b0, b1);
+
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    for (i = 0; i <= 10; i += 2) {
+      svg.appendChild(el("line", {x1: px(i), y1: Y1, x2: px(i), y2: Y0,
+        stroke: "var(--r-linea,#ddd)", "stroke-width": 0.6, opacity: 0.6}));
+      svg.appendChild(el("line", {x1: X0, y1: py(i), x2: X1, y2: py(i),
+        stroke: "var(--r-linea,#ddd)", "stroke-width": 0.6, opacity: 0.6}));
+      svg.appendChild(el("text", {x: px(i), y: Y0 + 15, "font-size": 9, "text-anchor": "middle",
+        fill: "var(--r-tinta-suave,#888)"}, String(i)));
+    }
+    svg.appendChild(el("rect", {x: X0, y: Y1, width: X1 - X0, height: Y0 - Y1,
+      fill: "none", stroke: "var(--r-linea,#ccc)"}));
+
+    // los cuadrados de los residuos, dibujados como cuadrados de verdad
+    if (sc.checked) {
+      for (i = 0; i < n; i++) {
+        var pred = b0 + b1 * DX[i], e2 = DY[i] - pred;
+        var lado = Math.abs(e2) * E;
+        if (lado < 0.6) continue;
+        var yr = Math.min(py(DY[i]), py(pred));
+        var xr = e2 > 0 ? px(DX[i]) : px(DX[i]) - lado;
+        svg.appendChild(el("rect", {x: xr.toFixed(1), y: yr.toFixed(1),
+          width: lado.toFixed(1), height: lado.toFixed(1),
+          fill: C_CUAD, "fill-opacity": 0.17, stroke: C_CUAD, "stroke-width": 0.8}));
+      }
+    }
+    // la recta propuesta
+    svg.appendChild(el("line", {x1: px(XL), y1: py(b0 + b1 * XL), x2: px(XH), y2: py(b0 + b1 * XH),
+      stroke: C_REC, "stroke-width": 2.4}));
+    // la optima, de fondo
+    svg.appendChild(el("line", {x1: px(XL), y1: py(B0 + B1 * XL), x2: px(XH), y2: py(B0 + B1 * XH),
+      stroke: C_OPT, "stroke-width": 1.2, "stroke-dasharray": "5 4", opacity: 0.65}));
+    for (i = 0; i < n; i++) {
+      svg.appendChild(el("line", {x1: px(DX[i]), y1: py(DY[i]),
+        x2: px(DX[i]), y2: py(b0 + b1 * DX[i]),
+        stroke: C_CUAD, "stroke-width": 1.1, opacity: 0.75}));
+      svg.appendChild(el("circle", {cx: px(DX[i]).toFixed(1), cy: py(DY[i]).toFixed(1), r: 3.4,
+        fill: C_PT}));
+    }
+    svg.appendChild(el("text", {x: X0 + 4, y: Y1 + 14, "font-size": 10.5, fill: C_REC},
+      "recta propuesta"));
+    svg.appendChild(el("text", {x: X0 + 4, y: Y1 + 27, "font-size": 10, fill: C_OPT},
+      "mínimo (punteada)"));
+
+    // panel derecho: el paisaje de SCE al mover la pendiente, con b0 fijo al actual
+    var PX0 = 400, PX1 = 546, PY0 = 250, PY1 = 60;
+    var lo = -0.4, hi = 2.4, mejor = Infinity, peor = -Infinity, t;
+    for (t = lo; t <= hi; t += 0.02) {
+      var v = sce(b0, t);
+      if (v < mejor) mejor = v;
+      if (v > peor) peor = v;
+    }
+    function qx(b) { return PX0 + (b - lo) / (hi - lo) * (PX1 - PX0); }
+    function qy(v) { return PY0 - (v - mejor) / (peor - mejor) * (PY0 - PY1); }
+    var d = "";
+    for (t = lo; t <= hi; t += 0.02)
+      d += (d ? " L " : "M ") + qx(t).toFixed(1) + " " + qy(sce(b0, t)).toFixed(1);
+    svg.appendChild(el("path", {d: d, fill: "none", stroke: C_REC, "stroke-width": 2}));
+    svg.appendChild(el("line", {x1: PX0, y1: PY0, x2: PX1, y2: PY0, stroke: "var(--r-linea,#ccc)"}));
+    svg.appendChild(el("circle", {cx: qx(b1).toFixed(1), cy: qy(S).toFixed(1), r: 4.2, fill: C_REC}));
+    svg.appendChild(el("line", {x1: qx(B1), y1: PY1 - 6, x2: qx(B1), y2: PY0,
+      stroke: C_OPT, "stroke-width": 1.2, "stroke-dasharray": "4 3"}));
+    svg.appendChild(el("text", {x: PX0 - 4, y: 44, "font-size": 11, "font-weight": 600,
+      fill: "var(--r-tinta,#222)"}, "suma de cuadrados"));
+    svg.appendChild(el("text", {x: PX0 - 4, y: 57, "font-size": 9.5,
+      fill: "var(--r-tinta-suave,#777)"}, "al mover b₁, con b₀ como está"));
+    svg.appendChild(el("text", {x: (PX0 + PX1) / 2, y: PY0 + 15, "font-size": 9.5,
+      "text-anchor": "middle", fill: "var(--r-tinta-suave,#777)"}, "b₁"));
+
+    var exceso = S - SCE_MIN;
+    lec.innerHTML = "<span class=\"fx\">suma de cuadrados = " + S.toFixed(4) +
+      "   ·   mínimo posible = " + SCE_MIN.toFixed(4) +
+      "   ·   exceso = " + exceso.toFixed(4) + "</span><br>" +
+      (exceso < 1e-4
+        ? "Estás en el mínimo: <span class=\"fx\">b₁ = " + B1.toFixed(4) + ", b₀ = " +
+          B0.toFixed(4) + "</span>, que es lo que da la Proposición 13.2."
+        : "Cualquier otra recta suma más. El área naranja total <b>es</b> la cantidad que se " +
+          "minimiza: por eso el método se llama mínimos cuadrados y no mínimas distancias.") +
+      "<br>El panel derecho es esa suma en función de b₁: una parábola, con un único mínimo. " +
+      "Por eso la derivada de la demostración basta y no hay que buscar más.";
+  }
+
+  s1.addEventListener("input", dibujar);
+  s0.addEventListener("input", dibujar);
+  sc.addEventListener("change", dibujar);
+  btn.addEventListener("click", function () {
+    s1.value = String(B1); s0.value = String(B0); dibujar();
+  });
+  dibujar();
+})();
+</script>
+```
+
+Los cuadrados naranjas del visual son literalmente cuadrados: de lado $|e_i|$ y área $e_i^2$. La suma de sus áreas es lo que se minimiza, y de ahí el nombre del método. Mover cualquiera de los dos controles la agranda; el botón devuelve al mínimo.
+
+El panel derecho es $S$ en función de $b_1$: una parábola con un único mínimo. Por eso la demostración puede limitarse a anular la derivada sin comprobar nada más —en una función con varios mínimos locales ese paso no bastaría—.
+
+```{pyodide}
+import numpy as np
+
+x = np.array([1.0, 1.6, 2.3, 3.1, 3.6, 4.4, 5.2, 6.0, 6.8, 7.5, 8.6, 9.4])
+y = np.array([2.9, 3.9, 3.4, 5.1, 4.6, 6.2, 5.8, 7.4, 6.9, 8.6, 8.1, 9.6])
+
+# (1) la formula de la Proposicion 13.2, escrita a mano
+cxy = ((x - x.mean()) * (y - y.mean())).sum()
+cxx = ((x - x.mean()) ** 2).sum()
+b1 = cxy / cxx
+b0 = y.mean() - b1 * x.mean()
+
+# (2) la forma r · s_y / s_x
+r = np.corrcoef(x, y)[0, 1]
+b1_r = r * y.std(ddof=1) / x.std(ddof=1)
+
+# (3) lo que dice numpy
+b1_np, b0_np = np.polyfit(x, y, 1)
+
+print(f"a mano      : b1 = {b1:.8f}   b0 = {b0:.8f}")
+print(f"r · sy / sx : b1 = {b1_r:.8f}")
+print(f"np.polyfit  : b1 = {b1_np:.8f}   b0 = {b0_np:.8f}")
+print()
+
+# la recta pasa por (x barra, y barra), como salio de la primera ecuacion normal
+print(f"prediccion en x̄ = {x.mean():.4f} : {b0 + b1*x.mean():.6f}   ·   ȳ = {y.mean():.6f}")
+
+# ninguna otra recta suma menos
+S_opt = ((y - b0 - b1*x)**2).sum()
+rng = np.random.default_rng(0)
+peor = min(((y - (b0 + db0) - (b1 + db1)*x)**2).sum()
+           for db0, db1 in rng.normal(0, 0.3, size=(20_000, 2)))
+print(f"suma de cuadrados en el optimo : {S_opt:.6f}")
+print(f"la menor de 20000 rectas cercanas: {peor:.6f}")
+```
+
+## 3. Hay dos rectas, no una
+
+::: {.proposicion}
+**Proposición 13.3.** La recta que minimiza los errores **en $y$** y la que los minimiza **en $x$** no son la misma, salvo si $|r| = 1$.
+:::
+
+::: {.proposicion}
+**Proposición 13.4.** Si $b_{y|x}$ es la pendiente de $y$ sobre $x$ y $b_{x|y}$ la de $x$ sobre $y$, entonces
+$$b_{y|x} \cdot b_{x|y} = r^2.$$
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Proposición 13.2 aplicada en cada sentido —basta intercambiar los papeles de las dos variables—:
+$$b_{y|x} = \frac{\text{Cov}(x,y)}{\text{Var}(x)}, \qquad b_{x|y} = \frac{\text{Cov}(x,y)}{\text{Var}(y)}.$$
+Multiplicando,
+$$b_{y|x}\,b_{x|y} = \frac{\text{Cov}(x,y)^2}{\text{Var}(x)\text{Var}(y)} = r^2,$$
+por la Definición 5.6. Como $r^2 \le 1$ por la Proposición 5.4, el producto nunca pasa de uno, y vale uno exactamente cuando $|r| = 1$. Si las dos rectas fueran la misma, la segunda pendiente sería la inversa de la primera y el producto valdría uno; luego coinciden solo en ese caso. [∎]{.fin-demo}
+:::
+
+Ese es el resultado de la Proposición 5.9 —$|r|$ como media geométrica de las dos pendientes— ahora con nombre: las dos pendientes son las de **dos rectas de regresión distintas**.
+
+```{=html}
+<div class="viz-dos">
+  <div class="controles">
+    <label>correlación r <input id="ds-r" type="range" min="-0.95" max="0.95" step="0.05" value="0.6"><output id="ds-r-v">0.60</output></label>
+    <button id="ds-otra" type="button">Otra nube</button>
+    <label><input id="ds-fran" type="checkbox" checked> ver la franja</label>
+  </div>
+  <svg id="ds-svg" viewBox="0 0 560 320" role="img" aria-label="Una nube con las dos rectas de regresión: y sobre x y x sobre y, que no coinciden salvo con correlación perfecta"></svg>
+  <p class="lectura" id="ds-lectura"></p>
+</div>
+<style>
+.viz-dos {
+  border: 1px solid var(--r-linea, #ddd);
+  border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0;
+}
+.viz-dos .controles {
+  display: flex; flex-wrap: wrap; gap: .45rem 1.1rem;
+  align-items: center; margin-bottom: .85rem; font-size: .85rem;
+}
+.viz-dos label { display: flex; align-items: center; gap: .4rem; }
+.viz-dos input[type=range] { width: 8rem; }
+.viz-dos output {
+  font-family: var(--bs-font-monospace, monospace); font-size: .8rem;
+  min-width: 2.6rem; color: var(--r-tinta-suave, #555);
+}
+.viz-dos button {
+  font-size: .8rem; padding: .22rem .6rem; border-radius: 5px; cursor: pointer;
+  border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit;
+}
+.viz-dos button:hover { border-color: var(--r-acento, #0F6E68); color: var(--r-acento, #0F6E68); }
+.viz-dos svg { width: 100%; height: auto; display: block; }
+.viz-dos .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5.2em; line-height: 1.6; }
+.viz-dos .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_PT = "#4B3A7A", C_YX = "#0F6E68", C_XY = "#B45309", C_DIAG = "#999", C_FR = "#B91C1C";
+  var svg = document.getElementById("ds-svg"), lec = document.getElementById("ds-lectura");
+  var sr = document.getElementById("ds-r"), orv = document.getElementById("ds-r-v");
+  var btn = document.getElementById("ds-otra"), sf = document.getElementById("ds-fran");
+  var N = 900, semilla = 314159;
+  // MARCO FIJO en unidades estandarizadas: las dos variables son N(0,1) (regla 19b)
+  var CX = 196, CY = 160, E = 40, LIM = 3.3;
+  var HX0 = 392, HX1 = 544;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(x) { return CX + x * E; }
+  function py(y) { return CY - y * E; }
+
+  function dibujar() {
+    var r = +sr.value, s = semilla, i;
+    orv.textContent = r.toFixed(2);
+    function u() {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    }
+    function gauss() { var a = u() || 1e-12, b = u(); return Math.sqrt(-2*Math.log(a))*Math.cos(2*Math.PI*b); }
+
+    var X = new Float64Array(N), Y = new Float64Array(N);
+    for (i = 0; i < N; i++) {
+      var a = gauss(), b = gauss();
+      X[i] = a;
+      Y[i] = r * a + Math.sqrt(Math.max(1 - r * r, 0)) * b;   // corr(X,Y) = r
+    }
+    var mx = 0, my = 0;
+    for (i = 0; i < N; i++) { mx += X[i]; my += Y[i]; }
+    mx /= N; my /= N;
+    var sxy = 0, sxx = 0, syy = 0;
+    for (i = 0; i < N; i++) {
+      sxy += (X[i]-mx)*(Y[i]-my); sxx += (X[i]-mx)*(X[i]-mx); syy += (Y[i]-my)*(Y[i]-my);
+    }
+    var r_med = sxy / Math.sqrt(sxx * syy);
+    var b_yx = sxy / sxx;            // pendiente de y sobre x
+    var b_xy = sxy / syy;            // pendiente de x sobre y, en el eje x
+    var producto = b_yx * b_xy;
+
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    svg.appendChild(el("rect", {x: px(-LIM), y: py(LIM), width: 2*LIM*E, height: 2*LIM*E,
+      fill: "none", stroke: "var(--r-linea,#ddd)"}));
+    svg.appendChild(el("line", {x1: px(-LIM), y1: py(0), x2: px(LIM), y2: py(0),
+      stroke: "var(--r-linea,#ccc)", "stroke-width": 0.9}));
+    svg.appendChild(el("line", {x1: px(0), y1: py(-LIM), x2: px(0), y2: py(LIM),
+      stroke: "var(--r-linea,#ccc)", "stroke-width": 0.9}));
+    // la diagonal y = x, de referencia
+    svg.appendChild(el("line", {x1: px(-LIM), y1: py(-LIM), x2: px(LIM), y2: py(LIM),
+      stroke: C_DIAG, "stroke-width": 1, "stroke-dasharray": "3 4", opacity: 0.7}));
+
+    for (i = 0; i < N; i++) {
+      if (Math.abs(X[i]) > LIM || Math.abs(Y[i]) > LIM) continue;
+      svg.appendChild(el("circle", {cx: px(X[i]).toFixed(1), cy: py(Y[i]).toFixed(1), r: 1.6,
+        fill: C_PT, "fill-opacity": 0.3}));
+    }
+    // y sobre x: y = my + b_yx (x - mx)
+    svg.appendChild(el("line", {
+      x1: px(-LIM), y1: py(my + b_yx * (-LIM - mx)),
+      x2: px(LIM),  y2: py(my + b_yx * (LIM - mx)),
+      stroke: C_YX, "stroke-width": 2.4}));
+    // x sobre y: x = mx + b_xy (y - my)  ->  se dibuja despejando x en funcion de y
+    svg.appendChild(el("line", {
+      x1: px(mx + b_xy * (-LIM - my)), y1: py(-LIM),
+      x2: px(mx + b_xy * (LIM - my)),  y2: py(LIM),
+      stroke: C_XY, "stroke-width": 2.4}));
+
+    svg.appendChild(el("rect", {x: 12, y: 14, width: 10, height: 3, fill: C_YX}));
+    svg.appendChild(el("text", {x: 26, y: 19, "font-size": 10, fill: C_YX},
+      "y sobre x · pendiente " + b_yx.toFixed(3)));
+    svg.appendChild(el("rect", {x: 12, y: 30, width: 10, height: 3, fill: C_XY}));
+    svg.appendChild(el("text", {x: 26, y: 35, "font-size": 10, fill: C_XY},
+      "x sobre y · pendiente " + (1 / b_xy).toFixed(3) + " en este dibujo"));
+
+    // franja vertical en x = 1.8: la media condicional cae MAS CERCA del centro
+    if (sf.checked) {
+      var a0 = 1.6, a1 = 2.0;
+      svg.appendChild(el("rect", {x: px(a0), y: py(LIM), width: (a1-a0)*E, height: 2*LIM*E,
+        fill: C_FR, "fill-opacity": 0.1, stroke: C_FR, "stroke-width": 1, "stroke-dasharray": "4 3"}));
+      var sum = 0, cnt = 0, bins = new Array(24).fill(0);
+      for (i = 0; i < N; i++) {
+        if (X[i] < a0 || X[i] > a1) continue;
+        sum += Y[i]; cnt++;
+        var bb = Math.floor((Y[i] + LIM) / (2*LIM) * 24);
+        if (bb >= 0 && bb < 24) bins[bb]++;
+      }
+      var media = cnt ? sum / cnt : 0;
+      svg.appendChild(el("line", {x1: px(a0) - 5, y1: py(media), x2: px(a1) + 5, y2: py(media),
+        stroke: C_FR, "stroke-width": 2.4}));
+      var pico = Math.max.apply(null, bins) || 1, alto = (2*LIM*E)/24;
+      svg.appendChild(el("text", {x: HX0, y: 22, "font-size": 11, "font-weight": 600, fill: C_FR},
+        "Y con X ≈ 1.8"));
+      svg.appendChild(el("text", {x: HX0, y: 36, "font-size": 9.5, fill: "var(--r-tinta-suave,#777)"},
+        cnt + " puntos · media " + media.toFixed(3)));
+      for (i = 0; i < 24; i++) {
+        if (!bins[i]) continue;
+        var yv = -LIM + (i + 0.5) / 24 * (2*LIM);
+        svg.appendChild(el("rect", {x: HX0, y: (py(yv) - alto/2).toFixed(1),
+          width: (bins[i]/pico*(HX1-HX0)).toFixed(1), height: (alto-0.8).toFixed(1),
+          fill: C_FR, "fill-opacity": 0.35, stroke: C_FR, "stroke-width": 0.5}));
+      }
+      svg.appendChild(el("line", {x1: HX0, y1: py(media), x2: HX1, y2: py(media),
+        stroke: C_FR, "stroke-width": 1.6}));
+      svg.appendChild(el("line", {x1: HX0, y1: py(1.8), x2: HX1, y2: py(1.8),
+        stroke: C_DIAG, "stroke-width": 1.2, "stroke-dasharray": "3 3"}));
+      svg.appendChild(el("text", {x: HX1, y: py(1.8) - 5, "font-size": 9, "text-anchor": "end",
+        fill: "var(--r-tinta-suave,#777)"}, "y = 1.8"));
+    }
+
+    lec.innerHTML = "<span class=\"fx\">r medida = " + r_med.toFixed(4) +
+      "   ·   pendiente y|x = " + b_yx.toFixed(4) +
+      "   ·   pendiente x|y = " + b_xy.toFixed(4) +
+      "   ·   producto = " + producto.toFixed(4) +
+      "   ·   r² = " + (r_med*r_med).toFixed(4) + "</span><br>" +
+      "<b>El producto de las dos pendientes es r²</b> (Proposición 13.4): no son la misma recta " +
+      "y no son inversas la una de la otra. Solo coinciden si |r| = 1, y se cruzan en ángulo " +
+      "recto si r = 0.<br>" +
+      "La franja lo explica: con X ≈ 1.8, la media de Y sale en " +
+      (sf.checked ? "la marca roja" : "un valor") + ", <b>más cerca del centro</b> que 1.8. " +
+      "Eso es la regresión a la media, y no es un fenómeno: es lo que dice la pendiente r < 1.";
+  }
+
+  sr.addEventListener("input", dibujar);
+  sf.addEventListener("change", dibujar);
+  btn.addEventListener("click", function () { semilla = (semilla * 16807 + 12345) | 0; dibujar(); });
+  dibujar();
+})();
+</script>
+```
+
+Que haya dos rectas no es una curiosidad: es lo que hace que el método **no sea simétrico**. «La recta que mejor describe la relación» no está bien definida; hay que decir qué se predice a partir de qué. Predecir el peso a partir de la altura y predecir la altura a partir del peso son dos problemas y dan dos rectas.
+
+La franja del visual enseña de dónde sale la asimetría. Tomando solo los puntos con $x \approx 1{,}8$, la media de sus $y$ cae **más cerca del centro** que 1,8. Eso es todo lo que hay detrás de la **regresión a la media**: si $|r| < 1$, la pendiente $r\,s_y/s_x$ es, en unidades estandarizadas, menor que uno, así que un valor extremo de $x$ predice un valor menos extremo de $y$.
+
+::: {.callout-note}
+La regresión a la media se confunde a menudo con un fenómeno causal —«castigar funciona porque después mejoran»— cuando es una consecuencia aritmética de que $|r| < 1$. El grupo seleccionado por un valor extremo mejora en la siguiente medición **aunque no se haga nada**, y el mismo efecto aparece midiendo hacia atrás en el tiempo, donde ninguna causa puede actuar. La lección 17 vuelve sobre esto.
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(7)
+n = 4000
+for r_obj in [0.0, 0.3, 0.6, 0.9, 0.99]:
+    a = rng.normal(size=n)
+    b = r_obj * a + np.sqrt(1 - r_obj**2) * rng.normal(size=n)
+    b_yx = np.cov(a, b)[0, 1] / a.var(ddof=1)
+    b_xy = np.cov(a, b)[0, 1] / b.var(ddof=1)
+    r = np.corrcoef(a, b)[0, 1]
+    print(f"r = {r:6.4f}   b(y|x) = {b_yx:7.4f}   b(x|y) = {b_xy:7.4f}   "
+          f"producto = {b_yx*b_xy:.4f}   r² = {r*r:.4f}")
+
+print()
+print("El producto de las dos pendientes es r² en todas las filas: Proposicion 13.4.")
+print("Solo cuando |r| tiende a 1 las dos rectas se juntan.")
+```
+
+## 4. La descomposición, $R^2$, y lo que $R^2$ no dice
+
+::: {.definicion}
+**Definición 13.5.** $\text{SCT} = \sum_i (y_i-\bar{y})^2$, $\;\text{SCR} = \sum_i (\hat{y}_i-\bar{y})^2$, $\;\text{SCE} = \sum_i (y_i-\hat{y}_i)^2$, y
+$$R^2 = \frac{\text{SCR}}{\text{SCT}} = 1 - \frac{\text{SCE}}{\text{SCT}}.$$
+:::
+
+::: {.proposicion}
+**Proposición 13.6.** $\text{SCT} = \text{SCR} + \text{SCE}$, y en regresión lineal simple $R^2 = r^2$.
+:::
+
+::: {.demostracion}
+*Demostración.* Se suma y se resta $\hat{y}_i$ dentro del cuadrado:
+$$\text{SCT} = \sum_i \big((y_i-\hat{y}_i) + (\hat{y}_i-\bar{y})\big)^2
+= \underbrace{\sum_i (y_i-\hat{y}_i)^2}_{\text{SCE}} + \underbrace{\sum_i (\hat{y}_i-\bar{y})^2}_{\text{SCR}} + 2\sum_i e_i(\hat{y}_i-\bar{y}).$$
+El término cruzado se anula. Escribiendo $\hat{y}_i - \bar{y} = \hat{\beta}_1(x_i-\bar{x})$ —que sale de restar la recta evaluada en $\bar{x}$, y usa que pasa por $(\bar{x},\bar{y})$—:
+$$\sum_i e_i(\hat{y}_i-\bar{y}) = \hat{\beta}_1\sum_i e_i(x_i-\bar{x}) = \hat{\beta}_1\Big(\sum_i e_ix_i - \bar{x}\sum_i e_i\Big) = 0,$$
+porque las dos ecuaciones normales de la demostración anterior dicen exactamente $\sum_i e_i = 0$ y $\sum_i e_ix_i = 0$. **Los residuos son ortogonales a $x$ y a la constante**: es la proyección ortogonal de la Matemática 5, escrita en sumas.
+
+Para la segunda parte, $\text{SCR} = \hat{\beta}_1^2\sum_i(x_i-\bar{x})^2$ por lo mismo, y sustituyendo $\hat{\beta}_1 = r\,s_y/s_x$:
+$$R^2 = \frac{\hat{\beta}_1^2\sum_i(x_i-\bar{x})^2}{\sum_i(y_i-\bar{y})^2}
+= \frac{r^2\,\dfrac{s_y^2}{s_x^2}\,(n-1)s_x^2}{(n-1)s_y^2} = r^2. \qquad$$
+[∎]{.fin-demo}
+:::
+
+El término cruzado no se anula por casualidad: **se anula porque los coeficientes se eligieron para que se anulara**. Las ecuaciones normales son precisamente la condición de ortogonalidad, y por eso el teorema de Pitágoras se aplica. Es el mismo argumento que en la Proposición 7.5, con otros vectores.
+
+Hasta aquí todo son identidades algebraicas que se cumplen siempre, **haya modelo o no**. Y ahí está el problema.
+
+```{=html}
+<div class="viz-res">
+  <div class="controles">
+    <label>Datos
+      <select id="rs-t">
+        <option value="lineal" selected>lineal, como pide el modelo</option>
+        <option value="curvo">relación curva</option>
+        <option value="hetero">varianza creciente</option>
+        <option value="atipico">un solo punto atípico</option>
+      </select>
+    </label>
+    <button id="rs-otra" type="button">Otra nube</button>
+  </div>
+  <svg id="rs-svg" viewBox="0 0 560 320" role="img" aria-label="Cuatro conjuntos con R cuadrado parecido y gráficos de residuos que delatan cuál cumple el modelo"></svg>
+  <p class="lectura" id="rs-lectura"></p>
+</div>
+<style>
+.viz-res {
+  border: 1px solid var(--r-linea, #ddd);
+  border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0;
+}
+.viz-res .controles {
+  display: flex; flex-wrap: wrap; gap: .45rem 1.1rem;
+  align-items: center; margin-bottom: .85rem; font-size: .85rem;
+}
+.viz-res label { display: flex; align-items: center; gap: .4rem; }
+.viz-res select {
+  font-size: .85rem; padding: .2rem .4rem; border-radius: 5px;
+  border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit;
+}
+.viz-res button {
+  font-size: .8rem; padding: .22rem .6rem; border-radius: 5px; cursor: pointer;
+  border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit;
+}
+.viz-res button:hover { border-color: var(--r-acento, #0F6E68); color: var(--r-acento, #0F6E68); }
+.viz-res svg { width: 100%; height: auto; display: block; }
+.viz-res .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5.2em; line-height: 1.6; }
+.viz-res .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_PT = "#4B3A7A", C_REC = "#0F6E68", C_RES = "#B45309", C_CERO = "#B91C1C";
+  var svg = document.getElementById("rs-svg"), lec = document.getElementById("rs-lectura");
+  var st = document.getElementById("rs-t"), btn = document.getElementById("rs-otra");
+  var N = 180, semilla = 20260913;
+  // MARCOS FIJOS en los dos paneles (regla 19b)
+  var AX0 = 40, AX1 = 276, AY0 = 268, AY1 = 40;
+  var BX0 = 320, BX1 = 548;
+  var XL = 0, XH = 10, YL = -1, YH = 13, RL = -5.2, RH = 5.2;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function ax(x) { return AX0 + (x - XL) / (XH - XL) * (AX1 - AX0); }
+  function ay(y) { return AY0 - (y - YL) / (YH - YL) * (AY0 - AY1); }
+  function bx(x) { return BX0 + (x - XL) / (XH - XL) * (BX1 - BX0); }
+  function by(r) { return AY0 - (r - RL) / (RH - RL) * (AY0 - AY1); }
+
+  function dibujar() {
+    var tipo = st.value, s = semilla, i;
+    function u() {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    }
+    function gauss() { var a = u() || 1e-12, b = u(); return Math.sqrt(-2*Math.log(a))*Math.cos(2*Math.PI*b); }
+
+    var X = new Float64Array(N), Y = new Float64Array(N);
+    for (i = 0; i < N; i++) {
+      var x = 0.4 + 9.2 * (i + 0.5) / N;
+      X[i] = x;
+      if (tipo === "lineal")      Y[i] = 1.2 + 0.95 * x + 1.35 * gauss();
+      else if (tipo === "curvo")  Y[i] = 1.2 + 2.35 * x - 0.155 * x * x + 0.72 * gauss();
+      else if (tipo === "hetero") Y[i] = 1.2 + 0.95 * x + (0.16 + 0.30 * x) * gauss();
+      else                        Y[i] = 1.2 + 0.95 * x + 0.62 * gauss();
+    }
+    if (tipo === "atipico") { X[N - 1] = 9.7; Y[N - 1] = 0.4; }
+
+    var mx = 0, my = 0;
+    for (i = 0; i < N; i++) { mx += X[i]; my += Y[i]; }
+    mx /= N; my /= N;
+    var sxy = 0, sxx = 0, syy = 0;
+    for (i = 0; i < N; i++) {
+      sxy += (X[i]-mx)*(Y[i]-my); sxx += (X[i]-mx)*(X[i]-mx); syy += (Y[i]-my)*(Y[i]-my);
+    }
+    var b1 = sxy / sxx, b0 = my - b1 * mx;
+    var sce = 0;
+    var R = new Float64Array(N);
+    for (i = 0; i < N; i++) { R[i] = Y[i] - b0 - b1 * X[i]; sce += R[i] * R[i]; }
+    var R2 = 1 - sce / syy;
+
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    // --- panel A: la nube y la recta ---
+    svg.appendChild(el("rect", {x: AX0, y: AY1, width: AX1-AX0, height: AY0-AY1,
+      fill: "none", stroke: "var(--r-linea,#ccc)"}));
+    svg.appendChild(el("line", {x1: ax(XL), y1: ay(b0 + b1*XL), x2: ax(XH), y2: ay(b0 + b1*XH),
+      stroke: C_REC, "stroke-width": 2.2}));
+    for (i = 0; i < N; i++) {
+      if (Y[i] < YL || Y[i] > YH) continue;
+      svg.appendChild(el("circle", {cx: ax(X[i]).toFixed(1), cy: ay(Y[i]).toFixed(1), r: 2.3,
+        fill: C_PT, "fill-opacity": 0.5}));
+    }
+    svg.appendChild(el("text", {x: AX0, y: 26, "font-size": 11.5, "font-weight": 600,
+      fill: "var(--r-tinta,#222)"}, "los datos y la recta ajustada"));
+    svg.appendChild(el("text", {x: AX0 + 4, y: AY0 - 8, "font-size": 10.5, fill: C_REC},
+      "R² = " + R2.toFixed(3)));
+
+    // --- panel B: residuos contra x ---
+    svg.appendChild(el("rect", {x: BX0, y: AY1, width: BX1-BX0, height: AY0-AY1,
+      fill: "none", stroke: "var(--r-linea,#ccc)"}));
+    svg.appendChild(el("line", {x1: BX0, y1: by(0), x2: BX1, y2: by(0),
+      stroke: C_CERO, "stroke-width": 1.4, "stroke-dasharray": "5 4"}));
+    for (i = 0; i < N; i++) {
+      if (R[i] < RL || R[i] > RH) continue;
+      svg.appendChild(el("circle", {cx: bx(X[i]).toFixed(1), cy: by(R[i]).toFixed(1), r: 2.3,
+        fill: C_RES, "fill-opacity": 0.5}));
+    }
+    // media de los residuos por franja: delata curvatura
+    var NB = 7, sum = new Array(NB).fill(0), cnt = new Array(NB).fill(0);
+    var sabs = new Array(NB).fill(0);
+    for (i = 0; i < N; i++) {
+      var b = Math.floor((X[i]-XL)/(XH-XL)*NB);
+      if (b >= 0 && b < NB) { sum[b] += R[i]; sabs[b] += Math.abs(R[i]); cnt[b]++; }
+    }
+    var d = "", primero = true;
+    for (i = 0; i < NB; i++) {
+      if (cnt[i] < 8) continue;
+      var xc = XL + (i+0.5)/NB*(XH-XL);
+      d += (primero ? "M " : " L ") + bx(xc).toFixed(1) + " " + by(sum[i]/cnt[i]).toFixed(1);
+      primero = false;
+    }
+    if (d) svg.appendChild(el("path", {d: d, fill: "none", stroke: "var(--r-tinta,#333)",
+      "stroke-width": 2}));
+    svg.appendChild(el("text", {x: BX0, y: 26, "font-size": 11.5, "font-weight": 600,
+      fill: "var(--r-tinta,#222)"}, "residuos contra x"));
+    svg.appendChild(el("text", {x: BX0 + 4, y: 39, "font-size": 9.5,
+      fill: "var(--r-tinta-suave,#777)"}, "la línea negra es su media por franja"));
+
+    // dispersion de los residuos en el primer y ultimo tercio: delata heterocedasticidad
+    var d1 = 0, c1 = 0, d2 = 0, c2 = 0;
+    for (i = 0; i < N; i++) {
+      if (X[i] < XL + (XH-XL)/3) { d1 += R[i]*R[i]; c1++; }
+      else if (X[i] > XH - (XH-XL)/3) { d2 += R[i]*R[i]; c2++; }
+    }
+    var disp1 = Math.sqrt(d1/Math.max(c1,1)), disp2 = Math.sqrt(d2/Math.max(c2,1));
+    var maxAbs = 0, argmax = 0;
+    for (i = 0; i < N; i++) if (Math.abs(R[i]) > maxAbs) { maxAbs = Math.abs(R[i]); argmax = i; }
+    var curvatura = 0;
+    for (i = 0; i < NB; i++) if (cnt[i] >= 8) curvatura = Math.max(curvatura, Math.abs(sum[i]/cnt[i]));
+
+    var juicio;
+    if (tipo === "lineal") {
+      juicio = "Los residuos caen alrededor de cero sin estructura: la línea negra es plana y la " +
+        "dispersión es la misma a izquierda y derecha. <b>Esto es lo que hay que ver</b> cuando el " +
+        "modelo es el correcto.";
+    } else if (tipo === "curvo") {
+      juicio = "La línea negra <b>hace una curva</b>: los residuos son negativos en los extremos y " +
+        "positivos en el centro. La recta está sistemáticamente equivocada y el R² alto no lo dice.";
+    } else if (tipo === "hetero") {
+      juicio = "El abanico se abre hacia la derecha: la dispersión pasa de " + disp1.toFixed(2) +
+        " a " + disp2.toFixed(2) + ". La pendiente sigue siendo insesgada, pero <b>su error " +
+        "estándar deja de valer</b>, y con él los intervalos de la lección 14.";
+    } else {
+      juicio = "Un solo punto se despega del resto (residuo " + maxAbs.toFixed(2) + " frente a una " +
+        "dispersión de " + disp1.toFixed(2) + "). Está en el borde del rango de x, donde más " +
+        "palanca tiene sobre la pendiente.";
+    }
+    lec.innerHTML = "<span class=\"fx\">R² = " + R2.toFixed(4) + "   ·   pendiente = " +
+      b1.toFixed(4) + "   ·   dispersión izquierda " + disp1.toFixed(3) +
+      " / derecha " + disp2.toFixed(3) +
+      "   ·   mayor desvío de la media por franja " + curvatura.toFixed(3) + "</span><br>" +
+      juicio + "<br>" +
+      "Los cuatro casos dan un R² parecido. <b>El R² no comprueba que el modelo sea correcto</b>: " +
+      "eso lo hace el panel de la derecha, y hay que mirarlo siempre.";
+  }
+
+  st.addEventListener("change", dibujar);
+  btn.addEventListener("click", function () { semilla = (semilla * 16807 + 12345) | 0; dibujar(); });
+  dibujar();
+})();
+</script>
+```
+
+Las cuatro opciones dan un $R^2$ parecido y tres de ellas violan un supuesto distinto de la Definición 13.1:
+
+- **curva**: la media de los residuos no es cero para todo $x$; la línea negra hace un arco. La recta está sistemáticamente equivocada en los extremos y en el centro.
+- **varianza creciente**: la dispersión se abre hacia la derecha. La pendiente sigue siendo insesgada, pero su error estándar deja de valer, y con él todos los intervalos de la lección 14.
+- **punto atípico**: un solo dato en el borde del rango de $x$ mueve la recta. Ahí es donde más palanca tiene, porque está lejos de $\bar{x}$.
+
+El panel de los residuos delata las tres; el $R^2$ no delata ninguna. **$R^2$ mide cuánta varianza explica la recta, no si la recta es la forma correcta.** Es la misma advertencia de los cuartetos de Anscombe de la lección 5, aplicada a una cifra concreta.
+
+```{pyodide}
+import numpy as np
+
+def ajusta(x, y):
+    b1 = ((x-x.mean())*(y-y.mean())).sum() / ((x-x.mean())**2).sum()
+    b0 = y.mean() - b1*x.mean()
+    e  = y - b0 - b1*x
+    sct = ((y-y.mean())**2).sum()
+    return b0, b1, e, 1 - (e**2).sum()/sct
+
+rng = np.random.default_rng(5)
+x = np.linspace(0.4, 9.6, 180)
+casos = {
+    "lineal  ": 1.2 + 0.95*x + 1.35*rng.normal(size=180),
+    "curvo   ": 1.2 + 2.35*x - 0.155*x**2 + 0.72*rng.normal(size=180),
+    "hetero  ": 1.2 + 0.95*x + (0.16 + 0.30*x)*rng.normal(size=180),
+}
+
+print("caso        R²      SCT = SCR + SCE        residuos: media  |curvatura|  disp izq/der")
+for nombre, y in casos.items():
+    b0, b1, e, R2 = ajusta(x, y)
+    yhat = b0 + b1*x
+    sct, scr, sce = ((y-y.mean())**2).sum(), ((yhat-y.mean())**2).sum(), (e**2).sum()
+    # curvatura: mayor desvio de la media de los residuos por franja
+    franjas = np.array_split(np.argsort(x), 7)
+    curv = max(abs(e[f].mean()) for f in franjas)
+    izq, der = e[x < 3.5].std(), e[x > 6.5].std()
+    print(f"{nombre}  {R2:.4f}  {sct:8.2f} = {scr:7.2f} + {sce:7.2f}   "
+          f"{e.mean():+.2e}   {curv:.3f}      {izq:.2f}/{der:.2f}")
+
+print()
+print("SCT = SCR + SCE cuadra en las tres: la identidad no sabe si el modelo es correcto.")
+print("La media de los residuos es cero en las tres: tambien es una identidad, no una comprobacion.")
+print("Lo que separa los casos es la curvatura por franja y la dispersion izquierda/derecha.")
+```
+
+Nótese que la media de los residuos sale cero en los tres casos, hasta el error de punto flotante. No es una buena señal: es una **identidad** que sale de la primera ecuación normal y se cumple siempre, incluso ajustando una recta a datos que no tienen nada de lineal. Comprobar que los residuos suman cero no comprueba nada.
+
+## Ejercicios
+
+### Ejercicio 1 — La pendiente es la covarianza normalizada
+
+Comprobar las tres formas de la Proposición 13.2 sobre 300 conjuntos aleatorios y devolver el mayor error absoluto entre ellas.
+
+```{pyodide}
+#| exercise: ex_pend
+import numpy as np
+
+rng = np.random.default_rng(19)
+errores = []
+for _ in range(300):
+    n = rng.integers(15, 60)
+    x = rng.normal(size=n) * rng.uniform(0.5, 4)
+    y = rng.normal(size=n) * rng.uniform(0.5, 4) + 1.3 * x
+
+    # Las tres formas: la suma de productos cruzados, Cov/Var, y r·sy/sx.
+    b_suma, b_cov, b_r = ______
+
+    errores.append(max(abs(b_suma - b_cov), abs(b_suma - b_r)))
+
+peor = max(errores)
+print(f"mayor discrepancia entre las tres formas : {peor:.3e}")
+```
+
+::: {.hint exercise="ex_pend"}
+La primera es `((x-x.mean())*(y-y.mean())).sum() / ((x-x.mean())**2).sum()`. La segunda usa `np.cov(x,y)[0,1] / x.var(ddof=1)`. La tercera, `np.corrcoef(x,y)[0,1] * y.std(ddof=1) / x.std(ddof=1)`.
+:::
+
+::: {.solution exercise="ex_pend"}
+```python
+b_suma = ((x-x.mean())*(y-y.mean())).sum() / ((x-x.mean())**2).sum()
+b_cov  = np.cov(x, y)[0,1] / x.var(ddof=1)
+b_r    = np.corrcoef(x, y)[0,1] * y.std(ddof=1) / x.std(ddof=1)
+b_suma, b_cov, b_r = b_suma, b_cov, b_r
+```
+
+El error queda en el orden de $10^{-14}$: son la misma fórmula escrita de tres maneras. El $(n-1)$ de `ddof=1` se cancela entre numerador y denominador, y por eso da igual usarlo o no mientras se use en los dos.
+:::
+
+```{pyodide}
+#| exercise: ex_pend
+#| check: true
+ok = peor < 1e-8
+feedback = ("Correcto." if ok else
+            "Las tres formas deberían coincidir; revisa cuál es cuál.")
+{"correct": bool(ok), "message": feedback}
+```
+
+### Ejercicio 2 — Regresión a la media
+
+Generar 50 000 pares con correlación 0,5, quedarse con los que tienen $x$ por encima de 2, y calcular la media de sus $y$. Devolver esa media.
+
+```{pyodide}
+#| exercise: ex_rm
+import numpy as np
+
+rng = np.random.default_rng(23)
+N, r = 50_000, 0.5
+X = rng.normal(size=N)
+Y = r*X + np.sqrt(1 - r**2)*rng.normal(size=N)
+
+# Quedarse con los pares cuya X supera 2, y promediar sus Y.
+media_y = ______
+
+media_x = X[X > 2].mean()
+print(f"media de X entre los seleccionados : {media_x:.4f}")
+print(f"media de Y de esos mismos pares    : {media_y:.4f}")
+print(f"r · media de X                     : {r*media_x:.4f}")
+print()
+print("Los seleccionados por X alta tienen Y alta, pero MENOS alta: r veces, no una vez.")
+```
+
+::: {.hint exercise="ex_rm"}
+`X > 2` da una máscara booleana; `Y[X > 2]` selecciona los `Y` correspondientes.
+:::
+
+::: {.solution exercise="ex_rm"}
+```python
+media_y = Y[X > 2].mean()
+```
+
+La media de $Y$ cae cerca de $r$ veces la de $X$, es decir, alrededor de 1,2 frente a 2,4. No hay ninguna fuerza que empuje hacia el centro: es la pendiente $r < 1$, y nada más. Si se repite seleccionando por $Y$ alta, los $X$ de esos pares salen igualmente menos extremos, y ahí no puede haber causa ninguna.
+:::
+
+```{pyodide}
+#| exercise: ex_rm
+#| check: true
+import numpy as np
+ok = abs(media_y - 0.5*media_x) < 0.05
+feedback = ("Correcto." if ok else
+            "La media de Y debería salir cerca de r veces la de X; revisa la selección.")
+{"correct": bool(ok), "message": feedback}
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Est 13**:
+
+1. Escribir `ajusta(x, y)` que devuelva coeficientes, residuos, $R^2$ y las tres sumas de cuadrados, sin usar `polyfit` ni `lstsq`. Probarla contra `np.polyfit` sobre mil conjuntos aleatorios. Añadir `diagnostico(x, y)` que dibuje los cuatro gráficos de residuos habituales: contra $x$, contra $\hat{y}$, el histograma, y el gráfico cuantil-cuantil contra la normal.
+2. Medir el efecto palanca: tomar un conjunto lineal, mover **un solo punto** en vertical, y graficar cómo cambia la pendiente según dónde esté ese punto en el eje $x$. ¿Dónde hace más daño, en el centro o en el borde? Deducirlo también de la fórmula de $\hat{\beta}_1$ antes de mirar el gráfico.
+3. Reproducir la regresión a la media con datos de dos mediciones repetidas —simuladas con una correlación conocida— y comprobar que el efecto aparece igual **midiendo hacia atrás en el tiempo**. Escribir en dos frases por qué eso descarta la explicación causal.
+
+## Del libro
+
+*Think Stats* se publica bajo licencia [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/), que permite citarlo textualmente.
+
+::: {.cita-libro}
+> A statistic, denoted R² and often pronounced 'R squared', that quantifies how well a model fits the data.
+>
+> [Downey, *Think Stats* 3e, §10.7 *Glossary*, definición de *coefficient of determination*]{.ref}
+:::
+
+La frase «how well a model fits the data» es exacta y conviene leerla con cuidado: dice **cuánto se ajusta**, no **si el modelo es el adecuado**. La sección 4 de aquí desarrolla esa diferencia con cuatro conjuntos de $R^2$ parecido y supuestos rotos distintos.
+
+**Preguntas para leer §10 con lápiz:**
+
+1. §10.3 se titula *Minimizing MSE*. ¿Qué relación establece entre minimizar el error cuadrático medio y la fórmula de la pendiente? Contrastarlo con la Proposición 13.2, que minimiza la suma sin dividir entre $n$: ¿por qué da lo mismo?
+2. §10.5 *Visualizing Uncertainty* dibuja muchas rectas ajustadas a remuestreos. ¿Qué técnica de la lección 11 es esa, y qué cantidad de la lección 14 está estimando?
+3. §10.6 *Transformation* ajusta una recta tras transformar una de las variables. ¿Qué supuesto de la Definición 13.1 se está intentando rescatar con eso, y cuál de los cuatro casos del visual de la sección 4 se arreglaría así?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/regresion-lineal.md`, enlazada a [[minimos-cuadrados]], [[covarianza-correlacion]] y [[maxima-verosimilitud]]. La demostración de la Proposición 13.6 conviene hacerla a mano: es la que enseña que la ortogonalidad no es un accidente sino la condición que define el ajuste.
+
+```
+¿Cuál es el modelo de regresión lineal simple?::y = β₀ + β₁x + ε, con los ε independientes, de media cero y varianza constante
+¿Qué cuatro supuestos lleva escondidos?::Linealidad, independencia de los errores, varianza constante, y media cero para todo x
+¿Cuánto vale la pendiente estimada?::Cov(x,y)/Var(x), que también es r·sy/sx
+¿Qué pasa si se estandarizan las dos variables?::La pendiente es exactamente r. La correlación es la pendiente en unidades estandarizadas
+¿Por dónde pasa siempre la recta de mínimos cuadrados?::Por el punto (x̄, ȳ). Sale de la primera ecuación normal
+¿Hay una recta de regresión o dos?::Dos. La de y sobre x y la de x sobre y no coinciden salvo si |r| = 1
+¿Cuánto vale el producto de sus pendientes?::r²
+¿Qué es la regresión a la media?::Que un valor extremo de x predice un valor menos extremo de y, porque la pendiente estandarizada es r < 1
+¿Es un fenómeno causal?::No. Es aritmética: aparece igual midiendo hacia atrás en el tiempo, donde ninguna causa puede actuar
+¿Qué dice la descomposición SCT = SCR + SCE?::Que la varianza total se parte en la explicada por la recta más la que queda
+¿Por qué se anula el término cruzado?::Porque las ecuaciones normales dicen que los residuos son ortogonales a x y a la constante. Es la proyección de Mat 05
+¿Cuánto vale R² en regresión simple?::r², el cuadrado de la correlación
+¿Un R² alto garantiza que el modelo es correcto?::No. Se puede tener R² alto con relación curva, varianza creciente o un punto atípico mandando
+¿Qué hay que mirar entonces?::El gráfico de residuos contra x: si hay curvatura, abanico o un punto despegado, el modelo no vale
+¿Los residuos suman cero es buena señal?::No es señal de nada. Es una identidad que sale de la primera ecuación normal y se cumple siempre
+¿Qué diferencia hay entre eᵢ y εᵢ?::εᵢ es el error verdadero del modelo, que no se ve; eᵢ es el residuo calculado. Los εᵢ son independientes, los eᵢ no
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** Las Proposiciones 13.2, 13.3, 13.4 y 13.6 se demuestran aquí, a partir de la Proposición 5.4 (Cauchy-Schwarz), la Proposición 5.5, la Definición 5.6 y la Proposición 5.9. Las tres se comprueban además numéricamente: las tres formas de la pendiente coinciden a $10^{-14}$, el producto de pendientes da $r^2$ en cinco correlaciones distintas, y la identidad SCT = SCR + SCE cuadra en los tres conjuntos de la sección 4 —incluidos los que rompen el modelo—. Los tres visuales se contrastaron contra `numpy` antes de publicarse.
+
+**Lo que se usa de otras lecciones sin repetir.** Que minimizar la suma de cuadrados equivale a máxima verosimilitud bajo errores normales es la Proposición 8.8, demostrada allí. Que el ajuste es una proyección ortogonal es la Matemática 6; aquí solo se reescribe en sumas.
+
+**Lo que viene de los libros.**
+
+- [*Think Stats* 3e](https://allendowney.github.io/ThinkStats/) (Downey, CC BY-NC-SA 4.0), §10.7 *Glossary* — citadas textualmente las definiciones de *linear least squares fit* y *coefficient of determination*.
+
+**Lo que es mío, no del libro.** La numeración de definiciones y proposiciones. La insistencia en las dos rectas como consecuencia de la Proposición 5.9, la lectura de la regresión a la media como aritmética y no como fenómeno, el argumento de que «los residuos suman cero» es una identidad y no una comprobación, y los cuatro casos de $R^2$ parecido con supuestos rotos distintos, son forma de presentarlo. *Think Stats* construye la distribución de los coeficientes por remuestreo y no deriva las ecuaciones normales.
+
+[Índices verificados el 12-09-2026 contra el índice publicado del libro.]{.sello}
+:::
+
+→ Siguiente: [Inferencia sobre los coeficientes](14-inferencia-coeficientes.qmd)
