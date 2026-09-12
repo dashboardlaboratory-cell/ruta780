@@ -58,6 +58,15 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
     una o dos frases, con atribución. Si no se puede extraer el texto de
     forma verificable, no se cita y se dice.
 
+20. **Un visual por concepto que lo admita, no uno por página.** Si una
+    definición o una proposición se puede ver, se ve. `estadistica/04` tiene
+    cuatro: esperanza como promedio ponderado sobre una viga, varianza como
+    área de cuadrados, media contra mediana con fulcro, y el sesgo de n vs
+    n−1 acumulando muestras. Un visual que solo decora no entra.
+21. **Todo símbolo que aparezca en una fórmula está en
+    `glosario/glosario.json` con `"tipo": "simbolo"`.** El tooltip se engancha
+    solo sobre lo que KaTeX renderiza; basta con que la entrada exista.
+
 ## Reglas de números
 
 6. **Todo número que la prosa afirme se declara en `verificar/afirmaciones.json`.**

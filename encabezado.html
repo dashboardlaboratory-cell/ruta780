@@ -145,7 +145,6 @@
   listo(function () {
     var G = window.GLOSARIO || {};
     var marcas = document.querySelectorAll("span.g");
-    if (!marcas.length) return;
 
     var tip = document.createElement("div");
     tip.className = "g-tip"; tip.setAttribute("role", "tooltip"); tip.id = "g-tip";
@@ -153,13 +152,18 @@
     document.body.appendChild(tip);
     var abierto = null;
 
-    function mostrar(el) {
-      var k = el.dataset.t ? clave(el.dataset.t) : clave(el.textContent);
-      var e = G[k]; if (!e) return;
+    function mostrar(el, entrada) {
+      var e = entrada;
+      if (!e) {
+        var k = el.dataset.t ? clave(el.dataset.t) : clave(el.textContent);
+        e = G[k];
+      }
+      if (!e) return;
       tip.innerHTML =
         '<span class="g-t">' + e.t + (e.s ? ' <span class="g-s">' + e.s + '</span>' : '') + '</span>' +
         '<span class="g-d">' + e.d + '</span>' +
         (e.l ? '<a class="g-l" href="/ruta780/' + e.l + '.html">se introduce en ' + e.l.split("/")[0] + ' ' + e.l.split("/")[1].slice(0, 2) + ' →</a>' : '');
+      cancelarCierre();
       tip.hidden = false;
       var r = el.getBoundingClientRect(), tw = Math.min(340, window.innerWidth - 24);
       tip.style.width = tw + "px";
@@ -170,11 +174,22 @@
       el.setAttribute("aria-describedby", "g-tip");
       abierto = el;
     }
-    function ocultar() {
+    // Cerrar con retardo: si no, al mover el raton hacia el tooltip se cierra
+    // antes de llegar y su enlace es inalcanzable.
+    var cierre = null;
+    function cancelarCierre() { if (cierre) { clearTimeout(cierre); cierre = null; } }
+    function ocultarYa() {
+      cancelarCierre();
       if (!abierto) return;
       abierto.removeAttribute("aria-describedby");
       tip.hidden = true; abierto = null;
     }
+    function ocultar() {
+      cancelarCierre();
+      cierre = setTimeout(ocultarYa, 220);
+    }
+    tip.addEventListener("mouseenter", cancelarCierre);
+    tip.addEventListener("mouseleave", ocultar);
 
     marcas.forEach(function (el) {
       var k = el.dataset.t ? clave(el.dataset.t) : clave(el.textContent);
@@ -187,13 +202,71 @@
       el.addEventListener("blur", ocultar);
       el.addEventListener("click", function (ev) {   // táctil: toca para abrir/cerrar
         ev.preventDefault();
-        abierto === el ? ocultar() : mostrar(el);
+        abierto === el ? ocultarYa() : mostrar(el);
       });
     });
-    document.addEventListener("keydown", function (ev) { if (ev.key === "Escape") ocultar(); });
+    document.addEventListener("keydown", function (ev) { if (ev.key === "Escape") ocultarYa(); });
     document.addEventListener("click", function (ev) {
-      if (abierto && !abierto.contains(ev.target) && !tip.contains(ev.target)) ocultar();
+      if (abierto && !abierto.contains(ev.target) && !tip.contains(ev.target)) ocultarYa();
     });
+
+    // ── símbolos dentro de las fórmulas ──
+    // KaTeX dibuja cada símbolo en su propio <span>. Se recorre solo .katex-html
+    // (la rama .katex-mathml es para lectores de pantalla y duplicaría el texto),
+    // se marcan las hojas cuyo texto es exactamente un símbolo del glosario, y se
+    // escucha con delegación en vez de un listener por span.
+    var S = window.GLOSARIO_SIMBOLOS || {};
+    if (Object.keys(S).length) {
+      var ALIAS = { "∑": "Σ", "⊤": "ᵀ", "⋅": "·" };
+
+      function marcarSimbolos() {
+        document.querySelectorAll(".katex-html span:not(.g-sim)").forEach(function (sp) {
+          if (sp.children.length) return;                // solo hojas
+          var txt = sp.textContent.trim();
+          if (!txt || txt.length > 3) return;
+          var k = ALIAS[txt] || txt;
+          if (!S[k] && sp.classList.contains("mathbb") && txt === "R") k = "ℝ";
+          if (!S[k]) return;
+          sp.classList.add("g-sim");
+          sp.dataset.sim = k;
+          sp.setAttribute("tabindex", "0");
+        });
+      }
+
+      // KaTeX renderiza despues de DOMContentLoaded, asi que no basta una pasada:
+      // se reintenta hasta que aparezcan formulas, y se vuelve a pasar en load por
+      // si alguna se renderizo tarde.
+      var intentos = 0;
+      (function esperarKatex() {
+        if (document.querySelector(".katex-html")) { marcarSimbolos(); return; }
+        if (++intentos < 40) setTimeout(esperarKatex, 150);
+      })();
+      window.addEventListener("load", function () { setTimeout(marcarSimbolos, 300); });
+
+      function entradaDe(el) { return S[el.dataset.sim]; }
+      document.addEventListener("mouseover", function (ev) {
+        var el = ev.target.closest && ev.target.closest(".g-sim");
+        if (el && el !== abierto) mostrar(el, entradaDe(el));
+      });
+      document.addEventListener("mouseout", function (ev) {
+        var el = ev.target.closest && ev.target.closest(".g-sim");
+        if (el && el === abierto) ocultar();
+      });
+      document.addEventListener("focusin", function (ev) {
+        var el = ev.target.closest && ev.target.closest(".g-sim");
+        if (el) mostrar(el, entradaDe(el));
+      });
+      document.addEventListener("focusout", function (ev) {
+        var el = ev.target.closest && ev.target.closest(".g-sim");
+        if (el && el === abierto) ocultar();
+      });
+      document.addEventListener("click", function (ev) {
+        var el = ev.target.closest && ev.target.closest(".g-sim");
+        if (!el) return;
+        ev.preventDefault();
+        abierto === el ? ocultarYa() : mostrar(el, entradaDe(el));
+      });
+    }
   });
 })();
 </script>
