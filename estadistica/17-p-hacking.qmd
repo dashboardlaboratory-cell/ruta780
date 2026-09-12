@@ -1,0 +1,916 @@
+---
+title: "P-hacking y errores frecuentes"
+subtitle: "Estadística · Lección 17"
+nivel: L4
+modulo: estadistica
+fase: F1
+prereqs: [estadistica/10-pruebas-de-hipotesis, estadistica/16-calibracion]
+siguientes: [estadistica/18-teorema-de-bayes]
+libro: "ISLP cap. 13 Multiple Testing · Think Stats 3e §9 Hypothesis Testing"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="estadistica/17-p-hacking"}
+[[L4]{.nivel .nivel-L4} **Derivación**]{.item}
+[**Fase** F1]{.item}
+[**Libro** ISLP cap. 13]{.item}
+[**Prereqs** [Pruebas de hipótesis](10-pruebas-de-hipotesis.qmd) · [Calibración](16-calibracion.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Demostrar que el menor de $m$ valores p no es uniforme sino $\text{Beta}(1,m)$, y calcular cuánto vale reportar solo la prueba que salió bien.
+2. Distinguir la [tasa de error por familia]{.g data-t="tasa de error por familia"} de la [tasa de falsos descubrimientos]{.g}, y demostrar que [Bonferroni]{.g data-t="corrección de Bonferroni"} controla la primera **sin suponer independencia**.
+3. Demostrar que [Holm]{.g data-t="método de Holm"} rechaza siempre al menos tanto como Bonferroni conservando la misma garantía, y explicar qué gana [Benjamini-Hochberg]{.g data-t="procedimiento de Benjamini-Hochberg"} a cambio de qué.
+4. Medir cuánto infla la tasa de falsos positivos mirar los datos mientras se recogen, y por qué el número de pruebas que cuenta es el de las hechas, no el de las reportadas.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Estadística 10**: la Proposición 10.8 —el valor p es uniforme bajo $H_0$— es el cimiento de todo lo que sigue; y la Proposición 10.9 calculó $1-(1-\alpha)^m$, que aquí se convierte en la distribución completa del mínimo.
+- **Estadística 9 y 14**: la lectura de un intervalo de confianza y de un coeficiente «significativo»; una tabla de regresión con veinte coeficientes son veinte pruebas.
+- **Estadística 16**: elegir el umbral que hace lucir mejor al modelo, después de ver los datos, es la misma contabilidad tramposa aplicada a la clasificación.
+- **Estadística 11**: el bootstrap y las pruebas de permutación no son inmunes: repetir una prueba de permutación con varios estadísticos y quedarse con el mejor es exactamente este problema.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Fase 2, inferencia bayesiana**: la lección 18 empieza por el otro lado —qué probabilidad tiene la hipótesis dados los datos— y eso cambia la contabilidad, no la elimina.
+- **Aprendizaje automático**: elegir hiperparámetros mirando el conjunto de prueba es p-hacking con otro nombre, y la separación entrenamiento/validación/prueba es la corrección.
+- **Lectura crítica**: saber qué preguntar ante un hallazgo —cuántas pruebas se hicieron, cuándo se decidió parar, cuántos análisis se probaron— es lo que esta lección deja instalado.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Símbolo | Se lee | Significado |
+|---|---|---|
+| $m$ | eme | Número de pruebas de la familia. **Solo en esta lección**; en la 15 era el número de casos completos |
+| $m_0$ | eme sub cero | Cuántas de esas $m$ hipótesis nulas son ciertas |
+| $p_{(1)}\le\dots\le p_{(m)}$ | pe sub paréntesis i | Los valores p ordenados de menor a mayor |
+| $V$ | ve | Número de hallazgos falsos: rechazos con $H_0$ cierta |
+| $R$ | erre | Número total de rechazos declarados. **Solo en esta lección** |
+| $\alpha$ | alfa | Nivel de cada prueba individual, y objetivo de la tasa por familia |
+| $\text{FWER}$ | fuer | $P(V\ge 1)$: probabilidad de cometer **al menos un** error de tipo I en toda la familia |
+| $\text{FDR}$ | efe de erre | $E\!\left[V/\max(R,1)\right]$: proporción esperada de falsos entre los hallazgos declarados |
+:::
+
+## 1. El mejor de muchos no es uno cualquiera
+
+La Proposición 10.9 calculó la probabilidad de que alguna de $m$ pruebas dé un falso positivo. Con la distribución completa del mínimo se ve mejor de dónde sale el problema.
+
+::: {.proposicion}
+**Proposición 17.1 (distribución del menor valor p).** Sean $p_1,\dots,p_m$ los valores p de $m$ pruebas independientes, todas con $H_0$ cierta y estadístico continuo. Entonces
+$$P\big(\min_i p_i \le t\big) = 1-(1-t)^m \quad\text{para todo } t\in[0,1],$$
+es decir, $\min_i p_i \sim \text{Beta}(1,m)$, con media $\dfrac{1}{m+1}$.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Proposición 10.8 cada $p_i$ es uniforme en $[0,1]$, de modo que $P(p_i > t) = 1-t$. Por independencia,
+$$P\big(\min_i p_i > t\big) = \prod_{i=1}^{m} P(p_i > t) = (1-t)^m,$$
+y el complemento da la acumulada anunciada, que es la de una $\text{Beta}(1,m)$. Su media se obtiene integrando la cola:
+$$E\big[\min_i p_i\big] = \int_0^1 P\big(\min_i p_i > t\big)\,dt = \int_0^1 (1-t)^m\,dt = \frac{1}{m+1}.$$
+[∎]{.fin-demo}
+:::
+
+Escrito así, el [p-hacking]{.g} deja de ser una cuestión de honestidad y pasa a ser una de aritmética: **reportar el menor de $m$ valores p como si fuera el de una sola prueba es reportar una $\text{Beta}(1,m)$ llamándola uniforme.** Con $m=20$ el menor valor p vale en promedio $1/21\approx 0{,}048$: por debajo de 0,05 sin que exista ningún efecto. El «hallazgo» es el valor esperado del procedimiento.
+
+```{=html}
+<div class="viz-min">
+  <div class="controles">
+    <label>Pruebas hechas <input id="min-m" type="range" min="1" max="40" step="1" value="10"> <span id="min-m-v">10</span></label>
+    <button id="min-otra" type="button">Otra tanda de experimentos</button>
+  </div>
+  <svg id="min-svg" viewBox="0 0 620 320" role="img" aria-label="A la izquierda, la acumulada del menor de m valores p cuando ninguna hipotesis es falsa: la diagonal corresponde a una sola prueba y la curva se despega hacia arriba al aumentar m. A la derecha, la probabilidad de encontrar al menos un hallazgo al cinco por ciento, comparada con el cinco por ciento prometido."></svg>
+  <p class="lectura" id="min-lectura"></p>
+</div>
+<style>
+.viz-min { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-min .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-min label { display: flex; align-items: center; gap: .4rem; }
+.viz-min input[type=range] { width: 130px; padding: 0; }
+.viz-min button { font-size: .8rem; padding: .22rem .6rem; border-radius: 5px; cursor: pointer; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-min button:hover { border-color: var(--r-acento, #0F6E68); color: var(--r-acento, #0F6E68); }
+.viz-min svg { width: 100%; height: auto; display: block; }
+.viz-min .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5.2em; line-height: 1.6; }
+.viz-min .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_E = "#0F6E68", C_T = "#B45309", C_TEO = "var(--r-tinta,#1f2430)";
+  var svg = document.getElementById("min-svg"), lec = document.getElementById("min-lectura");
+  var ctlM = document.getElementById("min-m"), etqM = document.getElementById("min-m-v");
+  var btn = document.getElementById("min-otra");
+
+  var REPS = 600, ALFA = 0.05;
+  var PX0 = 50, PX1 = 300, PY0 = 250, PY1 = 30;    // acumulada
+  var QX0 = 370, QX1 = 600;                         // barras
+  var semilla = 170917;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function flujo(s) {
+    return function () {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function px(v) { return PX0 + v * (PX1 - PX0); }
+  function py(v) { return PY0 - v * (PY0 - PY1); }
+  function qy(v) { return PY0 - v * (PY0 - PY1); }
+
+  // Los valores p de TODAS las pruebas posibles se sortean una vez por tanda:
+  // al mover el control se usan las primeras m columnas, no otros datos.
+  var P = null;
+  function generar(sem) {
+    var u = flujo(sem), a = [], i, j;
+    for (i = 0; i < REPS; i++) {
+      var fila = [];
+      for (j = 0; j < 40; j++) fila.push(u());
+      a.push(fila);
+    }
+    return a;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var m = +ctlM.value, i, j;
+    etqM.textContent = m;
+    var minimos = [];
+    for (i = 0; i < REPS; i++) {
+      var mn = 1;
+      for (j = 0; j < m; j++) if (P[i][j] < mn) mn = P[i][j];
+      minimos.push(mn);
+    }
+    minimos.sort(function (a, b) { return a - b; });
+    var hallazgo = 0;
+    for (i = 0; i < REPS; i++) if (minimos[i] < ALFA) hallazgo++;
+    var frac = hallazgo / REPS, teorico = 1 - Math.pow(1 - ALFA, m);
+
+    // --- izquierda: acumulada del minimo ---
+    svg.appendChild(el("rect", { x: PX0, y: PY1, width: PX1 - PX0, height: PY0 - PY1, fill: "none", stroke: "var(--r-linea,#ddd)" }));
+    svg.appendChild(el("line", { x1: px(0), y1: py(0), x2: px(1), y2: py(1), stroke: C_TEO, "stroke-width": 1.3, "stroke-dasharray": "5 4" }));
+    var d = "";
+    for (i = 0; i <= 100; i++) {
+      var t = i / 100;
+      d += (i ? " L" : "M") + px(t).toFixed(1) + "," + py(1 - Math.pow(1 - t, m)).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_T, "stroke-width": 2 }));
+    var e = "";
+    for (i = 0; i < REPS; i += 20) e += (i ? " L" : "M") + px(minimos[i]).toFixed(1) + "," + py(i / REPS).toFixed(1);
+    svg.appendChild(el("path", { d: e, fill: "none", stroke: C_E, "stroke-width": 2.4, "stroke-opacity": 0.65 }));
+    svg.appendChild(el("line", { x1: px(ALFA), y1: PY0, x2: px(ALFA), y2: PY1, stroke: C_TEO, "stroke-width": 1, "stroke-opacity": 0.5 }));
+    for (i = 0; i <= 1.0001; i += 0.25) {
+      svg.appendChild(el("text", { x: px(i), y: PY0 + 15, "font-size": 9, "text-anchor": "middle", fill: "var(--r-tinta-suave,#777)" }, i.toFixed(2)));
+      svg.appendChild(el("text", { x: PX0 - 6, y: py(i) + 3, "font-size": 9, "text-anchor": "end", fill: "var(--r-tinta-suave,#777)" }, i.toFixed(2)));
+    }
+    svg.appendChild(el("text", { x: PX0, y: 20, "font-size": 11, "font-weight": 600, fill: "var(--r-tinta,#222)" }, "acumulada del menor valor p"));
+    svg.appendChild(el("text", { x: (PX0 + PX1) / 2, y: PY0 + 30, "font-size": 9.5, "text-anchor": "middle", fill: "var(--r-tinta-suave,#777)" }, "valor p"));
+
+    // --- derecha: la barra del 5 % prometido y la real ---
+    svg.appendChild(el("line", { x1: QX0, y1: PY0, x2: QX1, y2: PY0, stroke: "var(--r-linea,#ccc)" }));
+    for (i = 0; i <= 1.0001; i += 0.25) {
+      svg.appendChild(el("line", { x1: QX0, y1: qy(i), x2: QX1, y2: qy(i), stroke: "var(--r-linea,#eee)" }));
+      svg.appendChild(el("text", { x: QX0 - 6, y: qy(i) + 3, "font-size": 9, "text-anchor": "end", fill: "var(--r-tinta-suave,#777)" }, Math.round(i * 100) + " %"));
+    }
+    svg.appendChild(el("rect", { x: QX0 + 30, y: qy(ALFA).toFixed(1), width: 60, height: (PY0 - qy(ALFA)).toFixed(1),
+      fill: C_TEO, "fill-opacity": 0.25, stroke: C_TEO }));
+    svg.appendChild(el("text", { x: QX0 + 60, y: qy(ALFA) - 6, "font-size": 9.5, "text-anchor": "middle", fill: "var(--r-tinta,#222)" }, "5 %"));
+    svg.appendChild(el("text", { x: QX0 + 60, y: PY0 + 14, "font-size": 9, "text-anchor": "middle", fill: "var(--r-tinta-suave,#777)" }, "prometido"));
+    svg.appendChild(el("rect", { x: QX0 + 130, y: qy(frac).toFixed(1), width: 60, height: (PY0 - qy(frac)).toFixed(1),
+      fill: C_T, "fill-opacity": 0.45, stroke: C_T }));
+    svg.appendChild(el("text", { x: QX0 + 160, y: qy(frac) - 6, "font-size": 9.5, "text-anchor": "middle", fill: "var(--r-tinta,#222)" }, (frac * 100).toFixed(1) + " %"));
+    svg.appendChild(el("text", { x: QX0 + 160, y: PY0 + 14, "font-size": 9, "text-anchor": "middle", fill: "var(--r-tinta-suave,#777)" }, "medido"));
+    svg.appendChild(el("text", { x: QX0, y: 20, "font-size": 11, "font-weight": 600, fill: "var(--r-tinta,#222)" }, "P(al menos un hallazgo)"));
+
+    lec.innerHTML = "<span class=\"fx\">m = " + m + " pruebas   ·   medido " + (frac * 100).toFixed(1) +
+      " %   ·   1−(1−0,05)^" + m + " = " + (teorico * 100).toFixed(1) + " %   ·   menor p medio " +
+      (minimos.reduce(function (a, b) { return a + b; }, 0) / REPS).toFixed(4) + "   (teórico 1/(m+1) = " + (1 / (m + 1)).toFixed(4) + ")</span><br>" +
+      "Ninguna de las m hipótesis es falsa: los valores p son uniformes uno por uno. Con m = 1 la acumulada es la diagonal " +
+      "y el 5 % se cumple. Al subir m, la curva del menor valor p se despega hacia arriba: el mínimo de varias uniformes " +
+      "se apelotona cerca de cero, y eso es lo que se reporta cuando solo se cuenta la prueba que salió bien.";
+  }
+
+  function remuestrear() { P = generar(semilla); dibujar(); }
+  ctlM.addEventListener("input", dibujar);
+  btn.addEventListener("click", function () { semilla = (semilla * 16807 + 12345) | 0; remuestrear(); });
+  remuestrear();
+})();
+</script>
+```
+
+```{pyodide}
+import numpy as np
+
+# m pruebas independientes, TODAS con H0 cierta. Por la Proposicion 10.8 cada
+# valor p es uniforme; lo que se reporta cuando se cuenta solo el mejor es el
+# minimo de m uniformes, que no es uniforme.
+rng = np.random.default_rng(17)
+reps = 200_000
+alfa = 0.05
+
+print(" m    P(min p < 0.05)   1−(1−α)^m     E[min p]   1/(m+1)")
+for m in [1, 5, 10, 20, 50]:
+    p = rng.random((reps, m))
+    minimo = p.min(axis=1)
+    print(f"{m:3d}       {(minimo < alfa).mean():.5f}      {1-(1-alfa)**m:.5f}     "
+          f"{minimo.mean():.5f}    {1/(m+1):.5f}")
+print()
+print("La distribucion del minimo es Beta(1, m): su acumulada es 1−(1−t)^m.")
+print("Reportar el mejor de m pruebas como si fuera una sola es reportar")
+print("una Beta(1,m) llamandola uniforme.")
+```
+
+Las dos columnas de la derecha son la Proposición 17.1: la probabilidad medida coincide con $1-(1-\alpha)^m$ y el menor valor p medio con $1/(m+1)$, fila por fila.
+
+## 2. Dos formas de contar los errores
+
+Con muchas pruebas hay dos cosas distintas que se pueden querer controlar, y confundirlas es el segundo error frecuente de esta lección.
+
+::: {.definicion}
+**Definición 17.2 (tasa de error por familia).** $\text{FWER} = P(V \ge 1)$: la probabilidad de que **al menos uno** de los hallazgos declarados sea falso.
+:::
+
+::: {.definicion}
+**Definición 17.3 (tasa de falsos descubrimientos).** $\text{FDR} = E\!\left[\dfrac{V}{\max(R,1)}\right]$: la proporción esperada de falsos entre los hallazgos declarados, contando cero cuando no se declara ninguno.
+:::
+
+La diferencia importa cuando $m$ es grande. Exigir que la probabilidad de un solo error sea del 5 % en una familia de diez mil pruebas es durísimo; admitir que el 5 % de lo declarado sea falso es una promesa distinta, más débil y a menudo más útil. Las dos son legítimas; lo que no es legítimo es prometer una y controlar la otra.
+
+::: {.proposicion}
+**Proposición 17.4 (Bonferroni).** Si se rechaza $H_{0i}$ cuando $p_i \le \alpha/m$, entonces $\text{FWER}\le\alpha$, **cualquiera que sea la dependencia** entre las pruebas.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $I_0$ el conjunto de índices con $H_{0i}$ cierta y $A_i=\{p_i\le\alpha/m\}$. Cometer al menos un error es el suceso $\bigcup_{i\in I_0}A_i$. Por subaditividad de la probabilidad —la desigualdad de Boole, que no supone nada sobre la dependencia—,
+$$\text{FWER} = P\Big(\bigcup_{i\in I_0}A_i\Big) \le \sum_{i\in I_0}P(A_i) = |I_0|\cdot\frac{\alpha}{m} \le m\cdot\frac{\alpha}{m} = \alpha,$$
+usando la Proposición 10.8 para $P(A_i)=\alpha/m$ y $|I_0|\le m$. [∎]{.fin-demo}
+:::
+
+Que no haga falta independencia es lo que hace a Bonferroni utilizable en la práctica, donde las pruebas casi siempre están correlacionadas: veinte coeficientes de una misma regresión, o el mismo efecto medido en veinte subgrupos que comparten datos. El precio es el de la desigualdad: cuanto más correlacionadas estén, más holgada es la cota y más potencia se desperdicia.
+
+```{pyodide}
+import numpy as np
+
+# La cota de Bonferroni no supone independencia: sale de la subaditividad.
+# Aqui se comprueba en los dos extremos y en medio.
+rp = np.random.default_rng(1703)
+reps, m, alfa = 100_000, 20, 0.05
+
+def cola_normal(z):
+    t = 1.0 / (1.0 + 0.2316419 * np.abs(z))
+    d = np.exp(-z * z / 2) / np.sqrt(2 * np.pi)
+    poli = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 +
+           t * (-1.821255978 + t * 1.330274429))))
+    c = d * poli
+    return np.where(z >= 0, c, 1 - c)
+
+print(f"{m} pruebas, todas con H0 cierta, umbral de Bonferroni {alfa}/{m} = {alfa/m}")
+print()
+print("correlacion entre las pruebas   FWER sin corregir   FWER con Bonferroni")
+for rho in [0.0, 0.5, 0.9, 1.0]:
+    comun = rp.normal(size=(reps, 1))
+    propio = rp.normal(size=(reps, m))
+    z = np.sqrt(rho) * comun + np.sqrt(1 - rho) * propio     # correlacion rho entre columnas
+    p = cola_normal(z)
+    print(f"            {rho:.1f}                   {(p <= alfa).any(axis=1).mean()*100:5.2f} %"
+          f"              {(p <= alfa/m).any(axis=1).mean()*100:5.2f} %")
+print()
+print("La cota se cumple siempre (<= 5 %), pero cuanto mas correlacionadas estan")
+print("las pruebas mas conservadora es: con correlacion 1 las m pruebas son en")
+print("realidad una sola, y gastar alfa/m en cada una desperdicia potencia.")
+```
+
+La última fila es el caso extremo: con correlación 1 las veinte pruebas son en realidad una sola, la tasa sin corregir vuelve al 5 % y Bonferroni baja al 0,23 %. La cota se cumple siempre —esa es la garantía—, pero pagar $\alpha/m$ cuando las pruebas se repiten unas a otras es tirar potencia a la basura.
+
+Holm mejora eso sin perder la garantía, y con una demostración que cabe en un párrafo.
+
+::: {.proposicion}
+**Proposición 17.5 (Holm).** Ordénense los valores p de menor a mayor, $p_{(1)}\le\dots\le p_{(m)}$. Recórranse en ese orden rechazando $H_{(i)}$ mientras $p_{(i)} \le \dfrac{\alpha}{m-i+1}$, y párese al primer $i$ que falle. Entonces $\text{FWER}\le\alpha$, sin suponer independencia, y el procedimiento rechaza siempre al menos tanto como Bonferroni.
+:::
+
+::: {.demostracion}
+*Demostración.* Lo segundo primero: en el paso $i=1$ el umbral es $\alpha/m$, exactamente el de Bonferroni, y en los pasos siguientes es mayor; así que todo lo que Bonferroni rechaza —los $p_i \le \alpha/m$, que ocupan las primeras posiciones del orden— Holm lo rechaza también.
+
+Para la garantía, supóngase que Holm comete al menos un error, y sea $H_{(k)}$ el **primer** nulo cierto que rechaza, en la posición $k$ del orden. Las $k-1$ posiciones anteriores son todas nulos falsos, así que entre las $m-k+1$ posiciones restantes están **todos** los nulos ciertos: $|I_0| \le m-k+1$. Como Holm rechazó en la posición $k$,
+$$p_{(k)} \le \frac{\alpha}{m-k+1} \le \frac{\alpha}{|I_0|},$$
+y $p_{(k)}$ es el valor p de un nulo cierto. Por tanto, si Holm comete algún error, existe un $i\in I_0$ con $p_i \le \alpha/|I_0|$, y la probabilidad de eso se acota otra vez por Boole:
+$$\text{FWER} \le P\Big(\bigcup_{i\in I_0}\{p_i\le \alpha/|I_0|\}\Big) \le |I_0|\cdot\frac{\alpha}{|I_0|} = \alpha.$$
+[∎]{.fin-demo}
+:::
+
+Holm es, entonces, gratis en el mismo sentido que la recalibración de la lección 16: misma garantía, nunca menos hallazgos. No hay razón para usar Bonferroni salvo la de explicarlo en una línea.
+
+::: {.proposicion}
+**Procedimiento 17.6 (Benjamini-Hochberg).** Con los valores p ordenados, sea
+$$k = \max\Big\{i : p_{(i)} \le \frac{\alpha\,i}{m}\Big\}$$
+y recházense las $k$ hipótesis con menores valores p (ninguna si el conjunto es vacío). Para pruebas independientes, $\text{FDR}\le\alpha$.
+:::
+
+::: {.demostracion}
+*Demostración parcial.* Aquí solo se demuestra el caso en que **todas** las nulas son ciertas, que es el que interesa cuando se teme que no haya nada. Si $m_0=m$, todo rechazo es falso, de modo que $V=R$ y
+$$\text{FDR} = E\left[\frac{V}{\max(R,1)}\right] = P(R\ge 1) = \text{FWER},$$
+y controlar el FDR equivale a controlar el FWER. El caso general —con $m_0<m$ nulas ciertas, donde BH controla el FDR en $\alpha m_0/m$ pero **no** el FWER— no se demuestra en esta página; se comprueba numéricamente abajo y queda declarado en Fuentes. [∎]{.fin-demo}
+:::
+
+La diferencia entre los tres se ve mejor dibujada: los umbrales de Bonferroni y Holm son rectas casi horizontales cerca de cero, y el de BH es una recta que sube con el rango.
+
+```{=html}
+<div class="viz-mult">
+  <div class="controles">
+    <label>Efectos reales <input id="mult-e" type="range" min="0" max="20" step="1" value="8"> <span id="mult-e-v">8</span> de 60</label>
+    <label>Tamaño del efecto <input id="mult-t" type="range" min="10" max="45" step="5" value="30"> <span id="mult-t-v">3,0</span> σ</label>
+    <button id="mult-otra" type="button">Otra tanda de pruebas</button>
+  </div>
+  <svg id="mult-svg" viewBox="0 0 620 340" role="img" aria-label="Los sesenta valores p de un experimento, ordenados de menor a mayor. Tres umbrales: el del cinco por ciento sin corregir, el de Bonferroni y la recta de Benjamini-Hochberg. Los puntos verdes son las pruebas con efecto real y los grises las que no lo tienen."></svg>
+  <p class="lectura" id="mult-lectura"></p>
+</div>
+<style>
+.viz-mult { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-mult .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-mult label { display: flex; align-items: center; gap: .4rem; }
+.viz-mult input[type=range] { width: 100px; padding: 0; }
+.viz-mult button { font-size: .8rem; padding: .22rem .6rem; border-radius: 5px; cursor: pointer; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-mult button:hover { border-color: var(--r-acento, #0F6E68); color: var(--r-acento, #0F6E68); }
+.viz-mult svg { width: 100%; height: auto; display: block; }
+.viz-mult .lectura { font-size: .85rem; margin-top: .75rem; min-height: 6em; line-height: 1.6; }
+.viz-mult .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_REAL = "#0F6E68", C_NULO = "#9aa0a6", C_BH = "#B45309", C_TEO = "var(--r-tinta,#1f2430)";
+  var svg = document.getElementById("mult-svg"), lec = document.getElementById("mult-lectura");
+  var ctlE = document.getElementById("mult-e"), etqE = document.getElementById("mult-e-v");
+  var ctlT = document.getElementById("mult-t"), etqT = document.getElementById("mult-t-v");
+  var btn = document.getElementById("mult-otra");
+
+  // Constantes: 60 pruebas, umbral 5 %, eje de p de 0 a 0,2. Nada sale de los datos.
+  var M = 60, ALFA = 0.05, PMAX = 0.2, REPS = 400;
+  var PX0 = 52, PX1 = 470, PY0 = 262, PY1 = 30;
+  var QX0 = 500, QX1 = 604;
+  var semilla = 171117;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function flujo(s) {
+    return function () {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function normal(u) { var a = u() || 1e-12, b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); }
+  function colaNormal(z) {   // P(Z > z), Abramowitz-Stegun 7.1.26
+    var t = 1 / (1 + 0.2316419 * Math.abs(z));
+    var d = Math.exp(-z * z / 2) / Math.sqrt(2 * Math.PI);
+    var poli = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+    var c = d * poli;
+    return z >= 0 ? c : 1 - c;
+  }
+  function px(i) { return PX0 + (i - 0.5) / M * (PX1 - PX0); }
+  function py(p) { return PY0 - Math.min(p, PMAX) / PMAX * (PY0 - PY1); }
+  function qy(v) { return PY0 - v * (PY0 - PY1); }
+
+  function experimento(u, nEfectos, tam) {
+    var p = [], real = [], i;
+    for (i = 0; i < M; i++) {
+      var esReal = i < nEfectos;
+      p.push(colaNormal(normal(u) + (esReal ? tam : 0)));
+      real.push(esReal);
+    }
+    return { p: p, real: real };
+  }
+
+  function decidir(p) {
+    // devuelve el umbral efectivo de cada metodo sobre esta lista de valores p
+    var orden = p.slice().sort(function (a, b) { return a - b; }), i;
+    var holm = -1;
+    for (i = 0; i < M; i++) {
+      if (orden[i] <= ALFA / (M - i)) holm = orden[i]; else break;
+    }
+    var bh = -1;
+    for (i = M - 1; i >= 0; i--) {
+      if (orden[i] <= ALFA * (i + 1) / M) { bh = orden[i]; break; }
+    }
+    return { sin: ALFA, bonf: ALFA / M, holm: holm, bh: bh };
+  }
+
+  function contar(d, ex, cual) {
+    var u = d[cual], v = 0, s = 0, i;
+    for (i = 0; i < M; i++) if (ex.p[i] <= u) { s++; if (!ex.real[i]) v++; }
+    return { total: s, falsos: v };
+  }
+
+  var ex = null;
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var nEf = +ctlE.value, tam = +ctlT.value / 10, i;
+    etqE.textContent = nEf;
+    etqT.textContent = tam.toFixed(1).replace(".", ",");
+    var u = flujo(semilla);
+    ex = experimento(u, nEf, tam);
+    var d = decidir(ex.p);
+
+    // ordenar para dibujar por rango
+    var idx = ex.p.map(function (v, i) { return i; });
+    idx.sort(function (a, b) { return ex.p[a] - ex.p[b]; });
+
+    svg.appendChild(el("rect", { x: PX0, y: PY1, width: PX1 - PX0, height: PY0 - PY1, fill: "none", stroke: "var(--r-linea,#ddd)" }));
+    // los tres umbrales
+    svg.appendChild(el("line", { x1: PX0, y1: py(ALFA), x2: PX1, y2: py(ALFA), stroke: C_TEO, "stroke-width": 1.3, "stroke-dasharray": "6 4" }));
+    svg.appendChild(el("text", { x: PX1 - 2, y: py(ALFA) - 5, "font-size": 9, "text-anchor": "end", fill: "var(--r-tinta,#222)" }, "sin corregir: 0,05"));
+    svg.appendChild(el("line", { x1: PX0, y1: py(ALFA / M), x2: PX1, y2: py(ALFA / M), stroke: C_TEO, "stroke-width": 1.3 }));
+    svg.appendChild(el("text", { x: PX1 - 2, y: py(ALFA / M) - 5, "font-size": 9, "text-anchor": "end", fill: "var(--r-tinta,#222)" }, "Bonferroni: 0,05/60"));
+    svg.appendChild(el("line", { x1: px(1), y1: py(ALFA * 1 / M), x2: px(M), y2: py(ALFA * M / M), stroke: C_BH, "stroke-width": 1.6 }));
+    svg.appendChild(el("text", { x: px(M) - 2, y: py(ALFA) + 13, "font-size": 9, "text-anchor": "end", fill: C_BH }, "Benjamini-Hochberg: 0,05·i/60"));
+
+    for (i = 0; i < M; i++) {
+      var j = idx[i];
+      svg.appendChild(el("circle", { cx: px(i + 1).toFixed(1), cy: py(ex.p[j]).toFixed(1), r: 3.4,
+        fill: ex.real[j] ? C_REAL : C_NULO, "fill-opacity": 0.75,
+        stroke: ex.real[j] ? C_REAL : C_NULO, "stroke-width": 0.6 }));
+    }
+    for (i = 0; i <= 0.2001; i += 0.05) {
+      svg.appendChild(el("text", { x: PX0 - 6, y: py(i) + 3, "font-size": 9, "text-anchor": "end", fill: "var(--r-tinta-suave,#777)" }, i.toFixed(2)));
+    }
+    for (i = 10; i <= M; i += 10) {
+      svg.appendChild(el("text", { x: px(i), y: PY0 + 15, "font-size": 9, "text-anchor": "middle", fill: "var(--r-tinta-suave,#777)" }, String(i)));
+    }
+    svg.appendChild(el("text", { x: PX0, y: 20, "font-size": 11, "font-weight": 600, fill: "var(--r-tinta,#222)" }, "los 60 valores p, ordenados"));
+    svg.appendChild(el("text", { x: (PX0 + PX1) / 2, y: PY0 + 30, "font-size": 9.5, "text-anchor": "middle", fill: "var(--r-tinta-suave,#777)" }, "rango i"));
+
+    // --- tasas medidas sobre muchas tandas ---
+    var um = flujo(semilla ^ 0x1d872b41), fw = { sin: 0, bonf: 0, holm: 0, bh: 0 }, fd = { sin: 0, bonf: 0, holm: 0, bh: 0 }, r;
+    for (r = 0; r < REPS; r++) {
+      var e2 = experimento(um, nEf, tam), d2 = decidir(e2.p);
+      ["sin", "bonf", "holm", "bh"].forEach(function (c) {
+        var k = contar(d2, e2, c);
+        if (k.falsos > 0) fw[c]++;
+        fd[c] += k.falsos / Math.max(k.total, 1);
+      });
+    }
+    var nombres = { sin: "sin corregir", bonf: "Bonferroni", holm: "Holm", bh: "BH" };
+    var y0 = 44, cs = ["sin", "bonf", "holm", "bh"];
+    svg.appendChild(el("line", { x1: QX0 + 0.05 * (QX1 - QX0) * 2, y1: 36, x2: QX0 + 0.05 * (QX1 - QX0) * 2, y2: PY0 - 20,
+      stroke: C_TEO, "stroke-width": 1, "stroke-dasharray": "3 3" }));
+    svg.appendChild(el("text", { x: QX0, y: 20, "font-size": 10, "font-weight": 600, fill: "var(--r-tinta,#222)" }, "FDR medido"));
+    for (i = 0; i < 4; i++) {
+      var v = fd[cs[i]] / REPS;
+      svg.appendChild(el("rect", { x: QX0, y: (y0 + i * 52).toFixed(1), width: Math.max(1, v * (QX1 - QX0) * 2).toFixed(1), height: 13,
+        fill: C_BH, "fill-opacity": 0.5, stroke: C_BH }));
+      svg.appendChild(el("text", { x: QX0, y: y0 + i * 52 - 4, "font-size": 9, fill: "var(--r-tinta-suave,#777)" }, nombres[cs[i]]));
+      svg.appendChild(el("text", { x: QX0, y: y0 + i * 52 + 26, "font-size": 9.5, fill: "var(--r-tinta,#222)" }, (v * 100).toFixed(1) + " %"));
+    }
+
+    var k1 = contar(d, ex, "sin"), k2 = contar(d, ex, "bonf"), k3 = contar(d, ex, "holm"), k4 = contar(d, ex, "bh");
+    lec.innerHTML = "<span class=\"fx\">en esta tanda (" + nEf + " efectos reales de " + M + "):<br>" +
+      "sin corregir " + k1.total + " hallazgos, " + k1.falsos + " falsos   ·   Bonferroni " + k2.total + " / " + k2.falsos +
+      "   ·   Holm " + k3.total + " / " + k3.falsos + "   ·   BH " + k4.total + " / " + k4.falsos + "</span><br>" +
+      "Bonferroni y Holm controlan la probabilidad de cometer <em>un solo</em> error: son los más estrictos y se les escapan " +
+      "efectos reales. BH controla la <em>proporción</em> de errores entre lo que declara, así que admite alguno a cambio de " +
+      "encontrar bastantes más. Con cero efectos reales las cuatro barras miden lo mismo, porque cualquier hallazgo es falso.";
+  }
+
+  ctlE.addEventListener("input", dibujar);
+  ctlT.addEventListener("input", dibujar);
+  btn.addEventListener("click", function () { semilla = (semilla * 16807 + 12345) | 0; dibujar(); });
+  dibujar();
+})();
+</script>
+```
+
+```{pyodide}
+import numpy as np
+
+# m pruebas a la vez: unas con efecto real y otras sin el. Se comparan cuatro
+# formas de decidir cuales se declaran hallazgo.
+rp = np.random.default_rng(1702)
+reps, m, m1, alfa = 20_000, 100, 10, 0.05      # 10 efectos reales de cada 100
+efecto = 3.2                                    # en unidades de z
+
+def cola_normal(z):
+    """P(Z > z) con la aproximacion de Abramowitz-Stegun 7.1.26 (error < 1.5e-7).
+
+    Sin scipy, y vectorizada: hacerlo dato a dato con math.erf tarda un orden
+    de magnitud mas, y en el navegador eso se nota.
+    """
+    t = 1.0 / (1.0 + 0.2316419 * np.abs(z))
+    d = np.exp(-z * z / 2) / np.sqrt(2 * np.pi)
+    poli = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 +
+           t * (-1.821255978 + t * 1.330274429))))
+    cola = d * poli
+    return np.where(z >= 0, cola, 1 - cola)
+
+verdad = np.zeros(m, dtype=bool); verdad[:m1] = True
+z = rp.normal(size=(reps, m)) + verdad * efecto
+p = cola_normal(z)
+ordenado = np.sort(p, axis=1)
+j = np.arange(m)
+
+# Holm: bajar por la lista ordenada mientras p_(j) <= alfa/(m−j); pararse al primer fallo
+pasa = ordenado <= alfa / (m - j)
+corte = np.where(pasa.all(axis=1), m, np.argmin(pasa, axis=1))
+umbral_holm = np.where(corte > 0, ordenado[np.arange(reps), np.maximum(corte - 1, 0)], -1.0)
+
+# BH: subir hasta el ultimo j con p_(j) <= alfa·(j+1)/m
+ok = ordenado <= alfa * (j + 1) / m
+k = np.where(ok.any(axis=1), m - np.argmax(ok[:, ::-1], axis=1), 0)
+umbral_bh = np.where(k > 0, ordenado[np.arange(reps), np.maximum(k - 1, 0)], -1.0)
+
+metodos = {
+    "sin corregir": p <= alfa,
+    "Bonferroni": p <= alfa / m,
+    "Holm": p <= umbral_holm[:, None],
+    "BH": p <= umbral_bh[:, None],
+}
+
+print(f"{m} pruebas por experimento, {m1} con efecto real, umbral {alfa}, {reps} experimentos")
+print()
+print("metodo          FWER      FDR      potencia")
+for nombre, rech in metodos.items():
+    falsos = (rech & ~verdad).sum(axis=1)
+    total = np.maximum(rech.sum(axis=1), 1)
+    print(f"{nombre:14s}  {(falsos > 0).mean()*100:5.1f} %  {(falsos/total).mean()*100:5.1f} %   "
+          f"{(rech & verdad).sum(axis=1).mean()/m1*100:5.1f} %")
+```
+
+La tabla es la lección entera en cuatro filas. Sin corregir, la probabilidad de publicar al menos un falso hallazgo es del 98,9 %: con cien pruebas, encontrar algo está garantizado. Bonferroni y Holm la devuelven al 5 % prometido —Holm con un poco más de potencia, 46,8 % contra 46,3 %, tal como dice la Proposición 17.5— y BH cambia de promesa: su FDR es del 4,4 %, por debajo del 5 % objetivo, a costa de un FWER del 30 %. Esos 30 puntos no son un fallo: son la definición. BH admite algún falso hallazgo con tal de encontrar el 70 % de los efectos reales en vez del 46 %.
+
+## 3. Mirar mientras se recogen los datos
+
+El caso anterior supone que $m$ está fijado de antemano. El error más común no es ese: es no saber cuántas pruebas se hicieron. La forma más silenciosa de inflar $m$ es mirar los datos e ir decidiendo si seguir.
+
+::: {.proposicion}
+**Proposición 17.7 (el vistazo repetido).** Sea $z_n$ el estadístico calculado con las primeras $n$ observaciones y considérese la regla «mirar en los momentos $n_1<\dots<n_K$ y declarar hallazgo la primera vez que $|z_{n_j}|>z_{\alpha/2}$». Entonces la tasa de falsos positivos
+$$\gamma_K = P\Big(\exists\, j\le K:\ |z_{n_j}|>z_{\alpha/2}\Big)$$
+es no decreciente en $K$, y $\gamma_1=\alpha$. Es decir: mirar más veces solo puede aumentar la tasa, nunca reducirla.
+:::
+
+::: {.demostracion}
+*Demostración.* Los sucesos están encajados: si se declara hallazgo mirando en los primeros $K$ momentos, también se declara mirando en los primeros $K+1$, porque el suceso «alguno de los $K$ primeros cruza» está contenido en «alguno de los $K+1$ primeros cruza». La probabilidad es monótona respecto de la inclusión, luego $\gamma_K \le \gamma_{K+1}$. Con un solo momento, la regla es la prueba de la lección 10 y $\gamma_1=\alpha$ por la Proposición 10.8. [∎]{.fin-demo}
+:::
+
+La proposición solo dice que la tasa sube. **Cuánto** sube es una cuenta que no tiene forma cerrada simple, y por eso se mide.
+
+```{=html}
+<div class="viz-vis">
+  <div class="controles">
+    <label>Veces que se mira <input id="vis-k" type="range" min="1" max="20" step="1" value="1"> <span id="vis-k-v">1</span></label>
+    <button id="vis-otra" type="button">Otra tanda de experimentos</button>
+  </div>
+  <svg id="vis-svg" viewBox="0 0 620 330" role="img" aria-label="Cuarenta experimentos sin ningun efecto real: cada linea es el estadistico z acumulado a medida que llegan datos. Las dos rectas horizontales son el umbral del cinco por ciento. Las verticales marcan los momentos en que se mira; los experimentos que cruzan en alguno de esos momentos se dibujan resaltados."></svg>
+  <p class="lectura" id="vis-lectura"></p>
+</div>
+<style>
+.viz-vis { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-vis .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-vis label { display: flex; align-items: center; gap: .4rem; }
+.viz-vis input[type=range] { width: 130px; padding: 0; }
+.viz-vis button { font-size: .8rem; padding: .22rem .6rem; border-radius: 5px; cursor: pointer; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-vis button:hover { border-color: var(--r-acento, #0F6E68); color: var(--r-acento, #0F6E68); }
+.viz-vis svg { width: 100%; height: auto; display: block; }
+.viz-vis .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5.2em; line-height: 1.6; }
+.viz-vis .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_N = "#9aa0a6", C_R = "#B45309", C_TEO = "var(--r-tinta,#1f2430)";
+  var svg = document.getElementById("vis-svg"), lec = document.getElementById("vis-lectura");
+  var ctlK = document.getElementById("vis-k"), etqK = document.getElementById("vis-k-v");
+  var btn = document.getElementById("vis-otra");
+
+  // Marco fijo: n de 20 a 400, z de −4 a 4, y el umbral en ±1,96. Nada de esto
+  // depende de los datos sorteados (regla 19b).
+  var NMIN = 20, NMAX = 400, ZC = 1.959963984540054, DIBUJADOS = 40, MEDIDOS = 800;
+  var PX0 = 52, PX1 = 470, PY0 = 268, PY1 = 26;
+  var QX0 = 512, QX1 = 596;
+  var semilla = 171017;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function flujo(s) {
+    return function () {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function normal(u) { var a = u() || 1e-12, b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); }
+  function px(n) { return PX0 + (n - NMIN) / (NMAX - NMIN) * (PX1 - PX0); }
+  function py(z) { return (PY0 + PY1) / 2 - z / 4 * (PY0 - PY1) / 2; }
+  function qy(v) { return PY0 - v * (PY0 - PY1); }
+
+  // Cada experimento es un paseo: z_n = (suma de n normales)/raiz(n), con H0 cierta.
+  function generar(sem, cuantos) {
+    var u = flujo(sem), caminos = [], i, n;
+    for (i = 0; i < cuantos; i++) {
+      var s = 0, z = [];
+      for (n = 1; n <= NMAX; n++) { s += normal(u); z.push(s / Math.sqrt(n)); }
+      caminos.push(z);
+    }
+    return caminos;
+  }
+
+  var dibujo = null, medida = null;
+  function momentos(k) {
+    var pts = [], i;
+    if (k === 1) return [NMAX];
+    for (i = 0; i < k; i++) pts.push(Math.round(NMIN + i * (NMAX - NMIN) / (k - 1)));
+    return pts;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var k = +ctlK.value, i, j;
+    etqK.textContent = k;
+    var pts = momentos(k);
+
+    svg.appendChild(el("rect", { x: PX0, y: PY1, width: PX1 - PX0, height: PY0 - PY1, fill: "none", stroke: "var(--r-linea,#ddd)" }));
+    // los momentos en que se mira
+    for (i = 0; i < pts.length; i++) {
+      svg.appendChild(el("line", { x1: px(pts[i]).toFixed(1), y1: PY1, x2: px(pts[i]).toFixed(1), y2: PY0,
+        stroke: "var(--r-linea,#ccc)", "stroke-width": 1, "stroke-dasharray": "2 4" }));
+    }
+    // el umbral: constante, no depende de los datos
+    svg.appendChild(el("line", { x1: PX0, y1: py(ZC), x2: PX1, y2: py(ZC), stroke: C_TEO, "stroke-width": 1.4, "stroke-dasharray": "6 4" }));
+    svg.appendChild(el("line", { x1: PX0, y1: py(-ZC), x2: PX1, y2: py(-ZC), stroke: C_TEO, "stroke-width": 1.4, "stroke-dasharray": "6 4" }));
+    svg.appendChild(el("line", { x1: PX0, y1: py(0), x2: PX1, y2: py(0), stroke: "var(--r-linea,#eee)" }));
+
+    function cruza(z) {
+      for (var a = 0; a < pts.length; a++) if (Math.abs(z[pts[a] - 1]) > ZC) return true;
+      return false;
+    }
+    var rojos = 0;
+    for (i = 0; i < dibujo.length; i++) {
+      var z = dibujo[i], roto = cruza(z), d = "";
+      for (j = NMIN - 1; j < NMAX; j += 3) d += (j === NMIN - 1 ? "M" : " L") + px(j + 1).toFixed(1) + "," + py(z[j]).toFixed(1);
+      svg.appendChild(el("path", { d: d, fill: "none", stroke: roto ? C_R : C_N,
+        "stroke-width": roto ? 1.4 : 0.8, "stroke-opacity": roto ? 0.9 : 0.4 }));
+      if (roto) rojos++;
+    }
+    var tasa = 0;
+    for (i = 0; i < medida.length; i++) if (cruza(medida[i])) tasa++;
+    tasa /= medida.length;
+
+    for (i = -4; i <= 4; i += 2) {
+      svg.appendChild(el("text", { x: PX0 - 6, y: py(i) + 3, "font-size": 9, "text-anchor": "end", fill: "var(--r-tinta-suave,#777)" }, String(i)));
+    }
+    for (i = NMIN; i <= NMAX; i += 95) {
+      svg.appendChild(el("text", { x: px(i), y: PY0 + 15, "font-size": 9, "text-anchor": "middle", fill: "var(--r-tinta-suave,#777)" }, String(i)));
+    }
+    svg.appendChild(el("text", { x: PX0, y: 18, "font-size": 11, "font-weight": 600, fill: "var(--r-tinta,#222)" }, "z acumulado, 40 experimentos sin ningún efecto"));
+    svg.appendChild(el("text", { x: (PX0 + PX1) / 2, y: PY0 + 30, "font-size": 9.5, "text-anchor": "middle", fill: "var(--r-tinta-suave,#777)" }, "datos acumulados (n)"));
+
+    // barra de la tasa medida
+    svg.appendChild(el("line", { x1: QX0, y1: PY0, x2: QX1, y2: PY0, stroke: "var(--r-linea,#ccc)" }));
+    for (i = 0; i <= 0.5001; i += 0.1) {
+      svg.appendChild(el("line", { x1: QX0, y1: qy(i * 2), x2: QX1, y2: qy(i * 2), stroke: "var(--r-linea,#eee)" }));
+      svg.appendChild(el("text", { x: QX0 - 5, y: qy(i * 2) + 3, "font-size": 8.5, "text-anchor": "end", fill: "var(--r-tinta-suave,#777)" }, Math.round(i * 100) + "%"));
+    }
+    svg.appendChild(el("line", { x1: QX0, y1: qy(0.05 * 2), x2: QX1, y2: qy(0.05 * 2), stroke: C_TEO, "stroke-width": 1.2, "stroke-dasharray": "4 3" }));
+    svg.appendChild(el("rect", { x: QX0 + 18, y: qy(tasa * 2).toFixed(1), width: 44, height: (PY0 - qy(tasa * 2)).toFixed(1),
+      fill: C_R, "fill-opacity": 0.5, stroke: C_R }));
+    svg.appendChild(el("text", { x: QX0 + 40, y: qy(tasa * 2) - 6, "font-size": 10, "text-anchor": "middle", fill: "var(--r-tinta,#222)" }, (tasa * 100).toFixed(1) + " %"));
+    svg.appendChild(el("text", { x: QX0 + 40, y: 18, "font-size": 10, "text-anchor": "middle", fill: "var(--r-tinta,#222)" }, "falsos"));
+    svg.appendChild(el("text", { x: QX0 + 40, y: 30, "font-size": 10, "text-anchor": "middle", fill: "var(--r-tinta,#222)" }, "positivos"));
+
+    lec.innerHTML = "<span class=\"fx\">se mira " + k + (k === 1 ? " vez" : " veces") +
+      "   ·   cruzan el umbral " + rojos + " de los " + DIBUJADOS + " dibujados   ·   " +
+      (tasa * 100).toFixed(1) + " % de " + MEDIDOS + " experimentos (prometido: 5 %)</span><br>" +
+      "Ninguno de estos experimentos tiene efecto real: todas las líneas son paseos aleatorios alrededor de cero. " +
+      "Mirando una sola vez, al final, cruza el 5 % prometido. Cada vistazo adicional es otra oportunidad de cruzar, " +
+      "y como basta con cruzar una vez para parar y declarar hallazgo, la tasa sube con el número de vistazos.";
+  }
+
+  function remuestrear() {
+    dibujo = generar(semilla, DIBUJADOS);
+    medida = generar(semilla ^ 0x5bf03635, MEDIDOS);
+    dibujar();
+  }
+  ctlK.addEventListener("input", dibujar);
+  btn.addEventListener("click", function () { semilla = (semilla * 16807 + 12345) | 0; remuestrear(); });
+  remuestrear();
+})();
+</script>
+```
+
+```{pyodide}
+import numpy as np
+
+# Mirar los datos e ir decidiendo si seguir: el estadistico z acumulado es un
+# paseo aleatorio, y cada vistazo es otra oportunidad de cruzar el umbral.
+ss_d, ss_o = np.random.SeedSequence(1701).spawn(2)
+rd = np.random.default_rng(ss_d)
+
+reps, n_max = 40_000, 400
+z_critico = 1.959963984540054
+x = rd.normal(size=(reps, n_max))          # H0 cierta: media verdadera 0
+acum = np.cumsum(x, axis=1)
+n = np.arange(1, n_max + 1)
+z = acum / np.sqrt(n)                       # estadistico z con sigma = 1 conocida
+
+print("n minimo antes de mirar: 20, hasta n = 400")
+print("vistazos   momentos en que se mira       tasa de rechazo al 5 %")
+for k in [1, 2, 5, 10, 20, 381]:
+    if k == 1:
+        puntos = np.array([n_max - 1])
+    else:
+        puntos = np.unique(np.linspace(19, n_max - 1, k).astype(int))
+    cruza = (np.abs(z[:, puntos]) > z_critico).any(axis=1)
+    print(f"{len(puntos):6d}     {'todos' if k > 300 else str(list(puntos[:4]) + (['...'] if len(puntos) > 4 else []))[:28]:28s}  {cruza.mean()*100:6.2f} %")
+print()
+print("Con un solo analisis al final la tasa es el 5 % prometido.")
+print("Cada vistazo adicional la sube, y la sucesion es creciente porque los")
+print("sucesos 'cruzo en alguno de los k momentos' estan encajados.")
+```
+
+Con un solo análisis al final, el 4,96 % prometido. Con dos, casi el 10 %. Mirando después de cada observación entre $n=20$ y $n=400$, el 35,13 %: uno de cada tres experimentos sin ningún efecto termina declarando un hallazgo, y en cada uno de ellos el análisis final está bien hecho. Lo que está mal hecho es la contabilidad de cuántas veces se preguntó.
+
+::: {.callout-warning}
+Este es el resultado que más cuesta aceptar, porque la regla «paro cuando el resultado sea claro» parece prudente. No lo es: es la que garantiza parar justo en el momento en que el ruido está de nuestro lado. Si hay que mirar sobre la marcha —y muchas veces hay que hacerlo—, existen métodos secuenciales que reparten $\alpha$ entre los vistazos; lo que no se puede es mirar libremente y reportar el umbral de un solo análisis.
+:::
+
+## 4. Qué preguntar ante un hallazgo
+
+Las tres secciones anteriores se resumen en una pregunta de contabilidad: **¿cuántas pruebas se hicieron en realidad?** El número casi nunca coincide con el reportado, y las formas de inflarlo son todas inocentes de una en una:
+
+1. **Varios estadísticos.** Probar la diferencia de medias, la de medianas y la de varianzas y reportar la que salió: $m=3$.
+2. **Varios subgrupos.** El efecto global no sale, pero sí en mujeres mayores de cincuenta: cada subgrupo es una prueba.
+3. **Varias variables de resultado.** Se midieron ocho cosas y se reporta la que dio: $m=8$.
+4. **Varias decisiones de limpieza.** Qué atípicos quitar, qué transformación aplicar, dónde cortar una variable continua. Cada decisión binaria tomada **después** de ver los datos duplica el número de análisis posibles.
+5. **Parar cuando conviene.** La Proposición 17.7.
+
+Las cuatro primeras son la Proposición 17.1 con distintos disfraces; la quinta es la 17.7. El Ejercicio 1 mide la cuarta, que es la más difícil de ver porque cada decisión parece técnica y no estadística.
+
+La consecuencia práctica no es dejar de explorar —explorar está bien y es necesario— sino **declarar qué se hizo**: decidir el análisis antes de ver los datos cuando el objetivo es confirmar, y decir con claridad «esto es exploratorio» cuando no. Un hallazgo exploratorio no es menos valioso; es otra cosa, y se confirma con datos nuevos.
+
+## Ejercicios
+
+### Ejercicio 1 — El jardín de los senderos que se bifurcan
+
+Cada decisión de análisis tomada después de ver los datos multiplica por dos el número de caminos posibles. Simular un experimento **sin ningún efecto** y $k$ decisiones binarias, quedarse con el camino que dé el menor valor p, y comparar la tasa de falsos positivos con $1-(1-\alpha)^{2^k}$.
+
+```{pyodide}
+import numpy as np
+
+# Cada decision de analisis que se toma DESPUES de ver los datos multiplica el
+# numero de pruebas: k decisiones binarias son 2^k caminos posibles.
+rp = np.random.default_rng(1704)
+reps, n = 40_000, 60
+
+def cola_normal(z):
+    t = 1.0 / (1.0 + 0.2316419 * np.abs(z))
+    d = np.exp(-z * z / 2) / np.sqrt(2 * np.pi)
+    poli = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 +
+           t * (-1.821255978 + t * 1.330274429))))
+    c = d * poli
+    return np.where(z >= 0, c, 1 - c)
+
+# Un experimento sin ningun efecto: dos grupos iguales, y cuatro decisiones
+# que parecen inocentes. Cada combinacion da un analisis distinto.
+print("k decisiones   caminos 2^k   P(el mejor camino da p < 0.05)   1−(1−α)^(2^k)")
+for k in [0, 1, 2, 3, 4]:
+    caminos = 2 ** k
+    z = rp.normal(size=(reps, caminos))          # H0 cierta en todos los caminos
+    p = 2 * cola_normal(np.abs(z))               # prueba bilateral
+    mejor = p.min(axis=1)
+    print(f"{k:6d}         {caminos:6d}              {(mejor < 0.05).mean()*100:6.2f} %"
+          f"                    {(1-(1-0.05)**caminos)*100:6.2f} %")
+print()
+print("El valor p que se reporta no es el de una prueba: es el minimo de 2^k.")
+print("Cuatro decisiones tomadas sobre la marcha —que atipicos quitar, que")
+print("transformacion usar, que covariable incluir, donde cortar un grupo—")
+print(f"llevan la tasa de falsos positivos al {(1-(1-0.05)**16)*100:.0f} %.")
+```
+
+Cuatro decisiones —cuatro, no cuarenta— llevan la tasa de falsos positivos al 56 %. Y nadie que lea el informe verá esas cuatro decisiones: verá un análisis, con su valor p por debajo de 0,05.
+
+### Ejercicio 2 — Cuánto cuesta corregir
+
+Bonferroni baja el umbral de cada prueba a $\alpha/m$, y eso cuesta potencia. Calcular, para un efecto real de $0{,}5\sigma$, qué potencia queda con $n=64$ al corregir por $m$ pruebas, y qué $n$ haría falta para mantener la potencia en 0,80. Predecir antes de correr si el costo crece con $m$ o con $\log m$.
+
+```{pyodide}
+import numpy as np
+
+# Precio de corregir: con Bonferroni el umbral baja a alfa/m, y para mantener
+# la misma potencia hay que agrandar la muestra.
+def cuantil_normal(p):
+    """Inversa de la normal estandar (Beasley-Springer-Moro), sin scipy."""
+    a = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
+         1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00]
+    b = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
+         6.680131188771972e+01, -1.328068155288572e+01]
+    c = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
+         -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00]
+    d = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00,
+         3.754408661907416e+00]
+    pl = 0.02425
+    if p < pl:
+        q = np.sqrt(-2 * np.log(p))
+        return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1)
+    if p > 1 - pl:
+        q = np.sqrt(-2 * np.log(1 - p))
+        return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1)
+    q = p - 0.5; r = q * q
+    return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q / (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1)
+
+def cola_normal(z):
+    t = 1.0 / (1.0 + 0.2316419 * abs(z))
+    d = np.exp(-z * z / 2) / np.sqrt(2 * np.pi)
+    poli = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 +
+           t * (-1.821255978 + t * 1.330274429))))
+    c = d * poli
+    return c if z >= 0 else 1 - c
+
+delta, n0 = 0.5, 64           # efecto en desviaciones tipicas, y n de partida
+print(f"efecto real delta = {delta} sigma,  prueba unilateral,  FWER objetivo 5 %")
+print()
+print("  m    umbral por prueba   z critico   potencia con n=64   n para potencia 0.80")
+for m in [1, 5, 20, 100, 1000]:
+    a = 0.05 / m
+    zc = cuantil_normal(1 - a)
+    pot = cola_normal(zc - delta * np.sqrt(n0))
+    n_nec = ((zc + cuantil_normal(0.80)) / delta) ** 2
+    print(f"{m:4d}        {a:.6f}         {zc:.3f}         {pot*100:5.1f} %            {int(np.ceil(n_nec)):5d}")
+print()
+print("Corregir no es gratis: el precio esta en la ultima columna, y crece con")
+print("el logaritmo de m, no con m. Pasar de 1 a 1000 pruebas no multiplica la")
+print("muestra por mil: la multiplica por poco mas de dos.")
+```
+
+La respuesta es $\log m$: el cuantil $z_{\alpha/m}$ crece como $\sqrt{2\log(m/\alpha)}$, y $n$ crece con su cuadrado. Pasar de una prueba a mil multiplica la muestra necesaria por menos de cuatro —de 25 a 90—, no por mil. Corregir por pruebas múltiples es mucho más barato de lo que la intuición sugiere, y desde luego más barato que publicar un hallazgo falso.
+
+## Del libro
+
+ISLP dedica su capítulo 13 completo, *Multiple Testing*, a este material: la tasa de error por familia, Bonferroni, Holm, Benjamini-Hochberg y las pruebas de permutación aplicadas al mismo problema. De ISLP solo está verificado el índice a nivel de capítulo —statlearning.com no publica los títulos de sección—, así que aquí se cita el capítulo y no se le atribuye ninguna frase ni ninguna numeración de sección.
+
+*Think Stats* llega a las mismas preguntas por el camino computacional del cap. 9 *Hypothesis Testing*, que la lección 10 ya recorrió: allí todo se resuelve remuestreando en vez de con distribuciones analíticas.
+
+**Preguntas para leer ISLP cap. 13 con lápiz:**
+
+1. El capítulo presenta Bonferroni y Holm en el mismo orden que esta lección. ¿En qué punto exacto de la demostración de la Proposición 17.5 se usa que los $k-1$ rechazos anteriores eran nulos falsos? ¿Qué pasaría con la cota si el primer nulo cierto rechazado estuviera en la posición 1?
+2. ISLP trata también el control del FDR por remuestreo, sin suponer independencia. ¿Qué parte de la Proposición 17.6 dejaría de hacer falta si el umbral se calibrara por permutaciones en vez de con la recta $\alpha i/m$?
+3. El capítulo distingue entre controlar el error de tipo I *antes* y *después* de mirar los datos. Contrastarlo con la Proposición 17.7: ¿es el vistazo repetido un problema de pruebas múltiples, o uno distinto?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/pruebas-multiples.md`, enlazada a [[valor-p]], [[error-de-tipo-i]] y [[potencia]]. La Proposición 17.1 conviene rehacerla a mano: sale en tres líneas de la Proposición 10.8 y deja el p-hacking convertido en aritmética.
+
+```
+¿Qué distribución tiene el menor de m valores p bajo H0?::Beta(1,m): P(min ≤ t) = 1−(1−t)^m (Proposición 17.1)
+¿Cuánto vale en promedio el menor de m valores p?::1/(m+1) — con m = 20 ya está por debajo de 0,05
+¿Qué es la FWER?::P(V ≥ 1): la probabilidad de cometer al menos un error de tipo I en toda la familia
+¿Qué es la FDR?::E[V / max(R,1)]: la proporción esperada de falsos entre los hallazgos declarados
+¿Bonferroni necesita independencia?::No: sale de la desigualdad de Boole, que no supone nada sobre la dependencia
+¿Cuándo es Bonferroni muy conservador?::Cuando las pruebas están correlacionadas; con correlación 1 son una sola prueba
+¿Por qué Holm domina a Bonferroni?::Su primer umbral es α/m y los siguientes son mayores: rechaza todo lo que Bonferroni rechaza, y a veces más
+¿Qué controla BH y qué no?::Controla la FDR; NO controla la FWER, y por eso encuentra más efectos reales
+¿Qué le pasa a la tasa de falsos positivos al mirar los datos varias veces?::Sube, y de forma monótona con el número de vistazos (Proposición 17.7)
+¿Cuánto sube mirando todo el tiempo entre n=20 y n=400?::Del 5 % al 35 % aproximadamente, medido por simulación
+¿Cuántas pruebas cuentan?::Las hechas, no las reportadas: estadísticos, subgrupos, variables, decisiones de limpieza y vistazos
+¿Cuánto cuesta corregir por m pruebas?::El umbral baja como α/m pero el n necesario crece con log m: de 1 a 1000 pruebas, menos de cuatro veces
+¿Qué hay que declarar para que un hallazgo sea interpretable?::Cuántas pruebas se hicieron, cuándo se decidió parar y qué se decidió después de ver los datos
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** Las Proposiciones 17.1, 17.4, 17.5 y 17.7 se demuestran aquí, a partir de la Proposición 10.8 (el valor p es uniforme bajo $H_0$), la desigualdad de Boole y la monotonía de la probabilidad. Se comprueban además numéricamente: la acumulada del mínimo y su media contra $1-(1-t)^m$ y $1/(m+1)$ en cinco valores de $m$; la cota de Bonferroni en cuatro niveles de correlación, incluida la correlación 1; FWER, FDR y potencia de los cuatro procedimientos sobre 20 000 experimentos de 100 pruebas; la tasa de falsos positivos con 1, 2, 5, 10, 20 y 381 vistazos; y el jardín de los senderos que se bifurcan contra $1-(1-\alpha)^{2^k}$. Los tres visuales se contrastaron contra `numpy` antes de publicarse.
+
+**Lo que se usa de otras lecciones sin repetir.** Que el valor p es uniforme bajo $H_0$ es la Proposición 10.8, y la cuenta $1-(1-\alpha)^m$ es la Proposición 10.9. La potencia de la prueba unilateral y su fórmula son la Proposición 10.7.
+
+**Lo que se enuncia sin demostrar.** El control del FDR por Benjamini-Hochberg en el caso general —con $m_0<m$ nulas ciertas— se enuncia y se comprueba numéricamente, pero **no se demuestra**: aquí solo se demuestra el caso $m_0=m$, donde FDR y FWER coinciden. La demostración general necesita un argumento sobre los valores p ordenados que no cabe en esta página. También se menciona sin demostrar que con vistazos ilimitados la tasa de falsos positivos tiende a 1; eso es consecuencia de la ley del logaritmo iterado, que este plan no ha visto.
+
+**Lo que viene de los libros.**
+
+- ISLP, cap. 13 *Multiple Testing* — citado por número y título de capítulo. De ISLP solo está verificado el índice a ese nivel, así que no se cita ninguna sección ni se transcribe texto.
+- [*Think Stats* 3e](https://allendowney.github.io/ThinkStats/), cap. 9 *Hypothesis Testing* — mencionado como el camino computacional al mismo problema, ya recorrido en la lección 10.
+
+**Lo que es mío, no del libro.** La numeración y la organización en tres mecanismos —muchas pruebas, muchos caminos, muchos vistazos— con la Proposición 17.1 como raíz común de los dos primeros. La demostración de Holm presentada como «el primer nulo cierto que se rechaza acota $|I_0|$», y la lectura de la Proposición 17.7 como monotonía de sucesos encajados, que es lo que la hace demostrable en dos líneas sin teoría de martingalas.
+
+[Índices verificados el 12-09-2026 contra los índices publicados de cada libro.]{.sello}
+:::

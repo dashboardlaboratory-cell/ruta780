@@ -1,6 +1,7 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **12-09-2026**, tras publicar Estadística 14 desde Claude Code.
+Última actualización: **12-09-2026**, tras publicar Estadística 15, 16 y 17 desde
+Claude Code. **El módulo de Estadística queda completo en su fase 1.**
 
 `CLAUDE.md` tiene las reglas, que cambian poco. Este archivo tiene el estado y
 la lista de trabajo, que cambia cada semana. Si los dos se contradicen, manda
@@ -58,16 +59,19 @@ hay que empezar a hacer:
 
 | Módulo | Publicadas | Total | Al día con el molde |
 |---|---|---|---|
-| Estadística | 14 | 17 (+8 bayesianas) | 12 de 14 |
+| Estadística | 17 | 17 (+8 bayesianas) | 15 de 17 |
 | Matemática | 9 | 18 | 2 de 9 |
 | Python | 6 | ~12 | 0 de 6 |
 
-- **29 lecciones** publicadas, **14** cumplen el molde nuevo.
-- **49 visuales**, todos auditados; ninguno con el fallo de la regla 19b.
-- **187 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`.
-- Glosario: **76 términos + 41 símbolos**.
+- **32 lecciones** publicadas, **17** cumplen el molde nuevo.
+- **58 visuales**, todos auditados; ninguno con el fallo de la regla 19b.
+- **268 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`.
+- Glosario: **99 términos + 41 símbolos**.
+- Estadística 01 y 02 son las dos únicas que faltan por migrar del módulo, y solo
+  les falta juntar las vallas `{=html}` de cada visual (punto 3.4).
 - Índices verificados: Think Stats 3e (75 secciones), MML (80), Think Bayes 2e
-  (20 capítulos + cap. 2), McKinney 3E y ISLP (solo capítulos).
+  (20 capítulos + cap. 2), McKinney 3E (capítulos + las 6 secciones del cap. 7,
+  traídas el 12-09-2026) e ISLP (solo capítulos).
 
 Para el estado exacto en cualquier momento:
 
@@ -79,20 +83,39 @@ python3 verificar/formato.py
 
 ## 3. Lo que sigue, en orden
 
-### 3.1 Terminar Estadística (3 lecciones)
+### 3.1 Estadística fase 1: terminada
 
-Est 14 (Inferencia sobre los coeficientes) se publicó el 12-09-2026: cierra el
-arco 9 → 12 → 13 → 14. Deriva $\text{Var}(\hat\beta_1)=\sigma^2/\text{SCX}$,
-prueba que $\hat\beta_1 \perp \hat\sigma^2$ por covarianza cero (sin Cochran),
-prueba que $\hat\sigma^2$ es insesgado, y cierra la $t_{n-2}$ con el mismo hueco
-de Cochran que la lección 12. Dos visuales nuevos (distribución $Z$ vs $T$, y
-cobertura del IC de $\beta_1$ con $z$ vs $t$), verificados con Playwright.
+Las tres últimas se publicaron el 12-09-2026 desde Claude Code.
 
-| # | Lección | Depende de | Notas |
-|---|---|---|---|
-| 15 | Datos faltantes: MCAR, MAR, MNAR | Est 13 ✓ | Sin bloqueo. Es la siguiente natural |
-| 16 | Calibración y curvas de lift | Est 10 ✓ | Sin bloqueo |
-| 17 | P-hacking y errores frecuentes | Est 10 ✓ | La Prop 10.9 es el motor; ya está |
+**Est 15 (Datos faltantes).** El eje es la Proposición 15.5,
+$E[Y|R=1]-E[Y] = \text{Cov}(Y,R)/P(R=1)$: de ahí salen MCAR (covarianza cero,
+solo cuesta precisión), MAR (la ley de $Y$ dado $X$ se conserva, así que la
+regresión sobrevive y la media marginal no) y la reponderación por $1/q(X)$ con
+positividad. Después, que rellenar con la media multiplica $s^2$ por
+$(m-1)/(n-1)$ y hunde la cobertura del 95 % al 76 % **con datos MCAR**, y que
+MNAR no es identificable: dos poblaciones con datos observados idénticos y
+medias separadas por 484 unidades. Tres visuales.
+
+**Est 16 (Calibración y lift).** Autocontenida: ningún libro con índice
+verificado trata el tema, así que `libro: "—"` y se dice en Fuentes. Brier como
+regla propia, la descomposición calibración − resolución + incertidumbre, el
+techo del lift $\min(1/u, 1/\bar{y})$, y el resultado que une las dos mitades:
+una transformación creciente no cambia ni el lift ni la resolución, solo la
+calibración —de donde recalibrar por isotónica es gratis y lleva el Brier a su
+suelo, incertidumbre − resolución—. Tres visuales; en el tercero el panel de la
+derecha no se mueve **porque la Proposición 16.10 dice que no puede**, y la
+prosa lo explica.
+
+**Est 17 (P-hacking).** El menor de $m$ valores p es $\text{Beta}(1,m)$ con
+media $1/(m+1)$: con $m=20$ el «hallazgo» es el valor esperado del
+procedimiento. Bonferroni por Boole (sin independencia), Holm demostrado en un
+párrafo y dominando a Bonferroni, BH enunciado con la demostración solo del caso
+$m_0=m$ —el resto declarado en Fuentes—, y el vistazo repetido: del 5 % al 35 %
+mirando entre $n=20$ y $n=400$. Tres visuales.
+
+Quedan **Estadística 18–24, las bayesianas**, y están bloqueadas: de Think Bayes
+2e solo se verificaron las secciones del capítulo 2. Traer el resto del índice es
+el primer paso de esa fase, no el último.
 
 ### 3.2 Reescribir Matemática 01–07
 
@@ -107,6 +130,21 @@ Orden recomendado, que es el de dependencia: **04 → 05 → 06 → 03 → 02 �
 La 04 (producto interno) y la 05 (proyección ortogonal) son las que más citan
 las lecciones nuevas, así que arreglarlas primero paga de inmediato.
 
+**Antes de eso conviene una pasada corta de regla 15**, porque son páginas ya
+publicadas con contexto de la empresa dentro. Medido el 12-09-2026:
+
+| Archivo | menciones |
+|---|---|
+| `python/03-comprehensions.qmd` | 52 |
+| `python/06-numpy-primer-contacto.qmd` | 18 |
+| `matematica/03-espacio-columna.qmd` | 11 |
+| `python/04`, `python/01`, `python/02`, `matematica/01`, `python/05` | 9, 8, 4, 2, 1 |
+
+Las de una a once menciones son una tarde de trabajo: cambiar el ejemplo por
+dados, pesos al nacer o ingresos, sin tocar la estructura. `python/03` no: con
+52 menciones el contexto está tejido en todos los ejemplos, y eso ya es la
+reescritura completa, que además está parada por la decisión del punto 6.
+
 ### 3.3 Reescribir Python 01–06
 
 Las más alejadas del molde y las que más contexto de empresa arrastran
@@ -116,7 +154,14 @@ programación. Antes de tocarlas hay que decidir qué significa el molde aquí:
 probablemente `.hilo` + notación + glosario sí, y definiciones numeradas no.
 **Esa decisión está sin tomar y conviene tomarla con Luis.**
 
-### 3.4 Estadística 01 y 02
+### 3.4 El orden acordado con Luis (12-09-2026)
+
+Est 16 y 17 primero —hechas—, después la pasada de regla 15 del punto 3.2,
+después traer los índices de Think Bayes, y solo entonces Matemática 04 → 05 →
+06 → 03 → 02 → 01 → 07. Python 01–06 y las bayesianas quedan detrás de las dos
+decisiones del punto 6.
+
+### 3.5 Estadística 01 y 02
 
 Solo les falta juntar los bloques `{=html}` de cada visual en uno. Es mecánico
 y no toca el contenido.
@@ -190,6 +235,21 @@ comprobaciones de `afirmaciones.json` apuntaban a la columna equivocada; una
 los datos. Cuando dos cantidades deben ser independientes, hay que sortearlas de
 flujos distintos.
 
+**Un botón de re-sorteo sobre un promedio de 4000 repeticiones no mueve nada.**
+El primer visual de Est 17 dibujaba la acumulada del menor valor p sobre 4000
+experimentos: tan estable que «Otra tanda» cambiaba el dibujo menos de 2 px, y
+`visuales.py` lo habría marcado como control roto —con razón, porque en pantalla
+no se notaba—. Bajar a 600 repeticiones lo dejó en 10,8 px y además es más
+honesto: se ve que la curva es una medición, no una fórmula. Regla práctica: si
+un botón promedia, hay que promediar poco, o el botón sobra.
+
+**Una celda de 17 segundos es una celda rota.** La primera versión de la celda
+de los tres mecanismos (Est 15) recorría 12 000 repeticiones en un bucle de
+Python: 17,5 s en CPython, y en Pyodide eso es un múltiplo que nadie va a
+esperar. Vectorizada a arreglos `(reps, n)` baja a 0,4 s con los mismos
+resultados. Regla práctica: si una celda pasa de dos o tres segundos en local,
+hay que reescribirla antes de publicarla, porque en el navegador se abandona.
+
 **`np.math` no existe en numpy 2.** Usar `math.erf` de la biblioteca estándar.
 
 **El harness de `visuales.py` medía en la esquina equivocada (van tres veces).**
@@ -233,6 +293,13 @@ falla el build. Codificar el SVG en base64.
   cierta suma de cuadrados dividida por $\sigma^2$ sigue una $\chi^2$ (con
   $n-1$ y $n-2$ grados respectivamente). Está declarado en Fuentes de las dos.
   Si alguna lección futura lo necesita demostrado, hay que decidir dónde va.
+- **El cuaderno de retos va por Estadística 5.** Las lecciones 6 a 15 cierran
+  con «en `proyectos/notebooks/F1-retos.ipynb`, sección **Est N**», y ese
+  cuaderno solo tiene secciones hasta Estadística 5 y Matemática 7. O se
+  escriben las diez que faltan —tres retos por lección, como las que ya están—,
+  o se quita la referencia del bloque *Reto*. Encontrado al publicar Est 15;
+  sin decidir.
+
 - **Colisiones en `glosario/glosario.json` → `GLOSARIO_SIMBOLOS` (auditado
   12-09-2026, sin tocar todavía).** El enganche de `encabezado.html` es
   **global por carácter**, sin alcance por lección: si dos lecciones usan el

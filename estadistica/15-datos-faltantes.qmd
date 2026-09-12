@@ -1,0 +1,1170 @@
+---
+title: "Datos faltantes: MCAR, MAR y MNAR"
+subtitle: "Estadística · Lección 15"
+nivel: L3
+modulo: estadistica
+fase: F1
+prereqs: [estadistica/05-covarianza-correlacion, estadistica/14-inferencia-coeficientes]
+siguientes: [estadistica/16-calibracion]
+libro: "McKinney 3E §7.1 Handling Missing Data"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="estadistica/15-datos-faltantes"}
+[[L3]{.nivel .nivel-L3} **Derivación**]{.item}
+[**Fase** F1]{.item}
+[**Libro** McKinney §7.1]{.item}
+[**Prereqs** [Covarianza y correlación](05-covarianza-correlacion.qmd) · [Inferencia sobre los coeficientes](14-inferencia-coeficientes.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Escribir el hecho de que un dato falte como una variable aleatoria más, y distinguir los tres [mecanismos]{.g data-t="mecanismo de faltantes"} clásicos: [MCAR]{.g}, [MAR]{.g} y [MNAR]{.g}.
+2. Demostrar que el [sesgo]{.g} del [análisis de casos completos]{.g} es exactamente una covarianza reescalada, y deducir de ahí qué mecanismo daña qué cantidad.
+3. Demostrar que rellenar los huecos con la media conserva la media y encoge la varianza por un factor conocido, y medir cuánta [cobertura]{.g} se pierde por eso.
+4. Explicar por qué bajo MNAR no hay estimador que sirva —el problema no es de método, es de [identificabilidad]{.g}— y calcular las cotas que los datos sí imponen.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Estadística 5**: la covarianza y su definición $\text{Cov}(X,Y)=E[(X-\mu_X)(Y-\mu_Y)]$. La Proposición 15.5 la usa con una variable que vale 0 o 1, y con eso el sesgo por no respuesta deja de ser una intuición y pasa a ser una fórmula.
+- **Estadística 9**: la cobertura de un intervalo de confianza y qué significa que se quede corta (Proposición 9.7). La Proposición 15.10 vuelve a medirla, ahora rota por la imputación y no por el cuantil.
+- **Estadística 13 y 14**: el modelo $y_i=\beta_0+\beta_1x_i+\varepsilon_i$, el estimador $\hat\beta_1$ y su varianza $\sigma^2/\text{SCX}$. Aquí se pregunta qué le pasa a los dos cuando parte de las filas no llega.
+- **Estadística 7**: insesgadez y error cuadrático medio, para poder decir con precisión qué se rompe y qué solo se encarece.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Lección 16**: una curva de calibración se construye con los casos que tienen etiqueta; si la etiqueta falta de forma no aleatoria, la curva miente antes de empezar.
+- **Lección 17**: descartar filas hasta que el resultado salga significativo es una de las formas más comunes de p-hacking, y se detecta comparando el $n$ de cada análisis.
+- **McKinney §7.1** *Handling Missing Data*: `dropna` y `fillna` son exactamente las dos operaciones que esta lección evalúa. Saber cuál usar es esta lección; saber cómo usarlas es ese capítulo.
+- **Aprendizaje automático**: toda tubería de preparación de datos imputa algo. El error estándar que reporta el modelo entrenado sobre datos imputados hereda el problema de la Proposición 15.9.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Símbolo | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | Tamaño de la muestra, filas incluidas las que tienen huecos |
+| $R_i$ | erre sub i | Indicador de respuesta: vale 1 si $y_i$ se observa y 0 si falta. **Solo en esta lección**; en Matemática 7, $R$ es la matriz triangular de $A=QR$ |
+| $m$ | eme | Número de casos completos, $m=\sum_i R_i$. Es aleatorio: depende de quién responda |
+| $q(x)$ | cu de equis | Propensión de respuesta, $P(R=1\mid X=x)$; $q$ a secas es $P(R=1)$. La literatura suele escribirla $\pi(x)$ o $e(x)$; aquí no, porque en este sitio $\pi$ ya es 3,1416 y $e$ ya es un residuo |
+| $\bar{y}_{\text{obs}}$ | y barra observada | Media de los $m$ casos completos, $\frac{1}{m}\sum_i R_iy_i$ |
+| $\tilde{y}$ | y tilde | El vector de $n$ valores después de rellenar los huecos |
+| $\mu(x)$ | mu de equis | $E[Y\mid X=x]$, la media condicional que la regresión de la lección 13 estima |
+:::
+
+El símbolo $R$ de esta tabla se usa aquí con un sentido distinto del que tiene en Matemática 7, así que está declarado arriba y no en el glosario del sitio: un símbolo entra al glosario global solo si significa lo mismo en todas las páginas. Por la misma razón la propensión se escribe $q(x)$ y no $\pi(x)$, que es lo habitual fuera de aquí: $\pi$ ya está tomado.
+
+## 1. Que un dato falte es un dato
+
+El primer movimiento es dejar de ver los huecos como un accidente de la tabla y verlos como una variable aleatoria más, que tiene su propia distribución y que puede estar relacionada con todo lo demás.
+
+::: {.definicion}
+**Definición 15.1 (indicador de respuesta).** Para cada unidad $i$ de la muestra, sea
+$$R_i = \begin{cases} 1 & \text{si } y_i \text{ se observa},\\ 0 & \text{si falta}.\end{cases}$$
+El vector $(R_1,\dots,R_n)$ es el **patrón de faltantes**. Los datos que llegan al análisis son los pares $(R_i,\, R_iy_i)$ y las covariables $x_i$, que se suponen siempre observadas. Se escribe $q(x) = P(R=1\mid X=x)$ para la **[propensión de respuesta]{.g}**.
+:::
+
+La clasificación clásica ordena los mecanismos por cuánta información usa la moneda que decide si el dato llega.
+
+::: {.definicion}
+**Definición 15.2 (MCAR).** El mecanismo es *missing completely at random* si
+$$P(R=1 \mid X, Y) = P(R=1)$$
+para todo valor de $X$ y de $Y$: la probabilidad de responder es la misma para todos.
+:::
+
+::: {.definicion}
+**Definición 15.3 (MAR).** El mecanismo es *missing at random* si
+$$P(R=1 \mid X, Y) = P(R=1 \mid X) = q(X),$$
+es decir, si depende solo de cantidades **observadas**. Dos unidades con el mismo $x$ tienen la misma probabilidad de responder, valga lo que valga su $y$.
+:::
+
+::: {.definicion}
+**Definición 15.4 (MNAR).** El mecanismo es *missing not at random* si no es MAR: $P(R=1\mid X,Y)$ sigue dependiendo de $Y$ aun fijando $X$.
+:::
+
+El nombre MAR es desafortunado y conviene decirlo una vez: «al azar» sugiere que no hay estructura, y lo que MAR afirma es que la estructura está **dentro de lo que se ve**. MCAR es el caso sin estructura ninguna. La diferencia entre MAR y MNAR no se puede comprobar con los datos —eso es la sección 4—, así que declarar uno u otro es siempre un supuesto, no un hallazgo.
+
+El visual siguiente sortea una población de ingresos y años de educación, y deja fuera la misma fracción de casos con los tres mecanismos. Lo que cambia entre ellos no es cuántos faltan: es quiénes.
+
+```{=html}
+<div class="viz-mec">
+  <div class="controles">
+    <label>Mecanismo <select id="mec-modo">
+      <option value="mcar">MCAR — al azar</option>
+      <option value="mar" selected>MAR — depende de la educación</option>
+      <option value="mnar">MNAR — depende del propio ingreso</option>
+    </select></label>
+    <label>Faltantes <input id="mec-falta" type="range" min="10" max="70" step="5" value="40"> <span id="mec-falta-v">40 %</span></label>
+    <button id="mec-otra" type="button">Otra muestra</button>
+  </div>
+  <svg id="mec-svg" viewBox="0 0 620 336" role="img" aria-label="Diagrama de dispersion de ingreso contra anos de educacion. Los que responden se dibujan llenos y los que faltan, huecos. Una recta oscura fija marca la relacion verdadera de la poblacion, una recta naranja punteada marca a donde tiende el ajuste de casos completos con ese mecanismo, y dos marcadores en el eje vertical comparan la media verdadera con la media a la que tiende la de los observados."></svg>
+  <p class="lectura" id="mec-lectura"></p>
+</div>
+<style>
+.viz-mec { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-mec .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-mec label { display: flex; align-items: center; gap: .4rem; }
+.viz-mec select, .viz-mec input[type=range] { font-size: .85rem; padding: .2rem .4rem; border-radius: 5px; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-mec input[type=range] { width: 116px; padding: 0; }
+.viz-mec button { font-size: .8rem; padding: .22rem .6rem; border-radius: 5px; cursor: pointer; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-mec button:hover { border-color: var(--r-acento, #0F6E68); color: var(--r-acento, #0F6E68); }
+.viz-mec svg { width: 100%; height: auto; display: block; }
+.viz-mec .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5.4em; line-height: 1.6; }
+.viz-mec .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_OBS = "#0F6E68", C_FALTA = "#9aa0a6", C_AJU = "#B45309", C_TEO = "var(--r-tinta,#1f2430)";
+  var svg = document.getElementById("mec-svg"), lec = document.getElementById("mec-lectura");
+  var selModo = document.getElementById("mec-modo");
+  var ctlFalta = document.getElementById("mec-falta"), etqFalta = document.getElementById("mec-falta-v");
+  var btn = document.getElementById("mec-otra");
+
+  // Poblacion: parametros fijos. El marco del dibujo sale de AQUI y nunca de la
+  // muestra; si los ejes siguieran a los datos, re-sortear no se notaria (regla 19b).
+  var B0 = 400, B1 = 120, SIGMA = 300, MUX = 12, SDX = 3, COEF = 2.0;
+  var N = 180, NREF = 6000;
+  var MUY = B0 + B1 * MUX, SDY = Math.sqrt(B1 * SDX * B1 * SDX + SIGMA * SIGMA);
+  var X0 = 4, X1 = 20, Y0 = 300, Y1 = 3400;          // limites del marco, constantes
+  var PX0 = 58, PX1 = 596, PY0 = 274, PY1 = 24;      // caja de dibujo, en px
+
+  var semilla = 20260915;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function flujo(s) {
+    return function () {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function normal(u) { var a = u() || 1e-12, b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); }
+  function logistica(t) { return 1 / (1 + Math.exp(-t)); }
+  function px(x) { return PX0 + (x - X0) / (X1 - X0) * (PX1 - PX0); }
+  function py(y) { return PY0 - (y - Y0) / (Y1 - Y0) * (PY0 - PY1); }
+
+  function generar(sem, cuantos) {
+    var u = flujo(sem), xs = [], ys = [], i;
+    for (i = 0; i < cuantos; i++) {
+      var x = MUX + SDX * normal(u);
+      if (x < X0 + 0.4) x = X0 + 0.4;
+      if (x > X1 - 0.4) x = X1 - 0.4;
+      xs.push(x);
+      ys.push(B0 + B1 * x + SIGMA * normal(u));
+    }
+    return { x: xs, y: ys };
+  }
+
+  // Un solo mando para la fraccion que falta: el corte se ajusta por biseccion
+  // para que los tres mecanismos dejen fuera la MISMA proporcion. Lo que cambia
+  // entre ellos es a QUIEN dejan fuera, no a cuantos.
+  function propensiones(d, modo, falta) {
+    var n = d.x.length, i, lo = -14, hi = 14, a, k, p = new Array(n);
+    function pi(i, a) {
+      if (modo === "mcar") return 1 - falta;
+      if (modo === "mar") return logistica(a + COEF * (d.x[i] - MUX) / SDX);
+      return logistica(a - COEF * (d.y[i] - MUY) / SDY);
+    }
+    for (k = 0; k < 44; k++) {
+      a = (lo + hi) / 2;
+      var s = 0;
+      for (i = 0; i < n; i++) s += pi(i, a);
+      if (s / n < 1 - falta) lo = a; else hi = a;
+    }
+    a = (lo + hi) / 2;
+    for (i = 0; i < n; i++) p[i] = pi(i, a);
+    return p;
+  }
+
+  function ajuste(xs, ys, w) {
+    var n = xs.length, i, sw = 0, sx = 0, sy = 0;
+    for (i = 0; i < n; i++) { var wi = w ? w[i] : 1; sw += wi; sx += wi * xs[i]; sy += wi * ys[i]; }
+    if (sw <= 0 || n < 3) return null;
+    var mx = sx / sw, my = sy / sw, num = 0, den = 0;
+    for (i = 0; i < n; i++) {
+      var wi = w ? w[i] : 1;
+      num += wi * (xs[i] - mx) * (ys[i] - my);
+      den += wi * (xs[i] - mx) * (xs[i] - mx);
+    }
+    if (den <= 0) return null;
+    var b1 = num / den;
+    return { b1: b1, b0: my - b1 * mx, media: my };
+  }
+
+  // Poblacion de referencia: se sortea UNA vez, con semilla fija. Sirve para
+  // calcular a donde tiende el analisis de casos completos con cada mecanismo,
+  // que es la parte sistematica —el sesgo— y no depende de la muestra dibujada.
+  var REF = generar(123456789, NREF);
+  var REF_AJU = ajuste(REF.x, REF.y, null);
+
+  function marco() {
+    var i;
+    svg.appendChild(el("rect", { x: PX0, y: PY1, width: PX1 - PX0, height: PY0 - PY1,
+      fill: "none", stroke: "var(--r-linea,#ddd)" }));
+    for (i = 6; i <= 18; i += 3) {
+      svg.appendChild(el("line", { x1: px(i), y1: PY0, x2: px(i), y2: PY0 + 4, stroke: "var(--r-linea,#ccc)" }));
+      svg.appendChild(el("text", { x: px(i), y: PY0 + 16, "font-size": 9.5, "text-anchor": "middle",
+        fill: "var(--r-tinta-suave,#777)" }, String(i)));
+    }
+    for (i = 1000; i <= 3000; i += 1000) {
+      svg.appendChild(el("line", { x1: PX0 - 4, y1: py(i), x2: PX0, y2: py(i), stroke: "var(--r-linea,#ccc)" }));
+      svg.appendChild(el("text", { x: PX0 - 8, y: py(i) + 3.5, "font-size": 9.5, "text-anchor": "end",
+        fill: "var(--r-tinta-suave,#777)" }, String(i)));
+    }
+    svg.appendChild(el("text", { x: (PX0 + PX1) / 2, y: 330, "font-size": 10, "text-anchor": "middle",
+      fill: "var(--r-tinta-suave,#777)" }, "años de educación"));
+    svg.appendChild(el("text", { x: 10, y: 16, "font-size": 10, fill: "var(--r-tinta-suave,#777)" }, "ingreso mensual"));
+  }
+
+  var datos = null;
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    marco();
+    var falta = +ctlFalta.value / 100, modo = selModo.value;
+    etqFalta.textContent = (+ctlFalta.value) + " %";
+
+    // quien responde EN ESTA MUESTRA: flujo aparte del que sorteo los datos
+    var p = propensiones(datos, modo, falta), u = flujo(semilla ^ 0x9E3779B9);
+    var xo = [], yo = [], i, nobs = 0, r = [];
+    for (i = 0; i < N; i++) {
+      var resp = u() < p[i];
+      r.push(resp);
+      if (resp) { xo.push(datos.x[i]); yo.push(datos.y[i]); nobs++; }
+    }
+    // a donde tiende el analisis de casos completos: media y recta ponderadas
+    // por la propension sobre la poblacion de referencia (parte sistematica)
+    var pref = propensiones(REF, modo, falta);
+    var lim = ajuste(REF.x, REF.y, pref);
+
+    for (i = 0; i < N; i++) {
+      svg.appendChild(el("circle", {
+        cx: px(datos.x[i]).toFixed(1), cy: py(datos.y[i]).toFixed(1), r: 3.2,
+        fill: r[i] ? C_OBS : "none", "fill-opacity": 0.5,
+        stroke: r[i] ? C_OBS : C_FALTA, "stroke-width": r[i] ? 0.6 : 1,
+        "stroke-opacity": r[i] ? 1 : 0.7
+      }));
+    }
+    // recta verdadera: anclada a B0 y B1, jamas a la muestra
+    svg.appendChild(el("line", { x1: px(X0), y1: py(B0 + B1 * X0), x2: px(X1), y2: py(B0 + B1 * X1),
+      stroke: C_TEO, "stroke-width": 2 }));
+    var aj = ajuste(xo, yo, null);
+    if (aj) {  // el ajuste de ESTA muestra: tenue, porque tiembla con el azar
+      svg.appendChild(el("line", { x1: px(X0), y1: py(aj.b0 + aj.b1 * X0), x2: px(X1), y2: py(aj.b0 + aj.b1 * X1),
+        stroke: C_AJU, "stroke-width": 1, "stroke-opacity": 0.45 }));
+    }
+    if (lim) {  // a donde tiende: eso es el sesgo, y no tiembla
+      svg.appendChild(el("line", { x1: px(X0), y1: py(lim.b0 + lim.b1 * X0), x2: px(X1), y2: py(lim.b0 + lim.b1 * X1),
+        stroke: C_AJU, "stroke-width": 2, "stroke-dasharray": "6 4" }));
+      svg.appendChild(el("line", { x1: PX0, y1: py(lim.media), x2: PX1, y2: py(lim.media),
+        stroke: C_AJU, "stroke-width": 1, "stroke-opacity": 0.3, "stroke-dasharray": "2 4" }));
+      svg.appendChild(el("path", {
+        d: "M" + (PX0 - 2) + "," + py(lim.media).toFixed(1) +
+           " L" + (PX0 - 14) + "," + (py(lim.media) - 5).toFixed(1) +
+           " L" + (PX0 - 14) + "," + (py(lim.media) + 5).toFixed(1) + " Z",
+        fill: C_AJU, stroke: C_AJU
+      }));
+    }
+    svg.appendChild(el("line", { x1: PX0, y1: py(MUY), x2: PX1, y2: py(MUY),
+      stroke: C_TEO, "stroke-width": 1, "stroke-opacity": 0.3, "stroke-dasharray": "2 4" }));
+    svg.appendChild(el("line", { x1: PX0 - 15, y1: py(MUY), x2: PX0 - 2, y2: py(MUY),
+      stroke: C_TEO, "stroke-width": 2.5 }));
+
+    var textos = {
+      mcar: "MCAR: responder es una moneda con la misma probabilidad para todos. Lo que queda es una muestra más chica de la misma población: la recta punteada cae encima de la oscura y el triángulo encima de la marca de μ. Lo único que se pierde es precisión.",
+      mar: "MAR: responde más quien tiene más educación. Falta la parte izquierda de la nube, así que la media observada se va hacia arriba y el triángulo se despega de μ. La recta punteada, en cambio, sigue encima de la oscura: dentro de cada valor de x, quién responde ya no depende del ingreso.",
+      mnar: "MNAR: responde menos quien más gana. Ahora falta la parte de arriba de cada columna vertical, y se mueven las dos cosas: el triángulo cae por debajo de μ y la recta punteada se aplana por debajo de la verdadera."
+    };
+    lec.innerHTML = "<span class=\"fx\">esta muestra: " + nobs + " de " + N +
+      " observados, media " + (aj ? aj.media.toFixed(0) : "—") + ", pendiente " + (aj ? aj.b1.toFixed(1) : "—") +
+      "<br>a la larga: media " + (lim ? lim.media.toFixed(0) : "—") +
+      " (μ = " + MUY.toFixed(0) + ", sesgo " + (lim && REF_AJU ? (lim.media - REF_AJU.media >= 0 ? "+" : "") + (lim.media - REF_AJU.media).toFixed(0) : "—") +
+      "), pendiente " + (lim ? lim.b1.toFixed(1) : "—") +
+      " (β₁ = " + B1 + ", sesgo " + (lim && REF_AJU ? (lim.b1 - REF_AJU.b1 >= 0 ? "+" : "") + (lim.b1 - REF_AJU.b1).toFixed(1) : "—") + ")</span><br>" +
+      textos[modo];
+  }
+
+  function remuestrear() { datos = generar(semilla, N); dibujar(); }
+  selModo.addEventListener("change", dibujar);
+  ctlFalta.addEventListener("input", dibujar);
+  btn.addEventListener("click", function () { semilla = (semilla * 16807 + 12345) | 0; remuestrear(); });
+  remuestrear();
+})();
+</script>
+```
+
+La recta oscura es la de la población y no se mueve nunca; la punteada es a dónde tiende el ajuste hecho solo con los casos completos. Con MCAR las dos coinciden. Con MAR la media observada se despega pero la recta no. Con MNAR se despegan las dos. La sección siguiente demuestra por qué.
+
+## 2. Qué sobrevive a cada mecanismo
+
+Todo el daño que hace la no respuesta a una media cabe en una covarianza.
+
+::: {.proposicion}
+**Proposición 15.5 (el sesgo del caso completo).** Si $P(R=1)>0$, entonces
+$$E[Y\mid R=1] - E[Y] \;=\; \frac{\text{Cov}(Y,R)}{P(R=1)}.$$
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $q = P(R=1) = E[R]$, usando que $R$ solo toma los valores 0 y 1. Como $YR$ vale $Y$ cuando $R=1$ y 0 cuando $R=0$,
+$$E[YR] = E[Y \mid R=1]\,P(R=1) = q\,E[Y\mid R=1].$$
+Con la definición de covarianza de la lección 5,
+$$\text{Cov}(Y,R) = E[YR] - E[Y]E[R] = q E[Y\mid R=1] - q E[Y] = q\big(E[Y\mid R=1] - E[Y]\big).$$
+Dividiendo entre $q>0$ queda la identidad. [∎]{.fin-demo}
+:::
+
+La lectura es la que organiza toda la lección: **la media de los casos completos es insesgada si y solo si el hecho de responder no covaría con lo que se mide.** No hace falta que responder sea independiente de todo; basta con que sea incorrelado con $Y$. Y el tamaño del sesgo no depende de cuántos faltan sino de cuánto covarían: con $q$ chico, una covarianza pequeña se amplifica al dividir.
+
+::: {.proposicion}
+**Proposición 15.6 (MCAR: menos datos, nada más).** Bajo MCAR, con $(R_i)$ independientes entre sí e independientes de los datos y $P(R=1)=q$:
+
+1. $\text{Cov}(Y,R)=0$ y por tanto $E[\bar{y}_{\text{obs}}\mid m]=\mu$ para todo $m\ge 1$;
+2. $\text{Var}(\bar{y}_{\text{obs}}\mid m) = \sigma^2/m$, con $E[m]=nq$.
+:::
+
+::: {.demostracion}
+*Demostración.* (1) MCAR dice $P(R=1\mid Y)=P(R=1)$, es decir, $R$ es independiente de $Y$, y variables independientes tienen covarianza cero; por la Proposición 15.5, $E[Y\mid R=1]=E[Y]=\mu$. Más aún, la densidad condicional cumple
+$$f(y\mid R=1) = \frac{f(y)P(R=1\mid Y=y)}{P(R=1)} = \frac{f(y)q}{q} = f(y),$$
+así que cada valor observado sigue teniendo la distribución de la población. (2) Condicionando en el patrón de faltantes, los $m$ valores observados son independientes con esa misma distribución —la independencia de los $R_i$ respecto de los datos es lo que impide que seleccionar cambie la ley conjunta—, de modo que $\bar{y}_{\text{obs}}$ es la media de una muestra de tamaño $m$: media $\mu$ y varianza $\sigma^2/m$. Como $m=\sum_iR_i$ es binomial de parámetros $n$ y $q$, $E[m]=nq$. [∎]{.fin-demo}
+:::
+
+MCAR no es un problema de sesgo sino de precio: donde había $n$ datos hay $nq$, y el error estándar sube por el factor $1/\sqrt{q}$. Con 40 % de no respuesta, la muestra efectiva es el 60 % y el error estándar sube un 29 %.
+
+Bajo MAR la media marginal ya no sobrevive, pero algo más importante sí.
+
+::: {.proposicion}
+**Proposición 15.7 (MAR: lo condicional se conserva).** Bajo MAR, para todo $x$ con $q(x)>0$,
+$$f(y \mid X=x,\, R=1) = f(y\mid X=x).$$
+En consecuencia, cualquier cantidad que dependa solo de la ley de $Y$ dado $X$ —en particular $\beta_0$ y $\beta_1$ del modelo de la Definición 13.1— se puede estimar sin sesgo con los casos completos, mientras que la media marginal queda sesgada en
+$$E[Y\mid R=1]-E[Y] = \frac{\text{Cov}\big(\mu(X),\,q(X)\big)}{E[q(X)]}.$$
+:::
+
+::: {.demostracion}
+*Demostración.* Por la regla de Bayes aplicada dentro del estrato $X=x$,
+$$f(y\mid x, R=1) = \frac{f(y\mid x)\,P(R=1\mid X=x, Y=y)}{P(R=1\mid X=x)} = \frac{f(y\mid x)\,q(x)}{q(x)} = f(y\mid x),$$
+donde el paso central es exactamente la Definición 15.3. Para la consecuencia sobre la regresión: la demostración de la Proposición 14.2 escribe $\hat\beta_1 = \beta_1 + \sum_i c_i\varepsilon_i$ **condicionando en los $x_i$**, y solo necesita que $E[\varepsilon_i\mid x_i]=0$ en la submuestra que se usa. Bajo MAR, seleccionar con probabilidad $q(x_i)$ no cambia la ley de $\varepsilon_i$ dado $x_i$ —es lo que acaba de demostrarse—, así que esa esperanza sigue siendo cero y $E[\hat\beta_1]=\beta_1$: la selección altera qué valores de $x$ aparecen, no qué pasa dentro de cada uno.
+
+Para la media marginal, aplíquese la Proposición 15.5 con la torre de esperanzas: $\text{Cov}(Y,R) = E[YR]-E[Y]E[R]$ y $E[YR] = E\big[E[YR\mid X]\big] = E[\mu(X)q(X)]$, mientras $E[R]=E[q(X)]$, de donde $\text{Cov}(Y,R)=\text{Cov}(\mu(X),q(X))$. [∎]{.fin-demo}
+:::
+
+Esto explica el visual: bajo MAR la recta punteada se queda encima de la oscura porque la Proposición 15.7 lo obliga, y la media se va porque la covarianza entre «cuánto se gana en promedio con esa educación» y «con qué probabilidad responde quien tiene esa educación» no es cero.
+
+Si el sesgo viene de que unos estratos están sobrerrepresentados, la reparación es devolverles su peso.
+
+::: {.proposicion}
+**Proposición 15.8 (reponderación por el inverso de la propensión).** Bajo MAR y con **positividad** —$q(x) \ge q_{\min} > 0$ para todo $x$ del soporte—,
+$$E\!\left[\frac{R\,Y}{q(X)}\right] = E[Y].$$
+:::
+
+::: {.demostracion}
+*Demostración.* Condicionando en $(X,Y)$ y usando que $E[R\mid X,Y]=P(R=1\mid X,Y)=q(X)$ por MAR,
+$$E\!\left[\frac{RY}{q(X)}\right] = E\!\left[\frac{Y}{q(X)}\,E[R\mid X,Y]\right] = E\!\left[\frac{Y\,q(X)}{q(X)}\right] = E[Y].$$
+La positividad es lo que hace legítima la división: si hubiera un valor de $x$ con $q(x)=0$, esa parte de la población nunca aparece en la muestra y ningún peso la puede resucitar. [∎]{.fin-demo}
+:::
+
+La condición de positividad merece atención porque es la que falla en la práctica con más frecuencia que el propio supuesto MAR: si nadie con menos de seis años de educación responde jamás, no hay reponderación que arregle nada, y lo honesto es decir que la estimación vale para la población en la que sí hay respuesta.
+
+La simulación siguiente mide los tres mecanismos sobre la misma población: para cada uno, el sesgo de la media de casos completos y el de la pendiente.
+
+```{pyodide}
+import numpy as np
+
+# Dos flujos independientes: uno sortea los datos, otro decide quien responde.
+# Si salieran del mismo flujo, responder y ganar quedarian correlacionados por
+# el generador y no por el mecanismo (el error de la leccion 12).
+ss_datos, ss_resp = np.random.SeedSequence(15).spawn(2)
+rng_datos = np.random.default_rng(ss_datos)
+rng_resp = np.random.default_rng(ss_resp)
+
+reps, n = 4000, 400
+b0, b1, sigma = 400.0, 120.0, 300.0
+mu_x, sd_x = 12.0, 3.0
+mu_y = b0 + b1 * mu_x
+sd_y = np.sqrt((b1 * sd_x) ** 2 + sigma ** 2)
+
+x = rng_datos.normal(mu_x, sd_x, size=(reps, n))
+y = b0 + b1 * x + rng_datos.normal(0, sigma, size=(reps, n))
+
+def logistica(t):
+    return 1.0 / (1.0 + np.exp(-t))
+
+# los tres mecanismos, calibrados para dejar fuera aproximadamente lo mismo
+mecanismos = {
+    "MCAR": np.full((reps, n), 0.60),
+    "MAR": logistica(0.55 + 0.45 * (x - mu_x) / sd_x),
+    "MNAR": logistica(0.55 - 0.45 * (y - mu_y) / sd_y),
+}
+
+print(f"poblacion:  mu_Y = {mu_y:.1f}   beta1 = {b1:.1f}   n = {n}   repeticiones = {reps}")
+print()
+print("mecanismo   responden   sesgo de la media   sesgo de la pendiente")
+for nombre, propension in mecanismos.items():
+    r = (rng_resp.random((reps, n)) < propension).astype(float)
+    m = r.sum(axis=1)
+    xb = (r * x).sum(axis=1) / m                  # medias dentro de los observados
+    yb = (r * y).sum(axis=1) / m
+    num = (r * (x - xb[:, None]) * (y - yb[:, None])).sum(axis=1)
+    den = (r * (x - xb[:, None]) ** 2).sum(axis=1)
+    print(f"{nombre:9s}   {(m/n).mean()*100:6.1f}%   {(yb - mu_y).mean():+15.2f}   "
+          f"{(num/den - b1).mean():+18.3f}")
+```
+
+Las tres filas son las tres definiciones, medidas. Con MCAR los dos sesgos son
+indistinguibles de cero. Con MAR la media se va en $+57$ —más del 3 % de $\mu_Y$— y la
+pendiente no se mueve, que es la Proposición 15.7 en números. Con MNAR se mueven
+las dos: la media cae 75 unidades y la pendiente pierde más de dos.
+
+La reponderación de la Proposición 15.8 arregla la media bajo MAR, y hay que
+pagarla en varianza.
+
+```{pyodide}
+import numpy as np
+
+ss_datos, ss_resp = np.random.SeedSequence(707).spawn(2)
+rng_datos = np.random.default_rng(ss_datos)
+rng_resp = np.random.default_rng(ss_resp)
+
+reps, n = 4000, 500
+b0, b1, sigma = 400.0, 120.0, 300.0
+mu_x, sd_x = 12.0, 3.0
+mu_y = b0 + b1 * mu_x
+
+def logistica(t):
+    return 1.0 / (1.0 + np.exp(-t))
+
+def propension(x):                 # depende SOLO de X: eso es MAR
+    return logistica(0.55 + 0.45 * (x - mu_x) / sd_x)
+
+crudo, pesado = [], []
+for _ in range(reps):
+    x = rng_datos.normal(mu_x, sd_x, n)
+    y = b0 + b1 * x + rng_datos.normal(0, sigma, n)
+    r = rng_resp.random(n) < propension(x)
+    crudo.append(y[r].mean())
+    w = 1.0 / propension(x[r])     # peso = 1 / P(responder | X)
+    pesado.append((w * y[r]).sum() / w.sum())
+
+crudo, pesado = np.array(crudo), np.array(pesado)
+err_mc = pesado.std() / np.sqrt(reps)
+print(f"mu_Y verdadero                        = {mu_y:.2f}")
+print(f"media de los casos completos          = {crudo.mean():.2f}   sesgo = {crudo.mean()-mu_y:+.2f}")
+print(f"media reponderada por 1/propension     = {pesado.mean():.2f}   sesgo = {pesado.mean()-mu_y:+.2f}")
+print(f"error de Monte Carlo de esos promedios = {err_mc:.2f}")
+print()
+print(f"desviacion tipica del crudo        = {crudo.std():.2f}")
+print(f"desviacion tipica del reponderado  = {pesado.std():.2f}   <- reponderar cuesta varianza")
+```
+
+El sesgo de $+57{,}89$ desaparece: queda $+0{,}61$ con un error de Monte Carlo de $0{,}43$, es decir, ruido de simulación. El precio está en la última línea: la desviación típica del estimador reponderado es mayor que la del crudo. Reponderar cambia sesgo por varianza, y esa es la misma moneda de la lección 7.
+
+## 3. Rellenar los huecos
+
+Borrar las filas incompletas tiene un costo evidente —se pierden también las columnas que sí estaban— y por eso la reacción habitual es rellenar. La [imputación]{.g} más simple es poner en cada hueco la media de lo observado. Conserva exactamente la cantidad que uno quería estimar y destruye la que mide la incertidumbre.
+
+::: {.proposicion}
+**Proposición 15.9 (qué le hace a la varianza rellenar con la media).** Sea $\tilde{y}$ el vector de $n$ valores que resulta de poner $\bar{y}_{\text{obs}}$ en cada hueco, y sean $s^2_{\text{obs}}$ y $s^2_{\tilde{y}}$ las varianzas muestrales (con divisor $m-1$ y $n-1$) de los observados y del vector completado. Entonces
+$$\bar{\tilde{y}} = \bar{y}_{\text{obs}}, \qquad s^2_{\tilde{y}} = \frac{m-1}{n-1}\,s^2_{\text{obs}}.$$
+:::
+
+::: {.demostracion}
+*Demostración.* La suma de los $n$ valores es $\sum_i R_iy_i + (n-m)\bar{y}_{\text{obs}} = m\bar{y}_{\text{obs}} + (n-m)\bar{y}_{\text{obs}} = n\bar{y}_{\text{obs}}$, de donde $\bar{\tilde{y}} = \bar{y}_{\text{obs}}$. Como la media del vector completado coincide con $\bar{y}_{\text{obs}}$, cada valor imputado tiene desviación **exactamente cero** respecto de ella, y la suma de cuadrados no cambia:
+$$\sum_{i=1}^{n}(\tilde{y}_i - \bar{\tilde{y}})^2 = \sum_{i:R_i=1}(y_i-\bar{y}_{\text{obs}})^2 + (n-m)\cdot 0 = (m-1)s^2_{\text{obs}}.$$
+Dividiendo entre $n-1$ queda el resultado. [∎]{.fin-demo}
+:::
+
+::: {.proposicion}
+**Proposición 15.10 (y qué le hace al intervalo).** Con la misma notación, el error estándar que reporta el conjunto completado es
+$$\frac{s_{\tilde{y}}}{\sqrt{n}} = \sqrt{\frac{m(m-1)}{n(n-1)}}\;\cdot\;\frac{s_{\text{obs}}}{\sqrt{m}} \;\approx\; \frac{m}{n}\cdot\frac{s_{\text{obs}}}{\sqrt{m}},$$
+donde el segundo factor es el error estándar correcto de $\bar{y}_{\text{obs}}$. El intervalo construido con él es, por tanto, aproximadamente $m/n$ veces más angosto de lo que debería, y su cobertura cae por debajo del nivel nominal aunque el mecanismo sea MCAR.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Proposición 15.9, $s_{\tilde{y}} = s_{\text{obs}}\sqrt{(m-1)/(n-1)}$. Entonces
+$$\frac{s_{\tilde{y}}}{\sqrt{n}} = s_{\text{obs}}\sqrt{\frac{m-1}{n(n-1)}} = \sqrt{\frac{m(m-1)}{n(n-1)}}\cdot\frac{s_{\text{obs}}}{\sqrt{m}},$$
+multiplicando y dividiendo por $\sqrt{m}$. Para $m$ y $n$ grandes, $\sqrt{m(m-1)/(n(n-1))}\approx m/n$. Como el centro del intervalo es el mismo $\bar{y}_{\text{obs}}$ —Proposición 15.9— y su dispersión real es $\sigma/\sqrt{m}$, estrechar el intervalo por un factor menor que uno sin mover el centro solo puede reducir la probabilidad de cubrir $\mu$. [∎]{.fin-demo}
+:::
+
+Con 40 % de huecos el factor es $0{,}6$: el intervalo del 95 % se reporta con seis décimas de su ancho correcto. No es una pérdida pequeña de cobertura; el visual la mide.
+
+```{=html}
+<div class="viz-imp">
+  <div class="controles">
+    <label>Qué se hace con los huecos <select id="imp-metodo">
+      <option value="borrar" selected>Borrar las filas incompletas</option>
+      <option value="media">Rellenar con la media observada</option>
+      <option value="ruido">Rellenar con media + ruido</option>
+    </select></label>
+    <label>Faltantes <input id="imp-falta" type="range" min="10" max="70" step="5" value="40"> <span id="imp-falta-v">40 %</span></label>
+    <button id="imp-otra" type="button">Otra muestra</button>
+  </div>
+  <svg id="imp-svg" viewBox="0 0 620 330" role="img" aria-label="A la izquierda, cada hogar es un punto colocado segun su ingreso: los observados en verde y los rellenados en naranja, que al imputar la media se apilan todos sobre una misma vertical. A la derecha, el intervalo de confianza que el metodo reporta comparado con el correcto y con la media verdadera de la poblacion, mas la cobertura medida por simulacion."></svg>
+  <p class="lectura" id="imp-lectura"></p>
+</div>
+<style>
+.viz-imp { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-imp .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-imp label { display: flex; align-items: center; gap: .4rem; }
+.viz-imp select, .viz-imp input[type=range] { font-size: .85rem; padding: .2rem .4rem; border-radius: 5px; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-imp input[type=range] { width: 116px; padding: 0; }
+.viz-imp button { font-size: .8rem; padding: .22rem .6rem; border-radius: 5px; cursor: pointer; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-imp button:hover { border-color: var(--r-acento, #0F6E68); color: var(--r-acento, #0F6E68); }
+.viz-imp svg { width: 100%; height: auto; display: block; }
+.viz-imp .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5.4em; line-height: 1.6; }
+.viz-imp .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_OBS = "#0F6E68", C_IMP = "#B45309", C_TEO = "var(--r-tinta,#1f2430)";
+  var svg = document.getElementById("imp-svg"), lec = document.getElementById("imp-lectura");
+  var selMet = document.getElementById("imp-metodo");
+  var ctlFalta = document.getElementById("imp-falta"), etqFalta = document.getElementById("imp-falta-v");
+  var btn = document.getElementById("imp-otra");
+
+  // Poblacion fija: el marco sale de aqui, no de la muestra (regla 19b).
+  var MU = 1840, SD = 460, N = 300, Z = 1.959964, REPS = 1200;
+  var X0 = 300, X1 = 3380;                        // eje de ingresos, constante
+  var PX0 = 34, PX1 = 318, PY0 = 250, PY1 = 40;   // panel izquierdo
+  var QX0 = 372, QX1 = 604;                       // panel derecho
+  var Q0 = MU - 230, Q1 = MU + 230;               // zoom fijo alrededor de mu
+  var semilla = 31415927;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function flujo(s) {
+    return function () {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function normal(u) { var a = u() || 1e-12, b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); }
+  function px(v) { return PX0 + (v - X0) / (X1 - X0) * (PX1 - PX0); }
+  function qx(v) { return QX0 + (v - Q0) / (Q1 - Q0) * (QX1 - QX0); }
+  function media(a) { var s = 0, i; for (i = 0; i < a.length; i++) s += a[i]; return s / a.length; }
+  function varianza(a) {
+    var m = media(a), s = 0, i;
+    for (i = 0; i < a.length; i++) s += (a[i] - m) * (a[i] - m);
+    return s / (a.length - 1);
+  }
+
+  // Los huecos de este visual son MCAR: cada hogar responde con la misma
+  // probabilidad, sin mirar su ingreso. Es el caso benigno a proposito — lo
+  // que se rompe aqui lo rompe la imputacion, no el mecanismo.
+  function muestrear(sem, falta) {
+    var u = flujo(sem), ur = flujo(sem ^ 0x9E3779B9), y = [], r = [], i;
+    for (i = 0; i < N; i++) { y.push(MU + SD * normal(u)); r.push(ur() >= falta); }
+    return { y: y, r: r };
+  }
+
+  function completar(d, metodo, u) {
+    var obs = [], i;
+    for (i = 0; i < N; i++) if (d.r[i]) obs.push(d.y[i]);
+    var m = obs.length, mo = media(obs), so = Math.sqrt(varianza(obs));
+    if (metodo === "borrar") return { vals: obs, relleno: [], m: m, nef: m, mo: mo, so: so };
+    var vals = [], relleno = [];
+    for (i = 0; i < N; i++) {
+      if (d.r[i]) { vals.push(d.y[i]); }
+      else {
+        var v = metodo === "media" ? mo : mo + so * normal(u);
+        vals.push(v); relleno.push(v);
+      }
+    }
+    return { vals: vals, relleno: relleno, m: m, nef: N, mo: mo, so: so };
+  }
+
+  function cobertura(metodo, falta) {
+    var u = flujo(777001), dentro = 0, k, i;
+    for (k = 0; k < REPS; k++) {
+      var obs = [], huecos = 0;
+      for (i = 0; i < N; i++) {
+        var v = MU + SD * normal(u);
+        if (u() >= falta) obs.push(v); else huecos++;
+      }
+      if (obs.length < 3) continue;
+      var mo = media(obs), so = Math.sqrt(varianza(obs)), vals, j;
+      if (metodo === "borrar") { vals = obs; }
+      else {
+        vals = obs.slice();
+        for (j = 0; j < huecos; j++) vals.push(metodo === "media" ? mo : mo + so * normal(u));
+      }
+      var mv = media(vals), h = Z * Math.sqrt(varianza(vals) / vals.length);
+      if (Math.abs(mv - MU) < h) dentro++;
+    }
+    return dentro / REPS;
+  }
+
+  function barra(y, lo, hi, centro, color, etiqueta, grosor) {
+    svg.appendChild(el("line", { x1: qx(lo).toFixed(1), y1: y, x2: qx(hi).toFixed(1), y2: y,
+      stroke: color, "stroke-width": grosor }));
+    svg.appendChild(el("line", { x1: qx(lo).toFixed(1), y1: y - 5, x2: qx(lo).toFixed(1), y2: y + 5, stroke: color, "stroke-width": grosor }));
+    svg.appendChild(el("line", { x1: qx(hi).toFixed(1), y1: y - 5, x2: qx(hi).toFixed(1), y2: y + 5, stroke: color, "stroke-width": grosor }));
+    svg.appendChild(el("circle", { cx: qx(centro).toFixed(1), cy: y, r: 3, fill: color }));
+    svg.appendChild(el("text", { x: QX0, y: y - 12, "font-size": 10, fill: "var(--r-tinta-suave,#777)" }, etiqueta));
+  }
+
+  var datos = null;
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var falta = +ctlFalta.value / 100, metodo = selMet.value;
+    etqFalta.textContent = (+ctlFalta.value) + " %";
+    datos = muestrear(semilla, falta);
+    var u = flujo(semilla ^ 0x51ED2701);
+    var c = completar(datos, metodo, u);
+
+    // --- panel izquierdo: un punto por hogar, altura sorteada solo para verlos ---
+    svg.appendChild(el("line", { x1: PX0, y1: PY0, x2: PX1, y2: PY0, stroke: "var(--r-linea,#ccc)" }));
+    var i, uj = flujo(4242);
+    for (i = 1000; i <= 3000; i += 1000) {
+      svg.appendChild(el("text", { x: px(i), y: PY0 + 15, "font-size": 9.5, "text-anchor": "middle",
+        fill: "var(--r-tinta-suave,#777)" }, String(i)));
+    }
+    var alturas = [];
+    for (i = 0; i < N; i++) alturas.push(PY1 + uj() * (PY0 - PY1 - 10));
+    var k = 0;
+    for (i = 0; i < N; i++) {
+      if (datos.r[i]) {
+        svg.appendChild(el("circle", { cx: px(datos.y[i]).toFixed(1), cy: alturas[i].toFixed(1), r: 2.2,
+          fill: C_OBS, "fill-opacity": 0.5, stroke: C_OBS, "stroke-width": 0.5 }));
+      } else if (metodo !== "borrar") {
+        svg.appendChild(el("circle", { cx: px(c.relleno[k++]).toFixed(1), cy: alturas[i].toFixed(1), r: 2.2,
+          fill: C_IMP, "fill-opacity": 0.5, stroke: C_IMP, "stroke-width": 0.5 }));
+      }
+    }
+    svg.appendChild(el("line", { x1: px(MU), y1: PY1 + 4, x2: px(MU), y2: PY0,
+      stroke: C_TEO, "stroke-width": 1.5, "stroke-dasharray": "4 3" }));
+    svg.appendChild(el("text", { x: px(MU) + 5, y: PY1 + 12, "font-size": 10, "text-anchor": "start",
+      fill: "var(--r-tinta,#222)" }, "μ = " + MU));
+    svg.appendChild(el("text", { x: PX0, y: 20, "font-size": 11, "font-weight": 600,
+      fill: "var(--r-tinta,#222)" }, "los datos con los que se calcula"));
+
+    // --- panel derecho: los dos intervalos y la media verdadera ---
+    svg.appendChild(el("text", { x: QX0, y: 20, "font-size": 11, "font-weight": 600,
+      fill: "var(--r-tinta,#222)" }, "el intervalo de confianza al 95 %"));
+    svg.appendChild(el("line", { x1: qx(MU), y1: 40, x2: qx(MU), y2: PY0,
+      stroke: C_TEO, "stroke-width": 1.5, "stroke-dasharray": "4 3" }));
+    svg.appendChild(el("line", { x1: QX0, y1: PY0, x2: QX1, y2: PY0, stroke: "var(--r-linea,#ccc)" }));
+    for (i = -200; i <= 200; i += 200) {
+      svg.appendChild(el("text", { x: qx(MU + i), y: PY0 + 15, "font-size": 9.5, "text-anchor": "middle",
+        fill: "var(--r-tinta-suave,#777)" }, (i > 0 ? "+" : "") + i));
+    }
+    var eeCorrecto = c.so / Math.sqrt(c.m);
+    var sv = Math.sqrt(varianza(c.vals)), mv = media(c.vals);
+    var eeRep = sv / Math.sqrt(c.nef);
+    barra(96, c.mo - Z * eeCorrecto, c.mo + Z * eeCorrecto, c.mo, C_OBS, "correcto: casos completos, n = m", 2);
+    barra(170, mv - Z * eeRep, mv + Z * eeRep, mv, C_IMP, "lo que reporta este método", 2.5);
+
+    var cob = cobertura(metodo, falta);
+    var nombres = { borrar: "Borrar filas", media: "Media", ruido: "Media + ruido" };
+    var textos = {
+      borrar: "Borrar las filas incompletas con datos MCAR es correcto: el intervalo es el de una muestra de tamaño m, y cubre el 95 % de las veces. Lo único que se paga es ancho.",
+      media: "Rellenar con la media no mueve la media —los puntos naranjas caen justo sobre ella— pero borra la dispersión de los huecos: s² se encoge por el factor (m−1)/(n−1) y el intervalo, que además divide entre n, sale mucho más angosto de lo que debería. La cobertura se desploma.",
+      ruido: "Rellenar con media + ruido devuelve la dispersión, así que s² ya no se encoge. Pero el intervalo sigue dividiendo entre n como si hubiera n datos de verdad, y solo hay m: queda angosto y la cobertura se queda por debajo del 95 %."
+    };
+    lec.innerHTML = "<span class=\"fx\">m = " + c.m + " de " + N +
+      "   ·   s²(datos usados)/s²(observados) = " + (varianza(c.vals) / (c.so * c.so)).toFixed(3) +
+      (metodo === "media" ? "   (predicho (m−1)/(n−1) = " + ((c.m - 1) / (N - 1)).toFixed(3) + ")" : "") +
+      "<br>EE correcto = " + eeCorrecto.toFixed(1) + "   ·   EE reportado = " + eeRep.toFixed(1) +
+      "   ·   cobertura medida (" + nombres[metodo] + "): " + (cob * 100).toFixed(1) + " %</span><br>" +
+      textos[metodo];
+  }
+
+  selMet.addEventListener("change", dibujar);
+  ctlFalta.addEventListener("input", dibujar);
+  btn.addEventListener("click", function () { semilla = (semilla * 16807 + 12345) | 0; dibujar(); });
+  dibujar();
+})();
+</script>
+```
+
+Los huecos de ese visual son MCAR: el caso benigno, en el que borrar las filas incompletas es correcto. Lo que se rompe no lo rompe el mecanismo, lo rompe el relleno. La tercera opción —rellenar con la media más un ruido de la misma desviación típica que lo observado— devuelve la dispersión y sin embargo tampoco alcanza: el intervalo sigue dividiendo entre $n$ como si hubiera $n$ datos independientes, y solo hay $m$. Ese residuo es lo que la [imputación múltiple]{.g} resuelve, imputando varias veces y sumando la variabilidad entre imputaciones a la de dentro de cada una; queda fuera de esta lección, pero el hueco que tapa es exactamente este.
+
+La celda comprueba la identidad de la Proposición 15.9 hasta el último dígito y mide la cobertura.
+
+```{pyodide}
+import numpy as np
+
+ss_datos, ss_resp = np.random.SeedSequence(1515).spawn(2)
+rng_datos = np.random.default_rng(ss_datos)
+rng_resp = np.random.default_rng(ss_resp)
+
+n, mu, sigma = 300, 1840.0, 460.0
+p_responde = 0.6                  # MCAR: el caso benigno, a proposito
+z = 1.959963984540054             # cuantil 0.975 de la normal estandar
+reps = 20000
+
+# --- una muestra concreta: la identidad algebraica ---
+y = rng_datos.normal(mu, sigma, n)
+r = rng_resp.random(n) < p_responde
+obs = y[r]
+m = obs.size
+imputado = np.where(r, y, obs.mean())      # cada hueco, la media de lo observado
+
+s2_obs = obs.var(ddof=1)
+s2_imp = imputado.var(ddof=1)
+print(f"n = {n}   m (casos completos) = {m}")
+print(f"media observada = {obs.mean():.4f}   media tras imputar = {imputado.mean():.4f}   "
+      f"iguales: {abs(obs.mean() - imputado.mean()) < 1e-9}")
+print(f"s2_obs = {s2_obs:.2f}   s2_imp = {s2_imp:.2f}   razon = {s2_imp/s2_obs:.6f}")
+print(f"factor (m-1)/(n-1) = {(m-1)/(n-1):.6f}   coincide: {abs(s2_imp/s2_obs - (m-1)/(n-1)) < 1e-9}")
+
+ee_correcto = np.sqrt(s2_obs / m)
+ee_reportado = np.sqrt(s2_imp / n)
+print(f"EE correcto (casos completos) = {ee_correcto:.4f}")
+print(f"EE que reporta el imputado    = {ee_reportado:.4f}")
+print(f"razon = {ee_reportado/ee_correcto:.6f}   predicho sqrt(m(m-1)/(n(n-1))) = "
+      f"{np.sqrt(m*(m-1)/(n*(n-1))):.6f}   ·   m/n = {m/n:.6f}")
+print()
+
+# --- cobertura del intervalo al 95 %, con datos MCAR ---
+dentro_completo = dentro_imputado = 0
+for _ in range(reps):
+    yy = rng_datos.normal(mu, sigma, n)
+    rr = rng_resp.random(n) < p_responde
+    ob = yy[rr]
+    mm = ob.size
+    ii = np.where(rr, yy, ob.mean())
+    dentro_completo += abs(ob.mean() - mu) < z * np.sqrt(ob.var(ddof=1) / mm)
+    dentro_imputado += abs(ii.mean() - mu) < z * np.sqrt(ii.var(ddof=1) / n)
+print(f"cobertura del IC 95% con casos completos  : {dentro_completo/reps*100:.2f}%")
+print(f"cobertura del IC 95% tras imputar la media: {dentro_imputado/reps*100:.2f}%")
+```
+
+La razón de varianzas sale $0{,}602007$ y el factor $(m-1)/(n-1)$ sale $0{,}602007$: no es una aproximación, es una identidad algebraica. La cobertura pasa de $95{,}00\,\%$ a $76{,}09\,\%$. Uno de cada cuatro intervalos falla, y el análisis no da ninguna señal de que algo vaya mal: los datos parecen completos porque alguien los completó.
+
+## 4. Lo que los datos no pueden decir
+
+Queda el caso MNAR, y la pregunta obvia: ¿qué estimador lo corrige? La respuesta es que la pregunta está mal planteada.
+
+::: {.proposicion}
+**Proposición 15.11 (MNAR no es identificable).** La distribución de los datos observados $(R,\,RY)$ determina únicamente $q=P(R=1)$ y la ley condicional $f(y\mid R=1)$. La ley $f(y\mid R=0)$ no está restringida por los datos: para cualquier densidad $g$ existe una población compatible con exactamente los mismos datos observados, a saber
+$$f(y) = q\,f(y\mid R=1) + (1-q)\,g(y).$$
+En consecuencia, si $Y$ toma valores en $[a,b]$, todo lo que los datos determinan sobre $E[Y]$ es la pertenencia al intervalo
+$$\Big[\;q\,E[Y\mid R=1] + (1-q)\,a,\;\;\; q\,E[Y\mid R=1] + (1-q)\,b\;\Big],$$
+de ancho $(1-q)(b-a)$, y ningún punto de ese intervalo puede descartarse con los datos observados.
+:::
+
+::: {.demostracion}
+*Demostración.* Un dato observado es el par $(R, RY)$: cuando $R=0$ el segundo componente vale 0 sin importar cuánto valía $Y$, así que la ley de los datos observados queda descrita por $P(R=1)=q$ y por la ley de $Y$ condicionada a $R=1$. Dadas esas dos piezas y **cualquier** densidad $g$ con soporte en $[a,b]$, la mezcla $f = q f(\cdot\mid R=1) + (1-q)g$ es una densidad legítima, y la población que la tiene, con mecanismo $P(R=1\mid Y=y) = q f(y\mid R=1)/f(y)$, reproduce exactamente los mismos datos observados. Por la ley de la esperanza total,
+$$E[Y] = q E[Y\mid R=1] + (1-q)E_g[Y],$$
+y $E_g[Y]$ recorre todo $[a,b]$ al recorrer $g$ las densidades con ese soporte —los extremos se alcanzan con la masa puntual en $a$ y en $b$—. [∎]{.fin-demo}
+:::
+
+Tres consecuencias que conviene tener escritas.
+
+1. **No hay método que arregle MNAR con los datos solos.** Cualquier procedimiento que dé una respuesta única está metiendo un supuesto adicional sobre $f(y\mid R=0)$; el trabajo honesto es decir cuál.
+2. **La fracción que falta es el ancho del desconocimiento.** El intervalo mide $(1-q)(b-a)$: con $Y$ acotada, bajar la no respuesta del 40 % al 10 % encoge las cotas cuatro veces. Reducir $1-q$ vale más que cualquier técnica aplicada después.
+3. **Sin cota inferior ni superior para $Y$, no hay cotas.** Si $Y$ no está acotada, el intervalo de la Proposición 15.11 es toda la recta: la media de los ingresos, sin un tope conocido, no admite ninguna cota a partir de los datos. Por eso el visual siguiente pregunta por una proporción, que siempre está entre 0 y 1.
+
+```{=html}
+<div class="viz-man">
+  <div class="controles">
+    <label>No responden <select id="man-falta">
+      <option value="20">20 %</option>
+      <option value="40" selected>40 %</option>
+      <option value="60">60 %</option>
+    </select></label>
+    <label>Supuesto sobre los que faltan <input id="man-delta" type="range" min="0" max="100" step="2" value="50"> <span id="man-delta-v">50 %</span></label>
+  </div>
+  <svg id="man-svg" viewBox="0 0 620 250" role="img" aria-label="A la izquierda, doscientos hogares en cuadricula: verde oscuro los que responden y ganan mas de dos mil, verde claro los que responden y ganan menos, y gris los que no responden. El supuesto que se elija pinta los grises. A la derecha, la recta de cero a cien por ciento con el intervalo de valores compatibles con los datos observados y un marcador que se mueve con el supuesto."></svg>
+  <p class="lectura" id="man-lectura"></p>
+</div>
+<style>
+.viz-man { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-man .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-man label { display: flex; align-items: center; gap: .4rem; }
+.viz-man select, .viz-man input[type=range] { font-size: .85rem; padding: .2rem .4rem; border-radius: 5px; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-man input[type=range] { width: 130px; padding: 0; }
+.viz-man svg { width: 100%; height: auto; display: block; }
+.viz-man .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5.4em; line-height: 1.6; }
+.viz-man .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_SI = "#0F6E68", C_NO = "#bfe0dc", C_GRIS = "#d8dade", C_BORDE = "#a8adb5", C_SUP = "#B45309", C_TEO = "var(--r-tinta,#1f2430)";
+  var svg = document.getElementById("man-svg"), lec = document.getElementById("man-lectura");
+  var selFalta = document.getElementById("man-falta");
+  var ctlDelta = document.getElementById("man-delta"), etqDelta = document.getElementById("man-delta-v");
+
+  // Poblacion fija. UMBRAL y los parametros anclan el dibujo (regla 19b).
+  var MU = 1840, SD = 469, UMBRAL = 2000, N = 200, COLS = 20, FIL = 10;
+  var GX0 = 34, GY0 = 52, CEL = 13.6;                 // cuadricula
+  var RX0 = 336, RX1 = 604, RY = 150;                 // recta de proporciones
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function flujo(s) {
+    return function () {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function normal(u) { var a = u() || 1e-12, b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); }
+  function logistica(t) { return 1 / (1 + Math.exp(-t)); }
+  function rx(p) { return RX0 + p * (RX1 - RX0); }
+
+  // La muestra es la MISMA siempre: este visual no habla de azar, habla de lo
+  // que los datos observados no pueden decidir. Lo unico que cambia es quien
+  // responde (el select) y que se supone de los que no (el deslizador).
+  var u = flujo(20260918), Y = [], i;
+  for (i = 0; i < N; i++) Y.push(MU + SD * normal(u));
+  var P_VERDAD = 0;                            // la de estos 200 hogares, que es la que se busca
+  for (i = 0; i < N; i++) if (Y[i] > UMBRAL) P_VERDAD++;
+  P_VERDAD /= N;
+
+  function responden(falta) {
+    // MNAR: responde menos quien mas gana. El corte se ajusta por biseccion
+    // para dejar fuera exactamente la fraccion pedida.
+    var lo = -14, hi = 14, a, k, j, p = [];
+    function pi(j, a) { return logistica(a - 1.6 * (Y[j] - MU) / SD); }
+    for (k = 0; k < 44; k++) {
+      a = (lo + hi) / 2;
+      var s = 0;
+      for (j = 0; j < N; j++) s += pi(j, a);
+      if (s / N < 1 - falta) lo = a; else hi = a;
+    }
+    a = (lo + hi) / 2;
+    var ur = flujo(987654321), r = [];
+    for (j = 0; j < N; j++) r.push(ur() < pi(j, a));
+    return r;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var falta = +selFalta.value / 100, delta = +ctlDelta.value / 100;
+    etqDelta.textContent = (+ctlDelta.value) + " %";
+    var r = responden(falta), i, nobs = 0, nsi = 0;
+    for (i = 0; i < N; i++) if (r[i]) { nobs++; if (Y[i] > UMBRAL) nsi++; }
+    var pobs = nobs ? nsi / nobs : 0, frac = nobs / N;
+    var lo = frac * pobs, hi = frac * pobs + (1 - frac);
+    var implicada = frac * pobs + (1 - frac) * delta;
+
+    svg.appendChild(el("text", { x: GX0, y: 26, "font-size": 11, "font-weight": 600,
+      fill: "var(--r-tinta,#222)" }, "200 hogares: ¿gana más de " + UMBRAL + "?"));
+
+    // La cuadricula se ordena en tres bloques —si, no, sin respuesta— para que
+    // el bloque gris sea el que el supuesto tiene que rellenar. Las posiciones
+    // son fijas: solo cambia cuantas celdas hay en cada bloque.
+    var orden = [], j;
+    for (j = 0; j < N; j++) if (r[j] && Y[j] > UMBRAL) orden.push(C_SI);
+    for (j = 0; j < N; j++) if (r[j] && Y[j] <= UMBRAL) orden.push(C_NO);
+    var primerGris = orden.length;
+    for (j = 0; j < N; j++) if (!r[j]) orden.push(C_GRIS);
+
+    var cuantos = Math.round(delta * (N - nobs));
+    for (i = 0; i < N; i++) {
+      var col = i % COLS, fil = Math.floor(i / COLS);
+      var x = GX0 + col * CEL, y = GY0 + fil * CEL;
+      svg.appendChild(el("rect", {
+        x: x.toFixed(1), y: y.toFixed(1), width: CEL - 2.4, height: CEL - 2.4, rx: 2,
+        fill: orden[i], stroke: orden[i] === C_GRIS ? C_BORDE : "none", "stroke-width": 0.8
+      }));
+      // el supuesto pinta las primeras celdas grises: son las que cuenta como «si»
+      if (i >= primerGris && i < primerGris + cuantos) {
+        svg.appendChild(el("rect", {
+          x: (x + 1.6).toFixed(1), y: (y + 1.6).toFixed(1),
+          width: CEL - 5.6, height: CEL - 5.6, rx: 1.5, fill: C_SUP, "fill-opacity": 0.75
+        }));
+      }
+    }
+    svg.appendChild(el("text", { x: GX0, y: GY0 + FIL * CEL + 18, "font-size": 9.5,
+      fill: "var(--r-tinta-suave,#777)" }, "verde oscuro: sí · verde claro: no · gris: no responde"));
+    svg.appendChild(el("text", { x: GX0, y: GY0 + FIL * CEL + 32, "font-size": 9.5,
+      fill: C_SUP }, "naranja: los grises que el supuesto cuenta como «sí»"));
+
+    // --- recta de proporciones ---
+    svg.appendChild(el("text", { x: RX0, y: 26, "font-size": 11, "font-weight": 600,
+      fill: "var(--r-tinta,#222)" }, "proporción con ingreso > " + UMBRAL));
+    svg.appendChild(el("line", { x1: RX0, y1: RY, x2: RX1, y2: RY, stroke: "var(--r-linea,#ccc)" }));
+    for (i = 0; i <= 100; i += 25) {
+      svg.appendChild(el("line", { x1: rx(i / 100), y1: RY, x2: rx(i / 100), y2: RY + 5, stroke: "var(--r-linea,#ccc)" }));
+      svg.appendChild(el("text", { x: rx(i / 100), y: RY + 17, "font-size": 9.5, "text-anchor": "middle",
+        fill: "var(--r-tinta-suave,#777)" }, i + " %"));
+    }
+    // la franja de lo compatible con los datos observados
+    svg.appendChild(el("rect", { x: rx(lo).toFixed(1), y: RY - 26, width: (rx(hi) - rx(lo)).toFixed(1),
+      height: 26, fill: C_SUP, "fill-opacity": 0.13 }));
+    svg.appendChild(el("line", { x1: rx(lo).toFixed(1), y1: RY - 30, x2: rx(lo).toFixed(1), y2: RY, stroke: C_SUP, "stroke-width": 2 }));
+    svg.appendChild(el("line", { x1: rx(hi).toFixed(1), y1: RY - 30, x2: rx(hi).toFixed(1), y2: RY, stroke: C_SUP, "stroke-width": 2 }));
+    // el valor verdadero de estos 200 hogares: constante, no se mueve nunca
+    svg.appendChild(el("line", { x1: rx(P_VERDAD), y1: RY - 48, x2: rx(P_VERDAD), y2: RY + 2, stroke: C_TEO, "stroke-width": 2 }));
+    svg.appendChild(el("text", { x: rx(P_VERDAD), y: RY - 53, "font-size": 10, "text-anchor": "middle",
+      fill: "var(--r-tinta,#222)" }, "verdad " + (P_VERDAD * 100).toFixed(1) + " %"));
+    // lo que implica el supuesto elegido
+    svg.appendChild(el("path", {
+      d: "M" + rx(implicada).toFixed(1) + "," + (RY + 6) + " L" + (rx(implicada) - 6).toFixed(1) + "," + (RY + 19) +
+         " L" + (rx(implicada) + 6).toFixed(1) + "," + (RY + 19) + " Z",
+      fill: C_SUP, stroke: C_SUP
+    }));
+    svg.appendChild(el("text", { x: rx(implicada).toFixed(1), y: RY + 32, "font-size": 10, "text-anchor": "middle",
+      fill: C_SUP }, "el supuesto dice " + (implicada * 100).toFixed(1) + " %"));
+
+    lec.innerHTML = "<span class=\"fx\">responden " + nobs + " de " + N +
+      "   ·   entre ellos, " + (pobs * 100).toFixed(1) + " % gana más de " + UMBRAL +
+      "<br>compatible con lo observado: de " + (lo * 100).toFixed(1) + " % a " + (hi * 100).toFixed(1) +
+      " %   (ancho " + ((hi - lo) * 100).toFixed(1) + " % = fracción que falta)</span><br>" +
+      "El deslizador no cambia ni un dato: cambia el supuesto sobre los grises, que nadie observó. " +
+      "Por eso el bloque verde de la izquierda no se mueve —lo único que cambia es cuántos grises se pintan— mientras el marcador " +
+      "naranja recorre todo el intervalo. Cualquier punto de esa franja produce exactamente los mismos " +
+      "datos observados: los datos, solos, no pueden elegir entre ellos.";
+  }
+
+  selFalta.addEventListener("change", dibujar);
+  ctlDelta.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+El deslizador de ese visual no toca ningún dato: lo único que mueve es el supuesto sobre las celdas grises, que nadie observó. Por eso el bloque verde se queda inmóvil mientras el marcador naranja recorre toda la franja. Esa inmovilidad **es** el contenido: si mover el supuesto de un extremo al otro no cambia ni un dato observado, entonces ningún estadístico calculado sobre los datos observados puede elegir entre los dos extremos. La franja es lo que los datos sí determinan; el punto exacto dentro de ella es lo que hay que suponer.
+
+La celda construye dos poblaciones con datos observados idénticos, bit a bit, y medias muy distintas.
+
+```{pyodide}
+import numpy as np
+
+ss_datos, ss_resp, ss_a, ss_b = np.random.SeedSequence(2026).spawn(4)
+rng_datos = np.random.default_rng(ss_datos)
+rng_resp = np.random.default_rng(ss_resp)
+
+n, mu, sigma, umbral = 200, 1840.0, 460.0, 2000.0
+
+y = rng_datos.normal(mu, sigma, n)
+# MNAR: responde menos quien mas gana
+p = 1.0 / (1.0 + np.exp(-(0.35 - 1.6 * (y - mu) / sigma)))
+r = rng_resp.random(n) < p
+m = int(r.sum())
+frac = m / n
+obs = y[r]
+
+# Dos mundos que comparten EXACTAMENTE los datos observados y difieren solo
+# en lo que nadie vio. Ningun estadistico de lo observado puede separarlos.
+mundo_a = y.copy()
+mundo_b = y.copy()
+mundo_a[~r] = np.random.default_rng(ss_a).normal(1500, 150, n - m)
+mundo_b[~r] = np.random.default_rng(ss_b).normal(2600, 150, n - m)
+
+print(f"responden {m} de {n}  ({frac:.1%})")
+print(f"los dos mundos tienen los mismos datos observados: "
+      f"{np.array_equal(mundo_a[r], mundo_b[r]) and np.array_equal(mundo_a[r], obs)}")
+print(f"media del mundo A = {mundo_a.mean():.1f}   media del mundo B = {mundo_b.mean():.1f}")
+print(f"media de los casos completos (identica en los dos) = {obs.mean():.1f}")
+print()
+
+# Para una cantidad acotada, lo observado SI acota: la proporcion que gana mas
+# que el umbral esta entre estos dos valores, y nada mas se puede afirmar.
+p_obs = (obs > umbral).mean()
+cota_baja = frac * p_obs
+cota_alta = frac * p_obs + (1 - frac)
+print(f"entre los que responden, {p_obs:.1%} gana mas de {umbral:.0f}")
+print(f"cotas para la proporcion en la poblacion: [{cota_baja:.1%}, {cota_alta:.1%}]")
+print(f"ancho de las cotas = {cota_alta - cota_baja:.1%}   ·   1 - frac = {1 - frac:.1%}")
+print(f"el valor verdadero, {np.mean(y > umbral):.1%}, cae dentro: "
+      f"{cota_baja <= np.mean(y > umbral) <= cota_alta}")
+```
+
+El mundo A tiene media $1573{,}3$ y el mundo B, $2057{,}1$: casi quinientas unidades de diferencia. Los dos producen el mismo conjunto de datos observados, y por tanto el mismo valor de cualquier estadístico que se calcule con ellos. La única cantidad que los datos sí acotan es la proporción, porque está confinada entre 0 y 1: las cotas salen $[9{,}0\,\%,\;52{,}0\,\%]$ y el valor verdadero, $34{,}0\,\%$, cae dentro. Un intervalo de 43 puntos es un resultado pobre, y es honesto: es lo que hay.
+
+::: {.callout-note}
+Con una fracción de no respuesta del 43 %, las cotas de una proporción tienen 43 puntos de ancho. Suele ser más informativo publicar eso que publicar un número puntual que depende por completo de un supuesto que nadie puede comprobar.
+:::
+
+## Ejercicios
+
+### Ejercicio 1 — Post-estratificar con estratos cada vez más finos
+
+La Proposición 15.8 reponderó con la propensión exacta, que en la práctica no se conoce. Una alternativa que solo usa $X$: partir la muestra en $K$ estratos según $x$ —[post-estratificación]{.g}—, promediar $y$ dentro de cada estrato con los que sí respondieron, y recombinar con el peso que cada estrato tiene en la muestra completa. Comprobar que el sesgo baja al afinar los estratos, y explicar por qué con $K=1$ el estimador coincide con la media de casos completos.
+
+```{pyodide}
+import numpy as np
+
+ss_datos, ss_resp = np.random.SeedSequence(4242).spawn(2)
+rng_datos = np.random.default_rng(ss_datos)
+rng_resp = np.random.default_rng(ss_resp)
+
+reps, n = 2000, 500
+b0, b1, sigma, mu_x, sd_x = 400.0, 120.0, 300.0, 12.0, 3.0
+mu_y = b0 + b1 * mu_x
+
+def propension(x):                                   # MAR: solo depende de X
+    return 1.0 / (1.0 + np.exp(-(0.55 + 0.45 * (x - mu_x) / sd_x)))
+
+# cortes fijos de la normal de X, para que los estratos no dependan de la muestra
+from math import sqrt
+def cuantil_normal(p):                               # Beasley-Springer-Moro, sin scipy
+    a = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
+         1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00]
+    b = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
+         6.680131188771972e+01, -1.328068155288572e+01]
+    c = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
+         -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00]
+    d = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00,
+         3.754408661907416e+00]
+    pl = 0.02425
+    if p < pl:
+        q = sqrt(-2 * np.log(p))
+        return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1)
+    if p > 1 - pl:
+        q = sqrt(-2 * np.log(1 - p))
+        return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1)
+    q = p - 0.5
+    rr = q * q
+    return (((((a[0]*rr+a[1])*rr+a[2])*rr+a[3])*rr+a[4])*rr+a[5])*q / (((((b[0]*rr+b[1])*rr+b[2])*rr+b[3])*rr+b[4])*rr+1)
+
+print("estratos   sesgo de la media post-estratificada")
+sesgos = []
+for K in [1, 2, 4, 8, 16]:
+    cortes = np.array([mu_x + sd_x * cuantil_normal(j / K) for j in range(1, K)])
+    estimaciones = []
+    for _ in range(reps):
+        x = rng_datos.normal(mu_x, sd_x, n)
+        y = b0 + b1 * x + rng_datos.normal(0, sigma, n)
+        r = rng_resp.random(n) < propension(x)
+        k_todos = np.digitize(x, cortes)
+        k_obs = np.digitize(x[r], cortes)
+        num = den = 0.0
+        for j in range(K):
+            if (k_obs == j).sum() > 0:
+                num += (k_todos == j).sum() * y[r][k_obs == j].mean()
+                den += (k_todos == j).sum()
+        estimaciones.append(num / den)
+    sesgo = np.mean(estimaciones) - mu_y
+    sesgos.append(sesgo)
+    print(f"{K:6d}     {sesgo:+8.2f}")
+print()
+print(f"el sesgo se reduce de forma monotona: {all(sesgos[i] > sesgos[i+1] for i in range(len(sesgos)-1))}")
+```
+
+Con un solo estrato el estimador es la media cruda y el sesgo es el de la tabla de la sección 2. Con 16 estratos queda en $+1{,}62$: la post-estratificación se acerca a la reponderación exacta a medida que dentro de cada estrato la propensión deja de variar. El límite no es gratis —estratos más finos tienen menos casos completos cada uno, y alguno puede quedarse vacío—, que es otra vez el intercambio entre sesgo y varianza.
+
+### Ejercicio 2 — Cuándo un faltante mata la pendiente y cuándo no
+
+La lección se ha ocupado de faltantes en $Y$. Este ejercicio compara cuatro reglas de selección sobre el mismo modelo de la lección 13: que no falte nada, que la respuesta dependa de $x$, que dependa del error $\varepsilon$, y que dependa de $y$. Predecir antes de correr cuál de las tres últimas sesga $\hat\beta_1$, cuál sesga $\hat\beta_0$ y cuál solo cuesta precisión.
+
+```{pyodide}
+import numpy as np
+
+ss_datos, ss_resp = np.random.SeedSequence(90210).spawn(2)
+rng_datos = np.random.default_rng(ss_datos)
+rng_resp = np.random.default_rng(ss_resp)
+
+reps, n = 4000, 200
+b0, b1, sigma, mu_x, sd_x = 400.0, 120.0, 300.0, 12.0, 3.0
+mu_y = b0 + b1 * mu_x
+sd_y = np.sqrt((b1 * sd_x) ** 2 + sigma ** 2)
+
+def logistica(t):
+    return 1.0 / (1.0 + np.exp(-t))
+
+def ajusta(x, y):
+    xb, yb = x.mean(), y.mean()
+    scx = ((x - xb) ** 2).sum()
+    b1_hat = ((x - xb) * (y - yb)).sum() / scx
+    return b1_hat, yb - b1_hat * xb, scx
+
+casos = {
+    "nada falta":        lambda x, e, y: np.ones(n, dtype=bool),
+    "falta segun X":     lambda x, e, y: rng_resp.random(n) < logistica(0.4 + 1.2 * (x - mu_x) / sd_x),
+    "falta segun error": lambda x, e, y: rng_resp.random(n) < logistica(0.4 - 1.2 * e / sigma),
+    "falta segun Y":     lambda x, e, y: rng_resp.random(n) < logistica(0.4 - 1.2 * (y - mu_y) / sd_y),
+}
+
+print("caso                responden   sesgo de b1   sesgo de b0   SCX medio   EE(b1) medido")
+for nombre, quien in casos.items():
+    p1, p0, scxs, tasa = [], [], [], []
+    for _ in range(reps):
+        x = rng_datos.normal(mu_x, sd_x, n)
+        e = rng_datos.normal(0, sigma, n)
+        y = b0 + b1 * x + e
+        r = quien(x, e, y)
+        bb1, bb0, scx = ajusta(x[r], y[r])
+        p1.append(bb1); p0.append(bb0); scxs.append(scx); tasa.append(r.mean())
+    p1, p0 = np.array(p1), np.array(p0)
+    print(f"{nombre:18s}  {np.mean(tasa)*100:6.1f}%   {p1.mean()-b1:+10.3f}   {p0.mean()-b0:+10.1f}   "
+          f"{np.mean(scxs):9.0f}   {p1.std():8.3f}")
+print()
+print(f"EE teorico de b1 con todo completo, sigma/sqrt(SCX) = {sigma/np.sqrt(n*sd_x**2):.3f}")
+```
+
+El resultado sorprende hasta que se mira la Proposición 15.7. Seleccionar según $x$ no sesga ni $\hat\beta_1$ ni $\hat\beta_0$, y solo encarece: SCX cae a menos de la mitad y el error estándar de $\hat\beta_1$ sube de $7{,}03$ a $10{,}61$, que es la Proposición 14.2 cobrando su factura. Seleccionar según el error $\varepsilon$ es MNAR y aun así deja $\hat\beta_1$ intacto —el sesgo se lo lleva entero $\hat\beta_0$, $-118{,}5$—, porque truncar los errores por igual en todas las columnas desplaza la recta sin inclinarla. Solo cuando la selección depende de $y$, que mezcla $x$ y $\varepsilon$, la pendiente se sesga: $-11{,}56$, casi el 10 %. MNAR no arruina todo lo que se calcule: arruina lo que dependa de la parte que la selección toca.
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Est 15**:
+
+1. Escribir `sesgo_por_mecanismo(mecanismo, n, reps)` que devuelva el sesgo de la media de casos completos, el de la pendiente y el error de Monte Carlo de cada uno, para los tres mecanismos. Comprobar que el de MCAR es compatible con cero a dos errores de Monte Carlo y que el de MNAR no lo es.
+2. Implementar la reponderación de la Proposición 15.8 **estimando** la propensión en vez de conocerla: ajustar $\hat{q}(x)$ con una regresión logística escrita a mano por descenso de gradiente, reponderar con $1/\hat{q}(x)$ y comparar contra usar la propensión verdadera. Medir qué pasa cuando el modelo de propensión está mal especificado —ajustar una recta cuando la verdad es cuadrática— y cuando algún $\hat{q}(x)$ se acerca a cero.
+3. Reproducir la Proposición 15.11 al revés: partiendo de un conjunto observado fijo, construir explícitamente las dos poblaciones extremas que alcanzan las cotas y dibujar la franja de valores compatibles en función de la fracción que falta, de 0 % a 60 %.
+
+## Del libro
+
+El sitio de *Python for Data Analysis* declara que su contenido no se puede copiar ni reproducir, así que aquí no hay cita textual: se cita número y título de sección, que es lo que el índice verificado permite, y no se le atribuyen al autor palabras que esta página no puede transcribir.
+
+**Preguntas para leer §7.1 *Handling Missing Data* con lápiz:**
+
+1. El capítulo enumera las funciones de pandas para faltantes —`dropna`, `fillna`, `isna`, `notna`— y muestra `dropna(how="all")` y `dropna(axis="columns")`. ¿Cuál de las definiciones 15.2 a 15.4 tiene que ser cierta para que `dropna()` sin más argumentos deje un análisis insesgado? ¿Y qué habría que comprobar en los datos antes de escribirlo?
+2. La sección de *Filling In Missing Data* llama a `fillna` «el caballo de batalla» y muestra rellenar con una constante, con un valor distinto por columna y con `ffill`. Según la Proposición 15.9, ¿cuál de esas tres opciones deja la varianza muestral intacta y cuál la encoge? ¿Cuánto, en el caso de la constante?
+3. §7.1 observa que suele ser importante analizar los propios faltantes para detectar problemas de recolección o sesgos. Traducido a la Proposición 15.5: ¿qué gráfico o tabla concreta sobre $R$ habría que mirar para estimar $\text{Cov}(Y,R)$, y por qué ese cálculo es imposible exactamente cuando más falta hace?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/datos-faltantes.md`, enlazada a [[covarianza]], [[intervalo-de-confianza]] y [[regresion-lineal]]. La Proposición 15.5 conviene rehacerla a mano: es de tres líneas y deja la clasificación MCAR/MAR/MNAR como consecuencia y no como lista que memorizar.
+
+```
+¿Qué es R_i en esta lección?::El indicador de respuesta: 1 si y_i se observa, 0 si falta (Definición 15.1)
+¿Qué dice MCAR?::Que P(R=1|X,Y) = P(R=1): responder no depende de nada
+¿Qué dice MAR?::Que P(R=1|X,Y) = P(R=1|X): depende solo de lo observado
+¿Qué dice MNAR?::Que P(R=1|X,Y) sigue dependiendo de Y aun fijando X
+¿Cuál es el sesgo de la media de casos completos?::Cov(Y,R)/P(R=1), exactamente (Proposición 15.5)
+¿Qué cuesta MCAR?::Precisión y nada más: la muestra efectiva pasa de n a nπ, y el error estándar sube 1/√π
+¿Qué sobrevive bajo MAR?::La ley de Y dado X, y con ella los coeficientes de regresión; la media marginal no
+¿Cómo se corrige la media bajo MAR?::Reponderando por 1/π(X), con positividad π(x) > 0 (Proposición 15.8)
+¿Qué le hace a la varianza rellenar con la media?::La multiplica por (m−1)/(n−1): la encoge (Proposición 15.9)
+¿Y al intervalo de confianza?::Lo estrecha por el factor ≈ m/n y le hunde la cobertura, incluso con datos MCAR
+¿Por qué no hay estimador que corrija MNAR?::Porque f(y|R=0) no está identificada: dos poblaciones distintas dan datos observados idénticos (Proposición 15.11)
+¿Qué sí determinan los datos bajo MNAR?::Cotas de ancho (1−π)(b−a) si Y está acotada; nada si no lo está
+¿Falta según x sesga la pendiente?::No: solo baja SCX y encarece el error estándar (Proposición 15.7)
+¿Falta según y sesga la pendiente?::Sí, porque la selección mezcla x con el error
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** Las Proposiciones 15.5, 15.6, 15.7, 15.8, 15.9, 15.10 y 15.11 se demuestran aquí, a partir de la definición de covarianza (lección 5), la regla de Bayes, la ley de la esperanza total y la construcción de $\hat\beta_1$ de la Proposición 14.2. Se comprueban además numéricamente: los tres mecanismos simulados sobre la misma población, la reponderación contra la media cruda con su error de Monte Carlo, la identidad $s^2_{\tilde{y}} = \frac{m-1}{n-1}s^2_{\text{obs}}$ hasta $10^{-9}$, la caída de cobertura de $95{,}00\,\%$ a $76{,}09\,\%$, y dos poblaciones con datos observados idénticos y medias separadas por casi 500 unidades. Los tres visuales se contrastaron contra `numpy` antes de publicarse: 3 mecanismos × 13 fracciones de faltantes para el primero, 3 métodos × 13 fracciones para el segundo, y 3 fracciones × 51 supuestos para el tercero.
+
+**Lo que se usa de otras lecciones sin repetir.** La definición y las propiedades de la covarianza son la lección 5. Que $\hat\beta_1$ se escribe como $\beta_1+\sum_ic_i\varepsilon_i$ condicionando en los $x_i$, y que su varianza es $\sigma^2/\text{SCX}$, es la Proposición 14.2. La lectura de la cobertura de un intervalo es la de la Proposición 9.7. El intercambio entre sesgo y varianza es la lección 7.
+
+**Lo que se enuncia sin demostrar.** Nada esencial. La imputación múltiple se menciona como la reparación del residuo que deja la imputación con ruido, pero no se define ni se demuestra: queda para una lección propia.
+
+**Lo que viene de los libros.**
+
+- [*Python for Data Analysis*, 3.ª ed.](https://wesmckinney.com/book/) (McKinney), §7.1 *Handling Missing Data* — citada por número y título. El sitio del libro declara que su contenido no se puede copiar ni reproducir, de modo que **no se transcribe ninguna frase** y las preguntas de lectura se refieren a lo que esa sección hace (`dropna`, `fillna`, `isna`, `notna`, el relleno por columna y `ffill`), verificado abriendo la sección el 12-09-2026.
+
+**Lo que es mío, no del libro.** La numeración de definiciones y proposiciones. La demostración del sesgo como covarianza reescalada (Proposición 15.5) y su uso como eje para ordenar los tres mecanismos; la deducción de que bajo MAR sobrevive la regresión por el argumento condicional de la Proposición 14.2; la identidad exacta de la Proposición 15.9 y su traducción a cobertura; y la construcción explícita de dos poblaciones indistinguibles de la Proposición 15.11. La taxonomía MCAR/MAR/MNAR y las cotas de no respuesta para una cantidad acotada son estándar en la literatura de datos faltantes; ninguno de los libros con índice verificado en `verificar/indices.json` las trata, así que esta página las construye desde cero y no cita fuente para ellas —por la regla 3 de `CLAUDE.md`, antes que citar de memoria, no se cita—.
+
+[Índice de McKinney 3E ampliado y verificado el 12-09-2026 contra el índice publicado del capítulo 7.]{.sello}
+:::

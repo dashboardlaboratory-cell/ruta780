@@ -1,0 +1,1010 @@
+---
+title: "Calibración de probabilidades y curvas de lift"
+subtitle: "Estadística · Lección 16"
+nivel: L4
+modulo: estadistica
+fase: F1
+prereqs: [estadistica/04-esperanza-varianza-momentos, estadistica/10-pruebas-de-hipotesis]
+siguientes: [estadistica/17-p-hacking]
+libro: "—"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="estadistica/16-calibracion"}
+[[L4]{.nivel .nivel-L4} **Derivación**]{.item}
+[**Fase** F1]{.item}
+[**Libro** lección autocontenida]{.item}
+[**Prereqs** [Esperanza y varianza](04-esperanza-varianza-momentos.qmd) · [Pruebas de hipótesis](10-pruebas-de-hipotesis.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir qué significa que un pronóstico probabilístico esté [calibrado]{.g data-t="calibración"} y por qué eso no basta para que sea bueno.
+2. Demostrar que el [score de Brier]{.g} es una regla de puntuación **propia** —se minimiza diciendo la verdad— y descomponerlo en calibración, [resolución]{.g data-t="resolución de un pronóstico"} e incertidumbre.
+3. Construir la [curva de ganancia]{.g} y el [lift]{.g}, y acotar cuánto puede valer el lift antes de mirar ningún modelo.
+4. Demostrar que una transformación creciente del pronóstico no cambia ni el lift ni la resolución, solo la calibración, y usar eso para recalibrar sin perder nada.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Estadística 4**: la esperanza condicional y la varianza de una Bernoulli, $\text{Var}(Y)=\bar{y}(1-\bar{y})$. La descomposición de la Proposición 16.6 es la ley de la varianza total aplicada a un pronóstico.
+- **Estadística 5**: la covarianza y la idea de descomponer una variación en piezas que suman.
+- **Estadística 10**: la Proposición 10.8, que el valor p es uniforme bajo $H_0$, es el mismo tipo de afirmación que la calibración: una cantidad anunciada como probabilidad tiene que comportarse como tal cuando se mira la frecuencia real.
+- **Estadística 15**: si la etiqueta $Y$ falta de forma no aleatoria, la frecuencia real que se compara contra el pronóstico ya viene sesgada, y la curva de calibración miente antes de empezar.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Lección 17**: elegir el umbral que hace lucir mejor al modelo, después de ver los datos, es la misma contabilidad tramposa que elegir la prueba que da el valor p más bajo.
+- **Aprendizaje automático**: toda salida `predict_proba` es un pronóstico probabilístico, y casi ninguna sale calibrada de fábrica. La Proposición 16.11 dice que recalibrar es gratis en términos de orden.
+- **Decisiones con umbral**: avisar, revisar o intervenir sobre el $u\,\%$ más probable es exactamente la curva de ganancia; el techo de la Proposición 16.10 dice cuánto se puede esperar antes de construir nada.
+- **ISLP cap. 4 *Classification*** es lo más cercano a este material dentro del plan: trata la curva ROC y las matrices de confusión, que son primas de la curva de ganancia, pero no la calibración.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Símbolo | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | Tamaño de la muestra: aquí, número de días pronosticados |
+| $Y$ | ye | El resultado, 0 o 1. En esta lección, si llovió |
+| $q(x)$ | cu de equis | La probabilidad verdadera, $P(Y=1\mid X=x)$. **Solo en esta lección**; en la 15 era la propensión de respuesta |
+| $f$, $\hat{p}$ | efe, pe sombrero | El pronóstico: $\hat{p}=f(X)\in[0,1]$, lo que el modelo anuncia |
+| $\text{BS}$ | be ese | Score de Brier, $E[(\hat{p}-Y)^2]$ |
+| $\bar{y}_p$ | ye barra sub pe | Frecuencia real entre los días en que se anunció $p$: $E[Y\mid \hat{p}=p]$ |
+| $\bar{y}$ | ye barra | La tasa base, $E[Y]$ |
+| $G(u)$ | ge de u | Ganancia: fracción de todos los positivos que cae en el $u$ por uno mejor ranqueado |
+| $L(u)$ | ele de u | Lift, $G(u)/u$ |
+:::
+
+## 1. Decir 30 % y que llueva el 30 %
+
+::: {.definicion}
+**Definición 16.1 (pronóstico probabilístico).** Una función $f$ que a cada día con características $X$ le asigna un número $\hat{p}=f(X)\in[0,1]$, leído como la probabilidad de que $Y=1$. Se escribe $q(x)=P(Y=1\mid X=x)$ para la probabilidad verdadera.
+:::
+
+::: {.definicion}
+**Definición 16.2 (calibración).** El pronóstico está **calibrado** si para todo valor $p$ que anuncia,
+$$E[Y \mid f(X)=p] = p.$$
+Es decir: entre los días en que dijo 30 %, llovió el 30 % de las veces.
+:::
+
+La definición se lee sobre los días agrupados por lo que se anunció, no día por día. Un día concreto llueve o no llueve; la afirmación «30 %» no se puede contrastar con un solo día, y sí con los cientos de días en que se dijo lo mismo. Eso es también lo que hace comprobable un pronóstico probabilístico, que a primera vista parece incontrastable.
+
+::: {.definicion}
+**Definición 16.3 (score de Brier).** $\text{BS} = E\big[(f(X)-Y)^2\big]$, el error cuadrático medio del pronóstico contra el resultado 0/1. Cuanto menor, mejor.
+:::
+
+La primera pregunta es si conviene decir la verdad. Un score mal elegido premia mentir: si a un pronosticador se le puntúa por acertar el sí o el no, le conviene anunciar siempre 0 o 1 aunque no esté seguro. El de Brier no tiene ese defecto.
+
+::: {.proposicion}
+**Proposición 16.4 (el score de Brier es propio).** Para un día con probabilidad verdadera $q$, anunciar $p$ cuesta
+$$E\big[(p-Y)^2\big] = (p-q)^2 + q(1-q).$$
+El mínimo es único y está en $p=q$. En consecuencia, sobre toda la población, $\text{BS} \ge E[q(X)(1-q(X))]$, con igualdad exactamente cuando $f(X)=q(X)$ casi seguro.
+:::
+
+::: {.demostracion}
+*Demostración.* Como $Y$ vale 0 o 1, $Y^2=Y$ y $E[Y]=E[Y^2]=q$. Entonces
+$$E[(p-Y)^2] = p^2 - 2pE[Y] + E[Y^2] = p^2 - 2pq + q = (p-q)^2 + q - q^2,$$
+sumando y restando $q^2$. El primer sumando es un cuadrado que se anula solo en $p=q$ y el segundo no depende de $p$, así que el mínimo es único. Para la versión global, tómese esperanza sobre $X$ en la identidad anterior con $p=f(X)$ y $q=q(X)$:
+$$\text{BS} = E\big[(f(X)-q(X))^2\big] + E\big[q(X)(1-q(X))\big],$$
+donde el primer término es no negativo y vale cero solo si $f=q$ casi seguro. [∎]{.fin-demo}
+:::
+
+Que el score sea propio es lo que permite usarlo como criterio: quien quiera minimizarlo no tiene ningún incentivo para exagerar ni para acobardarse. El segundo término, $E[q(1-q)]$, es el ruido irreducible: aunque se conociera la probabilidad verdadera de cada día, el Brier no bajaría de ahí.
+
+```{pyodide}
+import numpy as np
+
+# Un solo tipo de dia, con probabilidad verdadera de lluvia q = 0.30.
+# ¿Que numero conviene anunciar si lo que se quiere es el menor Brier?
+rng = np.random.default_rng(1601)
+q = 0.30
+y = (rng.random(400_000) < q).astype(float)
+
+print("anuncio p   Brier medido   (p−q)² + q(1−q)")
+for p in [0.05, 0.15, 0.25, 0.30, 0.35, 0.50, 0.80]:
+    medido = ((p - y) ** 2).mean()
+    teorico = (p - q) ** 2 + q * (1 - q)
+    print(f"   {p:.2f}      {medido:.6f}       {teorico:.6f}")
+print()
+print(f"el minimo teorico esta en p = q = {q}, y vale q(1−q) = {q*(1-q):.4f}")
+
+# Lo mismo con un pronostico completo: correrlo hacia arriba o hacia abajo
+ss_d, ss_l = np.random.SeedSequence(1602).spawn(2)
+rd, rl = np.random.default_rng(ss_d), np.random.default_rng(ss_l)
+n = 200_000
+qq = np.round(1 / (1 + np.exp(-(-0.6 + 1.3 * rd.normal(size=n)))) * 20) / 20
+yy = (rl.random(n) < qq).astype(float)
+print()
+print("corrimiento c   Brier de (q + c)")
+for c in [-0.10, -0.05, -0.02, 0.0, 0.02, 0.05, 0.10]:
+    p = np.clip(qq + c, 0, 1)
+    print(f"      {c:+.2f}          {((p - yy) ** 2).mean():.6f}")
+```
+
+La primera tabla es la Proposición 16.4 medida: el Brier de anunciar 0,05 cuando la verdad es 0,30 vale 0,2732 y el de anunciar 0,30 vale 0,2103, que es $q(1-q)$. La segunda repite la cuenta sobre un pronóstico completo: correrlo dos puntos hacia arriba o hacia abajo ya lo empeora, y el mínimo está en no moverlo.
+
+## 2. Las tres piezas de un pronóstico
+
+Un Brier bajo puede venir de dos virtudes distintas —decir el nivel correcto y separar los días entre sí— y de una circunstancia ajena: que el fenómeno sea fácil. La descomposición las separa.
+
+::: {.proposicion}
+**Proposición 16.5 (descomposición).** Sea $P=f(X)$ el pronóstico, $\bar{y}_P = E[Y\mid P]$ la frecuencia real de su nivel y $\bar{y}=E[Y]$ la [tasa base]{.g}. Entonces
+$$\text{BS} \;=\; \underbrace{E\big[(P-\bar{y}_P)^2\big]}_{\text{falta de calibración}} \;-\; \underbrace{E\big[(\bar{y}_P-\bar{y})^2\big]}_{\text{resolución}} \;+\; \underbrace{\bar{y}(1-\bar{y})}_{\text{incertidumbre}}.$$
+:::
+
+::: {.demostracion}
+*Demostración.* Escríbase $(P-Y)^2 = \big((P-\bar{y}_P) + (\bar{y}_P-Y)\big)^2$ y tómese esperanza condicionando en $P$:
+$$E[(P-Y)^2\mid P] = (P-\bar{y}_P)^2 + 2(P-\bar{y}_P)\,E[\bar{y}_P - Y\mid P] + E[(\bar{y}_P-Y)^2\mid P].$$
+El término cruzado se anula porque $E[Y\mid P]=\bar{y}_P$ por definición. El último es la varianza de una Bernoulli de parámetro $\bar{y}_P$, es decir $\bar{y}_P(1-\bar{y}_P)$ —lección 4—. Tomando esperanza sobre $P$,
+$$\text{BS} = E\big[(P-\bar{y}_P)^2\big] + E\big[\bar{y}_P(1-\bar{y}_P)\big].$$
+Queda reescribir el segundo sumando. Como $E[\bar{y}_P]=E[E[Y\mid P]]=\bar{y}$ por la torre de esperanzas,
+$$E\big[\bar{y}_P(1-\bar{y}_P)\big] = E[\bar{y}_P] - E[\bar{y}_P^2] = \bar{y} - \big(\text{Var}(\bar{y}_P) + \bar{y}^2\big) = \bar{y}(1-\bar{y}) - E\big[(\bar{y}_P-\bar{y})^2\big],$$
+usando $E[Z^2]=\text{Var}(Z)+E[Z]^2$ con $Z=\bar{y}_P$. Sustituyendo se obtiene el enunciado. [∎]{.fin-demo}
+:::
+
+Las tres piezas se leen así. La **incertidumbre** $\bar{y}(1-\bar{y})$ no depende del pronóstico: es del clima, no del pronosticador. La **falta de calibración** mide cuánto se despega lo anunciado de lo que pasó, y es lo único que el pronosticador puede llevar a cero diciendo la verdad. La **resolución** mide cuánto separa los días: cuánto se alejan las frecuencias reales de sus grupos respecto de la tasa base. Entra restando, así que **más resolución es mejor**.
+
+::: {.proposicion}
+**Corolario 16.6 (el pronosticador constante).** El pronóstico $f\equiv\bar{y}$ —anunciar siempre la tasa base— está perfectamente calibrado y tiene resolución cero. Su Brier es exactamente la incertidumbre $\bar{y}(1-\bar{y})$.
+:::
+
+::: {.demostracion}
+*Demostración.* Si $f$ es constante e igual a $\bar{y}$, hay un solo valor $p=\bar{y}$, y $\bar{y}_p = E[Y\mid f(X)=\bar{y}] = E[Y] = \bar{y}$. Entonces $E[(P-\bar{y}_P)^2]=0$ y $E[(\bar{y}_P-\bar{y})^2]=0$, y la descomposición deja $\text{BS}=\bar{y}(1-\bar{y})$. [∎]{.fin-demo}
+:::
+
+Este corolario es la razón por la que la calibración, sola, no sirve como criterio de calidad. «En esta ciudad llueve el 33 % de los días» es un pronóstico perfectamente calibrado y perfectamente inútil: nunca se equivoca en el nivel y nunca distingue un día de otro. Lo que se le pide a un pronóstico útil es calibración **y** resolución, y la descomposición las mide por separado.
+
+```{=html}
+<div class="viz-cal">
+  <div class="controles">
+    <label>Pronóstico <select id="cal-modo">
+      <option value="fiel" selected>fiel: dice lo que cree</option>
+      <option value="confiado">exceso de confianza: exagera</option>
+      <option value="timido">tímido: se acerca al 50 %</option>
+      <option value="optimista">sesgado: suma lluvia de más</option>
+    </select></label>
+    <label>Fuerza <input id="cal-fuerza" type="range" min="0" max="100" step="5" value="60"> <span id="cal-fuerza-v">60 %</span></label>
+    <button id="cal-otra" type="button">Otra tanda de días</button>
+  </div>
+  <svg id="cal-svg" viewBox="0 0 620 330" role="img" aria-label="A la izquierda el diagrama de fiabilidad: la diagonal marca la calibracion perfecta y los puntos, agrupados por probabilidad pronosticada, muestran con que frecuencia llovio de verdad. A la derecha las tres piezas de la descomposicion del score de Brier: incertidumbre, resolucion y falta de calibracion, y el Brier que resulta de ellas."></svg>
+  <p class="lectura" id="cal-lectura"></p>
+</div>
+<style>
+.viz-cal { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-cal .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-cal label { display: flex; align-items: center; gap: .4rem; }
+.viz-cal select, .viz-cal input[type=range] { font-size: .85rem; padding: .2rem .4rem; border-radius: 5px; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-cal input[type=range] { width: 110px; padding: 0; }
+.viz-cal button { font-size: .8rem; padding: .22rem .6rem; border-radius: 5px; cursor: pointer; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-cal button:hover { border-color: var(--r-acento, #0F6E68); color: var(--r-acento, #0F6E68); }
+.viz-cal svg { width: 100%; height: auto; display: block; }
+.viz-cal .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5.2em; line-height: 1.6; }
+.viz-cal .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_P = "#0F6E68", C_D = "#B45309", C_TEO = "var(--r-tinta,#1f2430)", C_GRIS = "#9aa0a6";
+  var svg = document.getElementById("cal-svg"), lec = document.getElementById("cal-lectura");
+  var selModo = document.getElementById("cal-modo");
+  var ctlF = document.getElementById("cal-fuerza"), etqF = document.getElementById("cal-fuerza-v");
+  var btn = document.getElementById("cal-otra");
+
+  // Poblacion fija: el eje y las escalas salen de aqui, nunca de la muestra (regla 19b).
+  var N = 1500, A = -0.6, B = 1.3, NIV = 20;
+  var PX0 = 46, PX1 = 276, PY0 = 258, PY1 = 28;       // diagrama de fiabilidad
+  var QX0 = 350, QX1 = 604, QY0 = 258, QY1 = 28;      // barras de la descomposicion
+  var YMAX = 0.30;                                     // escala fija de las barras
+  var semilla = 160916;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function flujo(s) {
+    return function () {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function normal(u) { var a = u() || 1e-12, b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); }
+  function logistica(t) { return 1 / (1 + Math.exp(-t)); }
+  function px(v) { return PX0 + v * (PX1 - PX0); }
+  function py(v) { return PY0 - v * (PY0 - PY1); }
+  function qy(v) { return QY0 - Math.min(v, YMAX) / YMAX * (QY0 - QY1); }
+
+  // Los dias: la probabilidad verdadera se redondea a 21 niveles, asi que
+  // condicionar sobre el pronostico es exacto y no hace falta agrupar a ojo.
+  function generar(sem) {
+    var u = flujo(sem), ur = flujo(sem ^ 0x9E3779B9), p = [], y = [], i;
+    for (i = 0; i < N; i++) {
+      var qi = Math.round(logistica(A + B * normal(u)) * NIV) / NIV;
+      p.push(qi);
+      y.push(ur() < qi ? 1 : 0);
+    }
+    return { p: p, y: y };
+  }
+
+  function distorsionar(p, modo, f) {
+    if (modo === "fiel" || f === 0) return p;
+    var i, out = [];
+    for (i = 0; i < p.length; i++) {
+      var v = p[i], z = Math.log(Math.min(Math.max(v, 1e-6), 1 - 1e-6) / (1 - Math.min(Math.max(v, 1e-6), 1 - 1e-6)));
+      if (modo === "confiado") out.push(logistica(z * (1 + 1.6 * f)));
+      else if (modo === "timido") out.push(logistica(z * (1 - 0.75 * f)));
+      else out.push(logistica(z + 1.5 * f));
+      }
+    return out;
+  }
+
+  // rel, res, inc de la Proposicion: condicionando sobre el valor pronosticado
+  function descomponer(p, y) {
+    var mapa = {}, i, ybar = 0;
+    for (i = 0; i < p.length; i++) {
+      var k = p[i].toFixed(6);
+      if (!mapa[k]) mapa[k] = { p: 0, y: 0, n: 0 };
+      mapa[k].p += p[i]; mapa[k].y += y[i]; mapa[k].n++;
+      ybar += y[i];
+    }
+    ybar /= y.length;
+    var rel = 0, res = 0, grupos = [];
+    for (var k in mapa) {
+      var g = mapa[k], w = g.n / y.length, pm = g.p / g.n, ym = g.y / g.n;
+      rel += w * (pm - ym) * (pm - ym);
+      res += w * (ym - ybar) * (ym - ybar);
+      grupos.push({ p: pm, y: ym, n: g.n });
+    }
+    grupos.sort(function (a, b) { return a.p - b.p; });
+    return { rel: rel, res: res, inc: ybar * (1 - ybar), ybar: ybar, grupos: grupos };
+  }
+
+  function brier(p, y) { var s = 0, i; for (i = 0; i < p.length; i++) s += (p[i] - y[i]) * (p[i] - y[i]); return s / p.length; }
+
+  var datos = null;
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var f = +ctlF.value / 100, modo = selModo.value;
+    etqF.textContent = (+ctlF.value) + " %";
+    var p = distorsionar(datos.p, modo, f);
+    var d = descomponer(p, datos.y), bs = brier(p, datos.y), i;
+
+    // --- panel izquierdo: diagrama de fiabilidad ---
+    svg.appendChild(el("rect", { x: PX0, y: PY1, width: PX1 - PX0, height: PY0 - PY1, fill: "none", stroke: "var(--r-linea,#ddd)" }));
+    svg.appendChild(el("line", { x1: px(0), y1: py(0), x2: px(1), y2: py(1), stroke: C_TEO, "stroke-width": 1.5, "stroke-dasharray": "5 4" }));
+    for (i = 0; i <= 1.0001; i += 0.25) {
+      svg.appendChild(el("text", { x: px(i), y: PY0 + 15, "font-size": 9, "text-anchor": "middle", fill: "var(--r-tinta-suave,#777)" }, Math.round(i * 100) + ""));
+      svg.appendChild(el("text", { x: PX0 - 6, y: py(i) + 3, "font-size": 9, "text-anchor": "end", fill: "var(--r-tinta-suave,#777)" }, Math.round(i * 100) + ""));
+    }
+    var camino = "";
+    for (i = 0; i < d.grupos.length; i++) {
+      var g = d.grupos[i];
+      camino += (i ? " L" : "M") + px(g.p).toFixed(1) + "," + py(g.y).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: camino, fill: "none", stroke: C_D, "stroke-width": 1.6, "stroke-opacity": 0.75 }));
+    for (i = 0; i < d.grupos.length; i++) {
+      var g2 = d.grupos[i];
+      svg.appendChild(el("circle", { cx: px(g2.p).toFixed(1), cy: py(g2.y).toFixed(1),
+        r: Math.max(2, Math.sqrt(g2.n) * 0.62).toFixed(1), fill: C_D, "fill-opacity": 0.45, stroke: C_D, "stroke-width": 0.7 }));
+    }
+    svg.appendChild(el("text", { x: PX0, y: 18, "font-size": 11, "font-weight": 600, fill: "var(--r-tinta,#222)" }, "probabilidad pronosticada → frecuencia real"));
+    svg.appendChild(el("text", { x: (PX0 + PX1) / 2, y: PY0 + 30, "font-size": 9.5, "text-anchor": "middle", fill: "var(--r-tinta-suave,#777)" }, "% pronosticado"));
+
+    // --- panel derecho: las tres piezas y el Brier ---
+    var anchoB = 46, xs = [QX0 + 24, QX0 + 104, QX0 + 184];
+    var piezas = [["incertidumbre", d.inc, C_GRIS], ["resolución", d.res, C_P], ["calibración", d.rel, C_D]];
+    svg.appendChild(el("line", { x1: QX0, y1: QY0, x2: QX1, y2: QY0, stroke: "var(--r-linea,#ccc)" }));
+    for (i = 0; i <= 0.3001; i += 0.1) {
+      svg.appendChild(el("line", { x1: QX0, y1: qy(i), x2: QX1, y2: qy(i), stroke: "var(--r-linea,#eee)" }));
+      svg.appendChild(el("text", { x: QX0 - 6, y: qy(i) + 3, "font-size": 9, "text-anchor": "end", fill: "var(--r-tinta-suave,#777)" }, i.toFixed(1)));
+    }
+    for (i = 0; i < 3; i++) {
+      svg.appendChild(el("rect", { x: xs[i], y: qy(piezas[i][1]).toFixed(1), width: anchoB,
+        height: (QY0 - qy(piezas[i][1])).toFixed(1), fill: piezas[i][2], "fill-opacity": 0.55, stroke: piezas[i][2] }));
+      svg.appendChild(el("text", { x: xs[i] + anchoB / 2, y: qy(piezas[i][1]) - 5, "font-size": 9.5, "text-anchor": "middle", fill: "var(--r-tinta,#222)" }, piezas[i][1].toFixed(3)));
+      svg.appendChild(el("text", { x: xs[i] + anchoB / 2, y: QY0 + 13, "font-size": 8.5, "text-anchor": "middle", fill: "var(--r-tinta-suave,#777)" }, piezas[i][0]));
+    }
+    // el Brier que resulta: marcador movil sobre el eje de la derecha
+    svg.appendChild(el("line", { x1: QX0, y1: qy(bs), x2: QX1, y2: qy(bs), stroke: C_TEO, "stroke-width": 2 }));
+    svg.appendChild(el("text", { x: QX1, y: qy(bs) - 5, "font-size": 10, "text-anchor": "end", fill: "var(--r-tinta,#222)" }, "Brier " + bs.toFixed(4)));
+    svg.appendChild(el("text", { x: QX0, y: 18, "font-size": 11, "font-weight": 600, fill: "var(--r-tinta,#222)" }, "BS = calibración − resolución + incertidumbre"));
+
+    var textos = {
+      fiel: "El pronóstico fiel cae sobre la diagonal: entre los días en que dijo 30 %, llovió cerca del 30 % de las veces. La falta de calibración es casi cero y el Brier queda en incertidumbre − resolución, que es su suelo.",
+      confiado: "Exagerar aleja los puntos de la diagonal por los extremos: cuando dice 90 % llueve bastante menos. La resolución no se mueve —exagerar es una transformación monótona y no cambia el orden—; lo único que sube es la falta de calibración, y con ella el Brier.",
+      timido: "Acercarse al 50 % encoge el pronóstico hacia el centro: los días de mucha lluvia se pronostican con menos confianza de la debida. Otra vez la resolución se queda igual y solo sube la falta de calibración.",
+      optimista: "Sumar lluvia de más levanta toda la curva por encima de la diagonal: llueve menos de lo anunciado en todos los niveles. Es el sesgo más fácil de ver y el más fácil de corregir, porque el orden de los días sigue intacto."
+    };
+    lec.innerHTML = "<span class=\"fx\">Brier " + bs.toFixed(4) +
+      "   =   calibración " + d.rel.toFixed(4) + " − resolución " + d.res.toFixed(4) +
+      " + incertidumbre " + d.inc.toFixed(4) + " = " + (d.rel - d.res + d.inc).toFixed(4) +
+      "</span><br>" + textos[modo];
+  }
+
+  function remuestrear() { datos = generar(semilla); dibujar(); }
+  selModo.addEventListener("change", dibujar);
+  ctlF.addEventListener("input", dibujar);
+  btn.addEventListener("click", function () { semilla = (semilla * 16807 + 12345) | 0; remuestrear(); });
+  remuestrear();
+})();
+</script>
+```
+
+```{pyodide}
+import numpy as np
+
+# Un ano de pronosticos de lluvia. La probabilidad verdadera se redondea a 21
+# niveles, asi que condicionar sobre "los dias en que el pronostico dijo p" es
+# exacto y no hace falta agrupar a ojo.
+ss_dias, ss_lluvia = np.random.SeedSequence(160).spawn(2)
+rng_dias = np.random.default_rng(ss_dias)
+rng_lluvia = np.random.default_rng(ss_lluvia)
+
+n = 200_000
+x = rng_dias.normal(size=n)
+q = np.round(1 / (1 + np.exp(-(-0.6 + 1.3 * x))) * 20) / 20   # probabilidad verdadera
+y = (rng_lluvia.random(n) < q).astype(float)                  # llovio o no
+
+def brier(p, y):
+    return ((p - y) ** 2).mean()
+
+def descomponer(p, y):
+    """rel, res, inc de la Proposicion 16.5, condicionando sobre el valor pronosticado."""
+    ybar = y.mean()
+    rel = res = 0.0
+    for v in np.unique(p):
+        m = p == v
+        w = m.mean()
+        yv = y[m].mean()
+        rel += w * (v - yv) ** 2
+        res += w * (yv - ybar) ** 2
+    return rel, res, ybar * (1 - ybar)
+
+for nombre, p in [("fiel (dice q)", q),
+                  ("constante (dice la tasa base)", np.full(n, y.mean())),
+                  ("exagerado (q elevado al cuadrado)", q ** 2)]:
+    rel, res, inc = descomponer(p, y)
+    bs = brier(p, y)
+    print(f"{nombre:34s} BS = {bs:.6f}")
+    print(f"{'':34s}    = {rel:.6f} − {res:.6f} + {inc:.6f} = {rel - res + inc:.6f}   "
+          f"coincide: {abs(bs - (rel - res + inc)) < 1e-9}")
+print()
+print(f"suelo alcanzable por cualquier pronostico con esta resolucion: inc − res = "
+      f"{descomponer(q, y)[2] - descomponer(q, y)[1]:.6f}")
+```
+
+La identidad se cumple hasta el último dígito en los tres casos, incluido el pronosticador constante del Corolario 16.6, cuyo Brier es la incertidumbre entera. Con el pronóstico fiel la falta de calibración no sale exactamente cero sino 0,000018: es ruido de muestreo, no sesgo. Estimar $\bar{y}_p$ con un número finito de días deja siempre un residuo positivo, y el Ejercicio 2 mide cuánto.
+
+## 3. Orden: ganancia y lift
+
+Hay decisiones que no usan el nivel del pronóstico sino solo el orden: avisar al $20\,\%$ de días con mayor probabilidad, revisar los mil expedientes más sospechosos, atender primero a quien más riesgo tiene. Para esas, lo que importa es cuántos positivos caen dentro del grupo elegido.
+
+::: {.definicion}
+**Definición 16.7 (curva de ganancia).** Ordenados los $n$ casos de mayor a menor pronóstico, para $u\in(0,1]$ la **ganancia** $G(u)$ es la fracción de todos los positivos que cae dentro del primer $u\cdot n$ de la lista.
+:::
+
+::: {.definicion}
+**Definición 16.8 (lift).** $L(u) = G(u)/u$: cuántas veces más positivos hay en el grupo elegido que los que habría eligiendo al azar.
+:::
+
+Un lift de 3 al 10 % significa que ese décimo de la lista concentra el triple de positivos que un décimo cualquiera. Es la medida que se usa para decidir a cuántos casos alcanza el presupuesto, y tiene un techo que conviene calcular antes de construir el modelo.
+
+::: {.proposicion}
+**Proposición 16.9 (techo del lift).** Para todo $u$ y todo pronóstico,
+$$L(u) \;\le\; \min\left(\frac{1}{u},\ \frac{1}{\bar{y}}\right),$$
+y el pronóstico que ordena primero todos los positivos alcanza esa cota con igualdad.
+:::
+
+::: {.demostracion}
+*Demostración.* Dos cotas, cada una por una razón distinta. La primera: $G(u)\le 1$ siempre, porque es una fracción de todos los positivos; dividiendo entre $u$, $L(u)\le 1/u$. La segunda: el grupo elegido tiene $u\,n$ casos, así que contiene como mucho $u\,n$ positivos, y como en total hay $\bar{y}\,n$ positivos, $G(u) \le un/(\bar{y}n) = u/\bar{y}$; dividiendo entre $u$, $L(u)\le 1/\bar{y}$. El pronóstico que conoce el resultado pone los $\bar{y}n$ positivos al principio de la lista: mientras $u \le \bar{y}$ el grupo elegido es todo positivos y $G(u)=u/\bar{y}$, que da $L(u)=1/\bar{y}$; y en cuanto $u\ge\bar{y}$ ya los ha capturado todos, $G(u)=1$ y $L(u)=1/u$. [∎]{.fin-demo}
+:::
+
+La consecuencia práctica es incómoda para quien promete mucho: **con una tasa base del 33 %, ningún modelo puede pasar de un lift de 3**, por perfecto que sea. Cuanto más raro es el fenómeno, más margen hay: con una tasa base del 1 %, el techo es 100. Comparar lifts de dos problemas con tasas base distintas no significa nada.
+
+```{=html}
+<div class="viz-lift">
+  <div class="controles">
+    <label>Calidad del pronóstico <input id="lift-cal" type="range" min="0" max="100" step="5" value="60"> <span id="lift-cal-v">60 %</span></label>
+    <label>Fracción avisada <input id="lift-u" type="range" min="5" max="100" step="5" value="20"> <span id="lift-u-v">20 %</span></label>
+    <button id="lift-otra" type="button">Otra tanda de días</button>
+  </div>
+  <svg id="lift-svg" viewBox="0 0 620 330" role="img" aria-label="A la izquierda la curva de ganancia: que fraccion de los dias de lluvia caen dentro del porcentaje de dias con mayor probabilidad pronosticada, comparada con la diagonal del azar y con la curva del pronostico perfecto. A la derecha el lift y su techo teorico."></svg>
+  <p class="lectura" id="lift-lectura"></p>
+</div>
+<style>
+.viz-lift { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-lift .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-lift label { display: flex; align-items: center; gap: .4rem; }
+.viz-lift input[type=range] { width: 110px; padding: 0; }
+.viz-lift button { font-size: .8rem; padding: .22rem .6rem; border-radius: 5px; cursor: pointer; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-lift button:hover { border-color: var(--r-acento, #0F6E68); color: var(--r-acento, #0F6E68); }
+.viz-lift svg { width: 100%; height: auto; display: block; }
+.viz-lift .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5.2em; line-height: 1.6; }
+.viz-lift .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_M = "#0F6E68", C_PERF = "#B45309", C_TEO = "var(--r-tinta,#1f2430)";
+  var svg = document.getElementById("lift-svg"), lec = document.getElementById("lift-lectura");
+  var ctlCal = document.getElementById("lift-cal"), etqCal = document.getElementById("lift-cal-v");
+  var ctlU = document.getElementById("lift-u"), etqU = document.getElementById("lift-u-v");
+  var btn = document.getElementById("lift-otra");
+
+  // Constantes de la poblacion: la tasa base sale del modelo, no de la muestra.
+  var N = 1200, A = -1.2, BMAX = 2.2;
+  var PX0 = 46, PX1 = 286, PY0 = 262, PY1 = 32;     // ganancia
+  var QX0 = 356, QX1 = 604;                          // lift
+  var LMAX = 6;                                      // techo fijo del eje de lift
+  var semilla = 20260916;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function flujo(s) {
+    return function () {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function normal(u) { var a = u() || 1e-12, b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); }
+  function logistica(t) { return 1 / (1 + Math.exp(-t)); }
+  function px(v) { return PX0 + v * (PX1 - PX0); }
+  function py(v) { return PY0 - v * (PY0 - PY1); }
+  function lx(v) { return QX0 + v * (QX1 - QX0); }
+  function ly(v) { return PY0 - Math.min(v, LMAX) / LMAX * (PY0 - PY1); }
+
+  var base = null;                       // los dias: se sortean una vez por tanda
+  function generar(sem) {
+    var u = flujo(sem), ur = flujo(sem ^ 0x9E3779B9), x = [], y = [], i;
+    for (i = 0; i < N; i++) {
+      var xi = normal(u);
+      x.push(xi);
+      y.push(ur() < logistica(A + BMAX * xi) ? 1 : 0);   // la verdad no depende del control
+    }
+    return { x: x, y: y };
+  }
+
+  function curvaGanancia(p, y) {
+    var idx = p.map(function (v, i) { return i; });
+    idx.sort(function (a, b) { return p[b] - p[a]; });
+    var tot = 0, i;
+    for (i = 0; i < y.length; i++) tot += y[i];
+    var acum = 0, g = [0];
+    for (i = 0; i < idx.length; i++) { acum += y[idx[i]]; g.push(acum / tot); }
+    return g;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var cal = +ctlCal.value / 100, u = +ctlU.value / 100;
+    etqCal.textContent = (+ctlCal.value) + " %";
+    etqU.textContent = (+ctlU.value) + " %";
+
+    // el pronostico usa la senal x mezclada con ruido: con calidad 0 es puro azar
+    var uf = flujo(4242), p = [], i;
+    for (i = 0; i < N; i++) p.push(cal * base.x[i] + (1 - cal) * 2.5 * normal(uf));
+    var g = curvaGanancia(p, base.y);
+    var tasa = 0;
+    for (i = 0; i < N; i++) tasa += base.y[i];
+    tasa /= N;
+
+    // marco
+    svg.appendChild(el("rect", { x: PX0, y: PY1, width: PX1 - PX0, height: PY0 - PY1, fill: "none", stroke: "var(--r-linea,#ddd)" }));
+    for (i = 0; i <= 1.0001; i += 0.25) {
+      svg.appendChild(el("text", { x: px(i), y: PY0 + 15, "font-size": 9, "text-anchor": "middle", fill: "var(--r-tinta-suave,#777)" }, Math.round(i * 100) + ""));
+      svg.appendChild(el("text", { x: PX0 - 6, y: py(i) + 3, "font-size": 9, "text-anchor": "end", fill: "var(--r-tinta-suave,#777)" }, Math.round(i * 100) + ""));
+    }
+    // azar y modelo perfecto: dos referencias ancladas a la tasa base, no a la muestra
+    svg.appendChild(el("line", { x1: px(0), y1: py(0), x2: px(1), y2: py(1), stroke: C_TEO, "stroke-width": 1.2, "stroke-dasharray": "5 4" }));
+    svg.appendChild(el("path", { d: "M" + px(0) + "," + py(0) + " L" + px(tasa) + "," + py(1) + " L" + px(1) + "," + py(1),
+      fill: "none", stroke: C_PERF, "stroke-width": 1.4, "stroke-dasharray": "3 3" }));
+    var d = "";
+    for (i = 0; i < g.length; i += 4) d += (i ? " L" : "M") + px(i / (g.length - 1)).toFixed(1) + "," + py(g[i]).toFixed(1);
+    d += " L" + px(1) + "," + py(1);
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_M, "stroke-width": 2.2 }));
+
+    var k = Math.round(u * N), gu = g[k];
+    svg.appendChild(el("line", { x1: px(u), y1: PY0, x2: px(u), y2: py(gu), stroke: C_M, "stroke-width": 1, "stroke-dasharray": "2 3" }));
+    svg.appendChild(el("line", { x1: PX0, y1: py(gu), x2: px(u), y2: py(gu), stroke: C_M, "stroke-width": 1, "stroke-dasharray": "2 3" }));
+    svg.appendChild(el("circle", { cx: px(u).toFixed(1), cy: py(gu).toFixed(1), r: 4.5, fill: C_M }));
+    svg.appendChild(el("text", { x: PX0, y: 20, "font-size": 11, "font-weight": 600, fill: "var(--r-tinta,#222)" }, "curva de ganancia"));
+    svg.appendChild(el("text", { x: (PX0 + PX1) / 2, y: PY0 + 30, "font-size": 9.5, "text-anchor": "middle", fill: "var(--r-tinta-suave,#777)" }, "% de días avisados"));
+
+    // --- panel derecho: lift y su techo ---
+    svg.appendChild(el("rect", { x: QX0, y: PY1, width: QX1 - QX0, height: PY0 - PY1, fill: "none", stroke: "var(--r-linea,#ddd)" }));
+    for (i = 0; i <= LMAX + 0.001; i += 2) {
+      svg.appendChild(el("text", { x: QX0 - 6, y: ly(i) + 3, "font-size": 9, "text-anchor": "end", fill: "var(--r-tinta-suave,#777)" }, i + "×"));
+      svg.appendChild(el("line", { x1: QX0, y1: ly(i), x2: QX1, y2: ly(i), stroke: "var(--r-linea,#eee)" }));
+    }
+    svg.appendChild(el("line", { x1: QX0, y1: ly(1), x2: QX1, y2: ly(1), stroke: C_TEO, "stroke-width": 1.2, "stroke-dasharray": "5 4" }));
+    var techo = "", curva = "";
+    for (i = 1; i <= 100; i++) {
+      var uu = i / 100, kk = Math.round(uu * N);
+      techo += (i > 1 ? " L" : "M") + lx(uu).toFixed(1) + "," + ly(Math.min(1 / uu, 1 / tasa)).toFixed(1);
+      curva += (i > 1 ? " L" : "M") + lx(uu).toFixed(1) + "," + ly(g[kk] / uu).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: techo, fill: "none", stroke: C_PERF, "stroke-width": 1.4, "stroke-dasharray": "3 3" }));
+    svg.appendChild(el("path", { d: curva, fill: "none", stroke: C_M, "stroke-width": 2.2 }));
+    svg.appendChild(el("circle", { cx: lx(u).toFixed(1), cy: ly(gu / u).toFixed(1), r: 4.5, fill: C_M }));
+    svg.appendChild(el("text", { x: QX0, y: 20, "font-size": 11, "font-weight": 600, fill: "var(--r-tinta,#222)" }, "lift = ganancia ÷ fracción avisada"));
+    for (i = 0; i <= 1.0001; i += 0.25) {
+      svg.appendChild(el("text", { x: lx(i), y: PY0 + 15, "font-size": 9, "text-anchor": "middle", fill: "var(--r-tinta-suave,#777)" }, Math.round(i * 100) + ""));
+    }
+
+    lec.innerHTML = "<span class=\"fx\">tasa base " + (tasa * 100).toFixed(1) + " %" +
+      "   ·   avisando el " + (u * 100).toFixed(0) + " % de los días se capturan " + (gu * 100).toFixed(1) + " % de las lluvias" +
+      "   ·   lift " + (gu / u).toFixed(2) + "×   (techo " + Math.min(1 / u, 1 / tasa).toFixed(2) + "×)</span><br>" +
+      "La diagonal es avisar al azar. La línea naranja es el máximo alcanzable: ningún pronóstico puede capturar más lluvias " +
+      "que días de lluvia haya, y de ahí que el lift no pueda pasar de 1/u ni de 1/tasa base. Al bajar la calidad a cero la curva " +
+      "se pega a la diagonal y el lift ronda 1×, arriba o abajo según el azar de la tanda: avisar sin información no sirve de nada.";
+  }
+
+  function remuestrear() { base = generar(semilla); dibujar(); }
+  ctlCal.addEventListener("input", dibujar);
+  ctlU.addEventListener("input", dibujar);
+  btn.addEventListener("click", function () { semilla = (semilla * 16807 + 12345) | 0; remuestrear(); });
+  remuestrear();
+})();
+</script>
+```
+
+```{pyodide}
+import numpy as np
+
+ss_d, ss_l = np.random.SeedSequence(1603).spawn(2)
+rd, rl = np.random.default_rng(ss_d), np.random.default_rng(ss_l)
+
+n = 100_000
+x = rd.normal(size=n)
+q = 1 / (1 + np.exp(-(-1.2 + 2.2 * x)))
+y = (rl.random(n) < q).astype(float)
+tasa = y.mean()
+
+def ganancia(p, y, u):
+    """Fraccion de los positivos que cae en el u por ciento mejor ranqueado."""
+    orden = np.argsort(-p, kind="stable")
+    k = max(int(round(u * len(y))), 1)
+    return y[orden[:k]].sum() / y.sum()
+
+print(f"tasa base de lluvia: {tasa:.4f}")
+print()
+print("u       ganancia   lift     techo min(1/u, 1/tasa)   dentro del techo")
+for u in [0.05, 0.10, 0.20, 0.30, 0.50, 0.80, 1.00]:
+    g = ganancia(q, y, u)
+    lift = g / u
+    techo = min(1 / u, 1 / tasa)
+    print(f"{u:.2f}     {g:.4f}     {lift:.3f}     {techo:7.3f}                 {lift <= techo + 1e-9}")
+print()
+# el pronostico perfecto alcanza el techo: ordena primero todos los dias de lluvia
+perfecto = y + 1e-9 * rd.random(n)
+print("con un pronostico que supiera el resultado:")
+for u in [0.05, 0.20, 0.50]:
+    g = ganancia(perfecto, y, u)
+    print(f"u = {u:.2f}   ganancia {g:.4f}   lift {g/u:.3f}   techo {min(1/u, 1/tasa):.3f}")
+```
+
+Ninguna fila se sale del techo, y el pronóstico que conoce el resultado lo toca exactamente: $1/0{,}3331 = 3{,}002$ mientras $u$ no pase de la tasa base, y $1/u$ a partir de ahí. Es la Proposición 16.9 dibujada por la propia cuenta.
+
+## 4. El orden y el nivel son cosas distintas
+
+Las dos mitades de la lección miden cosas distintas, y la forma más clara de verlo es preguntarse qué le pasa a cada una cuando se deforma el pronóstico sin cambiar el orden de los días.
+
+::: {.proposicion}
+**Proposición 16.10 (invariancia bajo transformaciones crecientes).** Sea $g:[0,1]\to[0,1]$ estrictamente creciente y $f'=g\circ f$. Entonces:
+
+1. $f'$ y $f$ tienen la misma curva de ganancia y el mismo lift;
+2. $f'$ y $f$ tienen la misma resolución y la misma incertidumbre;
+3. su único término distinto en la descomposición es la falta de calibración, y en general $f'$ no está calibrado aunque $f$ lo esté.
+:::
+
+::: {.demostracion}
+*Demostración.* (1) Como $g$ es estrictamente creciente, $f(X_i) > f(X_j)$ si y solo si $f'(X_i) > f'(X_j)$: el orden de la lista es el mismo, luego el grupo formado por el primer $u\,n$ es el mismo conjunto de días y $G(u)$ no cambia. (2) Estrictamente creciente implica inyectiva, así que los sucesos $\{f(X)=p\}$ y $\{f'(X)=g(p)\}$ son el mismo suceso; por tanto $E[Y\mid f'(X)=g(p)] = E[Y\mid f(X)=p] = \bar{y}_p$. La variable $\bar{y}_{P}$ es la misma en los dos casos, y con ella la resolución $E[(\bar{y}_P-\bar{y})^2]$ y la incertidumbre $\bar{y}(1-\bar{y})$, que ni siquiera depende del pronóstico. (3) Por la Proposición 16.5, si dos de los tres términos coinciden, toda la diferencia de Brier está en el tercero: la falta de calibración pasa de $E[(P-\bar{y}_P)^2]$ a $E[(g(P)-\bar{y}_P)^2]$, y esto vale cero solo si $g(p)=\bar{y}_p$ para todo $p$ del soporte. [∎]{.fin-demo}
+:::
+
+::: {.proposicion}
+**Corolario 16.11 (recalibrar es gratis).** Entre todas las transformaciones crecientes de $f$, la que lleva cada nivel $p$ a su frecuencia real, $g^\*(p)=\bar{y}_p$, deja la falta de calibración en cero y no cambia el orden. Su Brier es
+$$\text{BS}^\* = \bar{y}(1-\bar{y}) - E\big[(\bar{y}_P-\bar{y})^2\big] = \text{incertidumbre} - \text{resolución},$$
+que es el menor Brier alcanzable sin cambiar el orden de los casos.
+:::
+
+::: {.demostracion}
+*Demostración.* $g^\*$ es creciente porque $\bar{y}_p$ lo es cuando el pronóstico ordena bien —si no lo fuera, se toma la versión isotónica —[regresión isotónica]{.g}—, que es la del Ejercicio 1—. Aplicando la Proposición 16.10, la resolución y la incertidumbre no cambian, y el término de calibración pasa a ser $E[(\bar{y}_P-\bar{y}_P)^2]=0$. La descomposición de la Proposición 16.5 deja entonces $\text{BS}^\*=\text{incertidumbre}-\text{resolución}$. Como el término de calibración es no negativo, ningún otro $g$ puede dar un Brier menor. [∎]{.fin-demo}
+:::
+
+Esto es lo que hace la recalibración una operación rara y buena: **no hay nada que perder**. El orden de los casos no se toca, así que la curva de ganancia, el lift y la resolución quedan intactos; lo único que cambia es el número anunciado, y solo puede mejorar. Todo lo contrario de las decisiones habituales de modelado, que siempre cambian una cosa por otra.
+
+```{=html}
+<div class="viz-inv">
+  <div class="controles">
+    <label>Transformación <select id="inv-tipo">
+      <option value="potencia" selected>elevar a una potencia</option>
+      <option value="logit">estirar en escala logit</option>
+      <option value="lineal">encoger hacia el 50 %</option>
+    </select></label>
+    <label>Fuerza <input id="inv-fuerza" type="range" min="0" max="100" step="5" value="70"> <span id="inv-fuerza-v">70 %</span></label>
+  </div>
+  <svg id="inv-svg" viewBox="0 0 620 318" role="img" aria-label="A la izquierda, el diagrama de fiabilidad del pronostico original y el del transformado: el transformado se despega de la diagonal. A la derecha, las curvas de ganancia de los dos, dibujadas una encima de la otra: son exactamente la misma, porque una transformacion creciente no cambia el orden de los dias."></svg>
+  <p class="lectura" id="inv-lectura"></p>
+</div>
+<style>
+.viz-inv { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-inv .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-inv label { display: flex; align-items: center; gap: .4rem; }
+.viz-inv select, .viz-inv input[type=range] { font-size: .85rem; padding: .2rem .4rem; border-radius: 5px; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-inv input[type=range] { width: 110px; padding: 0; }
+.viz-inv svg { width: 100%; height: auto; display: block; }
+.viz-inv .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5.2em; line-height: 1.6; }
+.viz-inv .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_O = "#0F6E68", C_T = "#B45309", C_TEO = "var(--r-tinta,#1f2430)";
+  var svg = document.getElementById("inv-svg"), lec = document.getElementById("inv-lectura");
+  var selTipo = document.getElementById("inv-tipo");
+  var ctlF = document.getElementById("inv-fuerza"), etqF = document.getElementById("inv-fuerza-v");
+
+  // La tanda de dias es SIEMPRE la misma: este visual no habla de azar, habla
+  // de que le hace al pronostico una transformacion creciente.
+  var N = 1500, A = -0.6, B = 1.3, NIV = 20;
+  var PX0 = 46, PX1 = 276, PY0 = 250, PY1 = 30;
+  var QX0 = 356, QX1 = 604;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function flujo(s) {
+    return function () {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function normal(u) { var a = u() || 1e-12, b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); }
+  function logistica(t) { return 1 / (1 + Math.exp(-t)); }
+  function px(v) { return PX0 + v * (PX1 - PX0); }
+  function py(v) { return PY0 - v * (PY0 - PY1); }
+  function gx(v) { return QX0 + v * (QX1 - QX0); }
+
+  var P0 = [], Y = [];
+  (function () {
+    var u = flujo(778899), ur = flujo(112233), i;
+    for (i = 0; i < N; i++) {
+      var qi = Math.round(logistica(A + B * normal(u)) * NIV) / NIV;
+      P0.push(qi); Y.push(ur() < qi ? 1 : 0);
+    }
+  })();
+
+  function transformar(p, tipo, f) {
+    var i, out = [];
+    for (i = 0; i < p.length; i++) {
+      var v = Math.min(Math.max(p[i], 1e-6), 1 - 1e-6);
+      if (tipo === "potencia") out.push(Math.pow(v, 1 + 2.5 * f));
+      else if (tipo === "logit") out.push(logistica(Math.log(v / (1 - v)) * (1 + 2 * f)));
+      else out.push(0.5 + (v - 0.5) * (1 - 0.8 * f));
+    }
+    return out;
+  }
+
+  function descomponer(p) {
+    var mapa = {}, i, ybar = 0;
+    for (i = 0; i < p.length; i++) {
+      var k = p[i].toFixed(6);
+      if (!mapa[k]) mapa[k] = { p: 0, y: 0, n: 0 };
+      mapa[k].p += p[i]; mapa[k].y += Y[i]; mapa[k].n++; ybar += Y[i];
+    }
+    ybar /= N;
+    var rel = 0, res = 0, grupos = [];
+    for (var k in mapa) {
+      var g = mapa[k], w = g.n / N, pm = g.p / g.n, ym = g.y / g.n;
+      rel += w * (pm - ym) * (pm - ym);
+      res += w * (ym - ybar) * (ym - ybar);
+      grupos.push({ p: pm, y: ym, n: g.n });
+    }
+    grupos.sort(function (a, b) { return a.p - b.p; });
+    var bs = 0;
+    for (i = 0; i < N; i++) bs += (p[i] - Y[i]) * (p[i] - Y[i]);
+    return { rel: rel, res: res, inc: ybar * (1 - ybar), bs: bs / N, grupos: grupos };
+  }
+
+  function ganancia(p) {
+    var idx = p.map(function (v, i) { return i; });
+    idx.sort(function (a, b) { return (p[b] - p[a]) || (a - b); });   // desempate estable
+    var tot = 0, i;
+    for (i = 0; i < N; i++) tot += Y[i];
+    var acum = 0, g = [0];
+    for (i = 0; i < N; i++) { acum += Y[idx[i]]; g.push(acum / tot); }
+    return g;
+  }
+
+  function curvaFiabilidad(grupos, color, ancho) {
+    var d = "", i;
+    for (i = 0; i < grupos.length; i++) d += (i ? " L" : "M") + px(grupos[i].p).toFixed(1) + "," + py(grupos[i].y).toFixed(1);
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: color, "stroke-width": ancho, "stroke-opacity": 0.9 }));
+    for (i = 0; i < grupos.length; i++) {
+      svg.appendChild(el("circle", { cx: px(grupos[i].p).toFixed(1), cy: py(grupos[i].y).toFixed(1),
+        r: 2.6, fill: color, "fill-opacity": 0.6 }));
+    }
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var f = +ctlF.value / 100, tipo = selTipo.value;
+    etqF.textContent = (+ctlF.value) + " %";
+    var P1 = transformar(P0, tipo, f);
+    var d0 = descomponer(P0), d1 = descomponer(P1);
+    var g0 = ganancia(P0), g1 = ganancia(P1), i;
+
+    // --- izquierda: las dos curvas de fiabilidad ---
+    svg.appendChild(el("rect", { x: PX0, y: PY1, width: PX1 - PX0, height: PY0 - PY1, fill: "none", stroke: "var(--r-linea,#ddd)" }));
+    svg.appendChild(el("line", { x1: px(0), y1: py(0), x2: px(1), y2: py(1), stroke: C_TEO, "stroke-width": 1.3, "stroke-dasharray": "5 4" }));
+    for (i = 0; i <= 1.0001; i += 0.5) {
+      svg.appendChild(el("text", { x: px(i), y: PY0 + 15, "font-size": 9, "text-anchor": "middle", fill: "var(--r-tinta-suave,#777)" }, Math.round(i * 100) + ""));
+      svg.appendChild(el("text", { x: PX0 - 6, y: py(i) + 3, "font-size": 9, "text-anchor": "end", fill: "var(--r-tinta-suave,#777)" }, Math.round(i * 100) + ""));
+    }
+    curvaFiabilidad(d0.grupos, C_O, 2);
+    curvaFiabilidad(d1.grupos, C_T, 2);
+    svg.appendChild(el("text", { x: PX0, y: 20, "font-size": 11, "font-weight": 600, fill: "var(--r-tinta,#222)" }, "fiabilidad: sí cambia"));
+
+    // --- derecha: las dos curvas de ganancia, una encima de la otra ---
+    svg.appendChild(el("rect", { x: QX0, y: PY1, width: QX1 - QX0, height: PY0 - PY1, fill: "none", stroke: "var(--r-linea,#ddd)" }));
+    svg.appendChild(el("line", { x1: gx(0), y1: py(0), x2: gx(1), y2: py(1), stroke: C_TEO, "stroke-width": 1.2, "stroke-dasharray": "5 4" }));
+    var c0 = "", c1 = "";
+    for (i = 0; i <= N; i += 10) {
+      c0 += (i ? " L" : "M") + gx(i / N).toFixed(1) + "," + py(g0[i]).toFixed(1);
+      c1 += (i ? " L" : "M") + gx(i / N).toFixed(1) + "," + py(g1[i]).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: c0, fill: "none", stroke: C_O, "stroke-width": 4.5, "stroke-opacity": 0.55 }));
+    svg.appendChild(el("path", { d: c1, fill: "none", stroke: C_T, "stroke-width": 1.8, "stroke-dasharray": "6 4" }));
+    for (i = 0; i <= 1.0001; i += 0.5) {
+      svg.appendChild(el("text", { x: gx(i), y: PY0 + 15, "font-size": 9, "text-anchor": "middle", fill: "var(--r-tinta-suave,#777)" }, Math.round(i * 100) + ""));
+    }
+    svg.appendChild(el("text", { x: QX0, y: 20, "font-size": 11, "font-weight": 600, fill: "var(--r-tinta,#222)" }, "ganancia: no se mueve"));
+
+    var k20 = Math.round(0.2 * N);
+    var iguales = true;
+    for (i = 0; i <= N; i++) if (Math.abs(g0[i] - g1[i]) > 1e-12) { iguales = false; break; }
+    lec.innerHTML = "<span class=\"fx\">original    Brier " + d0.bs.toFixed(4) + "   calibración " + d0.rel.toFixed(4) +
+      "   resolución " + d0.res.toFixed(4) + "   ganancia al 20 % " + (g0[k20] * 100).toFixed(2) + " %<br>" +
+      "transformado Brier " + d1.bs.toFixed(4) + "   calibración " + d1.rel.toFixed(4) +
+      "   resolución " + d1.res.toFixed(4) + "   ganancia al 20 % " + (g1[k20] * 100).toFixed(2) + " %<br>" +
+      "las dos curvas de ganancia coinciden punto por punto: " + (iguales ? "sí" : "no") + "</span><br>" +
+      "La transformación es creciente, así que no cambia el orden de los días: la curva de ganancia de la derecha es la misma, " +
+      "y la resolución tampoco se mueve. Lo único que cambia es el nivel que se anuncia, y eso lo mide la calibración.";
+  }
+
+  selTipo.addEventListener("change", dibujar);
+  ctlF.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+```{pyodide}
+import numpy as np
+
+ss_d, ss_l = np.random.SeedSequence(1604).spawn(2)
+rd, rl = np.random.default_rng(ss_d), np.random.default_rng(ss_l)
+
+n = 200_000
+q = np.round(1 / (1 + np.exp(-(-0.6 + 1.3 * rd.normal(size=n)))) * 20) / 20
+y = (rl.random(n) < q).astype(float)
+
+def brier(p, y):
+    return ((p - y) ** 2).mean()
+
+def descomponer(p, y):
+    ybar = y.mean()
+    rel = res = 0.0
+    for v in np.unique(p):
+        m = p == v
+        w = m.mean(); yv = y[m].mean()
+        rel += w * (v - yv) ** 2
+        res += w * (yv - ybar) ** 2
+    return rel, res, ybar * (1 - ybar)
+
+def curva_ganancia(p, y, us):
+    orden = np.argsort(-p, kind="stable")
+    acum = np.cumsum(y[orden]) / y.sum()
+    return np.array([acum[max(int(round(u * len(y))) - 1, 0)] for u in us])
+
+us = np.array([0.1, 0.2, 0.3, 0.5])
+g_original = curva_ganancia(q, y, us)
+
+print("transformacion        Brier      calibracion   resolucion   ganancia (10/20/30/50 %)")
+for nombre, p in [("ninguna", q),
+                  ("q²", q ** 2),
+                  ("raiz de q", np.sqrt(q)),
+                  ("0.5q + 0.25", 0.5 * q + 0.25)]:
+    rel, res, inc = descomponer(p, y)
+    g = curva_ganancia(p, y, us)
+    print(f"{nombre:20s}  {brier(p, y):.6f}    {rel:.6f}     {res:.6f}    {np.round(g, 6)}")
+    if nombre != "ninguna":
+        print(f"{'':20s}  ganancia identica a la original: {np.array_equal(g, g_original)}")
+```
+
+La columna de resolución es la misma en las cuatro filas, hasta el sexto decimal, y las cuatro curvas de ganancia son idénticas como arreglos: `np.array_equal` devuelve `True`. Lo único que se mueve es la calibración, y con ella el Brier. En el visual de arriba, el panel de la derecha **no se mueve nunca** al arrastrar el control, y esa inmovilidad no es un fallo del dibujo: es la Proposición 16.10, que dice que no puede moverse.
+
+::: {.callout-note}
+De aquí sale una regla práctica: un informe que solo trae AUC, lift o ganancia **no dice nada** sobre si las probabilidades del modelo son creíbles, porque esas tres medidas son ciegas a cualquier deformación creciente. Y al revés: un modelo bien calibrado puede tener una resolución pésima. Hay que mirar las dos cosas, y la descomposición de la Proposición 16.5 las trae separadas.
+:::
+
+## Ejercicios
+
+### Ejercicio 1 — Recalibrar con regresión isotónica
+
+Implementar PAVA —*pool adjacent violators*— sobre los niveles distintos del pronóstico: recorrerlos de menor a mayor y, cada vez que la frecuencia real de un nivel sea menor que la del anterior, fundir los dos bloques en uno con la media ponderada. Comprobar sobre un pronóstico descalibrado que la recalibración deja la calibración en cero, no toca la resolución y no cambia la curva de ganancia.
+
+```{pyodide}
+import numpy as np
+
+ss_d, ss_l = np.random.SeedSequence(1605).spawn(2)
+rd, rl = np.random.default_rng(ss_d), np.random.default_rng(ss_l)
+
+n = 100_000
+q = np.round(1 / (1 + np.exp(-(-0.6 + 1.3 * rd.normal(size=n)))) * 20) / 20
+y = (rl.random(n) < q).astype(float)
+p_malo = q ** 2                      # descalibrado, mismo orden que q
+
+def brier(p, y): return ((p - y) ** 2).mean()
+
+def descomponer(p, y):
+    ybar = y.mean(); rel = res = 0.0
+    for v in np.unique(p):
+        m = p == v; w = m.mean(); yv = y[m].mean()
+        rel += w * (v - yv) ** 2
+        res += w * (yv - ybar) ** 2
+    return rel, res, ybar * (1 - ybar)
+
+def isotonica(p, y):
+    """Regresion isotonica por PAVA sobre los niveles distintos del pronostico.
+
+    Devuelve, para cada dia, la frecuencia ajustada de su nivel. Es la mejor
+    recalibracion creciente posible: deja la calibracion en cero sin tocar el orden.
+    """
+    niveles = np.unique(p)
+    medias = np.array([y[p == v].mean() for v in niveles])
+    pesos = np.array([(p == v).sum() for v in niveles], dtype=float)
+    vs, ws, ns = [], [], []
+    for v, w in zip(medias, pesos):
+        vv, ww, nn = v, w, 1
+        while vs and vs[-1] > vv:                   # violacion: fundir bloques
+            v0, w0, n0 = vs.pop(), ws.pop(), ns.pop()
+            vv = (v0 * w0 + vv * ww) / (w0 + ww); ww = w0 + ww; nn = n0 + nn
+        vs.append(vv); ws.append(ww); ns.append(nn)
+    ajustado, i = np.empty(len(niveles)), 0
+    for v, k in zip(vs, ns):
+        ajustado[i:i + k] = v; i += k
+    return np.interp(p, niveles, ajustado)
+
+def curva_ganancia(p, y, us):
+    orden = np.argsort(-p, kind="stable")
+    acum = np.cumsum(y[orden]) / y.sum()
+    return np.array([acum[max(int(round(u * len(y))) - 1, 0)] for u in us])
+
+us = np.array([0.1, 0.2, 0.5])
+p_recal = isotonica(p_malo, y)
+for nombre, p in [("descalibrado", p_malo), ("tras isotonica", p_recal)]:
+    rel, res, inc = descomponer(np.round(p, 9), y)
+    print(f"{nombre:16s} BS = {brier(p, y):.6f}   calibracion = {rel:.6f}   "
+          f"resolucion = {res:.6f}   inc − res = {inc - res:.6f}")
+print()
+print(f"la ganancia no cambia: {np.array_equal(curva_ganancia(p_malo, y, us), curva_ganancia(p_recal, y, us))}")
+print(f"ganancia (10/20/50 %): {np.round(curva_ganancia(p_recal, y, us), 6)}")
+print(f"niveles distintos: {len(np.unique(p_malo))} antes, {len(np.unique(np.round(p_recal,9)))} despues")
+```
+
+El Brier cae de 0,216403 a 0,179618, que es exactamente incertidumbre − resolución: el suelo del Corolario 16.11. La calibración queda en cero, la resolución no se movió ni en el sexto decimal y la ganancia es idéntica. Conviene fijarse en que PAVA es creciente pero **no estrictamente**: puede fundir niveles vecinos en uno solo, y dentro de un empate el orden entre casos ya no está determinado. Aquí no fundió ninguno —21 niveles antes y después—, pero cuando lo haga, la curva de ganancia cambia un poco por el desempate, y eso hay que decirlo en vez de esconderlo.
+
+### Ejercicio 2 — Cuántas cajas tiene un diagrama de fiabilidad
+
+Un pronóstico continuo no repite valores, así que para dibujar el diagrama hay que agrupar en cajas. Tomar un pronóstico **perfectamente calibrado** —que anuncia la probabilidad verdadera— y medir la calibración estimada con distintos números de cajas. Predecir antes de correr qué debería dar y qué va a dar.
+
+```{pyodide}
+import numpy as np
+
+# Un pronostico CONTINUO y perfectamente calibrado: dice exactamente q.
+# Como no repite valores, para dibujar el diagrama hay que agrupar en cajas,
+# y el numero de cajas cambia lo que el diagrama parece decir.
+ss_d, ss_l = np.random.SeedSequence(1606).spawn(2)
+rd, rl = np.random.default_rng(ss_d), np.random.default_rng(ss_l)
+
+n = 4000
+q = 1 / (1 + np.exp(-(-0.6 + 1.3 * rd.normal(size=n))))
+y = (rl.random(n) < q).astype(float)
+
+def rel_por_cajas(p, y, K):
+    bordes = np.quantile(p, np.linspace(0, 1, K + 1))
+    bordes[-1] += 1e-9
+    caja = np.clip(np.digitize(p, bordes[1:-1]), 0, K - 1)
+    rel = 0.0
+    for j in range(K):
+        m = caja == j
+        if m.sum() == 0:
+            continue
+        rel += m.mean() * (p[m].mean() - y[m].mean()) ** 2
+    return rel
+
+print(f"n = {n} dias, pronostico perfectamente calibrado (dice la probabilidad verdadera)")
+print()
+print("cajas   calibracion estimada   dias por caja")
+for K in [2, 5, 10, 20, 50, 100, 400]:
+    print(f"{K:5d}        {rel_por_cajas(q, y, K):.6f}          {n // K}")
+print()
+print("Todas deberian dar cero: el pronostico ES la probabilidad verdadera.")
+print("Lo que crece con el numero de cajas es el ruido de estimar una frecuencia")
+print("con pocos dias dentro de cada caja.")
+```
+
+El valor correcto es cero en las siete filas: el pronóstico **es** la probabilidad verdadera. Lo que la tabla mide es el sesgo del estimador, que crece con el número de cajas porque cada caja estima una frecuencia con menos días: de 0,000002 con dos cajas a 0,018799 con cuatrocientas. Un diagrama de fiabilidad con muchas cajas y pocos datos siempre parece descalibrado, y la tentación de leerlo como un hallazgo es exactamente el error que la lección 17 persigue.
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Est 16**:
+
+1. Escribir `descompone(p, y, cajas=None)` que devuelva calibración, resolución e incertidumbre, y que use agrupación exacta si el pronóstico tiene pocos niveles distintos y cajas por cuantiles si es continuo. Comprobar sobre mil conjuntos simulados que calibración − resolución + incertidumbre reproduce el Brier con error menor que $10^{-12}$ cuando la agrupación es exacta.
+2. Comparar tres recalibraciones sobre el mismo pronóstico descalibrado: isotónica (Ejercicio 1), logística sobre el logit —ajustada por descenso de gradiente escrito a mano— y no hacer nada. Medir Brier, calibración y resolución de las tres, **ajustando en una mitad de los datos y midiendo en la otra**. ¿Cuál gana cuando hay 200 días? ¿Y cuando hay 20 000?
+3. Construir dos modelos con el mismo lift al 10 % y Brier muy distinto, y dos con el mismo Brier y lift muy distinto. Es la forma más rápida de convencerse de que las dos medidas no se implican.
+
+## Del libro
+
+Ningún libro del plan con índice verificado trata la calibración de probabilidades ni las curvas de ganancia, así que esta lección es autocontenida y **no cita ninguna fuente**: por la regla 3 de `CLAUDE.md`, antes que citar de memoria, no se cita. Lo más cercano dentro del plan es ISLP cap. 4 *Classification*, que trata la curva ROC y las matrices de confusión —primas de la curva de ganancia, construidas también sobre el orden— pero no la calibración ni la descomposición del score.
+
+Para poder citar material sobre esto habría que traer antes el índice de una fuente abierta que lo cubra, meterlo en `verificar/indices.json` con su URL y su fecha, y solo entonces escribir preguntas de lectura. Mientras tanto, las demostraciones de esta página se sostienen solas, que es lo que se les pide.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/calibracion.md`, enlazada a [[esperanza-condicional]], [[valor-p]] y [[regresion-logistica]]. La Proposición 16.5 conviene rehacerla a mano: es la ley de la varianza total con un disfraz, y una vez hecha, la diferencia entre calibración y resolución deja de confundirse.
+
+```
+¿Qué significa que un pronóstico esté calibrado?::Que entre los días en que dijo p, la frecuencia real fue p: E[Y | f(X)=p] = p
+¿Por qué no se puede juzgar un pronóstico probabilístico con un solo día?::Porque la afirmación es sobre el grupo de días en que se dijo lo mismo, no sobre uno
+¿Qué es el score de Brier?::El error cuadrático medio contra el resultado 0/1: E[(p̂ − Y)²]
+¿Qué quiere decir que el Brier sea una regla propia?::Que se minimiza anunciando la probabilidad verdadera: E[(p−Y)²] = (p−q)² + q(1−q)
+¿En qué tres piezas se descompone el Brier?::Falta de calibración − resolución + incertidumbre (Proposición 16.5)
+¿Cuál de las tres no depende del pronosticador?::La incertidumbre, ȳ(1−ȳ): es del fenómeno
+¿Por qué la resolución entra restando?::Porque separar los casos mejora el score: más resolución, menor Brier
+¿Qué Brier tiene el que siempre anuncia la tasa base?::La incertidumbre entera: está calibrado y tiene resolución cero (Corolario 16.6)
+¿Qué es la curva de ganancia?::La fracción de todos los positivos que cae en el u % mejor ranqueado
+¿Qué es el lift?::G(u)/u: cuántas veces más positivos que eligiendo al azar
+¿Cuál es el techo del lift?::min(1/u, 1/ȳ) — con tasa base 33 % ningún modelo pasa de 3× (Proposición 16.9)
+¿Qué le hace al lift una transformación creciente del pronóstico?::Nada: el orden no cambia, y la resolución tampoco (Proposición 16.10)
+¿Qué sí cambia esa transformación?::Solo la falta de calibración, y con ella el Brier
+¿Por qué recalibrar es gratis?::Porque no toca el orden: baja la calibración a cero y deja resolución y ganancia intactas (Corolario 16.11)
+¿Qué Brier alcanza la mejor recalibración?::Incertidumbre − resolución, el suelo sin cambiar el orden
+¿Basta con reportar AUC o lift?::No: son ciegos a cualquier deformación creciente, así que no dicen nada de la calibración
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** Todo. Las Proposiciones 16.4, 16.5, 16.9 y 16.10 y los Corolarios 16.6 y 16.11 se demuestran aquí, a partir de la esperanza condicional y la varianza de una Bernoulli (lección 4) y de la ley de la varianza total. Se comprueban además numéricamente: la identidad de la descomposición hasta $10^{-9}$ en tres pronósticos distintos, el mínimo del Brier en $p=q$ tanto puntual como sobre un pronóstico completo, el techo del lift en siete fracciones con su caso de igualdad, la invariancia de la resolución y de la curva de ganancia bajo tres transformaciones crecientes —con `np.array_equal` devolviendo `True`—, y la recalibración isotónica llevando el Brier exactamente a incertidumbre − resolución. Los tres visuales se contrastaron contra `numpy` antes de publicarse: 4 formas de distorsión × 21 fuerzas para el primero, 21 calidades × 20 fracciones para el segundo, y 3 transformaciones × 21 fuerzas para el tercero.
+
+**Lo que se usa de otras lecciones sin repetir.** La varianza de una Bernoulli y la torre de esperanzas son la lección 4. La lectura de una cantidad anunciada como probabilidad que debe comportarse como tal es la Proposición 10.8. Que las etiquetas faltantes sesgan la frecuencia observada es la lección 15.
+
+**Lo que se enuncia sin demostrar.** Nada. La única afirmación no demostrada es de tipo empírico —que la mayoría de los modelos de aprendizaje automático salen descalibrados de fábrica—, y se presenta como observación, no como resultado.
+
+**Lo que viene de los libros.** Nada. Ninguno de los libros con índice verificado en `verificar/indices.json` trata este material, y por la regla 3 no se cita lo que no se puede verificar. La descomposición del score de Brier y la regresión isotónica son estándar en la literatura de pronóstico probabilístico; esta página las construye desde cero.
+
+**Lo que es mío, no del libro.** La numeración, la elección del pronóstico de lluvia como hilo único de toda la lección, y el orden de presentación: score propio → descomposición → orden → invariancia, que deja el Corolario 16.11 como consecuencia de las dos mitades anteriores en vez de como receta.
+:::

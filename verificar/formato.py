@@ -38,6 +38,10 @@ MIGRADAS = {
     "estadistica/11-bootstrap.qmd",
     "estadistica/12-normal-multivariante.qmd",
     "estadistica/13-regresion-primeros-principios.qmd",
+    "estadistica/14-inferencia-coeficientes.qmd",
+    "estadistica/15-datos-faltantes.qmd",
+    "estadistica/16-calibracion.qmd",
+    "estadistica/17-p-hacking.qmd",
     "matematica/08-determinante.qmd",
     "matematica/09-eigenvalores.qmd",
 }
