@@ -346,7 +346,7 @@ $$\frac{n}{2}\log\frac{n}{n-1} = \frac{n}{2}\Big(\frac{1}{n} + \frac{1}{2n^2} + 
 Restando $\tfrac12$ quedan solo términos positivos, luego $\Delta > 0$, y el primero de ellos domina: $\Delta \sim 1/(4n)$. [∎]{.fin-demo}
 :::
 
-El visual muestra las dos vistas de lo mismo. A la izquierda, la log-verosimilitud sobre el plano $(\mu,\sigma)$ —más intensa donde es mayor— con el máximo marcado. A la derecha, el corte vertical en $\mu = \bar{x}$, donde los dos candidatos se ven a la vez.
+El visual separa lo que cambia de una muestra a otra de lo que no. A la izquierda, la log-verosimilitud sobre el plano $(\mu,\sigma)$ —más intensa donde es mayor— dibujada en un marco **fijo**, anclado a la población y no a los datos. A la derecha, esa misma superficie cortada en $\mu = \bar{x}$ y medida en unidades de $\hat{\sigma}$.
 
 ```{=html}
 <div class="viz-nv">
@@ -355,8 +355,9 @@ El visual muestra las dos vistas de lo mismo. A la izquierda, la log-verosimilit
       <select id="nv-n"><option>5</option><option selected>12</option><option>40</option></select>
     </label>
     <button id="nv-otra" type="button">Otra muestra</button>
+    <label><input id="nv-rastro" type="checkbox" checked> dejar rastro</label>
   </div>
-  <svg id="nv-svg" viewBox="0 0 560 330" role="img" aria-label="Superficie de log-verosimilitud de una normal sobre mu y sigma, y su corte en mu igual a la media muestral, con el máximo y el estimador insesgado marcados"></svg>
+  <svg id="nv-svg" viewBox="0 0 560 330" role="img" aria-label="Superficie de log-verosimilitud de una normal sobre mu y sigma en ejes fijos, y la forma de esa superficie cerca de su máximo medida en unidades de sigma sombrero"></svg>
   <p class="lectura" id="nv-lectura"></p>
 </div>
 <style>
@@ -379,16 +380,18 @@ El visual muestra las dos vistas de lo mismo. A la izquierda, la log-verosimilit
 }
 .viz-nv button:hover { border-color: var(--r-acento, #0F6E68); color: var(--r-acento, #0F6E68); }
 .viz-nv svg { width: 100%; height: auto; display: block; }
-.viz-nv .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+.viz-nv .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5em; line-height: 1.6; }
 .viz-nv .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
 </style>
 <script>
 (function () {
-  var C_MV = "#B45309", C_IN = "#4B3A7A", C_C = "#0F6E68";
+  var C_MV = "#B45309", C_IN = "#4B3A7A", C_C = "#0F6E68", C_TH = "#B91C1C";
   var svg = document.getElementById("nv-svg"), lec = document.getElementById("nv-lectura");
   var sn = document.getElementById("nv-n"), btn = document.getElementById("nv-otra");
-  var semilla = 31337, MU = 5, SIG = 2;
-  var NX = 44, NY = 34;
+  var sr = document.getElementById("nv-rastro");
+  var semilla = 31337, MU = 5, SIG = 2;      // poblacion verdadera, fija
+  var NX = 46, NY = 36;
+  var rastro = [];                            // maximos de las muestras anteriores
 
   function el(t, at, txt) {
     var e = document.createElementNS("http://www.w3.org/2000/svg", t);
@@ -397,7 +400,20 @@ El visual muestra las dos vistas de lo mismo. A la izquierda, la log-verosimilit
     return e;
   }
 
-  function dibujar() {
+  // ---- panel derecho: forma de ell cerca del maximo, en unidades de sigma sombrero ----
+  // Con r = sigma / sigma_mv:  ell(r·s) − ell(s) = −n·log(r) − n/(2r²) + n/2,
+  // que NO depende de los datos: solo de n. Esa es la Proposicion 8.7 dibujada.
+  function forma(r, n) { return -n * Math.log(r) - n / (2 * r * r) + n / 2; }
+  function cruce(n, objetivo, lo, hi) {        // biseccion de forma(r) = objetivo
+    var a = lo, b = hi, m, i;
+    for (i = 0; i < 70; i++) {
+      m = (a + b) / 2;
+      if ((forma(m, n) < objetivo) === (forma(a, n) < objetivo)) a = m; else b = m;
+    }
+    return (a + b) / 2;
+  }
+
+  function dibujar(nuevaMuestra) {
     var n = +sn.value, s = semilla, i, j;
     function u() {
       s |= 0; s = s + 0x6D2B79F5 | 0;
@@ -420,18 +436,24 @@ El visual muestra las dos vistas de lo mismo. A la izquierda, la log-verosimilit
       return -n * Math.log(sg) - q / (2 * sg * sg) - n / 2 * Math.log(2 * Math.PI);
     }
     var lmax = logL(xb, sig_mv), lins = logL(xb, s_ins);
+    var delta = lmax - lins;
 
     while (svg.firstChild) svg.removeChild(svg.firstChild);
 
-    // ---------- panel izquierdo: la superficie ----------
-    var AX0 = 44, AX1 = 292, AY0 = 272, AY1 = 44;
-    var m0 = xb - 2.2 * sig_mv / Math.sqrt(n) * 2.6, m1 = xb + 2.2 * sig_mv / Math.sqrt(n) * 2.6;
-    var g0 = 0.42 * sig_mv, g1 = 2.15 * sig_mv;
+    // ================= panel izquierdo =================
+    // EJES FIJOS, anclados a la poblacion: no se mueven con la muestra.
+    var AX0 = 46, AX1 = 286, AY0 = 276, AY1 = 52;
+    var ee = SIG / Math.sqrt(n);
+    var m0 = MU - 3.4 * ee, m1 = MU + 3.4 * ee;
+    var g0 = 0.20 * SIG,   g1 = 2.20 * SIG;
     function mx(m) { return AX0 + (m - m0) / (m1 - m0) * (AX1 - AX0); }
     function gy(g) { return AY0 - (g - g0) / (g1 - g0) * (AY0 - AY1); }
+    function dentro(m, g) { return m > m0 && m < m1 && g > g0 && g < g1; }
 
-    svg.appendChild(el("text", {x: AX0 - 6, y: 26, "font-size": 12, "font-weight": 600,
-      fill: "var(--r-tinta, #222)"}, "ℓ(μ, σ) sobre los dos parámetros"));
+    svg.appendChild(el("text", {x: AX0 - 8, y: 22, "font-size": 11.5, "font-weight": 600,
+      fill: "var(--r-tinta, #222)"}, "ℓ(μ, σ) — ejes fijos"));
+    svg.appendChild(el("text", {x: AX0 - 8, y: 37, "font-size": 9.5,
+      fill: "var(--r-tinta-suave, #777)"}, "el máximo se mueve con cada muestra"));
 
     var cw = (AX1 - AX0) / NX, ch = (AY0 - AY1) / NY;
     for (i = 0; i < NX; i++) {
@@ -445,73 +467,135 @@ El visual muestra las dos vistas de lo mismo. A la izquierda, la log-verosimilit
           fill: C_C, "fill-opacity": Math.min(op, 0.85).toFixed(3)}));
       }
     }
-    // ejes
-    svg.appendChild(el("line", {x1: AX0, y1: AY0, x2: AX1, y2: AY0, stroke: "var(--r-linea,#ccc)"}));
-    svg.appendChild(el("line", {x1: AX0, y1: AY0, x2: AX0, y2: AY1, stroke: "var(--r-linea,#ccc)"}));
-    svg.appendChild(el("text", {x: (AX0 + AX1) / 2, y: AY0 + 30, "font-size": 10.5,
+    svg.appendChild(el("rect", {x: AX0, y: AY1, width: AX1 - AX0, height: AY0 - AY1,
+      fill: "none", stroke: "var(--r-linea,#ccc)", "stroke-width": 1}));
+    // marcas de los ejes, con numeros: sin ellas no se ve que el marco es fijo
+    for (var k = 0; k <= 2; k++) {
+      var mv = m0 + k * (m1 - m0) / 2;
+      svg.appendChild(el("line", {x1: mx(mv), y1: AY0, x2: mx(mv), y2: AY0 + 4,
+        stroke: "var(--r-linea,#bbb)"}));
+      svg.appendChild(el("text", {x: mx(mv), y: AY0 + 15, "font-size": 9, "text-anchor": "middle",
+        fill: "var(--r-tinta-suave,#777)"}, mv.toFixed(1)));
+      var gv = g0 + k * (g1 - g0) / 2;
+      svg.appendChild(el("line", {x1: AX0 - 4, y1: gy(gv), x2: AX0, y2: gy(gv),
+        stroke: "var(--r-linea,#bbb)"}));
+      svg.appendChild(el("text", {x: AX0 - 7, y: gy(gv) + 3.5, "font-size": 9, "text-anchor": "end",
+        fill: "var(--r-tinta-suave,#777)"}, gv.toFixed(1)));
+    }
+    svg.appendChild(el("text", {x: (AX0 + AX1) / 2, y: AY0 + 29, "font-size": 10.5,
       "text-anchor": "middle", fill: "var(--r-tinta-suave,#666)"}, "μ"));
-    svg.appendChild(el("text", {x: AX0 - 14, y: (AY0 + AY1) / 2, "font-size": 10.5,
+    svg.appendChild(el("text", {x: AX0 - 30, y: (AY0 + AY1) / 2, "font-size": 10.5,
       "text-anchor": "middle", fill: "var(--r-tinta-suave,#666)"}, "σ"));
 
-    // corte vertical en mu = x barra
-    svg.appendChild(el("line", {x1: mx(xb), y1: AY1, x2: mx(xb), y2: AY0,
-      stroke: "var(--r-tinta,#333)", "stroke-width": 1, "stroke-dasharray": "3 3", opacity: 0.55}));
-    svg.appendChild(el("circle", {cx: mx(xb).toFixed(1), cy: gy(sig_mv).toFixed(1), r: 4.2, fill: C_MV}));
-    svg.appendChild(el("text", {x: mx(xb) + 8, y: gy(sig_mv) - 6, "font-size": 10.5, fill: C_MV},
-      "máximo"));
-    if (gy(s_ins) > AY1 && gy(s_ins) < AY0) {
-      svg.appendChild(el("circle", {cx: mx(xb).toFixed(1), cy: gy(s_ins).toFixed(1), r: 3.6,
-        fill: "none", stroke: C_IN, "stroke-width": 1.8}));
+    // el parametro VERDADERO, fijo en el marco: la referencia contra la que se mueve todo
+    svg.appendChild(el("line", {x1: mx(MU) - 6, y1: gy(SIG), x2: mx(MU) + 6, y2: gy(SIG),
+      stroke: C_TH, "stroke-width": 1.6}));
+    svg.appendChild(el("line", {x1: mx(MU), y1: gy(SIG) - 6, x2: mx(MU), y2: gy(SIG) + 6,
+      stroke: C_TH, "stroke-width": 1.6}));
+    svg.appendChild(el("text", {x: mx(MU) + 9, y: gy(SIG) - 7, "font-size": 10, fill: C_TH},
+      "(μ, σ) real"));
+
+    // rastro de los maximos anteriores
+    if (sr.checked) {
+      rastro.forEach(function (p, idx) {
+        if (p.n !== n || !dentro(p.m, p.g)) return;
+        svg.appendChild(el("circle", {cx: mx(p.m).toFixed(1), cy: gy(p.g).toFixed(1), r: 2.2,
+          fill: C_MV, "fill-opacity": 0.3}));
+      });
     }
 
-    // ---------- panel derecho: el corte en mu = x barra ----------
-    var BX0 = 348, BX1 = 540, BY0 = 272, BY1 = 44, NP = 150;
-    svg.appendChild(el("text", {x: BX0 - 8, y: 26, "font-size": 12, "font-weight": 600,
-      fill: "var(--r-tinta, #222)"}, "El corte en μ = x̄"));
-    var lo = Math.min(logL(xb, g0), logL(xb, g1));
-    function bx(g) { return BX0 + (g - g0) / (g1 - g0) * (BX1 - BX0); }
-    function by(l) { return BY0 - (l - lo) / (lmax - lo) * (BY0 - BY1); }
+    // el maximo de ESTA muestra
+    if (dentro(xb, sig_mv)) {
+      svg.appendChild(el("circle", {cx: mx(xb).toFixed(1), cy: gy(sig_mv).toFixed(1), r: 4.6,
+        fill: C_MV, stroke: "#fff", "stroke-width": 1.2}));
+      svg.appendChild(el("text", {x: mx(xb) + 8, y: gy(sig_mv) - 7, "font-size": 10, fill: C_MV},
+        "máximo"));
+      // el punto insesgado, misma mu y sigma mayor
+      if (dentro(xb, s_ins)) {
+        svg.appendChild(el("circle", {cx: mx(xb).toFixed(1), cy: gy(s_ins).toFixed(1), r: 3.4,
+          fill: "none", stroke: C_IN, "stroke-width": 1.8}));
+      }
+    } else {
+      svg.appendChild(el("text", {x: (AX0 + AX1) / 2, y: AY0 - 8, "font-size": 10,
+        "text-anchor": "middle", fill: C_MV}, "el máximo se salió del marco"));
+    }
 
-    var d = "";
+    // ================= panel derecho =================
+    var BX0 = 352, BX1 = 542, BY0 = 276, BY1 = 52, NP = 220;
+    var K = 9;                                    // cuantos Δℓ de profundidad se muestran
+    var yLo = -K * delta, yHi = 0.12 * delta;
+    var rLo = cruce(n, yLo, 0.05, 1), rHi = cruce(n, yLo, 1, 8);
+    function bx(r) { return BX0 + (r - rLo) / (rHi - rLo) * (BX1 - BX0); }
+    function by(y) { return BY0 - (y - yLo) / (yHi - yLo) * (BY0 - BY1); }
+
+    svg.appendChild(el("text", {x: BX0 - 8, y: 22, "font-size": 11.5, "font-weight": 600,
+      fill: "var(--r-tinta, #222)"}, "ℓ cerca del máximo, en unidades de σ̂"));
+    svg.appendChild(el("text", {x: BX0 - 8, y: 37, "font-size": 9.5,
+      fill: "var(--r-tinta-suave, #777)"}, "esta forma NO cambia con la muestra"));
+
+    var d = "", rr;
     for (i = 0; i <= NP; i++) {
-      var gg = g0 + i / NP * (g1 - g0);
-      d += (i ? " L " : "M ") + bx(gg).toFixed(1) + " " + by(logL(xb, gg)).toFixed(1);
+      rr = rLo + i / NP * (rHi - rLo);
+      d += (i ? " L " : "M ") + bx(rr).toFixed(1) + " " + by(forma(rr, n)).toFixed(1);
     }
     svg.appendChild(el("path", {d: d, fill: "none", stroke: C_C, "stroke-width": 2.2}));
     svg.appendChild(el("line", {x1: BX0, y1: BY0, x2: BX1, y2: BY0, stroke: "var(--r-linea,#ccc)"}));
-    svg.appendChild(el("text", {x: (BX0 + BX1) / 2, y: BY0 + 30, "font-size": 10.5,
-      "text-anchor": "middle", fill: "var(--r-tinta-suave,#666)"}, "σ"));
-
-    svg.appendChild(el("line", {x1: bx(sig_mv), y1: by(lmax), x2: bx(sig_mv), y2: BY0,
-      stroke: C_MV, "stroke-width": 1.5, "stroke-dasharray": "4 3"}));
-    svg.appendChild(el("circle", {cx: bx(sig_mv).toFixed(1), cy: by(lmax).toFixed(1), r: 4.2, fill: C_MV}));
-    svg.appendChild(el("text", {x: bx(sig_mv), y: by(lmax) - 9, "font-size": 10.5,
+    [1, Math.sqrt(n / (n - 1))].forEach(function (r0, idx) {
+      var col = idx ? C_IN : C_MV, y0 = forma(r0, n);
+      svg.appendChild(el("line", {x1: bx(r0), y1: by(y0), x2: bx(r0), y2: BY0,
+        stroke: col, "stroke-width": 1.5, "stroke-dasharray": idx ? "" : "4 3"}));
+      svg.appendChild(el("circle", {cx: bx(r0).toFixed(1), cy: by(y0).toFixed(1), r: 4.2, fill: col}));
+    });
+    svg.appendChild(el("text", {x: bx(1), y: by(0) - 9, "font-size": 10,
       "text-anchor": "middle", fill: C_MV}, "σ̂ (÷n)"));
+    svg.appendChild(el("text", {x: bx(Math.sqrt(n / (n - 1))) + 6,
+      y: by(-delta) + 14, "font-size": 10, fill: C_IN}, "s (÷ n−1)"));
+    // la altura que separa a los dos: Δℓ
+    svg.appendChild(el("line", {x1: bx(Math.sqrt(n / (n - 1))) - 13, y1: by(0),
+      x2: bx(Math.sqrt(n / (n - 1))) - 13, y2: by(-delta),
+      stroke: "var(--r-tinta,#333)", "stroke-width": 1.2}));
+    svg.appendChild(el("text", {x: bx(Math.sqrt(n / (n - 1))) - 17, y: by(-delta / 2) + 3.5,
+      "font-size": 10, "text-anchor": "end", fill: "var(--r-tinta,#333)"}, "Δℓ"));
+    for (var q = 0; q <= 2; q++) {
+      var rv = rLo + q * (rHi - rLo) / 2;
+      svg.appendChild(el("text", {x: bx(rv), y: BY0 + 15, "font-size": 9, "text-anchor": "middle",
+        fill: "var(--r-tinta-suave,#777)"}, rv.toFixed(2)));
+    }
+    svg.appendChild(el("text", {x: (BX0 + BX1) / 2, y: BY0 + 29, "font-size": 10.5,
+      "text-anchor": "middle", fill: "var(--r-tinta-suave,#666)"}, "σ / σ̂"));
 
-    svg.appendChild(el("line", {x1: bx(s_ins), y1: by(lins), x2: bx(s_ins), y2: BY0,
-      stroke: C_IN, "stroke-width": 1.5}));
-    svg.appendChild(el("circle", {cx: bx(s_ins).toFixed(1), cy: by(lins).toFixed(1), r: 4.2, fill: C_IN}));
-    svg.appendChild(el("text", {x: bx(s_ins) + 6, y: by(lins) + 14, "font-size": 10.5, fill: C_IN},
-      "s (÷ n−1)"));
+    if (nuevaMuestra) rastro.push({m: xb, g: sig_mv, n: n});
+    if (rastro.length > 60) rastro.shift();
 
     lec.innerHTML = '<span class="fx">σ̂ = ' + sig_mv.toFixed(4) + "  (÷ n)   ·   s = " +
-      s_ins.toFixed(4) + "  (÷ n−1)   ·   ℓ(σ̂) − ℓ(s) = " + (lmax - lins).toFixed(4) +
+      s_ins.toFixed(4) + "  (÷ n−1)   ·   ℓ(σ̂) − ℓ(s) = " + delta.toFixed(4) +
+      "   ·   muestras dibujadas: " + (rastro.filter(function (p) { return p.n === n; }).length) +
       "</span><br>" +
-      "La diferencia es positiva en toda muestra: el máximo de ℓ está en el denominador n, " +
-      "no en n−1. Máxima verosimilitud no elige el estimador insesgado porque no es eso lo que " +
-      "está optimizando.<br>" +
-      "Al subir n los dos puntos se juntan —el factor entre ellos es √(n/(n−1))— y la diferencia " +
-      "de log-verosimilitud se hace despreciable.";
+      "<b>Panel izquierdo:</b> el marco está anclado a la población, no a los datos, así que " +
+      "cada muestra nueva mueve el máximo de sitio. Los puntos pálidos son los máximos anteriores: " +
+      "se reparten alrededor de la cruz roja, que es el parámetro verdadero.<br>" +
+      "<b>Panel derecho:</b> la misma superficie cortada en μ = x̄ y medida en unidades de σ̂. " +
+      "Escrita así, la curva <b>es exactamente la misma en toda muestra</b> —solo depende de n—, " +
+      "y con ella la distancia Δℓ entre los dos candidatos. Eso es la Proposición 8.7. " +
+      "El máximo cae en σ̂, el del denominador n, y no en s.";
   }
 
-  sn.addEventListener("change", dibujar);
-  btn.addEventListener("click", function () { semilla = (semilla * 16807 + 12345) | 0; dibujar(); });
-  dibujar();
+  sn.addEventListener("change", function () { dibujar(false); });
+  btn.addEventListener("click", function () {
+    semilla = (semilla * 16807 + 12345) | 0;
+    dibujar(true);
+  });
+  sr.addEventListener("change", function () { dibujar(false); });
+  dibujar(true);
 })();
 </script>
 ```
 
-Pulsando **Otra muestra** sin tocar $n$, los dos primeros números del pie cambian y el tercero no se mueve: es la Proposición 8.7 vista de una vez. Cambiando $n$ sí cambia, y hacia cero.
+Pulsando **Otra muestra**, el punto naranja del panel izquierdo salta de sitio y va dejando rastro. Los máximos se reparten alrededor de la cruz roja —el parámetro verdadero— sin caer nunca encima: eso es la distribución muestral de $(\bar{x}, \hat{\sigma})$, y al subir $n$ el enjambre se aprieta contra la cruz.
+
+La curva de la derecha, en cambio, no se mueve ni un píxel por muchas muestras que se sorteen. No es que esté congelada: escribiendo $\sigma = r\,\hat{\sigma}$ y usando $\hat{\sigma}^2 = Q/n$,
+$$\ell(\bar{x},\, r\hat{\sigma}) - \ell(\bar{x},\, \hat{\sigma}) = -n\log r - \frac{n}{2r^{2}} + \frac{n}{2},$$
+expresión en la que **los datos han desaparecido**: solo quedan $r$ y $n$. Medida en unidades de $\hat{\sigma}$, la log-verosimilitud de una normal tiene siempre la misma forma. La Proposición 8.7 es un caso particular de eso, el de $r = \sqrt{n/(n-1)}$, que es donde cae $s$; por eso $\Delta\ell$ tampoco depende de los datos. Cambiando $n$ la curva sí se estrecha y $\Delta\ell$ baja hacia cero.
 
 ```{pyodide}
 import numpy as np
