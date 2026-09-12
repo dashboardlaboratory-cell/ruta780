@@ -1,9 +1,9 @@
 # Estado de Ruta 780 y qué sigue
 
 Última actualización: **12-09-2026**, tras publicar Estadística 15, 16 y 17 y
-reescribir Matemática 04, 05 y 06 desde Claude Code. **El módulo de Estadística
-queda completo en su fase 1**, y el arco producto interno → proyección →
-mínimos cuadrados ya está en el molde nuevo.
+reescribir las nueve lecciones de Matemática desde Claude Code. **Estadística y
+Matemática quedan completas y al día con el molde nuevo**; lo único que sigue
+en el molde viejo son las seis lecciones de Python.
 
 `CLAUDE.md` tiene las reglas, que cambian poco. Este archivo tiene el estado y
 la lista de trabajo, que cambia cada semana. Si los dos se contradicen, manda
@@ -62,15 +62,15 @@ hay que empezar a hacer:
 | Módulo | Publicadas | Total | Al día con el molde |
 |---|---|---|---|
 | Estadística | 17 | 17 (+8 bayesianas) | **17 de 17** |
-| Matemática | 9 | 18 | 5 de 9 |
+| Matemática | 9 | 18 | **9 de 9** |
 | Python | 6 | ~12 | 0 de 6 |
 
-- **32 lecciones** publicadas, **22** cumplen el molde nuevo.
+- **32 lecciones** publicadas, **26** cumplen el molde nuevo.
 - **60 visuales**, todos auditados; ninguno con el fallo de la regla 19b.
-- **307 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`.
-- Glosario: **111 términos + 41 símbolos**.
-- De Matemática quedan por reescribir la 01, 02, 03 y 07; las 04, 05, 06, 08 y 09
-  ya están en el molde.
+- **332 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`.
+- Glosario: **126 términos + 41 símbolos**.
+- Lo único que queda en el molde viejo son `python/01` a `python/06`, y están
+  detrás de la decisión del punto 6.
 - Índices verificados: Think Stats 3e (75 secciones), MML (80), Think Bayes 2e
   (20 capítulos + cap. 2), McKinney 3E (capítulos + las 6 secciones del cap. 7,
   traídas el 12-09-2026) e ISLP (solo capítulos).
@@ -119,48 +119,37 @@ Quedan **Estadística 18–24, las bayesianas**, y están bloqueadas: de Think B
 2e solo se verificaron las secciones del capítulo 2. Traer el resto del índice es
 el primer paso de esa fase, no el último.
 
-### 3.2 Reescribir Matemática: quedan 01, 02, 03 y 07
+### 3.2 Matemática: terminada
 
-**Hechas el 12-09-2026: 04, 05 y 06.** Eran las que más citaban las lecciones
-nuevas, y ahora el arco entero está en el molde:
+Las nueve publicadas están en el molde nuevo. El 12-09-2026 se reescribieron las
+siete que faltaban:
 
-- **Mat 04** define el producto interno y deduce de él norma, distancia y
-  ortogonalidad; demuestra Pitágoras en $\mathbb{R}^n$, Cauchy-Schwarz —de donde
-  sale que el ángulo exista— y la desigualdad triangular, y cierra demostrando
-  que la correlación de Pearson **es** el coseno del ángulo entre las variables
-  centradas. Dos visuales nuevos, el segundo con un control que deja ver que sin
-  centrar el coseno da 0,97 mientras la correlación real va de −0,9 a +0,7.
-- **Mat 05** define la proyección por la propiedad que la caracteriza y deduce
-  la fórmula; demuestra que es el punto más cercano por Pitágoras, las cuatro
-  propiedades de $P$, las ecuaciones normales y que $A^\top A$ es invertible con
-  rango completo. Cierra con la Proposición 5.9: restar la media es proyectar
-  sobre la recta de los unos. Dos visuales nuevos, uno de ellos en perspectiva
-  sobre un plano de $\mathbb{R}^3$.
-- **Mat 06** deriva las ecuaciones normales por los dos caminos —geometría y
-  cálculo— y demuestra que la unicidad equivale al rango columna completo;
-  demuestra las identidades del residuo y que $R^2=\cos^2\theta$; y explica la
-  matriz sombrero, su traza como grados de libertad y por qué no se invierte
-  $A^\top A$. Conserva su visual, que ya cumplía.
+- **01** define el espacio vectorial por sus dos operaciones, demuestra que dos
+  vectores del plano con determinante no nulo generan todo $\mathbb{R}^2$ con
+  coeficientes únicos, su recíproco, y que las coordenadas en una base son
+  únicas —que es lo que justifica escribir un vector como una lista—.
+- **02** demuestra que una transformación lineal queda determinada por las
+  imágenes de la base, que por eso las columnas de la matriz son esas imágenes,
+  que componer es multiplicar, y las tres restricciones que una transformación
+  lineal no puede violar.
+- **03** define espacio columna, rango y núcleo, demuestra el teorema del
+  rango-nulidad y que el conjunto de soluciones es el núcleo trasladado. Los
+  ejemplos de colinealidad se pasaron a peso/altura/IMC y a grupos, sin empresa.
+- **04, 05 y 06**: el arco producto interno → proyección → mínimos cuadrados,
+  descrito arriba.
+- **07** demuestra que con base ortonormal la proyección es $QQ^\top$, deriva
+  Gram-Schmidt con la triangularidad de $R$ **deducida** y no impuesta, y
+  resuelve mínimos cuadrados con $R\hat{x}=Q^\top b$. La tabla de pérdida de
+  ortogonalidad se declara por la regla 7: se afirma la propiedad, no los
+  dígitos.
 
-Quedan **01, 02, 03 y 07**, en ese orden de dependencia: 03 → 02 → 01 → 07. Les
-falta todo el molde, y además **Mat 01 y Mat 03 tienen contexto de la empresa**
-(regla 15) y **Mat 01, 02 y 03 tienen el visual partido en tres vallas**
-`{=html}`.
+Quedan por escribir, no por reescribir, las lecciones 10 a 18 del módulo.
 
-**Antes de eso conviene una pasada corta de regla 15**, porque son páginas ya
-publicadas con contexto de la empresa dentro. Medido el 12-09-2026:
-
-| Archivo | menciones |
-|---|---|
-| `python/03-comprehensions.qmd` | 52 |
-| `python/06-numpy-primer-contacto.qmd` | 18 |
-| `matematica/03-espacio-columna.qmd` | 11 |
-| `python/04`, `python/01`, `python/02`, `matematica/01`, `python/05` | 9, 8, 4, 2, 1 |
-
-Las de una a once menciones son una tarde de trabajo: cambiar el ejemplo por
-dados, pesos al nacer o ingresos, sin tocar la estructura. `python/03` no: con
-52 menciones el contexto está tejido en todos los ejemplos, y eso ya es la
-reescritura completa, que además está parada por la decisión del punto 6.
+**Un fallo que encontró el gate durante esta tanda:** en `matematica/07` el
+botón «Caso típico» no hacía nada, porque el estado inicial del visual **era**
+ese preajuste. Se cambió el arranque a una posición que no coincide con ningún
+preajuste. Es el mismo tipo de error que la regla 19b persigue, y esta vez lo
+cazó `visuales.py` en vez de Luis.
 
 ### 3.3 Reescribir Python 01–06
 
@@ -176,15 +165,15 @@ probablemente `.hilo` + notación + glosario sí, y definiciones numeradas no.
 Est 16 y 17 primero —hechas—, Estadística 01 y 02 de calentamiento —hechas—, y
 Matemática 04 → 05 → 06 —hechas—. Lo que sigue, en este orden:
 
+Matemática 03 → 02 → 01 → 07 también está hecha. Lo que sigue:
+
 1. **La pasada de regla 15** sobre las cinco páginas de Python baratas (01, 02,
    04, 05 y 06): cambiar el ejemplo por dados, pesos al nacer o ingresos, sin
-   tocar la estructura. Mat 01 y Mat 03 no hace falta tocarlas aparte, porque se
-   arreglan en su reescritura.
+   tocar la estructura. Se puede hacer sin decidir nada del molde.
 2. **Traer los índices de Think Bayes**, capítulos 3 al 20, para desbloquear
    Estadística 18–24.
-3. **Matemática 03 → 02 → 01 → 07.**
-
-Python 01–06 y las bayesianas siguen detrás de las dos decisiones del punto 6.
+3. **Decidir el molde de Python** (punto 6) y reescribir `python/01–06`.
+4. **Seguir Matemática por la 10 en adelante**, que están sin escribir.
 
 ### 3.5 Estadística 01 y 02: hechas
 

@@ -44,9 +44,13 @@ MIGRADAS = {
     "estadistica/15-datos-faltantes.qmd",
     "estadistica/16-calibracion.qmd",
     "estadistica/17-p-hacking.qmd",
+    "matematica/01-vectores-y-espacios.qmd",
+    "matematica/02-matriz-como-transformacion.qmd",
+    "matematica/03-espacio-columna.qmd",
     "matematica/04-producto-interno.qmd",
     "matematica/05-proyeccion-ortogonal.qmd",
     "matematica/06-minimos-cuadrados.qmd",
+    "matematica/07-gram-schmidt-qr.qmd",
     "matematica/08-determinante.qmd",
     "matematica/09-eigenvalores.qmd",
 }
