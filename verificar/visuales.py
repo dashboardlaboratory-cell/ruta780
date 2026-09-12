@@ -109,6 +109,25 @@ JS_CTRL = """() => [...document.querySelectorAll('input,select,button')]
               ops: e.tagName === 'SELECT' ? [...e.options].map(o => o.value) : null,
               txt: (e.textContent || '').trim().slice(0, 24)}))"""
 
+# El valor con el que arrancó la página: option[selected] o defaultValue/defaultChecked,
+# nunca el .value actual. Sirve para devolver los demás controles a un estado no
+# degenerado antes de probar un botón (ver JS_CTRL y la restauración en audita()).
+JS_DEFAULTS = """() => {
+  const out = {};
+  document.querySelectorAll('input,select').forEach(e => {
+    if (!e.id) return;
+    if (e.tagName === 'SELECT') {
+      const opt = e.querySelector('option[selected]') || e.options[0];
+      out[e.id] = opt ? opt.value : '';
+    } else if (e.type === 'checkbox') {
+      out[e.id] = e.defaultChecked ? '1' : '0';
+    } else {
+      out[e.id] = e.defaultValue;
+    }
+  });
+  return out;
+}"""
+
 RESORTEO = re.compile(r"otra|nueva|tanda|muestra|remuestre|genera|mil|cien", re.I)
 
 
@@ -254,6 +273,35 @@ async def audita(pg, html, rel, idx, fallos, avisos, notas):
                            f"los marcadores apenas se mueven ({recorrido(marcas):.1f} px): "
                            "¿el eje está siguiendo a los datos? (regla 19b)"))
 
+    # Antes de probar los botones, devolver selects y ranges a su valor por
+    # defecto. Barrer un select hasta su última opción o un range hasta su
+    # máximo puede dejar la página en una esquina degenerada del espacio de
+    # parámetros —una matriz sin eigenvectores reales, un efecto tan grande
+    # que el p-valor ya es cero en todos los casos— donde un botón que SÍ
+    # mueve el dibujo en cualquier estado normal no tiene nada que mover. Esa
+    # esquina no es un control roto: es el test midiendo en el punto
+    # equivocado. Probar los botones desde el estado inicial de la página es
+    # lo que de verdad corresponde a cómo se usa el visual.
+    defaults = await pg.evaluate(JS_DEFAULTS)
+    for c in ctrls:
+        cid = c["id"]
+        if c["tag"] == "button" or cid not in defaults:
+            continue
+        val = defaults[cid]
+        try:
+            if c["tag"] == "select":
+                await pg.select_option("#" + cid, val)
+            elif c["tipo"] == "checkbox":
+                await pg.eval_on_selector("#" + cid,
+                    "(e,v)=>{e.checked=(v=='1');e.dispatchEvent(new Event('change',{bubbles:true}))}", val)
+            else:
+                await pg.eval_on_selector("#" + cid,
+                    "(e,v)=>{e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));"
+                    "e.dispatchEvent(new Event('change',{bubbles:true}))}", val)
+        except Exception:
+            pass
+    await estable(pg, sel)
+
     # Botones. Los de re-sorteo son los que la regla 19b vigila de cerca: tienen
     # que dejar el marcador principal en sitios distintos, no solo cambiar cifras.
     for c in botones:
@@ -277,11 +325,23 @@ async def audita(pg, html, rel, idx, fallos, avisos, notas):
                                    f"«re-sortear» cambia cifras pero el marcador solo se mueve "
                                    f"{rec:.1f} px: el marco está siguiendo a los datos (regla 19b)"))
             else:
-                # reset y similares: mover algo antes, y ver si el botón lo revierte
+                # reset y similares: mover algo antes, y ver si el botón lo revierte.
+                # Subir los ranges al máximo no basta: si uno de ellos limpia el
+                # estado como efecto lateral (p. ej. cambiar λ invalida las esperas
+                # acumuladas), el "antes" queda vacío y el reset no tiene nada que
+                # revertir. Un botón de re-sorteo, si lo hay, sí genera contenido
+                # real sin ese efecto lateral — se pulsa después, para que quede
+                # la última palabra antes de medir "antes".
                 for d in ctrls:
                     if d["tipo"] == "range":
                         await pg.eval_on_selector("#" + d["id"],
                             "(e)=>{e.value=e.max;e.dispatchEvent(new Event('input',{bubbles:true}))}")
+                for d in botones:
+                    if RESORTEO.search(d["txt"]):
+                        try:
+                            await pg.click("#" + d["id"])
+                        except Exception:
+                            pass
                 antes, _ = await estable(pg, sel)
                 await pg.click("#" + cid)
                 uno, _ = await estable(pg, sel)
