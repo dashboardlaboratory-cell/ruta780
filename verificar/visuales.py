@@ -198,6 +198,34 @@ def recorrido(marcas):
     return peor
 
 
+async def restaurar(pg, ctrls, defaults):
+    """Devuelve cada select, range y checkbox a su valor de arranque.
+
+    Hace falta antes de probar CADA control, no solo antes de los botones: si un
+    visual tiene dos deslizadores y el barrido deja el primero en su máximo, el
+    segundo puede quedar midiéndose en una esquina degenerada donde de verdad no
+    mueve nada —dos eigenvalores iguales hacen un círculo, y ahí girar no cambia
+    el dibujo—. Eso es el test mirando en el punto equivocado, no un control roto.
+    """
+    for c in ctrls:
+        cid = c["id"]
+        if c["tag"] == "button" or cid not in defaults:
+            continue
+        val = defaults[cid]
+        try:
+            if c["tag"] == "select":
+                await pg.select_option("#" + cid, val)
+            elif c["tipo"] == "checkbox":
+                await pg.eval_on_selector("#" + cid,
+                    "(e,v)=>{e.checked=(v=='1');e.dispatchEvent(new Event('change',{bubbles:true}))}", val)
+            else:
+                await pg.eval_on_selector("#" + cid,
+                    "(e,v)=>{e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));"
+                    "e.dispatchEvent(new Event('change',{bubbles:true}))}", val)
+        except Exception:
+            pass
+
+
 async def audita(pg, html, rel, idx, fallos, avisos, notas):
     TMP.write_text("<!doctype html><meta charset='utf-8'>" + CSS + html, encoding="utf-8")
     errs = []
@@ -229,8 +257,11 @@ async def audita(pg, html, rel, idx, fallos, avisos, notas):
         avisos.append((etiqueta, "-", f"lento: {ms:.0f} ms por redibujo"))
 
     botones = []
+    defaults = await pg.evaluate(JS_DEFAULTS)
     for c in ctrls:
         cid, firmas, marcas = c["id"], set(), []
+        if c["tag"] != "button":
+            await restaurar(pg, ctrls, defaults)
         if (rel, cid) in QUIETOS:
             notas.append((etiqueta, cid, "quieto a propósito: " + QUIETOS[(rel, cid)]))
             continue
@@ -282,24 +313,7 @@ async def audita(pg, html, rel, idx, fallos, avisos, notas):
     # esquina no es un control roto: es el test midiendo en el punto
     # equivocado. Probar los botones desde el estado inicial de la página es
     # lo que de verdad corresponde a cómo se usa el visual.
-    defaults = await pg.evaluate(JS_DEFAULTS)
-    for c in ctrls:
-        cid = c["id"]
-        if c["tag"] == "button" or cid not in defaults:
-            continue
-        val = defaults[cid]
-        try:
-            if c["tag"] == "select":
-                await pg.select_option("#" + cid, val)
-            elif c["tipo"] == "checkbox":
-                await pg.eval_on_selector("#" + cid,
-                    "(e,v)=>{e.checked=(v=='1');e.dispatchEvent(new Event('change',{bubbles:true}))}", val)
-            else:
-                await pg.eval_on_selector("#" + cid,
-                    "(e,v)=>{e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));"
-                    "e.dispatchEvent(new Event('change',{bubbles:true}))}", val)
-        except Exception:
-            pass
+    await restaurar(pg, ctrls, defaults)
     await estable(pg, sel)
 
     # Botones. Los de re-sorteo son los que la regla 19b vigila de cerca: tienen

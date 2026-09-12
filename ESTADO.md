@@ -284,6 +284,19 @@ se habían añadido a esa lista tras arreglarles solo las vallas `{=html}`, sin
 mirarles la prosa: el detector encontró en la 01 tres frases de golpe que venían
 del molde viejo.
 
+**El harness de visuales medía cada deslizador desde donde lo dejó el anterior
+(van cuatro veces).** El 12-09-2026, `matematica/12` disparó un aviso falso: el
+gate barre λ₁ y λ₂ hasta su máximo antes de probar el giro, y con los dos
+eigenvalores iguales la forma es un círculo, donde girar de verdad no cambia
+nada. Ya existía la restauración de valores por defecto, pero solo antes de
+probar los **botones**. Ahora `visuales.py` restaura antes de **cada** control.
+
+El cambio destapó de inmediato un fallo real que el orden viejo escondía: en
+`estadistica/16`, el deslizador «Fuerza» no hacía nada con el pronóstico «fiel»
+seleccionado, que era el valor por defecto. Se rediseñó el control —la opción
+«fiel» desaparece y es simplemente fuerza cero—, y ahora el deslizador siempre
+mueve el dibujo.
+
 **`np.linalg.eig` devuelve complejos en numpy 2 aunque los eigenvalores sean
 reales.** Segunda vez que la diferencia de versiones rompe el build, ahora en
 `matematica/10`: en local imprimía `[5. 2.]` y en el CI `[5.+0.j 2.+0.j]`. La

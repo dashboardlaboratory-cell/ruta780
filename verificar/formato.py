@@ -93,6 +93,7 @@ MIGRADAS = {
     "matematica/09-eigenvalores.qmd",
     "matematica/10-diagonalizacion.qmd",
     "matematica/11-svd.qmd",
+    "matematica/12-formas-cuadraticas.qmd",
 }
 
 
