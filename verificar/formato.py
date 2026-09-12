@@ -26,10 +26,47 @@ EMPRESA = re.compile(
     r"tiendas?(?!\s+(?:al?|hacia)\s)|"
     r"tickets?|baristas?|pedidosya|spoonity|kronos|simphony)\b", re.I)
 
+# Regla 14: registro de libro de texto, no de revista.
+#
+# Dos vicios que se pueden detectar sin ambigüedad y que se colaron al migrar
+# lecciones viejas (lo encontró Luis en matematica/01 el 12-09-2026):
+#
+#   · la construcción de golpe «no es X: es Y», que la regla prohíbe por su
+#     nombre. Las negaciones con «sino» NO entran: «el conjunto de soluciones
+#     no es un subespacio sino uno trasladado» es una precisión matemática, no
+#     un titular, y esas se dejan pasar a propósito;
+#   · la segunda persona, que el molde nuevo no usa en ningún caso.
+#
+# Solo se mira la prosa: lo que va dentro de una valla ``` es código, y ahí
+# «arrastra» es el nombre de una variable, no una orden al lector.
+GOLPE = re.compile(r"\b[Nn]o (?:es|son|era|fue|fueron)\b(?![^.;:]*\bsino\b)"
+                   r"[^.;:]{3,80}[:,]\s*(?:es|son|era|fue|fueron)\b")
+# Solo formas inequívocamente imperativas o de tuteo. «se mira», «quien mira» y
+# «mira dónde cae» son tercera persona y NO entran: la primera versión de esta
+# expresión las cazaba y daba cuatro falsos positivos.
+SEGUNDA_PERSONA = re.compile(
+    r"(?:\b[Ff]íjate\b|\b[Rr]etén\b|\b[Dd]etente\b|\b[Ll]éelo\b|\bverás\b|"
+    r"\bvas a (?:ver|usar|necesitar|encontrar|hacer)\b|\btus datos\b|\btu tabla\b|"
+    r"(?:^|[.:;—]\s)(?:Mira|Arrastra|Dale|Toma|Prueba|Observa)\b)")
+
+
+def prosa(texto):
+    """El texto de la lección sin los bloques de código ni los visuales."""
+    fuera, dentro = [], False
+    for linea in texto.split("\n"):
+        if linea.startswith("```"):
+            dentro = not dentro
+            continue
+        if not dentro:
+            fuera.append(linea)
+    return fuera
+
+
 # Lecciones que ya siguen el molde nuevo. El resto está pendiente de reescritura.
 MIGRADAS = {
     "estadistica/01-variables-aleatorias.qmd",
     "estadistica/02-pmf-cdf.qmd",
+    "estadistica/03-distribuciones-analiticas.qmd",
     "estadistica/04-esperanza-varianza-momentos.qmd",
     "estadistica/05-covarianza-correlacion.qmd",
     "estadistica/06-teorema-central-limite.qmd",
@@ -129,6 +166,20 @@ def revisa(ruta):
         sueltos = sorted({(b or a).lower() for a, b in marcas} - claves)
         if sueltos:
             faltas.append(f"términos marcados que no están en el glosario: {', '.join(sueltos)}")
+
+    # --- regla 14: registro de libro de texto, no de revista ---
+    golpes, tuteos = [], []
+    for i, linea in enumerate(prosa(t), 1):
+        m = GOLPE.search(linea)
+        if m:
+            golpes.append(f"línea {i}: «{m.group(0)[:60]}…»")
+        m = SEGUNDA_PERSONA.search(linea)
+        if m:
+            tuteos.append(f"línea {i}: «{m.group(0)}»")
+    if golpes:
+        faltas.append(f"prosa de golpe «no es X, es Y» (regla 14): {'; '.join(golpes[:3])}")
+    if tuteos:
+        faltas.append(f"segunda persona (regla 14): {'; '.join(tuteos[:3])}")
 
     # --- regla 15: cero contexto de la empresa ---
     hallado = sorted({m.group(0).lower() for m in EMPRESA.finditer(t)})

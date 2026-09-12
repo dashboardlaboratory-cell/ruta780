@@ -273,10 +273,16 @@ explícitamente, y el contenido es impreciso, porque las dos operaciones son del
 gate. Migrar una lección es reescribir también sus párrafos de enlace, no solo
 envolver el contenido viejo en el molde nuevo.
 
-Barrido hecho el 12-09-2026 sobre las diez lecciones de esta tanda: ocho frases
-más con la misma forma de golpe, corregidas. Quedan instancias parecidas en
-lecciones migradas por sesiones anteriores —`estadistica/08`, `09`, `10` y
-`13`—, sin tocar.
+Barrido hecho el 12-09-2026 sobre todo el corpus: **veintiuna frases** con la
+forma de golpe o con segunda persona, en once lecciones, todas corregidas. Y
+para que no vuelva, `formato.py` lo comprueba desde entonces (regla 22): si una
+lección migrada recupera el vicio, `--estricto` falla y el CI no publica.
+
+De paso salieron dos cosas más. `estadistica/03` cumplía el molde desde hacía
+tiempo y nunca se había añadido a `MIGRADAS`; ya está. Y `estadistica/01` y `02`
+se habían añadido a esa lista tras arreglarles solo las vallas `{=html}`, sin
+mirarles la prosa: el detector encontró en la 01 tres frases de golpe que venían
+del molde viejo.
 
 **El CI corre numpy 2 y esta máquina numpy 1.24: no fijar dígitos de un cero
 de punto flotante.** El 12-09-2026 el build murió en `salidas.py` con dos

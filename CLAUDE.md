@@ -125,6 +125,12 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
     Cuando se termina de reescribir una, se añade a la lista `MIGRADAS` de ese
     archivo: a partir de ahí, `--estricto` falla si retrocede.
 
+    Desde el 12-09-2026 comprueba además dos vicios de la regla 14 sobre la
+    **prosa** —nunca sobre el código—: la construcción de golpe «no es X, es Y»
+    y la segunda persona. Las negaciones con «sino» se dejan pasar a propósito,
+    porque suelen ser precisiones matemáticas («no es un subespacio sino uno
+    trasladado») y no titulares.
+
 23. **`verificar/visuales.py` comprueba la regla 19b en píxeles.** Acciona cada
     control de cada visual y mide cuánto se desplaza la geometría, trazo a
     trazo. Si un control de verdad no debe mover nada porque la cantidad que
