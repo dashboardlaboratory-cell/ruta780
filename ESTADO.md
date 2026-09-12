@@ -264,6 +264,22 @@ esperar. Vectorizada a arreglos `(reps, n)` baja a 0,4 s con los mismos
 resultados. Regla práctica: si una celda pasa de dos o tres segundos en local,
 hay que reescribirla antes de publicarla, porque en el navegador se abandona.
 
+**El CI corre numpy 2 y esta máquina numpy 1.24: no fijar dígitos de un cero
+de punto flotante.** El 12-09-2026 el build murió en `salidas.py` con dos
+afirmaciones que pasaban en local: `error máximo : 0.0` salía `4.44e-16` con
+numpy 2 —otro orden de suma— y `A^T e = [0. 0.]` salía `[ 0. -0.]`, porque el
+signo del cero al redondear también cambió. Las dos eran `contiene` sobre
+ceros. La corrección no fue tocar la afirmación sino **la celda**: imprimir la
+propiedad (`max |A^T e| por debajo de 1e-12 : True`) en vez del número. Regla
+práctica: si lo que se imprime es un cero numérico, se imprime la cota.
+
+Para reproducir el entorno del CI antes de empujar:
+
+```sh
+python3 -m venv /tmp/ci-venv && /tmp/ci-venv/bin/pip install numpy
+/tmp/ci-venv/bin/python verificar/salidas.py
+```
+
 **`np.math` no existe en numpy 2.** Usar `math.erf` de la biblioteca estándar.
 
 **El harness de `visuales.py` medía en la esquina equivocada (van tres veces).**
