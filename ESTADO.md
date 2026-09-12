@@ -1,7 +1,9 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **12-09-2026**, tras publicar Estadística 15, 16 y 17 desde
-Claude Code. **El módulo de Estadística queda completo en su fase 1.**
+Última actualización: **12-09-2026**, tras publicar Estadística 15, 16 y 17 y
+reescribir Matemática 04, 05 y 06 desde Claude Code. **El módulo de Estadística
+queda completo en su fase 1**, y el arco producto interno → proyección →
+mínimos cuadrados ya está en el molde nuevo.
 
 `CLAUDE.md` tiene las reglas, que cambian poco. Este archivo tiene el estado y
 la lista de trabajo, que cambia cada semana. Si los dos se contradicen, manda
@@ -59,16 +61,16 @@ hay que empezar a hacer:
 
 | Módulo | Publicadas | Total | Al día con el molde |
 |---|---|---|---|
-| Estadística | 17 | 17 (+8 bayesianas) | 15 de 17 |
-| Matemática | 9 | 18 | 2 de 9 |
+| Estadística | 17 | 17 (+8 bayesianas) | **17 de 17** |
+| Matemática | 9 | 18 | 5 de 9 |
 | Python | 6 | ~12 | 0 de 6 |
 
-- **32 lecciones** publicadas, **17** cumplen el molde nuevo.
-- **58 visuales**, todos auditados; ninguno con el fallo de la regla 19b.
-- **268 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`.
-- Glosario: **99 términos + 41 símbolos**.
-- Estadística 01 y 02 son las dos únicas que faltan por migrar del módulo, y solo
-  les falta juntar las vallas `{=html}` de cada visual (punto 3.4).
+- **32 lecciones** publicadas, **22** cumplen el molde nuevo.
+- **60 visuales**, todos auditados; ninguno con el fallo de la regla 19b.
+- **307 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`.
+- Glosario: **111 términos + 41 símbolos**.
+- De Matemática quedan por reescribir la 01, 02, 03 y 07; las 04, 05, 06, 08 y 09
+  ya están en el molde.
 - Índices verificados: Think Stats 3e (75 secciones), MML (80), Think Bayes 2e
   (20 capítulos + cap. 2), McKinney 3E (capítulos + las 6 secciones del cap. 7,
   traídas el 12-09-2026) e ISLP (solo capítulos).
@@ -117,18 +119,33 @@ Quedan **Estadística 18–24, las bayesianas**, y están bloqueadas: de Think B
 2e solo se verificaron las secciones del capítulo 2. Traer el resto del índice es
 el primer paso de esa fase, no el último.
 
-### 3.2 Reescribir Matemática 01–07
+### 3.2 Reescribir Matemática: quedan 01, 02, 03 y 07
 
-Son las más viejas y las que peor están. Les falta **todo** el molde: sin
-`.hilo`, sin tabla de notación, sin definiciones ni proposiciones numeradas,
-sin términos marcados para el glosario. Además:
+**Hechas el 12-09-2026: 04, 05 y 06.** Eran las que más citaban las lecciones
+nuevas, y ahora el arco entero está en el molde:
 
-- **Mat 01** y **Mat 03** tienen contexto de la empresa (regla 15).
-- **Mat 01–05** tienen el visual partido en tres vallas `{=html}`.
+- **Mat 04** define el producto interno y deduce de él norma, distancia y
+  ortogonalidad; demuestra Pitágoras en $\mathbb{R}^n$, Cauchy-Schwarz —de donde
+  sale que el ángulo exista— y la desigualdad triangular, y cierra demostrando
+  que la correlación de Pearson **es** el coseno del ángulo entre las variables
+  centradas. Dos visuales nuevos, el segundo con un control que deja ver que sin
+  centrar el coseno da 0,97 mientras la correlación real va de −0,9 a +0,7.
+- **Mat 05** define la proyección por la propiedad que la caracteriza y deduce
+  la fórmula; demuestra que es el punto más cercano por Pitágoras, las cuatro
+  propiedades de $P$, las ecuaciones normales y que $A^\top A$ es invertible con
+  rango completo. Cierra con la Proposición 5.9: restar la media es proyectar
+  sobre la recta de los unos. Dos visuales nuevos, uno de ellos en perspectiva
+  sobre un plano de $\mathbb{R}^3$.
+- **Mat 06** deriva las ecuaciones normales por los dos caminos —geometría y
+  cálculo— y demuestra que la unicidad equivale al rango columna completo;
+  demuestra las identidades del residuo y que $R^2=\cos^2\theta$; y explica la
+  matriz sombrero, su traza como grados de libertad y por qué no se invierte
+  $A^\top A$. Conserva su visual, que ya cumplía.
 
-Orden recomendado, que es el de dependencia: **04 → 05 → 06 → 03 → 02 → 01 → 07**.
-La 04 (producto interno) y la 05 (proyección ortogonal) son las que más citan
-las lecciones nuevas, así que arreglarlas primero paga de inmediato.
+Quedan **01, 02, 03 y 07**, en ese orden de dependencia: 03 → 02 → 01 → 07. Les
+falta todo el molde, y además **Mat 01 y Mat 03 tienen contexto de la empresa**
+(regla 15) y **Mat 01, 02 y 03 tienen el visual partido en tres vallas**
+`{=html}`.
 
 **Antes de eso conviene una pasada corta de regla 15**, porque son páginas ya
 publicadas con contexto de la empresa dentro. Medido el 12-09-2026:
@@ -156,15 +173,23 @@ probablemente `.hilo` + notación + glosario sí, y definiciones numeradas no.
 
 ### 3.4 El orden acordado con Luis (12-09-2026)
 
-Est 16 y 17 primero —hechas—, después la pasada de regla 15 del punto 3.2,
-después traer los índices de Think Bayes, y solo entonces Matemática 04 → 05 →
-06 → 03 → 02 → 01 → 07. Python 01–06 y las bayesianas quedan detrás de las dos
-decisiones del punto 6.
+Est 16 y 17 primero —hechas—, Estadística 01 y 02 de calentamiento —hechas—, y
+Matemática 04 → 05 → 06 —hechas—. Lo que sigue, en este orden:
 
-### 3.5 Estadística 01 y 02
+1. **La pasada de regla 15** sobre las cinco páginas de Python baratas (01, 02,
+   04, 05 y 06): cambiar el ejemplo por dados, pesos al nacer o ingresos, sin
+   tocar la estructura. Mat 01 y Mat 03 no hace falta tocarlas aparte, porque se
+   arreglan en su reescritura.
+2. **Traer los índices de Think Bayes**, capítulos 3 al 20, para desbloquear
+   Estadística 18–24.
+3. **Matemática 03 → 02 → 01 → 07.**
 
-Solo les falta juntar los bloques `{=html}` de cada visual en uno. Es mecánico
-y no toca el contenido.
+Python 01–06 y las bayesianas siguen detrás de las dos decisiones del punto 6.
+
+### 3.5 Estadística 01 y 02: hechas
+
+Se juntaron las vallas `{=html}` de cada visual el 12-09-2026 y las dos entraron
+en `MIGRADAS`. Con eso el módulo de Estadística está completo y al día: 17 de 17.
 
 ---
 
