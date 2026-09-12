@@ -104,6 +104,7 @@ MIGRADAS = {
     "matematica/14-hessiana-taylor.qmd",
     "matematica/15-convexidad.qmd",
     "matematica/16-descenso-de-gradiente.qmd",
+    "matematica/17-metodo-de-newton.qmd",
 }
 
 
