@@ -1,0 +1,928 @@
+---
+title: "Bootstrap: el error estándar sin fórmula"
+subtitle: "Estadística · Lección 11"
+nivel: L3
+modulo: estadistica
+fase: F1
+prereqs: [estadistica/10-pruebas-de-hipotesis, estadistica/09-intervalos-de-confianza]
+siguientes: [estadistica/12-normal-multivariante]
+libro: "Think Stats 3e §8.4 Sampling Distributions"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="estadistica/11-bootstrap"}
+[[L3]{.nivel .nivel-L3} **Derivación**]{.item}
+[**Fase** F1]{.item}
+[**Libro** TS 3e §8.4]{.item}
+[**Prereqs** [Pruebas de hipótesis](10-pruebas-de-hipotesis.qmd) · [Intervalos de confianza](09-intervalos-de-confianza.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir la [distribución empírica]{.g data-t="distribución empírica"} y demostrar en qué sentido aproxima a la verdadera.
+2. Calcular un error estándar por [bootstrap]{.g} y demostrar que para la media reproduce la fórmula conocida.
+3. Construir un intervalo por percentiles y **medir** su cobertura real, en vez de suponerla.
+4. Reconocer un caso donde el bootstrap falla y explicar por qué más datos no lo arreglan.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Lección 1**: la [distribución muestral]{.g} (Definición 1.6) es el objeto que aquí se aproxima. Toda la lección es una manera de dibujarla sin tener acceso a la población.
+- **Lección 8**: la Proposición 11.5 muestra que el bootstrap devuelve $Q/n$, la varianza de máxima verosimilitud de la Proposición 8.6, y no la insesgada, sin que nadie se lo pida.
+- **Lección 9**: el intervalo por percentiles sustituye a la fórmula de la Proposición 9.3, y se le exige lo mismo: cobertura.
+- **Lección 10**: la prueba de permutación de la sección 5 calcula el valor p de la Definición 10.3 sin suponer ninguna distribución.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Lección 14**: los errores estándar de los coeficientes de una regresión se pueden obtener por bootstrap cuando los supuestos de la fórmula no se sostienen.
+- **Lección 16**: las bandas de incertidumbre de una curva de calibración se construyen así.
+- **Aprendizaje automático**: el *bagging* —y con él los bosques aleatorios— es exactamente el remuestreo de la Definición 11.3, aplicado a modelos en vez de a estadísticos.
+- **Trabajo aplicado**: es la herramienta que se usa cuando el estadístico de interés no tiene fórmula, que es la mayoría de las veces.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Símbolo | Se lee | Significado |
+|---|---|---|
+| $F$ | efe | La función acumulada verdadera de la población, desconocida |
+| $\hat{F}_n$ | efe sombrero sub ene | La distribución empírica: masa $1/n$ en cada dato observado |
+| $x^{*}$ | equis estrella | Un dato **remuestreado**, sorteado de $\hat{F}_n$ con reemplazo |
+| $\hat{\theta}^{*}$ | theta sombrero estrella | El estadístico calculado sobre un remuestreo |
+| $B$ | be | El número de remuestreos; no confundir con $n$ |
+| $P^{*}$, $E^{*}$ | pe estrella, e estrella | Probabilidad y esperanza **condicionadas a los datos observados** |
+| $Q$ | cu | La suma de cuadrados centrada, $\sum_i (x_i-\bar{x})^2$ |
+:::
+
+La estrella marca siempre lo mismo: **cantidades calculadas tratando la muestra observada como si fuera la población**. En $E^{*}$ los datos son constantes y lo aleatorio es el sorteo del remuestreo. Confundir $P$ con $P^{*}$ es el origen de casi todos los errores de interpretación del método.
+
+## 1. La idea
+
+El problema de fondo de las lecciones 9 y 10 es que para construir un intervalo o una prueba hace falta conocer la distribución muestral del estadístico, y solo se conoce en unos pocos casos afortunados: la media con población normal, y poco más. Para la mediana, para un percentil, para el cociente de dos medias, no hay fórmula elemental.
+
+::: {.cita-libro}
+> The core idea is to use the sample to make a model of the population, then use the model to simulate the sampling process.
+>
+> [Downey, *Think Stats* 3e, §8.4 *Sampling Distributions*]{.ref}
+:::
+
+El bootstrap toma el modelo más simple posible de la población: **la propia muestra**.
+
+::: {.definicion}
+**Definición 11.1 (distribución empírica).** Dada $x_1,\dots,x_n$, la distribución empírica $\hat{F}_n$ es la que asigna probabilidad $1/n$ a cada dato observado. Su función acumulada es
+$$\hat{F}_n(x) = \frac{1}{n}\#\{i : x_i \le x\},$$
+la fracción de datos que no superan a $x$.
+:::
+
+Que eso sea razonable no es un acto de fe; se demuestra.
+
+::: {.proposicion}
+**Proposición 11.2.** Para cada $x$ fijo,
+$$E\big[\hat{F}_n(x)\big] = F(x), \qquad \text{Var}\big(\hat{F}_n(x)\big) = \frac{F(x)\big(1-F(x)\big)}{n}.$$
+En particular $\hat{F}_n(x) \to F(x)$ en probabilidad, por la Proposición 7.7.
+:::
+
+::: {.demostracion}
+*Demostración.* Fíjese $x$ y considérese el indicador $I_i = 1$ si $x_i \le x$ y $0$ si no. Cada $I_i$ es una Bernoulli de parámetro $P(x_i \le x) = F(x)$, y son independientes por serlo los datos. Entonces $n\hat{F}_n(x) = \sum_i I_i$ es una binomial de parámetros $n$ y $F(x)$, cuya esperanza es $nF(x)$ y cuya varianza es $nF(x)(1-F(x))$ por la Proposición 4.7. Dividiendo por $n$ —y por $n^2$ en la varianza, según la Proposición 4.6— se obtienen las dos fórmulas. Como el sesgo es cero y la varianza tiende a cero, el ECM tiende a cero y la Proposición 7.7 da la convergencia. [∎]{.fin-demo}
+:::
+
+La proposición fija un $x$ y lo hace converger. Lo que de verdad justifica el método es más fuerte —el **teorema de Glivenko-Cantelli**, que dice que $\sup_x |\hat{F}_n(x) - F(x)| \to 0$ casi seguramente, es decir, uniformemente en $x$ y no punto a punto— y no se demuestra aquí: hace falta maquinaria de convergencia uniforme que este plan no ha construido. La versión puntual de arriba basta para entender de dónde viene la confianza en el método.
+
+::: {.definicion}
+**Definición 11.3 (bootstrap).** Para estimar la distribución muestral de $\hat{\theta}$:
+
+1. Sortear $n$ datos **con reemplazo** de $x_1,\dots,x_n$; llamarlos $x_1^{*},\dots,x_n^{*}$.
+2. Calcular $\hat{\theta}^{*}$ sobre ese remuestreo.
+3. Repetir $B$ veces.
+
+El conjunto de los $B$ valores $\hat{\theta}^{*}$ es la **distribución bootstrap** de $\hat{\theta}$.
+:::
+
+El paso 1 es exactamente sortear de $\hat{F}_n$: como $\hat{F}_n$ pone masa $1/n$ en cada dato, sortear de ella es elegir un índice al azar. Y el reemplazo no es opcional: sin él, cada remuestreo sería una permutación de la muestra entera y todos darían el mismo valor de la media.
+
+```{=html}
+<div class="viz-boot">
+  <div class="controles">
+    <label>Estadístico
+      <select id="bo-e">
+        <option value="media" selected>media</option>
+        <option value="mediana">mediana</option>
+        <option value="p90">percentil 90</option>
+      </select>
+    </label>
+    <label>n <select id="bo-n"><option>12</option><option selected>40</option><option>160</option></select></label>
+    <button id="bo-otra" type="button">Otra muestra original</button>
+  </div>
+  <svg id="bo-svg" viewBox="0 0 560 320" role="img" aria-label="Distribución muestral verdadera y distribución bootstrap del mismo estadístico, superpuestas"></svg>
+  <p class="lectura" id="bo-lectura"></p>
+</div>
+<style>
+.viz-boot {
+  border: 1px solid var(--r-linea, #ddd);
+  border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0;
+}
+.viz-boot .controles {
+  display: flex; flex-wrap: wrap; gap: .45rem 1.1rem;
+  align-items: center; margin-bottom: .85rem; font-size: .85rem;
+}
+.viz-boot label { display: flex; align-items: center; gap: .4rem; }
+.viz-boot select {
+  font-size: .85rem; padding: .2rem .4rem; border-radius: 5px;
+  border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit;
+}
+.viz-boot button {
+  font-size: .8rem; padding: .22rem .6rem; border-radius: 5px; cursor: pointer;
+  border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit;
+}
+.viz-boot button:hover { border-color: var(--r-acento, #0F6E68); color: var(--r-acento, #0F6E68); }
+.viz-boot svg { width: 100%; height: auto; display: block; }
+.viz-boot .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5em; line-height: 1.6; }
+.viz-boot .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_VER = "#4B3A7A", C_BOO = "#0F6E68", C_TH = "#B91C1C", C_OBS = "#B45309";
+  var svg = document.getElementById("bo-svg"), lec = document.getElementById("bo-lectura");
+  var se = document.getElementById("bo-e"), sn = document.getElementById("bo-n");
+  var btn = document.getElementById("bo-otra");
+  var B = 4000, NB = 46, semilla = 606060;
+  var X0 = 44, X1 = 528, Y0 = 246, Y1 = 48;
+  // poblacion exponencial de media 1: media 1, mediana ln2, p90 ln10
+  var VERD = {media: 1, mediana: Math.LN2, p90: Math.log(10)};
+  var NOMBRE = {media: "media", mediana: "mediana", p90: "percentil 90"};
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function estad(v, cual) {
+    var i, n = v.length;
+    if (cual === "media") {
+      var s = 0; for (i = 0; i < n; i++) s += v[i]; return s / n;
+    }
+    var w = Array.prototype.slice.call(v).sort(function (a, b) { return a - b; });
+    if (cual === "mediana")
+      return n % 2 ? w[(n - 1) / 2] : (w[n / 2 - 1] + w[n / 2]) / 2;
+    var pos = 0.9 * (n - 1), lo = Math.floor(pos), f = pos - lo;
+    return w[lo] + f * (w[Math.min(lo + 1, n - 1)] - w[lo]);
+  }
+  function sd(a) {
+    var i, m = 0, v = 0;
+    for (i = 0; i < a.length; i++) m += a[i];
+    m /= a.length;
+    for (i = 0; i < a.length; i++) v += (a[i] - m) * (a[i] - m);
+    return Math.sqrt(v / a.length);
+  }
+
+  function dibujar() {
+    var cual = se.value, n = +sn.value, s = semilla, i, j;
+    function u() {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    }
+    function expo() { return -Math.log(1 - u() || 1e-12); }
+
+    // (1) la muestra original, una sola
+    var orig = new Float64Array(n);
+    for (i = 0; i < n; i++) orig[i] = expo();
+    var obs = estad(orig, cual);
+
+    // (2) distribucion muestral VERDADERA: muestras nuevas de la poblacion
+    var verd = new Float64Array(B), tmp = new Float64Array(n);
+    for (i = 0; i < B; i++) {
+      for (j = 0; j < n; j++) tmp[j] = expo();
+      verd[i] = estad(tmp, cual);
+    }
+    // (3) distribucion BOOTSTRAP: remuestreos con reemplazo de la original
+    var boot = new Float64Array(B);
+    for (i = 0; i < B; i++) {
+      for (j = 0; j < n; j++) tmp[j] = orig[(u() * n) | 0];
+      boot[i] = estad(tmp, cual);
+    }
+
+    var sdv = sd(verd), sdb = sd(boot);
+
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    var todo = [], lo = Infinity, hi = -Infinity;
+    for (i = 0; i < B; i++) {
+      if (verd[i] < lo) lo = verd[i]; if (verd[i] > hi) hi = verd[i];
+      if (boot[i] < lo) lo = boot[i]; if (boot[i] > hi) hi = boot[i];
+    }
+    var pad = (hi - lo) * 0.04; lo -= pad; hi += pad;
+    function sx(v) { return X0 + (v - lo) / (hi - lo) * (X1 - X0); }
+
+    function histo(a, col, op) {
+      var bins = new Array(NB).fill(0), k;
+      for (k = 0; k < B; k++) {
+        var b = Math.floor((a[k] - lo) / (hi - lo) * NB);
+        if (b >= 0 && b < NB) bins[b]++;
+      }
+      return bins;
+    }
+    var hv = histo(verd), hb = histo(boot);
+    var pico = Math.max(Math.max.apply(null, hv), Math.max.apply(null, hb)) || 1;
+    function sy(c) { return Y0 - c / pico * (Y0 - Y1); }
+    var w = (X1 - X0) / NB;
+
+    function pinta(bins, col, op) {
+      var d = "M " + X0.toFixed(1) + " " + Y0.toFixed(1), k;
+      for (k = 0; k < NB; k++) {
+        d += " L " + (X0 + k * w).toFixed(1) + " " + sy(bins[k]).toFixed(1);
+        d += " L " + (X0 + (k + 1) * w).toFixed(1) + " " + sy(bins[k]).toFixed(1);
+      }
+      d += " L " + X1.toFixed(1) + " " + Y0.toFixed(1) + " Z";
+      svg.appendChild(el("path", {d: d, fill: col, "fill-opacity": op, stroke: col, "stroke-width": 1.3}));
+    }
+    pinta(hv, C_VER, 0.18);
+    pinta(hb, C_BOO, 0.22);
+
+    svg.appendChild(el("text", {x: X0, y: 22, "font-size": 12, "font-weight": 600,
+      fill: "var(--r-tinta,#222)"},
+      NOMBRE[cual] + " de una exponencial, n = " + n));
+    svg.appendChild(el("rect", {x: X0, y: 30, width: 10, height: 8, fill: C_VER, "fill-opacity": 0.3}));
+    svg.appendChild(el("text", {x: X0 + 15, y: 38, "font-size": 10, fill: C_VER},
+      "muestras nuevas de la población (inalcanzable)"));
+    svg.appendChild(el("rect", {x: 300, y: 30, width: 10, height: 8, fill: C_BOO, "fill-opacity": 0.35}));
+    svg.appendChild(el("text", {x: 315, y: 38, "font-size": 10, fill: C_BOO},
+      "remuestreos de una sola muestra"));
+
+    svg.appendChild(el("line", {x1: X0, y1: Y0, x2: X1, y2: Y0, stroke: "var(--r-linea,#ccc)"}));
+    var paso = (hi - lo) > 2 ? 0.5 : ((hi - lo) > 0.8 ? 0.2 : 0.1);
+    for (var v2 = Math.ceil(lo / paso) * paso; v2 <= hi; v2 += paso) {
+      svg.appendChild(el("text", {x: sx(v2), y: Y0 + 16, "font-size": 9.5, "text-anchor": "middle",
+        fill: "var(--r-tinta-suave,#666)"}, v2.toFixed(1)));
+    }
+
+    svg.appendChild(el("line", {x1: sx(VERD[cual]), y1: Y0, x2: sx(VERD[cual]), y2: Y1 - 4,
+      stroke: C_TH, "stroke-width": 1.6, "stroke-dasharray": "5 4"}));
+    svg.appendChild(el("text", {x: sx(VERD[cual]), y: Y1 - 9, "font-size": 10.5,
+      "text-anchor": "middle", fill: C_TH}, "verdadero"));
+    svg.appendChild(el("line", {x1: sx(obs), y1: Y0, x2: sx(obs), y2: Y1 + 8,
+      stroke: C_OBS, "stroke-width": 1.8}));
+    svg.appendChild(el("text", {x: sx(obs), y: Y1 + 3, "font-size": 10.5,
+      "text-anchor": "middle", fill: C_OBS}, "observado"));
+
+    var coc = sdb / sdv;
+    var juicio = Math.abs(coc - 1) < 0.15
+      ? "En esta muestra las dos anchuras casi coinciden"
+      : (coc < 1
+         ? "En esta muestra el bootstrap se queda <b>corto</b> un " + Math.round(100 * (1 - coc)) + " %"
+         : "En esta muestra el bootstrap se pasa <b>largo</b> un " + Math.round(100 * (coc - 1)) + " %");
+    var extra = cual === "media"
+      ? " Para la media hay fórmula —σ/√n = " + (1 / Math.sqrt(n)).toFixed(4) +
+        "—, así que aquí se puede comprobar; para los otros dos estadísticos no la hay."
+      : " Para este estadístico no hay fórmula elemental, y el bootstrap da la anchura igual.";
+    lec.innerHTML = "<span class=\"fx\">anchura verdadera " + sdv.toFixed(4) +
+      "   ·   anchura bootstrap " + sdb.toFixed(4) +
+      "   ·   cociente " + coc.toFixed(3) + "</span><br>" +
+      juicio + ", y esa anchura es el error estándar." + extra + "<br>" +
+      "Pulsando <b>Otra muestra original</b> varias veces se ve lo importante: con n pequeña el " +
+      "cociente baila mucho, y con n grande se pega a 1. El bootstrap <b>estima</b> el error " +
+      "estándar, y esa estimación tiene su propio error.<br>" +
+      "Lo que no corrige nunca es el <b>centro</b>: la campana verde está centrada en el valor " +
+      "observado, no en el verdadero. Si la muestra salió alta, sale alta con ella.";
+  }
+
+  se.addEventListener("change", dibujar);
+  sn.addEventListener("change", dibujar);
+  btn.addEventListener("click", function () { semilla = (semilla * 16807 + 12345) | 0; dibujar(); });
+  dibujar();
+})();
+</script>
+```
+
+El visual pone una al lado de la otra la distribución que **no** se puede calcular en la vida real —la morada, que exige volver a la población tantas veces como haga falta— y la que sí —la verde, que solo usa los $n$ datos que ya se tienen—. La lectura tiene dos partes que conviene no mezclar.
+
+**La anchura se recupera.** Las dos campanas miden aproximadamente lo mismo, y esa anchura es el error estándar. Eso es lo que hace útil al método.
+
+**El centro no.** La campana verde está centrada en el valor observado, no en el verdadero. El bootstrap estima la **variabilidad** de un estimador, no corrige su error: si la muestra salió alta, la distribución bootstrap entera sale alta con ella. Por eso un intervalo bootstrap sigue siendo un intervalo, con su cobertura, y no una garantía.
+
+## 2. El error estándar por bootstrap
+
+::: {.definicion}
+**Definición 11.4 (error estándar bootstrap).** La desviación típica de los $B$ valores $\hat{\theta}^{*}$.
+:::
+
+Para el único caso en que ya se conoce la respuesta, el método la reproduce exactamente.
+
+::: {.proposicion}
+**Proposición 11.5.** Para $\hat{\theta} = \bar{x}$, y condicionando a los datos observados,
+$$E^{*}\big[\bar{x}^{*}\big] = \bar{x}, \qquad \text{Var}^{*}\big(\bar{x}^{*}\big) = \frac{1}{n}\cdot\frac{Q}{n},$$
+donde $Q = \sum_i (x_i-\bar{x})^2$. El error estándar bootstrap es, por tanto, $\sqrt{Q}/n$.
+:::
+
+::: {.demostracion}
+*Demostración.* Condicionando a los datos, cada $x_i^{*}$ es una variable que toma el valor $x_j$ con probabilidad $1/n$, para $j = 1,\dots,n$. Su esperanza es
+$$E^{*}[x_i^{*}] = \sum_{j=1}^{n} x_j \cdot \frac{1}{n} = \bar{x},$$
+y su varianza, por la Definición 4.5,
+$$\text{Var}^{*}(x_i^{*}) = \sum_{j=1}^{n} (x_j-\bar{x})^2 \cdot \frac{1}{n} = \frac{Q}{n}.$$
+Los $x_i^{*}$ son independientes entre sí —cada sorteo es independiente de los demás, que es lo que significa «con reemplazo»—, así que la Proposición 6.1 se aplica tal cual y da $E^{*}[\bar{x}^{*}] = \bar{x}$ y $\text{Var}^{*}(\bar{x}^{*}) = (Q/n)/n$. La raíz es $\sqrt{Q}/n$. [∎]{.fin-demo}
+:::
+
+Vale la pena mirar qué varianza ha aparecido: $Q/n$, con denominador $n$. Es exactamente $\hat{\sigma}^2_{\text{MV}}$ de la Proposición 8.6, no la insesgada $s^2 = Q/(n-1)$. **El bootstrap elige el denominador $n$ por su cuenta**, sin que nadie se lo diga, porque trata la muestra como si fuera la población entera —y en una población de $n$ puntos, la varianza es la media de los cuadrados sobre $n$—. La diferencia es el factor $\sqrt{(n-1)/n}$, despreciable salvo con muestras muy pequeñas, y es la misma que separaba los dos puntos del visual de la lección 8.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(4)
+n, B = 30, 40_000
+x = rng.exponential(1.0, size=n)
+
+Q  = ((x - x.mean()) ** 2).sum()
+s  = x.std(ddof=1)
+
+idx = rng.integers(0, n, size=(B, n))        # B remuestreos con reemplazo
+medias = x[idx].mean(axis=1)
+
+print(f"EE bootstrap medido      : {medias.std():.6f}")
+print(f"√Q / n  (Proposicion 11.5): {np.sqrt(Q) / n:.6f}")
+print(f"s / √n  (formula clasica) : {s / np.sqrt(n):.6f}")
+print()
+print(f"cociente entre las dos formulas: {(np.sqrt(Q)/n) / (s/np.sqrt(n)):.6f}")
+print(f"√((n−1)/n)                     : {np.sqrt((n-1)/n):.6f}")
+```
+
+El valor medido y la fórmula de la Proposición 11.5 coinciden en cuatro cifras; la discrepancia que queda es el error de Monte Carlo de usar $B$ finito. Y el cociente entre las dos fórmulas es exactamente $\sqrt{(n-1)/n}$, como anuncia la proposición.
+
+### $B$ no es $n$
+
+Hay dos fuentes de error distintas en juego y se controlan con mandos distintos. Confundirlas es el error más común al usar el método.
+
+```{=html}
+<div class="viz-bn">
+  <div class="controles">
+    <label>Réplicas bootstrap B <input id="bn-b" type="range" min="0" max="4" step="1" value="2"><output id="bn-b-v">400</output></label>
+    <label>Datos n <input id="bn-n" type="range" min="0" max="4" step="1" value="2"><output id="bn-n-v">40</output></label>
+  </div>
+  <svg id="bn-svg" viewBox="0 0 560 300" role="img" aria-label="Cinco intervalos bootstrap calculados sobre los mismos datos, comparados con cinco calculados sobre muestras distintas"></svg>
+  <p class="lectura" id="bn-lectura"></p>
+</div>
+<style>
+.viz-bn {
+  border: 1px solid var(--r-linea, #ddd);
+  border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0;
+}
+.viz-bn .controles {
+  display: flex; flex-wrap: wrap; gap: .45rem 1.3rem;
+  align-items: center; margin-bottom: .85rem; font-size: .85rem;
+}
+.viz-bn label { display: flex; align-items: center; gap: .4rem; }
+.viz-bn input[type=range] { width: 7rem; }
+.viz-bn output {
+  font-family: var(--bs-font-monospace, monospace); font-size: .8rem;
+  min-width: 2.8rem; color: var(--r-tinta-suave, #555);
+}
+.viz-bn svg { width: 100%; height: auto; display: block; }
+.viz-bn .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5em; line-height: 1.6; }
+.viz-bn .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_MISMO = "#0F6E68", C_OTRO = "#B45309", C_TH = "#B91C1C";
+  var BS = [50, 150, 400, 1500, 6000], NS = [10, 20, 40, 160, 640];
+  var svg = document.getElementById("bn-svg"), lec = document.getElementById("bn-lectura");
+  var sb = document.getElementById("bn-b"), sbv = document.getElementById("bn-b-v");
+  var sn = document.getElementById("bn-n"), snv = document.getElementById("bn-n-v");
+  var K = 6, MU = 1;   // exponencial de media 1
+  var X0 = 46, X1 = 526;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    var B = BS[+sb.value], n = NS[+sn.value];
+    sbv.textContent = String(B); snv.textContent = String(n);
+    var s = 5150505, i, j, k;
+    function u() {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    }
+    function expo() { return -Math.log(1 - u() || 1e-12); }
+
+    function intervalo(datos) {
+      var m = datos.length, medias = new Float64Array(B), tmp;
+      for (i = 0; i < B; i++) {
+        var ac = 0;
+        for (j = 0; j < m; j++) ac += datos[(u() * m) | 0];
+        medias[i] = ac / m;
+      }
+      tmp = Array.prototype.slice.call(medias).sort(function (a, b) { return a - b; });
+      return [tmp[Math.floor(0.025 * B)], tmp[Math.min(B - 1, Math.floor(0.975 * B))]];
+    }
+
+    // (a) K intervalos sobre LOS MISMOS datos: solo cambia la semilla del remuestreo
+    var datos = new Float64Array(n);
+    for (i = 0; i < n; i++) datos[i] = expo();
+    var mismos = [];
+    for (k = 0; k < K; k++) mismos.push(intervalo(datos));
+
+    // (b) K intervalos sobre datos NUEVOS cada vez
+    var otros = [];
+    for (k = 0; k < K; k++) {
+      var d2 = new Float64Array(n);
+      for (i = 0; i < n; i++) d2[i] = expo();
+      otros.push(intervalo(d2));
+    }
+
+    function disp(arr) {
+      var c = arr.map(function (a) { return (a[0] + a[1]) / 2; });
+      var m = 0, v = 0;
+      for (i = 0; i < c.length; i++) m += c[i];
+      m /= c.length;
+      for (i = 0; i < c.length; i++) v += (c[i] - m) * (c[i] - m);
+      return Math.sqrt(v / c.length);
+    }
+    var dm = disp(mismos), doo = disp(otros);
+
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    var lo = Infinity, hi = -Infinity;
+    mismos.concat(otros).forEach(function (a) {
+      if (a[0] < lo) lo = a[0]; if (a[1] > hi) hi = a[1];
+    });
+    if (MU < lo) lo = MU; if (MU > hi) hi = MU;
+    var pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+    function sx(v) { return X0 + (v - lo) / (hi - lo) * (X1 - X0); }
+
+    svg.appendChild(el("line", {x1: sx(MU), y1: 34, x2: sx(MU), y2: 252,
+      stroke: C_TH, "stroke-width": 1.5, "stroke-dasharray": "5 4"}));
+    svg.appendChild(el("text", {x: sx(MU) + 5, y: 32, "font-size": 10.5, fill: C_TH}, "μ = 1"));
+
+    function bloque(arr, y0, col, titulo) {
+      svg.appendChild(el("text", {x: X0 - 2, y: y0 - 12, "font-size": 11, "font-weight": 600,
+        fill: col}, titulo));
+      arr.forEach(function (a, idx) {
+        var y = y0 + idx * 14;
+        svg.appendChild(el("line", {x1: sx(a[0]).toFixed(1), y1: y, x2: sx(a[1]).toFixed(1), y2: y,
+          stroke: col, "stroke-width": 2.4, "stroke-linecap": "round"}));
+        svg.appendChild(el("line", {x1: sx(a[0]).toFixed(1), y1: y - 3.5, x2: sx(a[0]).toFixed(1), y2: y + 3.5, stroke: col}));
+        svg.appendChild(el("line", {x1: sx(a[1]).toFixed(1), y1: y - 3.5, x2: sx(a[1]).toFixed(1), y2: y + 3.5, stroke: col}));
+      });
+    }
+    bloque(mismos, 48, C_MISMO, "mismos datos, B réplicas nuevas cada vez");
+    bloque(otros, 160, C_OTRO, "datos nuevos cada vez");
+
+    svg.appendChild(el("line", {x1: X0, y1: 258, x2: X1, y2: 258, stroke: "var(--r-linea,#ccc)"}));
+    var paso = (hi - lo) > 1.2 ? 0.5 : ((hi - lo) > 0.5 ? 0.2 : 0.1);
+    for (var v = Math.ceil(lo / paso) * paso; v <= hi; v += paso) {
+      svg.appendChild(el("text", {x: sx(v), y: 273, "font-size": 9.5, "text-anchor": "middle",
+        fill: "var(--r-tinta-suave,#666)"}, v.toFixed(1)));
+    }
+    svg.appendChild(el("text", {x: (X0 + X1) / 2, y: 290, "font-size": 10.5, "text-anchor": "middle",
+      fill: "var(--r-tinta-suave,#666)"}, "media de una exponencial"));
+
+    lec.innerHTML = "<span class=\"fx\">B = " + B + "   ·   n = " + n +
+      "   ·   dispersión de los centros: mismos datos " + dm.toFixed(4) +
+      ", datos nuevos " + doo.toFixed(4) + "</span><br>" +
+      "Los seis intervalos de arriba salen de <b>los mismos n datos</b>: solo cambian los sorteos " +
+      "del remuestreo. Subiendo B se juntan hasta ser indistinguibles — eso es error de Monte Carlo, " +
+      "y se compra barato.<br>" +
+      "Los seis de abajo salen de <b>datos distintos</b>. Subir B no los junta; solo subir n lo hace. " +
+      "Eso es el error estadístico, y es el que de verdad importa. <b>B no es n.</b>";
+  }
+
+  sb.addEventListener("input", dibujar);
+  sn.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+Los seis intervalos de arriba salen de los **mismos** datos: lo único que cambia entre ellos son los sorteos del remuestreo. Su dispersión es **error de Monte Carlo**, y subiendo $B$ desaparece. Es barato: $B$ solo cuesta tiempo de cálculo.
+
+Los seis de abajo salen de datos **distintos**. Subir $B$ no los junta en absoluto, porque cada uno está estimando desde una muestra diferente. Su dispersión es el **error estadístico**, el mismo de la lección 9, y lo único que lo reduce es $n$.
+
+De ahí la regla: $B$ se elige lo bastante grande para que el ruido de Monte Carlo no se note —unos miles bastan para un error estándar; para percentiles extremos hacen falta más— y a partir de ahí subirlo no aporta nada. **Ningún valor de $B$ compensa una muestra pequeña.**
+
+## 3. Intervalos por percentiles, y su cobertura
+
+::: {.definicion}
+**Definición 11.6 (intervalo bootstrap por percentiles).** El intervalo cuyos extremos son los percentiles $100\alpha/2$ y $100(1-\alpha/2)$ de los $B$ valores $\hat{\theta}^{*}$.
+:::
+
+Es la construcción de Downey en §8.6, aplicada a la distribución bootstrap en vez de a una distribución muestral simulada desde la población. No hay fórmula, no hace falta conocer $\sigma$, y no se supone normalidad en ningún punto.
+
+Lo que sí hace falta es lo mismo que en la lección 9: **comprobar la cobertura**. La Definición 11.6 no garantiza nada por sí sola.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(2026)
+MEDIANA_VERDADERA = np.log(2)                # mediana de una exponencial de media 1
+
+print("cobertura del intervalo por percentiles, nominal 95 %, poblacion exponencial")
+print("   n     media    mediana")
+for n in [8, 16, 32, 64, 128]:
+    R, B = 1200, 400
+    cub_m = cub_md = 0
+    for _ in range(R):
+        x  = rng.exponential(1.0, size=n)
+        Rs = x[rng.integers(0, n, size=(B, n))]
+        bm  = np.sort(Rs.mean(axis=1))
+        bmd = np.sort(np.median(Rs, axis=1))
+        if bm[int(0.025*B)]  <= 1.0 <= bm[int(0.975*B)]:   cub_m  += 1
+        if bmd[int(0.025*B)] <= MEDIANA_VERDADERA <= bmd[int(0.975*B)]: cub_md += 1
+    print(f"{n:5d}   {100*cub_m/R:6.1f} %  {100*cub_md/R:6.1f} %")
+```
+
+Con $n = 8$ el intervalo que promete 95 % cubre alrededor del 85 % para la media. El déficit se cierra al crecer $n$, pero está ahí, y es del mismo tipo que el de la Proposición 9.7: **cobertura nominal y cobertura real no son lo mismo, y la segunda hay que medirla**.
+
+La razón de fondo es que la población es asimétrica —una exponencial— y el intervalo por percentiles no corrige ni el sesgo del estimador ni esa asimetría. Existen variantes que sí lo hacen, la más conocida BCa (*bias-corrected and accelerated*), y a cambio son más caras y más difíciles de explicar. La decisión práctica es la de siempre: medir la cobertura en el problema concreto antes de confiar en ella.
+
+## 4. Dónde falla
+
+El bootstrap no es universal, y el caso donde se rompe es instructivo porque falla **por construcción**, no por falta de datos.
+
+::: {.proposicion}
+**Proposición 11.7.** Sea $\hat{\theta} = \max_i x_i$ y sea $M^{*}$ el máximo de un remuestreo. Entonces
+$$P^{*}\big(M^{*} = \hat{\theta}\big) = 1-\Big(1-\frac{1}{n}\Big)^{n} \xrightarrow[n\to\infty]{} 1-\frac{1}{e} \approx 0{,}632.$$
+:::
+
+::: {.demostracion}
+*Demostración.* Supóngase que el máximo se alcanza en un solo dato, lo que ocurre con probabilidad uno si la población es continua. Cada uno de los $n$ sorteos del remuestreo elige ese dato con probabilidad $1/n$, y por tanto **no** lo elige con probabilidad $1-1/n$. Los $n$ sorteos son independientes, así que la probabilidad de que ninguno lo elija es $(1-1/n)^{n}$. El complemento es la expresión del enunciado. Para el límite se usa $(1-1/n)^{n} \to e^{-1}$, que es la definición del número $e$. [∎]{.fin-demo}
+:::
+
+```{=html}
+<div class="viz-max">
+  <div class="controles">
+    <label>n <select id="mx-n"><option>5</option><option selected>20</option><option>80</option></select></label>
+    <button id="mx-otra" type="button">Otra muestra original</button>
+  </div>
+  <svg id="mx-svg" viewBox="0 0 560 320" role="img" aria-label="Distribución muestral del máximo comparada con su distribución bootstrap, que concentra un átomo de masa en el máximo observado"></svg>
+  <p class="lectura" id="mx-lectura"></p>
+</div>
+<style>
+.viz-max {
+  border: 1px solid var(--r-linea, #ddd);
+  border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0;
+}
+.viz-max .controles {
+  display: flex; flex-wrap: wrap; gap: .45rem 1.1rem;
+  align-items: center; margin-bottom: .85rem; font-size: .85rem;
+}
+.viz-max label { display: flex; align-items: center; gap: .4rem; }
+.viz-max select {
+  font-size: .85rem; padding: .2rem .4rem; border-radius: 5px;
+  border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit;
+}
+.viz-max button {
+  font-size: .8rem; padding: .22rem .6rem; border-radius: 5px; cursor: pointer;
+  border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit;
+}
+.viz-max button:hover { border-color: var(--r-acento, #0F6E68); color: var(--r-acento, #0F6E68); }
+.viz-max svg { width: 100%; height: auto; display: block; }
+.viz-max .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5em; line-height: 1.6; }
+.viz-max .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_VER = "#4B3A7A", C_BOO = "#0F6E68", C_TH = "#B91C1C", C_AT = "#B45309";
+  var svg = document.getElementById("mx-svg"), lec = document.getElementById("mx-lectura");
+  var sn = document.getElementById("mx-n"), btn = document.getElementById("mx-otra");
+  var THETA = 10, B = 6000, NB = 44, semilla = 13131;
+  var X0 = 44, X1 = 522, Y0 = 250, Y1 = 54;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    var n = +sn.value, s = semilla, i, j;
+    function u() {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    }
+
+    var orig = new Float64Array(n), obs = 0;
+    for (i = 0; i < n; i++) { orig[i] = u() * THETA; if (orig[i] > obs) obs = orig[i]; }
+
+    var verd = new Float64Array(B), boot = new Float64Array(B), iguales = 0;
+    for (i = 0; i < B; i++) {
+      var m1 = 0, m2 = 0;
+      for (j = 0; j < n; j++) {
+        var y = u() * THETA; if (y > m1) m1 = y;
+        var z = orig[(u() * n) | 0]; if (z > m2) m2 = z;
+      }
+      verd[i] = m1; boot[i] = m2;
+      if (m2 === obs) iguales++;
+    }
+    var frac = iguales / B, teor = 1 - Math.pow(1 - 1 / n, n);
+
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    var lo = Math.min(obs, THETA) * 0.62, hi = THETA * 1.03;
+    function sx(v) { return X0 + (v - lo) / (hi - lo) * (X1 - X0); }
+    function histo(a) {
+      var bins = new Array(NB).fill(0), k;
+      for (k = 0; k < B; k++) {
+        var b = Math.floor((a[k] - lo) / (hi - lo) * NB);
+        if (b >= 0 && b < NB) bins[b]++;
+      }
+      return bins;
+    }
+    var hv = histo(verd), hb = histo(boot);
+    var pico = Math.max.apply(null, hv) || 1;
+    function sy(c) { return Y0 - Math.min(c / pico, 1.12) * (Y0 - Y1); }
+    var w = (X1 - X0) / NB;
+
+    for (i = 0; i < NB; i++) {
+      if (hv[i]) svg.appendChild(el("rect", {x: (X0 + i * w).toFixed(2), y: sy(hv[i]).toFixed(2),
+        width: Math.max(1, w - 1).toFixed(2), height: (Y0 - sy(hv[i])).toFixed(2),
+        fill: C_VER, "fill-opacity": 0.22, stroke: C_VER, "stroke-width": 0.6}));
+    }
+    for (i = 0; i < NB; i++) {
+      if (!hb[i]) continue;
+      var esAtomo = (X0 + i * w) <= sx(obs) && sx(obs) <= (X0 + (i + 1) * w);
+      svg.appendChild(el("rect", {x: (X0 + i * w).toFixed(2), y: sy(hb[i]).toFixed(2),
+        width: Math.max(1, w - 1).toFixed(2), height: (Y0 - sy(hb[i])).toFixed(2),
+        fill: esAtomo ? C_AT : C_BOO, "fill-opacity": esAtomo ? 0.55 : 0.3,
+        stroke: esAtomo ? C_AT : C_BOO, "stroke-width": 0.8}));
+    }
+
+    svg.appendChild(el("text", {x: X0, y: 22, "font-size": 12, "font-weight": 600,
+      fill: "var(--r-tinta,#222)"}, "El máximo de una muestra uniforme en [0, θ], n = " + n));
+    svg.appendChild(el("rect", {x: X0, y: 30, width: 10, height: 8, fill: C_VER, "fill-opacity": 0.3}));
+    svg.appendChild(el("text", {x: X0 + 15, y: 38, "font-size": 10, fill: C_VER},
+      "distribución muestral verdadera"));
+    svg.appendChild(el("rect", {x: 250, y: 30, width: 10, height: 8, fill: C_BOO, "fill-opacity": 0.35}));
+    svg.appendChild(el("text", {x: 265, y: 38, "font-size": 10, fill: C_BOO}, "bootstrap"));
+    svg.appendChild(el("rect", {x: 360, y: 30, width: 10, height: 8, fill: C_AT, "fill-opacity": 0.6}));
+    svg.appendChild(el("text", {x: 375, y: 38, "font-size": 10, fill: C_AT}, "el átomo en el máximo observado"));
+
+    svg.appendChild(el("line", {x1: X0, y1: Y0, x2: X1, y2: Y0, stroke: "var(--r-linea,#ccc)"}));
+    for (var v = Math.ceil(lo); v <= hi; v++) {
+      svg.appendChild(el("text", {x: sx(v), y: Y0 + 16, "font-size": 9.5, "text-anchor": "middle",
+        fill: "var(--r-tinta-suave,#666)"}, String(v)));
+    }
+    svg.appendChild(el("line", {x1: sx(THETA), y1: Y0, x2: sx(THETA), y2: Y1 - 6,
+      stroke: C_TH, "stroke-width": 1.6, "stroke-dasharray": "5 4"}));
+    svg.appendChild(el("text", {x: sx(THETA) - 4, y: Y1 - 11, "font-size": 10.5,
+      "text-anchor": "end", fill: C_TH}, "θ = 10"));
+
+    lec.innerHTML = "<span class=\"fx\">réplicas bootstrap que repiten el máximo observado: " +
+      (100 * frac).toFixed(1) + " %   ·   teórico 1 − (1 − 1/n)ⁿ = " + (100 * teor).toFixed(1) +
+      " %   ·   límite 1 − 1/e = 63.2 %</span><br>" +
+      "La barra naranja es una <b>masa puntual</b>: más de tres de cada cinco remuestreos devuelven " +
+      "exactamente el mismo número. La distribución muestral verdadera, en cambio, es continua y no " +
+      "tiene ningún átomo.<br>" +
+      "Y el bootstrap <b>nunca</b> propone un valor por encima del máximo observado, porque no puede " +
+      "inventar datos que no estén en la muestra. Subiendo n el átomo no encoge: se acerca al 63,2 % " +
+      "y se queda ahí. Este es un caso donde el método falla y no se arregla con más datos.";
+  }
+
+  sn.addEventListener("change", dibujar);
+  btn.addEventListener("click", function () { semilla = (semilla * 16807 + 12345) | 0; dibujar(); });
+  dibujar();
+})();
+</script>
+```
+
+Dos cosas se ven de golpe y ninguna se arregla con más datos.
+
+La primera: la distribución bootstrap tiene un **átomo** —una masa puntual— de peso $\approx 0{,}632$ sobre el máximo observado, mientras que la verdadera es continua. Y ese peso **no baja con $n$**: converge a $1-1/e$ y se queda ahí.
+
+La segunda: el bootstrap nunca propone un valor por encima del máximo observado, porque no puede inventar datos que no estén en la muestra. Pero la distribución muestral verdadera del máximo sí tiene masa por encima —otra muestra podría dar un máximo mayor—. El método es ciego a la mitad del problema.
+
+La causa general es que $\hat{F}_n$ aproxima bien a $F$ **en el centro** y mal en los extremos: donde hay pocos datos, la distribución empírica es una mala copia. Los estadísticos que dependen de la cola —máximos, mínimos, percentiles muy extremos— heredan ese fallo. Los que dependen del centro —medias, medianas, correlaciones— no.
+
+## 5. Pruebas de permutación
+
+El mismo giro sirve para la lección 10: si se puede simular bajo $H_0$, no hace falta conocer la distribución del estadístico.
+
+::: {.definicion}
+**Definición 11.8 (prueba de permutación).** Para comparar dos grupos bajo $H_0$: «las dos muestras vienen de la misma distribución», se juntan todos los datos, se reparten al azar en dos grupos de los tamaños originales, se calcula el estadístico, y se repite $M$ veces. El valor p es
+$$p = \frac{1 + \#\{\text{permutaciones con estadístico} \ge \text{observado}\}}{M+1}.$$
+:::
+
+::: {.proposicion}
+**Proposición 11.9.** Bajo $H_0$, ese valor p cumple $P(p \le \alpha) \le \alpha$ para todo $\alpha$. La prueba es **exacta**: no es una aproximación que mejore con $n$.
+:::
+
+::: {.demostracion}
+*Demostración.* Bajo $H_0$ las etiquetas de grupo no aportan información, así que el estadístico observado y los $M$ permutados son $M+1$ valores intercambiables: cualquier orden entre ellos tiene la misma probabilidad. El rango del observado dentro de los $M+1$ es entonces uniforme sobre $\{1,\dots,M+1\}$, y el valor p de la definición es ese rango dividido entre $M+1$ (contando desde arriba). Por tanto, para $\alpha = k/(M+1)$,
+$$P(p \le \alpha) = P(\text{rango} \le k) = \frac{k}{M+1} = \alpha,$$
+y para un $\alpha$ cualquiera se redondea hacia abajo al múltiplo de $1/(M+1)$ más cercano, lo que da $\le \alpha$. El $1+$ del numerador es lo que hace que la cuenta salga: sin él, el valor p podría valer cero y la desigualdad fallaría. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(88)
+
+def p_permutacion(a, b, M=9999, semilla=0):
+    """Valor p de la Definicion 11.8 para la diferencia de medias."""
+    r = np.random.default_rng(semilla)
+    obs = abs(a.mean() - b.mean())
+    junto, na = np.concatenate([a, b]), len(a)
+    mayores = 0
+    for _ in range(M):
+        r.shuffle(junto)
+        if abs(junto[:na].mean() - junto[na:].mean()) >= obs:
+            mayores += 1
+    return (1 + mayores) / (M + 1)
+
+# (a) dos grupos de la MISMA poblacion: H0 cierta
+a = rng.exponential(1.0, size=30)
+b = rng.exponential(1.0, size=35)
+print(f"H0 cierta  → p = {p_permutacion(a, b, 2999, 1):.4f}")
+
+# (b) dos grupos con medias distintas
+c = rng.exponential(1.0, size=30)
+d = rng.exponential(1.7, size=35)
+print(f"H0 falsa   → p = {p_permutacion(c, d, 2999, 2):.4f}")
+print()
+print("Sin suponer normalidad, sin conocer sigma y sin ninguna formula:")
+print("solo barajando las etiquetas de grupo.")
+```
+
+Nótese que no aparece ninguna distribución teórica: la de $H_0$ se construye barajando. Es el mismo estadístico de la Definición 10.2 y el mismo valor p de la Definición 10.3; lo único que cambia es de dónde sale la distribución nula. Ese es el enfoque del capítulo 9 de *Think Stats* de principio a fin.
+
+::: {.callout-note}
+Bootstrap y permutación se parecen y no son lo mismo. El bootstrap **remuestrea con reemplazo dentro** de cada grupo y estima la variabilidad de un estimador; no supone $H_0$. La permutación **reparte sin reemplazo entre** los grupos y construye la distribución bajo $H_0$; no estima ningún error estándar. Uno responde «¿cuánto varía esto?» y el otro «¿podría ser casualidad?».
+:::
+
+## Ejercicios
+
+### Ejercicio 1 — El error estándar bootstrap de la mediana
+
+No hay fórmula elemental para el error estándar de la mediana muestral. Calcularlo por bootstrap con $B = 20\,000$ sobre la muestra dada, y compararlo con el valor verdadero, obtenido simulando muestras nuevas de la población. Devolver el error estándar bootstrap.
+
+```{pyodide}
+#| exercise: ex_med
+import numpy as np
+
+rng = np.random.default_rng(12)
+n, B = 60, 20_000
+x = rng.exponential(1.0, size=n)
+
+# Remuestrear con reemplazo B veces y quedarse con la mediana de cada remuestreo.
+medianas = ______
+
+ee_boot = medianas.std()
+
+# valor verdadero, que en un problema real no se tendria
+verdad = np.median(rng.exponential(1.0, size=(40_000, n)), axis=1).std()
+print(f"EE bootstrap : {ee_boot:.5f}")
+print(f"EE verdadero : {verdad:.5f}")
+print(f"cociente     : {ee_boot/verdad:.4f}")
+```
+
+::: {.hint exercise="ex_med"}
+`rng.integers(0, n, size=(B, n))` da una matriz de índices; `x[idx]` la convierte en una matriz de $B$ remuestreos de tamaño $n$. La mediana por filas es `np.median(..., axis=1)`.
+:::
+
+::: {.solution exercise="ex_med"}
+```python
+medianas = np.median(x[rng.integers(0, n, size=(B, n))], axis=1)
+```
+
+El cociente cae cerca de 1, pero no exactamente: con $n = 60$ la estimación bootstrap del error estándar tiene ella misma un error de varios puntos porcentuales. Es lo que muestra el primer visual al pulsar *Otra muestra original*.
+:::
+
+```{pyodide}
+#| exercise: ex_med
+#| check: true
+import numpy as np
+ok = 0.7 < ee_boot / verdad < 1.4
+feedback = ("Correcto." if ok else
+            "El EE bootstrap no se parece al verdadero; revisa cómo formas los remuestreos.")
+{"correct": bool(ok), "message": feedback}
+```
+
+### Ejercicio 2 — El átomo del máximo
+
+Comprobar la Proposición 11.7: remuestrear 20 000 veces una muestra de tamaño $n = 25$ y contar qué fracción de los remuestreos tiene el mismo máximo que la muestra original. Devolver esa fracción.
+
+```{pyodide}
+#| exercise: ex_atomo
+import numpy as np
+
+rng = np.random.default_rng(6)
+n, B = 25, 20_000
+x = rng.uniform(0, 10, size=n)
+maximo_observado = x.max()
+
+maximos = x[rng.integers(0, n, size=(B, n))].max(axis=1)
+
+# Fraccion de remuestreos cuyo maximo coincide EXACTAMENTE con el observado.
+fraccion = ______
+
+print(f"fraccion medida        : {fraccion:.4f}")
+print(f"1 − (1 − 1/n)ⁿ         : {1 - (1 - 1/n)**n:.4f}")
+print(f"limite 1 − 1/e         : {1 - np.exp(-1):.4f}")
+```
+
+::: {.hint exercise="ex_atomo"}
+`maximos == maximo_observado` da un vector de booleanos. Su media es la fracción. La comparación exacta con `==` es válida aquí: el valor remuestreado es literalmente el mismo número de punto flotante, copiado.
+:::
+
+::: {.solution exercise="ex_atomo"}
+```python
+fraccion = (maximos == maximo_observado).mean()
+```
+
+Con $n = 25$ la fórmula da 0,6396 y el límite 0,6321. La fracción medida cae entre las dos, a menos de un punto porcentual. Nada de eso baja al subir $n$: ahí está el problema.
+:::
+
+```{pyodide}
+#| exercise: ex_atomo
+#| check: true
+import numpy as np
+ok = abs(fraccion - (1 - (1 - 1/25)**25)) < 0.015
+feedback = ("Correcto." if ok else
+            "La fracción no cuadra con la Proposición 11.7; revisa la comparación.")
+{"correct": bool(ok), "message": feedback}
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Est 11**:
+
+1. Escribir `bootstrap(x, estadistico, B)` genérica y `ic_percentil(x, estadistico, B, alfa)`. Usarlas sobre cinco estadísticos —media, mediana, desviación típica, coeficiente de variación y correlación entre dos columnas— y presentar una tabla de estimaciones con su error estándar.
+2. Medir la cobertura de tres intervalos bootstrap —percentil, básico (o pivotal) y $t$ bootstrap— para la media de una población asimétrica, con $n \in \{10, 25, 100\}$. Decidir cuál se usaría por defecto y con qué argumento. Contrastar los resultados con la tabla de la sección 3.
+3. Reproducir la Proposición 11.7 y luego intentar arreglarla: el *bootstrap m de n* sortea $m < n$ datos en cada remuestreo. Medir cuánto encoge el átomo con $m = \sqrt{n}$ y si la distribución bootstrap se parece más a la verdadera. Explicar el precio que se paga.
+
+## Del libro
+
+*Think Stats* se publica bajo licencia [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/), que permite citarlo textualmente.
+
+::: {.cita-libro}
+> A way to approximate the sampling distribution of an estimate by simulating the sampling process.
+>
+> [Downey, *Think Stats* 3e, §8.8 *Glossary*, definición de *resampling*]{.ref}
+:::
+
+La diferencia de encuadre con esta lección está en el «simulating the sampling process». Downey lo hace de varias maneras a lo largo del libro —resortear desde la muestra, resortear con pesos, barajar etiquetas— y las trata como variantes de una misma idea. Aquí se ha separado explícitamente el bootstrap de la Definición 11.3 —que sortea con reemplazo dentro de un grupo y no supone $H_0$— de la permutación de la Definición 11.8 —que reparte sin reemplazo entre grupos y sí la supone—, porque responden a preguntas distintas.
+
+**Preguntas para leer §8 y §9 con lápiz:**
+
+1. §8.4 *Sampling Distributions* simula muestras nuevas usando la distribución que generó los datos. En un problema real esa distribución no se conoce. ¿Qué la sustituye en la Definición 11.3, y qué se pierde en el cambio?
+2. §9.2 *Testing a Difference in Means* usa una permutación. Localizar en el código del libro dónde ocurre el barajado y comprobar que el reparto es **sin** reemplazo. ¿Qué cambiaría si fuera con reemplazo?
+3. §8.5 *Standard Error* define el error estándar como la desviación típica de la distribución muestral. Comparar esa definición con la Definición 11.4 de aquí: ¿sobre qué distribución se calcula la desviación en cada caso?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/bootstrap.md`, enlazada a [[distribucion-muestral]], [[intervalo-de-confianza]] y [[prueba-de-hipotesis]]. La Proposición 11.5 conviene derivarla a mano: es la que explica de dónde sale el denominador $n$ sin que nadie lo elija.
+
+```
+¿Qué es la distribución empírica?::La que pone masa 1/n en cada dato observado. Es el modelo más simple posible de la población: la propia muestra
+¿Por qué se puede usar en lugar de la verdadera?::Porque para cada x, F̂n(x) es insesgada para F(x) con varianza F(x)(1−F(x))/n, así que converge. La versión uniforme es Glivenko-Cantelli
+¿Qué es el bootstrap?::Sortear n datos con reemplazo de la muestra, recalcular el estadístico, y repetir B veces
+¿Por qué con reemplazo?::Sin reemplazo cada remuestreo sería una permutación de la muestra entera y todos darían el mismo valor
+¿Qué estima bien el bootstrap?::La anchura de la distribución muestral, es decir, el error estándar
+¿Qué no corrige?::El centro. La distribución bootstrap está centrada en el valor observado, no en el verdadero
+¿Cuál es el EE bootstrap de la media?::√Q/n, es decir, la varianza de máxima verosimilitud Q/n dividida entre n y con raíz
+¿Por qué sale el denominador n y no n−1?::Porque el bootstrap trata la muestra como si fuera toda la población, y en una población de n puntos la varianza divide entre n
+¿Qué diferencia hay entre B y n?::B controla el error de Monte Carlo y se compra barato; n controla el error estadístico. Ningún B compensa una muestra pequeña
+¿Qué es el intervalo por percentiles?::El que va del percentil 2.5 al 97.5 de los valores bootstrap
+¿Su cobertura es la nominal?::No necesariamente. Con n = 8 y población exponencial cubre menos del 85 % siendo nominal 95 %. Hay que medirla
+¿Dónde falla el bootstrap?::En estadísticos que dependen de la cola: máximos, mínimos, percentiles extremos
+¿Qué pasa con el máximo?::La distribución bootstrap tiene un átomo de peso 1−(1−1/n)ⁿ → 63.2 % sobre el máximo observado, y nunca propone nada por encima
+¿Eso se arregla con más datos?::No. El peso del átomo converge a 1−1/e y se queda ahí
+¿Qué es una prueba de permutación?::Barajar las etiquetas de grupo para construir la distribución bajo H0, sin suponer ninguna distribución
+¿Es exacta?::Sí: bajo H0 el rango del observado entre los M+1 valores es uniforme, y de ahí P(p ≤ α) ≤ α
+¿Por qué el valor p de permutación lleva un 1+ en el numerador?::Porque sin él el valor p podría valer cero y la desigualdad de la Proposición 11.9 fallaría
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** Las Proposiciones 11.2, 11.5, 11.7 y 11.9 se demuestran aquí, a partir de la Proposición 4.6 (varianza de un múltiplo), la Proposición 4.7 (varianza de una Bernoulli), la Proposición 6.1 (varianza de una media) y la Proposición 7.7 (consistencia por ECM). Las tres se comprueban además numéricamente: la 11.5 contra el error estándar medido, la 11.7 contra la fracción de remuestreos que repiten el máximo, y la cobertura de la sección 3 se mide en vez de suponerse.
+
+**Lo que se enuncia sin demostrar.** El teorema de Glivenko-Cantelli —convergencia uniforme de $\hat{F}_n$ a $F$— se menciona y no se demuestra; hace falta maquinaria de convergencia uniforme que este plan no ha construido. La versión puntual sí se demuestra. El intervalo BCa se nombra sin derivarlo.
+
+**Lo que viene de los libros.**
+
+- [*Think Stats* 3e](https://allendowney.github.io/ThinkStats/) (Downey, CC BY-NC-SA 4.0), §8.4 *Sampling Distributions* y §8.8 *Glossary* — citadas textualmente arriba.
+
+**Lo que es mío, no del libro.** La numeración de definiciones y proposiciones. La Proposición 11.5 con su lectura —que el bootstrap elige el denominador $n$ por su cuenta, enlazando con la Proposición 8.6—, la Proposición 11.7 con la demostración del átomo, la Proposición 11.9 con el argumento del rango uniforme, y la separación explícita entre bootstrap y permutación, son forma de presentarlo. *Think Stats* las trata como variantes de una misma técnica y no demuestra ninguna de las cuatro.
+
+[Índices verificados el 12-09-2026 contra el índice publicado del libro.]{.sello}
+:::
+
+→ Siguiente: [Distribución normal multivariante](12-normal-multivariante.qmd)
