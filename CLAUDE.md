@@ -2,6 +2,23 @@
 
 Plataforma de estudio de Luis. 86 semanas, 2 h/día. Él estudia; yo construyo.
 
+**Este archivo tiene las reglas, que cambian poco. El estado del proyecto, la
+lista de lo que falta y cómo poner el entorno en marcha están en
+[`ESTADO.md`](ESTADO.md), que cambia cada semana. Leer los dos antes de empezar.**
+
+Antes de cada commit, los cinco gates:
+
+```sh
+python3 verificar/estructura.py && \
+python3 verificar/citas.py     && \
+python3 verificar/salidas.py   && \
+python3 verificar/formato.py   && \
+python3 verificar/visuales.py --estricto
+```
+
+Y `quarto preview` para ver la página de verdad: los tooltips del glosario y
+KaTeX solo existen ahí, no en el `.qmd` ni en un visual suelto.
+
 ## Reglas de citación (no negociables)
 
 Estas existen porque ya fallaron. En septiembre de 2026 se publicaron cinco
@@ -102,6 +119,21 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
    propiedad, y declararla en `afirmaciones.json` bajo `cumple`, no `contiene`.
 
 ## Reglas de construcción
+
+22. **`verificar/formato.py` dice si una lección cumple el molde** (reglas 14 a
+    21) y separa las que ya están migradas de las que siguen el molde viejo.
+    Cuando se termina de reescribir una, se añade a la lista `MIGRADAS` de ese
+    archivo: a partir de ahí, `--estricto` falla si retrocede.
+
+23. **`verificar/visuales.py` comprueba la regla 19b en píxeles.** Acciona cada
+    control de cada visual y mide cuánto se desplaza la geometría, trazo a
+    trazo. Si un control de verdad no debe mover nada porque la cantidad que
+    representa no depende de los datos, se declara en `QUIETOS` con su razón
+    **y la lección tiene que explicarlo en la prosa**.
+
+    Requiere Playwright. Si no está instalado, el gate se salta con un aviso en
+    vez de fallar, para que el CI no se rompa; pero en local hay que instalarlo.
+
 
 8. **`python3 verificar/estructura.py` antes de cada commit.** Una valla
     `:::` sin cerrar no rompe el render: Quarto publica la página con el
