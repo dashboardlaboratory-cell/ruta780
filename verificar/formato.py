@@ -91,6 +91,7 @@ MIGRADAS = {
     "matematica/07-gram-schmidt-qr.qmd",
     "matematica/08-determinante.qmd",
     "matematica/09-eigenvalores.qmd",
+    "matematica/10-diagonalizacion.qmd",
 }
 
 
