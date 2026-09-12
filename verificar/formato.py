@@ -103,6 +103,7 @@ MIGRADAS = {
     "matematica/13-derivada-gradiente.qmd",
     "matematica/14-hessiana-taylor.qmd",
     "matematica/15-convexidad.qmd",
+    "matematica/16-descenso-de-gradiente.qmd",
 }
 
 

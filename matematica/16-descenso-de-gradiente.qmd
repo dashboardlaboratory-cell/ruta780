@@ -1,0 +1,630 @@
+---
+title: "Descenso de gradiente y sus variantes"
+subtitle: "Matemática · Lección 16"
+nivel: L3
+modulo: matematica
+fase: F1
+prereqs: [matematica/15-convexidad, matematica/14-hessiana-taylor]
+siguientes: [matematica/17-metodo-de-newton]
+libro: "MML §7.1 Optimization Using Gradient Descent"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="matematica/16-descenso-de-gradiente"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F1]{.item}
+[**Libro** MML §7.1]{.item}
+[**Prereqs** [Convexidad](15-convexidad.qmd) · [Hessiana y Taylor](14-hessiana-taylor.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir el paso de [descenso de gradiente]{.g} y demostrar que con un paso suficientemente corto la función baja.
+2. Definir la [suavidad de Lipschitz]{.g data-t="gradiente Lipschitz"} del gradiente y demostrar el [lema de descenso]{.g}, que convierte «baja» en una cantidad medible.
+3. Demostrar que en una cuadrática el error se contrae por el factor $\max_i|1-\eta\lambda_i|$, y deducir de ahí el paso óptimo, el paso límite y la tasa $(\kappa-1)/(\kappa+1)$.
+4. Explicar por qué el [número de condición]{.g} —y no la dimensión— es lo que decide la velocidad, y qué le añade el [momento]{.g}.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Matemática 15**: la convexidad. El método encuentra un mínimo local, y la Proposición 15.5 es lo que lo convierte en la respuesta buscada.
+- **Matemática 14**: el desarrollo de Taylor. El lema de descenso es la cota cuadrática de ese desarrollo escrita con una constante global en lugar de una hessiana evaluada en un punto intermedio.
+- **Matemática 13**: la dirección de máximo descenso de la Proposición 13.9, que es exactamente la dirección que este método toma en cada paso.
+- **Matemática 10 y 12**: la diagonalización ortogonal y los eigenvalores, que aquí desacoplan el método en $n$ recursiones independientes.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Matemática 17**: el método de Newton cambia el paso fijo $\eta$ por la inversa de la hessiana, y con eso vuelve la tasa independiente del número de condición.
+- **Matemática 18**: el descenso proyectado y las condiciones KKT extienden todo esto a problemas con restricciones.
+- **Estadística 8 y 16**: la regresión logística y la calibración por isotónica no tienen solución cerrada, y se ajustan con este método o con una variante suya.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Símbolo | Se lee | Significado |
+|---|---|---|
+| $\eta$ | eta | El paso, o tasa de aprendizaje |
+| $x_k$ | equis sub ka | El punto tras $k$ iteraciones |
+| $e_k = x_k-x^\star$ | error en el paso ka | La distancia con signo al minimizador |
+| $L$ | ele | La constante de Lipschitz del gradiente |
+| $\lambda_1\ge\dots\ge\lambda_n$ | lambdas | Eigenvalores de la hessiana, todos positivos |
+| $\kappa=\lambda_1/\lambda_n$ | kappa | El número de condición |
+| $\rho(\eta)$ | rho de eta | El factor de contracción por iteración |
+| $\beta$ | beta | El coeficiente de momento |
+:::
+
+## 1. El paso, y por qué baja
+
+::: {.definicion}
+**Definición 16.1 (descenso de gradiente).** Dado un punto inicial $x_0$ y un paso $\eta>0$, el **descenso de gradiente** genera la sucesión
+$$x_{k+1} = x_k - \eta\,\nabla f(x_k), \qquad k=0,1,2,\dots$$
+:::
+
+::: {.proposicion}
+**Proposición 16.2 (el paso corto siempre baja).** Si $f$ es diferenciable en $x_k$ y $\nabla f(x_k)\ne0$, existe $\eta_0>0$ tal que
+$$f\big(x_k-\eta\nabla f(x_k)\big) < f(x_k) \qquad\text{para todo } 0<\eta<\eta_0.$$
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $v=-\nabla f(x_k)/\|\nabla f(x_k)\|$, unitario. Por la Proposición 13.9 aplicada al mínimo,
+$$D_vf(x_k) = \nabla f(x_k)\cdot v = -\|\nabla f(x_k)\| < 0.$$
+Por la Definición 13.6 ese número es el límite de $[f(x_k+tv)-f(x_k)]/t$ cuando $t\to0$, así que existe $t_0>0$ tal que el cociente es negativo para todo $0<t<t_0$; multiplicando por $t>0$,
+$$f(x_k+tv) < f(x_k) \qquad (0<t<t_0).$$
+Y $x_k+tv = x_k-\eta\nabla f(x_k)$ con $\eta = t/\|\nabla f(x_k)\|$, de modo que basta tomar $\eta_0 = t_0/\|\nabla f(x_k)\|$. [∎]{.fin-demo}
+:::
+
+La Proposición 16.2 garantiza que **existe** un paso que sirve, pero no dice cuál ni cuánto baja. Para eso hace falta una hipótesis sobre cuánto puede cambiar el gradiente.
+
+## 2. El lema de descenso
+
+::: {.definicion}
+**Definición 16.3 (gradiente Lipschitz).** El gradiente de $f$ es **$L$-Lipschitz** en un conjunto $C$ si
+$$\|\nabla f(y)-\nabla f(x)\| \;\le\; L\,\|y-x\| \qquad\text{para todos } x,y\in C.$$
+Se dice entonces que $f$ es $L$-suave. Para una cuadrática con hessiana $A$, la menor $L$ que sirve es $\lambda_1$, el mayor eigenvalor.
+:::
+
+::: {.proposicion}
+**Proposición 16.4 (lema de descenso).** Si $\nabla f$ es $L$-Lipschitz en un conjunto convexo $C$, entonces para todos $x,y\in C$
+$$f(y) \;\le\; f(x) + \nabla f(x)\cdot(y-x) + \frac{L}{2}\|y-x\|^2.$$
+En consecuencia, el paso de la Definición 16.1 con $0<\eta\le1/L$ cumple
+$$f(x_{k+1}) \;\le\; f(x_k) - \frac{\eta}{2}\,\|\nabla f(x_k)\|^2.$$
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $\phi(t)=f\big(x+t(y-x)\big)$, con $\phi'(t)=\nabla f\big(x+t(y-x)\big)\cdot(y-x)$ por la regla de la cadena. Por el teorema fundamental del cálculo —que se da por conocido—,
+$$f(y)-f(x) = \phi(1)-\phi(0) = \int_0^1 \nabla f\big(x+t(y-x)\big)\cdot(y-x)\,dt.$$
+Restando $\nabla f(x)\cdot(y-x)=\int_0^1\nabla f(x)\cdot(y-x)\,dt$,
+$$f(y)-f(x)-\nabla f(x)\cdot(y-x) = \int_0^1 \big[\nabla f\big(x+t(y-x)\big)-\nabla f(x)\big]\cdot(y-x)\,dt.$$
+Acotando el integrando con Cauchy-Schwarz (Proposición 4.5) y después con la Definición 16.3, cuyo desplazamiento es $t\|y-x\|$,
+$$\big[\nabla f(x+t(y-x))-\nabla f(x)\big]\cdot(y-x) \;\le\; L\,t\,\|y-x\|\cdot\|y-x\| = L\,t\,\|y-x\|^2.$$
+Integrando esa cota entre $0$ y $1$ sale $\tfrac{L}{2}\|y-x\|^2$, que es el lema.
+
+Para la consecuencia, tómese $y=x_{k+1}=x_k-\eta\nabla f(x_k)$, de modo que $y-x_k=-\eta\nabla f(x_k)$ y $\|y-x_k\|^2=\eta^2\|\nabla f(x_k)\|^2$. Sustituyendo,
+$$f(x_{k+1}) \le f(x_k) - \eta\|\nabla f(x_k)\|^2 + \frac{L\eta^2}{2}\|\nabla f(x_k)\|^2
+= f(x_k) - \eta\Big(1-\frac{L\eta}{2}\Big)\|\nabla f(x_k)\|^2.$$
+Con $\eta\le 1/L$ se tiene $L\eta/2\le\tfrac12$, luego $1-L\eta/2\ge\tfrac12$ y el paréntesis se puede sustituir por $\tfrac12$ sin invalidar la desigualdad. [∎]{.fin-demo}
+:::
+
+La segunda parte es una garantía cuantitativa: cada paso baja **al menos** $\tfrac{\eta}{2}\|\nabla f\|^2$. Mientras el gradiente no sea pequeño, el progreso no se detiene.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(160)
+M = rng.normal(size=(3, 3))
+A = M @ M.T + 0.6*np.eye(3)      # simetrica definida positiva
+b = rng.normal(size=3)
+lam = np.linalg.eigvalsh(A)
+L = lam.max()                    # la constante de Lipschitz del gradiente
+
+def f(X):
+    return 0.5*np.einsum("ij,jk,ik->i", X, A, X) - X @ b
+
+X = rng.normal(size=(20000, 3))
+Y = rng.normal(size=(20000, 3))
+D = Y - X
+gX = X @ A - b                   # gradiente en X; A es simetrica
+lineal = f(X) + np.einsum("ij,ij->i", gX, D)
+cuad = np.einsum("ij,ij->i", D, D)
+izq = f(Y)
+
+print(f"lambda_min = {lam.min():.4f}   lambda_max = L = {L:.4f}")
+print(f"pares que violan el lema de descenso: {int((izq > lineal + 0.5*L*cuad + 1e-9).sum())} de 20000")
+print(f"con L a la mitad, pares que lo violan: {int((izq > lineal + 0.25*L*cuad + 1e-9).sum())} de 20000")
+print()
+print("la cota vale con L = lambda_max y se rompe con cualquier L menor")
+```
+
+La cota aguanta los 20 000 pares con $L=\lambda_1$ y falla en casi la mitad de ellos en cuanto se la rebaja a $L/2$: la Definición 16.3 no admite una constante más pequeña.
+
+## 3. La cuadrática, donde todo se puede calcular
+
+::: {.proposicion}
+**Proposición 16.5 (contracción exacta en el caso cuadrático).** Sea $f(x)=\tfrac12x^\top Ax-b^\top x$ con $A$ simétrica definida positiva, $x^\star=A^{-1}b$ y $e_k=x_k-x^\star$. Entonces
+
+1. $e_{k+1}=(I-\eta A)\,e_k$, y por tanto $\|e_k\|\le\rho(\eta)^k\|e_0\|$ con $\rho(\eta)=\max_i|1-\eta\lambda_i|$;
+2. el método converge desde **todo** arranque si y solo si $0<\eta<2/\lambda_1$;
+3. el mínimo de $\rho$ se alcanza en $\eta^\star=\dfrac{2}{\lambda_1+\lambda_n}$ y vale $\rho(\eta^\star)=\dfrac{\kappa-1}{\kappa+1}$, con $\kappa=\lambda_1/\lambda_n$.
+:::
+
+::: {.demostracion}
+*Demostración.* **(1)** Como $\nabla f(x)=Ax-b=A(x-x^\star)=Ae$, restando $x^\star$ en la Definición 16.1,
+$$e_{k+1} = x_k-\eta Ae_k-x^\star = e_k-\eta Ae_k = (I-\eta A)e_k.$$
+Por el teorema espectral (Proposición 10.4) $A=Q\Lambda Q^\top$ con $Q$ ortogonal, así que $I-\eta A = Q(I-\eta\Lambda)Q^\top$. Escribiendo $y_k=Q^\top e_k$ —que tiene la misma norma, porque $Q$ es ortogonal— cada coordenada evoluciona por separado:
+$$y_{k+1,i} = (1-\eta\lambda_i)\,y_{k,i}, \qquad\text{de donde}\qquad y_{k,i}=(1-\eta\lambda_i)^k y_{0,i}.$$
+El método se parte en $n$ recursiones de una sola variable, cada una con su propio factor. Tomando normas y acotando cada factor por el mayor sale $\|e_k\|\le\rho(\eta)^k\|e_0\|$.
+
+**(2)** Si $\rho(\eta)<1$, la cota de (1) tiende a cero. Y si $|1-\eta\lambda_j|\ge1$ para algún $j$, basta arrancar con $e_0=q_j$ para que esa coordenada no decrezca nunca. Luego la convergencia desde todo arranque equivale a $|1-\eta\lambda_i|<1$ para todo $i$, es decir a $0<\eta<2/\lambda_i$ para todo $i$; la más restrictiva es la del mayor eigenvalor, $0<\eta<2/\lambda_1$.
+
+**(3)** Como $\eta\mapsto|1-\eta\lambda|$ es decreciente en $\lambda$ mientras $1-\eta\lambda>0$ y creciente después, el máximo sobre los $\lambda_i$ lo alcanzan siempre los extremos:
+$$\rho(\eta)=\max\big\{|1-\eta\lambda_n|,\;|1-\eta\lambda_1|\big\}.$$
+En el rango útil la primera decrece con $\eta$ y la segunda crece, así que el mínimo del máximo está donde se cruzan:
+$$1-\eta\lambda_n = \eta\lambda_1-1 \quad\Longrightarrow\quad \eta^\star=\frac{2}{\lambda_1+\lambda_n}.$$
+Sustituyendo,
+$$\rho(\eta^\star) = 1-\frac{2\lambda_n}{\lambda_1+\lambda_n} = \frac{\lambda_1-\lambda_n}{\lambda_1+\lambda_n} = \frac{\kappa-1}{\kappa+1}. \;\;[\blacksquare]$$
+:::
+
+El apartado (3) es el resultado que hay que recordar: la velocidad no depende de la dimensión ni de la escala global, **solo del cociente entre el mayor y el menor eigenvalor**. Con $\kappa=100$ la mejor tasa posible es $99/101\approx0{,}98$, y hacen falta unos $230$ pasos para ganar un solo dígito.
+
+```{pyodide}
+import numpy as np
+
+# el mismo problema de la celda anterior
+rng = np.random.default_rng(160)
+M = rng.normal(size=(3, 3))
+A = M @ M.T + 0.6*np.eye(3)
+b = rng.normal(size=3)
+lam = np.linalg.eigvalsh(A)
+x_est = np.linalg.solve(A, b)
+
+def descender(eta, beta=0.0, pasos=200):
+    x = np.zeros(3); prev = np.zeros(3); err = []
+    for _ in range(pasos):
+        err.append(np.linalg.norm(x - x_est))
+        nuevo = x - eta*(A @ x - b) + beta*(x - prev)
+        prev, x = x, nuevo
+    return np.array(err)
+
+kappa = lam.max() / lam.min()
+eta_opt = 2.0 / (lam.min() + lam.max())
+print(f"numero de condicion kappa = {kappa:.4f}")
+print(f"paso optimo 2/(l_min+l_max) = {eta_opt:.4f}")
+print(f"tasa teorica (kappa-1)/(kappa+1) = {(kappa-1)/(kappa+1):.4f}")
+print()
+print(f"{'eta':>9s}  {'max|1-eta*lambda|':>18s}  {'factor medido':>14s}")
+for eta in [0.05, 0.15, eta_opt, 0.2273, 0.45]:
+    teorico = max(abs(1 - eta*lam.min()), abs(1 - eta*lam.max()))
+    err = descender(eta)
+    medido = (err[150] / err[50]) ** (1/100)
+    print(f"{eta:9.4f}  {teorico:18.4f}  {medido:14.4f}")
+print()
+print("el factor medido reproduce la prediccion, y es minimo justo en el paso optimo")
+```
+
+Las dos últimas columnas coinciden en las cuatro cifras, incluido el caso $\eta=0{,}45$ donde el factor pasa de uno y el método se aleja: la Proposición 16.5 da el factor exacto, no una cota holgada.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(160)
+M = rng.normal(size=(3, 3))
+A = M @ M.T + 0.6*np.eye(3)
+b = rng.normal(size=3)
+lam = np.linalg.eigvalsh(A)
+L = lam.max()
+x_est = np.linalg.solve(A, b)
+
+def descender(eta, beta=0.0, pasos=200):
+    x = np.zeros(3); prev = np.zeros(3); err = []
+    for _ in range(pasos):
+        err.append(np.linalg.norm(x - x_est))
+        nuevo = x - eta*(A @ x - b) + beta*(x - prev)
+        prev, x = x, nuevo
+    return np.array(err)
+
+print(f"el paso limite es 2/lambda_max = {2/L:.4f}")
+for s in [0.90, 0.99, 1.01, 1.20]:
+    eta = s*2/L
+    err = descender(eta, pasos=120)
+    print(f"  eta = {eta:.4f}  ({s:.2f} veces el limite):  "
+          f"error final / inicial = {err[-1]/err[0]:11.3e}   se aleja: {bool(err[-1] > err[0])}")
+print()
+print("por encima de 2/lambda_max el metodo se aleja, por convexa que sea la funcion")
+```
+
+Al $99\,\%$ del límite todavía converge, aunque despacio; al $101\,\%$ ya se aleja, y al $120\,\%$ el error crece dieciséis órdenes de magnitud en $120$ pasos. El umbral de la Proposición 16.5 es una frontera, no una recomendación.
+
+```{=html}
+<div class="viz-descenso">
+  <div class="controles">
+    <label>Condición κ <input id="de-k" type="range" min="1" max="30" step="1" value="12"> <span id="de-k-v">12</span></label>
+    <label>Paso (× el límite) <input id="de-s" type="range" min="10" max="115" step="5" value="60"> <span id="de-s-v">0,60</span></label>
+  </div>
+  <svg id="de-svg" viewBox="0 0 620 320" role="img" aria-label="A la izquierda las curvas de nivel de una cuadratica con el camino del descenso de gradiente desde un arranque fijo. A la derecha el error en escala logaritmica frente al numero de paso, con la recta que predice el factor de contraccion."></svg>
+  <p class="lectura" id="de-lectura"></p>
+</div>
+<style>
+.viz-descenso { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-descenso .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-descenso label { display: flex; align-items: center; gap: .4rem; }
+.viz-descenso input[type=range] { width: 120px; padding: 0; }
+.viz-descenso svg { width: 100%; height: auto; display: block; }
+.viz-descenso .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5.2em; line-height: 1.6; }
+.viz-descenso .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_NIVEL = "var(--r-tinta,#1f2430)", C_CAM = "#B45309", C_TEO = "#0F6E68";
+  var svg = document.getElementById("de-svg"), lec = document.getElementById("de-lectura");
+  var ck = document.getElementById("de-k"), ek = document.getElementById("de-k-v");
+  var cs = document.getElementById("de-s"), es = document.getElementById("de-s-v");
+
+  // Marco constante: no depende de kappa ni del paso.
+  var LCX = 162, LCY = 160, LESC = 96, LR = 1.45;
+  var RX0 = 355, RX1 = 602, RY0 = 292, RY1 = 28;
+  var PASOS = 60, LOGMIN = -14, LOGMAX = 4;
+  var X0 = 1.15, Y0 = 0.92;              // arranque fijo
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function lx(x) { return LCX + x * LESC; }
+  function ly(y) { return LCY - y * LESC; }
+  function qx(k) { return RX0 + k / PASOS * (RX1 - RX0); }
+  function qy(lg) { return RY0 - (Math.max(LOGMIN, Math.min(LOGMAX, lg)) - LOGMIN) / (LOGMAX - LOGMIN) * (RY0 - RY1); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var kap = +ck.value, s = (+cs.value) / 100;
+    ek.textContent = kap;
+    es.textContent = s.toFixed(2).replace(".", ",");
+    var eta = s * 2 / kap;               // el limite es 2/lambda_max = 2/kappa
+
+    svg.appendChild(el("rect", { x: lx(-LR), y: ly(LR), width: 2 * LR * LESC, height: 2 * LR * LESC, fill: "none", stroke: "var(--r-linea,#ddd)" }));
+    svg.appendChild(el("line", { x1: lx(-LR), y1: ly(0), x2: lx(LR), y2: ly(0), stroke: "var(--r-linea,#eee)" }));
+    svg.appendChild(el("line", { x1: lx(0), y1: ly(-LR), x2: lx(0), y2: ly(LR), stroke: "var(--r-linea,#eee)" }));
+
+    // f = (x^2 + kappa y^2)/2: elipses de semiejes sqrt(2c) y sqrt(2c/kappa)
+    [0.06, 0.25, 0.6, 1.1].forEach(function (c) {
+      svg.appendChild(el("ellipse", { cx: lx(0).toFixed(1), cy: ly(0).toFixed(1),
+        rx: (Math.sqrt(2 * c) * LESC).toFixed(1), ry: (Math.sqrt(2 * c / kap) * LESC).toFixed(1),
+        fill: "none", stroke: C_NIVEL, "stroke-width": 1, "stroke-opacity": 0.32 }));
+    });
+
+    // el camino
+    var x = X0, y = Y0, d = "M" + lx(x).toFixed(1) + "," + ly(y).toFixed(1), errs = [Math.hypot(x, y)];
+    for (var i = 0; i < PASOS; i++) {
+      var nx = x - eta * x, ny = y - eta * kap * y;
+      x = nx; y = ny;
+      errs.push(Math.hypot(x, y));
+      d += " L" + lx(Math.max(-9, Math.min(9, x))).toFixed(1) + "," + ly(Math.max(-9, Math.min(9, y))).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_CAM, "stroke-width": 1.5 }));
+    svg.appendChild(el("circle", { cx: lx(X0).toFixed(1), cy: ly(Y0).toFixed(1), r: 3.6, fill: C_CAM }));
+    svg.appendChild(el("circle", { cx: lx(0).toFixed(1), cy: ly(0).toFixed(1), r: 3.2, fill: C_TEO }));
+    svg.appendChild(el("text", { x: lx(-LR), y: 18, "font-size": 11, "font-weight": 600, fill: "var(--r-tinta,#222)" },
+      "f(x,y) = (x² + κy²)/2   ·   curvas de nivel y camino"));
+
+    // panel derecho: error en escala log
+    svg.appendChild(el("rect", { x: RX0, y: RY1, width: RX1 - RX0, height: RY0 - RY1, fill: "none", stroke: "var(--r-linea,#ddd)" }));
+    svg.appendChild(el("line", { x1: RX0, y1: qy(0).toFixed(1), x2: RX1, y2: qy(0).toFixed(1), stroke: "var(--r-linea,#eee)" }));
+    var rho = Math.max(Math.abs(1 - eta), Math.abs(1 - eta * kap));
+    var dTeo = "", dMed = "";
+    for (i = 0; i <= PASOS; i++) {
+      var lgTeo = Math.log10(errs[0]) + i * Math.log10(Math.max(rho, 1e-16));
+      dTeo += (i ? " L" : "M") + qx(i).toFixed(1) + "," + qy(lgTeo).toFixed(1);
+      dMed += (i ? " L" : "M") + qx(i).toFixed(1) + "," + qy(Math.log10(Math.max(errs[i], 1e-300))).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: dTeo, fill: "none", stroke: C_TEO, "stroke-width": 1.4, "stroke-dasharray": "5 4" }));
+    svg.appendChild(el("path", { d: dMed, fill: "none", stroke: C_CAM, "stroke-width": 2 }));
+    svg.appendChild(el("text", { x: RX0, y: 18, "font-size": 11, "font-weight": 600, fill: "var(--r-tinta,#222)" },
+      "log₁₀‖eₖ‖ frente al paso k"));
+
+    var etaOpt = 2 / (1 + kap), rhoOpt = (kap - 1) / (kap + 1);
+    lec.innerHTML = "<span class=\"fx\">η = " + eta.toFixed(4).replace(".", ",") +
+      "   ·   ρ = " + rho.toFixed(4).replace(".", ",") +
+      "   ·   ρ óptimo = " + rhoOpt.toFixed(4).replace(".", ",") +
+      " (con η = " + etaOpt.toFixed(4).replace(".", ",") + ")</span><br>" +
+      (rho >= 1
+        ? "Con ρ ≥ 1 el método se aleja: el paso pasó de 2/λ₁ y la coordenada del eigenvalor grande se amplifica en cada iteración."
+        : "El camino zigzaguea entre las paredes del valle: cada paso corrige de más en la dirección empinada y de menos en la plana. " +
+          "La recta punteada es ρᵏ‖e₀‖, y el error medido la sigue exactamente, como afirma la Proposición 16.5.");
+  }
+
+  ck.addEventListener("input", dibujar);
+  cs.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Momento
+
+El zigzag del visual tiene una causa concreta: en la dirección empinada el paso corrige de más y en la plana, de menos. El **momento** promedia la dirección con la del paso anterior, lo que cancela parte de la oscilación y acumula avance en la dirección que se repite.
+
+::: {.definicion}
+**Definición 16.6 (descenso con momento).** Con $x_{-1}=x_0$ y un coeficiente $\beta\in[0,1)$,
+$$x_{k+1} = x_k - \eta\,\nabla f(x_k) + \beta\,(x_k-x_{k-1}).$$
+Con $\beta=0$ se recupera la Definición 16.1.
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(160)
+M = rng.normal(size=(3, 3))
+A = M @ M.T + 0.6*np.eye(3)
+b = rng.normal(size=3)
+lam = np.linalg.eigvalsh(A)
+x_est = np.linalg.solve(A, b)
+eta_opt = 2.0 / (lam.min() + lam.max())
+
+def descender(eta, beta=0.0, pasos=200):
+    x = np.zeros(3); prev = np.zeros(3); err = []
+    for _ in range(pasos):
+        err.append(np.linalg.norm(x - x_est))
+        nuevo = x - eta*(A @ x - b) + beta*(x - prev)
+        prev, x = x, nuevo
+    return np.array(err)
+
+objetivo = 1e-8 * np.linalg.norm(x_est)
+for beta in [0.0, 0.3, 0.5, 0.8]:
+    err = descender(eta_opt, beta, pasos=400)
+    n = int(np.argmax(err < objetivo)) if (err < objetivo).any() else -1
+    print(f"  beta = {beta:.1f}:  pasos hasta un error relativo de 1e-8: {n}")
+print()
+print("el momento acelera hasta cierto punto; pasado ese punto se pasa de largo y tarda mas")
+```
+
+Con el mismo paso óptimo, $\beta=0{,}5$ recorta los $125$ pasos a $53$. Pero $\beta=0{,}8$ sube a $155$: el momento no es un parámetro que convenga subir sin mirar, y la elección buena depende de $\kappa$. Lo que la Definición 16.6 no arregla es el problema de fondo —que la tasa siga dependiendo del número de condición—, y eso es lo que ataca la lección 17 cambiando el paso escalar por una matriz.
+
+```{=html}
+<div class="viz-momento">
+  <div class="controles">
+    <label>Momento β <input id="mo-b" type="range" min="0" max="90" step="5" value="50"> <span id="mo-b-v">0,50</span></label>
+    <label>Pasos <input id="mo-n" type="range" min="0" max="80" step="4" value="40"> <span id="mo-n-v">40</span></label>
+  </div>
+  <svg id="mo-svg" viewBox="0 0 620 320" role="img" aria-label="Curvas de nivel de un valle alargado con dos caminos superpuestos: el descenso simple y el descenso con momento desde el mismo arranque. A la derecha el error de los dos en escala logaritmica."></svg>
+  <p class="lectura" id="mo-lectura"></p>
+</div>
+<style>
+.viz-momento { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-momento .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-momento label { display: flex; align-items: center; gap: .4rem; }
+.viz-momento input[type=range] { width: 125px; padding: 0; }
+.viz-momento svg { width: 100%; height: auto; display: block; }
+.viz-momento .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5em; line-height: 1.6; }
+.viz-momento .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_NIVEL = "var(--r-tinta,#1f2430)", C_PLANO = "#B45309", C_MOM = "#0F6E68";
+  var svg = document.getElementById("mo-svg"), lec = document.getElementById("mo-lectura");
+  var cb = document.getElementById("mo-b"), eb = document.getElementById("mo-b-v");
+  var cn = document.getElementById("mo-n"), en = document.getElementById("mo-n-v");
+
+  // Marco y problema constantes: solo cambian beta y el numero de pasos.
+  var KAPPA = 20, ETA = 2 / (1 + KAPPA);
+  var LCX = 162, LCY = 160, LESC = 96, LR = 1.45;
+  var RX0 = 355, RX1 = 602, RY0 = 292, RY1 = 28;
+  var MAXP = 80, LOGMIN = -14, LOGMAX = 1;
+  var AX = 1.15, AY = 0.92;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function lx(x) { return LCX + x * LESC; }
+  function ly(y) { return LCY - y * LESC; }
+  function qx(k) { return RX0 + k / MAXP * (RX1 - RX0); }
+  function qy(lg) { return RY0 - (Math.max(LOGMIN, Math.min(LOGMAX, lg)) - LOGMIN) / (LOGMAX - LOGMIN) * (RY0 - RY1); }
+
+  function camino(beta, pasos) {
+    var x = AX, y = AY, px = AX, py = AY, pts = [[x, y]], errs = [Math.hypot(x, y)];
+    for (var i = 0; i < pasos; i++) {
+      var nx = x - ETA * x + beta * (x - px);
+      var ny = y - ETA * KAPPA * y + beta * (y - py);
+      px = x; py = y; x = nx; y = ny;
+      pts.push([x, y]);
+      errs.push(Math.hypot(x, y));
+    }
+    return { pts: pts, errs: errs };
+  }
+
+  function trazo(pts) {
+    var d = "";
+    for (var i = 0; i < pts.length; i++) {
+      var x = Math.max(-9, Math.min(9, pts[i][0])), y = Math.max(-9, Math.min(9, pts[i][1]));
+      d += (i ? " L" : "M") + lx(x).toFixed(1) + "," + ly(y).toFixed(1);
+    }
+    return d;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var beta = (+cb.value) / 100, pasos = +cn.value;
+    eb.textContent = beta.toFixed(2).replace(".", ",");
+    en.textContent = pasos;
+
+    svg.appendChild(el("rect", { x: lx(-LR), y: ly(LR), width: 2 * LR * LESC, height: 2 * LR * LESC, fill: "none", stroke: "var(--r-linea,#ddd)" }));
+    [0.06, 0.25, 0.6, 1.1].forEach(function (c) {
+      svg.appendChild(el("ellipse", { cx: lx(0).toFixed(1), cy: ly(0).toFixed(1),
+        rx: (Math.sqrt(2 * c) * LESC).toFixed(1), ry: (Math.sqrt(2 * c / KAPPA) * LESC).toFixed(1),
+        fill: "none", stroke: C_NIVEL, "stroke-width": 1, "stroke-opacity": 0.32 }));
+    });
+
+    var plano = camino(0, pasos), mom = camino(beta, pasos);
+    svg.appendChild(el("path", { d: trazo(plano.pts), fill: "none", stroke: C_PLANO, "stroke-width": 1.4, "stroke-dasharray": "5 3" }));
+    svg.appendChild(el("path", { d: trazo(mom.pts), fill: "none", stroke: C_MOM, "stroke-width": 1.8 }));
+    svg.appendChild(el("circle", { cx: lx(AX).toFixed(1), cy: ly(AY).toFixed(1), r: 3.6, fill: "var(--r-tinta,#222)" }));
+    svg.appendChild(el("text", { x: lx(-LR), y: 18, "font-size": 11, "font-weight": 600, fill: "var(--r-tinta,#222)" }, "κ = 20, mismo paso y mismo arranque"));
+    svg.appendChild(el("text", { x: lx(-LR) + 4, y: 34, "font-size": 10, fill: C_PLANO }, "— — sin momento"));
+    svg.appendChild(el("text", { x: lx(-LR) + 4, y: 47, "font-size": 10, fill: C_MOM }, "— con momento"));
+
+    svg.appendChild(el("rect", { x: RX0, y: RY1, width: RX1 - RX0, height: RY0 - RY1, fill: "none", stroke: "var(--r-linea,#ddd)" }));
+    [plano, mom].forEach(function (c, k) {
+      var d = "";
+      for (var i = 0; i < c.errs.length; i++) {
+        d += (i ? " L" : "M") + qx(i).toFixed(1) + "," + qy(Math.log10(Math.max(c.errs[i], 1e-300))).toFixed(1);
+      }
+      svg.appendChild(el("path", { d: d, fill: "none", stroke: k ? C_MOM : C_PLANO, "stroke-width": k ? 1.9 : 1.3,
+        "stroke-dasharray": k ? "none" : "5 3" }));
+    });
+    svg.appendChild(el("text", { x: RX0, y: 18, "font-size": 11, "font-weight": 600, fill: "var(--r-tinta,#222)" }, "log₁₀‖eₖ‖ de los dos métodos"));
+
+    var eP = plano.errs[plano.errs.length - 1], eM = mom.errs[mom.errs.length - 1];
+    lec.innerHTML = "<span class=\"fx\">tras " + pasos + " pasos:   sin momento ‖e‖ = " + eP.toExponential(2) +
+      "   ·   con β = " + beta.toFixed(2).replace(".", ",") + ", ‖e‖ = " + eM.toExponential(2) + "</span><br>" +
+      (pasos === 0
+        ? "Con cero pasos los dos caminos están en el arranque y los errores coinciden: mover el número de pasos separa las dos curvas."
+        : (eM < eP
+            ? "El momento va por delante: arrastra la componente que se repite y cancela parte del zigzag."
+            : "Con este β el momento se pasa de largo y llega más tarde que el descenso simple: el coeficiente también se puede elegir mal."));
+  }
+
+  cb.addEventListener("input", dibujar);
+  cn.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## Ejercicios
+
+### Ejercicio 1 — El paso que la teoría recomienda y el que va mejor
+
+El lema de descenso pide $\eta\le1/L$, pero la Proposición 16.5 dice que el óptimo es $2/(\lambda_1+\lambda_n)$, que es mayor. Comprobar que los dos son válidos, medir cuántos pasos ahorra el segundo, y explicar por qué no se contradicen.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(160)
+M = rng.normal(size=(3, 3))
+A = M @ M.T + 0.6*np.eye(3)
+b = rng.normal(size=3)
+lam = np.linalg.eigvalsh(A)
+L = lam.max()
+x_est = np.linalg.solve(A, b)
+
+def descender(eta, beta=0.0, pasos=200):
+    x = np.zeros(3); prev = np.zeros(3); err = []
+    for _ in range(pasos):
+        err.append(np.linalg.norm(x - x_est))
+        nuevo = x - eta*(A @ x - b) + beta*(x - prev)
+        prev, x = x, nuevo
+    return np.array(err)
+
+objetivo = 1e-10 * np.linalg.norm(x_est)
+for nombre, eta in [("1/L  (lema de descenso)", 1/L),
+                    ("2/(l_min+l_max)  (optimo)", 2/(lam.min()+lam.max())),
+                    ("2/l_max  (el limite)", 2/L)]:
+    err = descender(eta, pasos=600)
+    n = f"{int(np.argmax(err < objetivo)):d}" if (err < objetivo).any() else "no llega en 600"
+    rho = max(abs(1-eta*lam.min()), abs(1-eta*lam.max()))
+    print(f"{nombre:28s}  eta = {eta:.4f}   rho = {rho:.4f}   pasos hasta 1e-10: {n}")
+print()
+print("el lema pide una cota suficiente, no la mejor: por eso 1/L funciona pero no gana")
+```
+
+### Ejercicio 2 — Qué le hace el número de condición
+
+Generar matrices con número de condición controlado y comprobar que los pasos necesarios crecen como $\kappa$, no como la dimensión.
+
+```{pyodide}
+import numpy as np
+
+rng2 = np.random.default_rng(161)
+
+def problema(n, kappa):
+    Q = np.linalg.qr(rng2.normal(size=(n, n)))[0]
+    d = np.linspace(1.0, kappa, n)
+    return Q @ np.diag(d) @ Q.T
+
+print(f"{'n':>4s}  {'kappa':>7s}  {'eta optimo':>11s}  {'pasos hasta 1e-8':>17s}")
+for n, kappa in [(5, 5.0), (5, 50.0), (5, 500.0), (20, 50.0), (80, 50.0)]:
+    A2 = problema(n, kappa)
+    b2 = rng2.normal(size=n)
+    xe = np.linalg.solve(A2, b2)
+    eta = 2.0/(1.0 + kappa)
+    x = np.zeros(n); pasos = 0
+    obj = 1e-8*np.linalg.norm(xe)
+    while np.linalg.norm(x - xe) > obj and pasos < 40000:
+        x = x - eta*(A2 @ x - b2)
+        pasos += 1
+    print(f"{n:4d}  {kappa:7.1f}  {eta:11.5f}  {pasos:17d}")
+print()
+print("con kappa fijo la dimension casi no importa; con n fijo los pasos crecen con kappa")
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Mat 16**:
+
+1. Implementar `descenso(f, grad, x0, eta, pasos)` con registro del camino, y añadirle búsqueda de línea: en cada iteración, probar $\eta,\eta/2,\eta/4,\dots$ hasta que el lema de descenso de la Proposición 16.4 se cumpla con la constante medida. Comparar pasos totales y evaluaciones de $f$ contra el paso fijo.
+2. Reproducir la tabla del Ejercicio 2 dibujando pasos frente a $\kappa$ en escala log-log, y estimar la pendiente. Comprobar si sale $1$, como predice $(\kappa-1)/(\kappa+1)$ para $\kappa$ grande.
+3. Implementar el momento de Nesterov —que evalúa el gradiente en el punto adelantado $x_k+\beta(x_k-x_{k-1})$— y comparar con la Definición 16.6 sobre el mismo problema mal condicionado. Anotar en `50-Errores/` con qué $\beta$ cada uno empieza a oscilar.
+
+## Del libro
+
+*Mathematics for Machine Learning* trata este material en §7.1 *Optimization Using Gradient Descent*, dentro del capítulo 7 sobre optimización continua. El libro tiene copyright y no es descargable desde el entorno en que se escribió esta página, así que se cita número y título y no se le atribuye ninguna frase.
+
+**Preguntas para leer §7.1 con lápiz:**
+
+1. La sección presenta el descenso de gradiente con paso fijo y después con momento. Con la Proposición 16.5, ¿por qué el paso máximo admisible depende del mayor eigenvalor de la hessiana y no de su determinante ni de su traza?
+2. §7.1 menciona el descenso estocástico, donde el gradiente se estima con una parte de los datos. ¿Qué parte de la demostración de la Proposición 16.4 deja de valer cuando $\nabla f(x_k)$ se sustituye por una estimación ruidosa, y por qué eso obliga a hacer decrecer $\eta$ con $k$?
+3. El capítulo usa la palabra *learning rate* para $\eta$. Con el Ejercicio 1, ¿por qué la recomendación $\eta\le1/L$ es segura pero conservadora, y qué información extra hace falta para poder subirla hasta $2/(\lambda_1+\lambda_n)$?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/descenso-de-gradiente.md`, enlazada a [[convexidad]], [[hessiana]] y [[numero-de-condicion]]. Conviene rehacer a mano la Proposición 16.5: la diagonalización parte el método en $n$ recursiones de una variable, y de ahí sale todo lo demás —paso límite, paso óptimo y tasa— sin ninguna cuenta más.
+
+```
+¿Cuál es el paso del descenso de gradiente?::x_{k+1} = x_k − η∇f(x_k)
+¿Por qué baja con η pequeño?::Porque −∇f es la dirección de máximo descenso y su derivada direccional es −‖∇f‖ < 0
+¿Qué es un gradiente L-Lipschitz?::Uno que cumple ‖∇f(y)−∇f(x)‖ ≤ L‖y−x‖; para una cuadrática, L = λ₁
+¿Qué dice el lema de descenso?::f(y) ≤ f(x) + ∇f(x)·(y−x) + (L/2)‖y−x‖²
+¿Cuánto baja cada paso con η ≤ 1/L?::Al menos (η/2)‖∇f(x_k)‖²
+¿Cómo evoluciona el error en una cuadrática?::e_{k+1} = (I−ηA)e_k, y cada coordenada propia se multiplica por (1−ηλᵢ)
+¿Cuál es el factor de contracción?::ρ(η) = maxᵢ|1−ηλᵢ|
+¿Cuál es el paso límite?::2/λ₁; por encima de ahí el método se aleja
+¿Cuál es el paso óptimo?::2/(λ₁+λₙ)
+¿Cuál es la mejor tasa posible?::(κ−1)/(κ+1), con κ = λ₁/λₙ
+¿De qué depende la velocidad?::Del número de condición κ, no de la dimensión ni de la escala global
+¿Qué hace el momento?::Suma β(x_k−x_{k−1}) al paso: cancela zigzag y acumula avance en la dirección repetida
+¿Conviene subir β sin mirar?::No: con κ=20, β=0,5 recorta 125 pasos a 53, pero β=0,8 sube a 155
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** Las Proposiciones 16.2, 16.4 y 16.5 se demuestran aquí a partir de la dirección de máximo descenso de la lección 13, de Cauchy-Schwarz de la lección 4 y de la diagonalización ortogonal de la lección 10. Se comprueban además numéricamente: el lema de descenso en 20 000 pares con $L=\lambda_1$, y su rotura en 9424 de ellos al rebajar la constante a la mitad; el factor de contracción medido contra $\max_i|1-\eta\lambda_i|$ para cinco pasos distintos, coincidiendo en las cuatro cifras, incluido el caso divergente; el umbral $2/\lambda_1$ recorrido al 90, 99, 101 y 120 por ciento; el efecto del momento con cuatro valores de $\beta$; y el crecimiento de los pasos con $\kappa$ a dimensión fija frente a su indiferencia a la dimensión con $\kappa$ fijo. Los dos visuales se contrastaron antes de publicarse contra las fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** La Proposición 13.9 —dirección de máximo descenso— y la Definición 13.6 de derivada direccional. La desigualdad de Cauchy-Schwarz es la Proposición 4.5. El teorema espectral y la escritura $A=Q\Lambda Q^\top$ son la Proposición 10.4. Que un mínimo local de una función convexa es global es la Proposición 15.5, y es lo que da sentido a buscar con este método.
+
+**Lo que se enuncia sin demostrar.** El teorema fundamental del cálculo, usado en la Proposición 16.4 para escribir $f(y)-f(x)$ como integral de $\phi'$. La aceleración del momento se muestra midiendo pero no se demuestra: la tasa óptima del método con momento sobre una cuadrática es $(\sqrt{\kappa}-1)/(\sqrt{\kappa}+1)$, y ese análisis queda fuera de esta lección. En la Definición 16.3 se afirma que para una cuadrática la menor constante válida es $\lambda_1$, que sale de $\|A v\|\le\lambda_1\|v\|$ por el mismo argumento de la Proposición 12.4 y no se detalla.
+
+**Lo que viene de los libros.**
+
+- [*Mathematics for Machine Learning*](https://mml-book.github.io/book/mml-book.pdf) (Deisenroth, Faisal & Ong, Cambridge University Press, 2020), §7.1 *Optimization Using Gradient Descent* — citada por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** El orden que va de la garantía cualitativa (Proposición 16.2) a la cuantitativa (16.4) y de ahí al factor exacto (16.5), para que se vea qué añade cada hipótesis. El primer visual, que pone el paso en unidades del límite $2/\lambda_1$ en lugar de en valor absoluto: así el mismo control sirve para cualquier $\kappa$ y la frontera de divergencia queda siempre en el mismo sitio del deslizador. Y la honestidad del segundo visual y de la última celda sobre $\beta=0{,}8$, que empeora en lugar de mejorar.
+
+[Índices verificados el 12-09-2026 contra el índice publicado del PDF oficial.]{.sello}
+:::
+
+→ Siguiente: [Método de Newton](17-metodo-de-newton.qmd)
