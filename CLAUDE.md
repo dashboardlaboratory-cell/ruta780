@@ -65,6 +65,23 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
     una o dos frases, con atribución. Si no se puede extraer el texto de
     forma verificable, no se cita y se dice.
 
+19b. **Un control que no mueve el dibujo es un control roto.** Encontrado por
+    Luis el 12-09-2026 en `estadistica/08`: los dos paneles reescalaban sus
+    ejes a la muestra, así que «Otra muestra» sorteaba datos nuevos y el
+    dibujo salía idéntico. **El marco se ancla a la población o a una
+    constante, nunca a los datos que se están dibujando.**
+
+    Comprobarlo por firma del SVG NO basta: en ese caso las opacidades
+    cambiaban y la firma salía distinta aunque nada se moviera. Hay que medir
+    **píxeles del marcador concreto**: un botón de re-sorteo debe dejar su
+    marcador principal en posiciones distintas, con recorrido de decenas de
+    px. Ver el test de `estadistica/08` (12 posiciones en 12 muestras,
+    recorrido 82×106 px).
+
+    Si una cantidad de verdad no depende de los datos, eso es contenido y se
+    dice: el panel derecho de `estadistica/08` no se mueve **porque** la
+    Proposición 8.7 dice que no puede, y la prosa lo explica.
+
 20. **Un visual por concepto que lo admita, no uno por página.** Si una
     definición o una proposición se puede ver, se ve. `estadistica/04` tiene
     cuatro: esperanza como promedio ponderado sobre una viga, varianza como
