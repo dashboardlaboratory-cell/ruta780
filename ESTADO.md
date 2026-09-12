@@ -284,6 +284,13 @@ se habían añadido a esa lista tras arreglarles solo las vallas `{=html}`, sin
 mirarles la prosa: el detector encontró en la 01 tres frases de golpe que venían
 del molde viejo.
 
+**`np.linalg.eig` devuelve complejos en numpy 2 aunque los eigenvalores sean
+reales.** Segunda vez que la diferencia de versiones rompe el build, ahora en
+`matematica/10`: en local imprimía `[5. 2.]` y en el CI `[5.+0.j 2.+0.j]`. La
+corrección es explícita y además enseña algo: comprobar que la parte imaginaria
+es cero y quedarse con `.real`. Con `eigh` —matrices simétricas— no pasa, porque
+ahí los eigenvalores son reales por construcción.
+
 **El CI corre numpy 2 y esta máquina numpy 1.24: no fijar dígitos de un cero
 de punto flotante.** El 12-09-2026 el build murió en `salidas.py` con dos
 afirmaciones que pasaban en local: `error máximo : 0.0` salía `4.44e-16` con
