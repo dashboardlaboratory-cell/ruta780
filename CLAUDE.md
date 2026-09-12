@@ -79,18 +79,21 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
 
 ## Reglas de construcción
 
-8. **Verificar cada visual sin navegador antes de publicar**: extraer los
+8. **`python3 verificar/estructura.py` antes de cada commit.** Una valla
+    `:::` sin cerrar no rompe el render: Quarto publica la página con el
+    bloque abierto y todo lo demás dentro. Corre también en CI.
+9. **Verificar cada visual sin navegador antes de publicar**: extraer los
    bloques ` ```{=html} `, montar un HTML suelto, correrlo con Playwright y
    comprobar cero `pageerror` y las lecturas de todos los presets.
-9. **Nada que pueda dejar contenido invisible.** Sin animaciones de entrada
+10. **Nada que pueda dejar contenido invisible.** Sin animaciones de entrada
    con `opacity: 0`: si el observer no dispara, el índice desaparece. Ya pasó.
-10. **Widgets siempre dentro de ` ```{=html} `**, o Quarto los renderiza como
+11. **Widgets siempre dentro de ` ```{=html} `**, o Quarto los renderiza como
     texto literal.
-11. `engine: markdown` en el frontmatter de **cada** `.qmd`; a nivel de
+12. `engine: markdown` en el frontmatter de **cada** `.qmd`; a nivel de
     proyecto no se propaga.
-12. **Nada de `url()` dentro de un data URI en el SCSS**: Quarto escanea el CSS
+13. **Nada de `url()` dentro de un data URI en el SCSS**: Quarto escanea el CSS
     compilado y lo toma por una ruta de archivo. Usar base64.
-13. **Datos de CBTL jamás al repo.** Es público. Datos públicos o sintéticos.
+14. **Datos de CBTL jamás al repo.** Es público. Datos públicos o sintéticos.
 
 ## Dónde está cada cosa
 
