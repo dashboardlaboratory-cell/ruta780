@@ -101,6 +101,7 @@ MIGRADAS = {
     "matematica/11-svd.qmd",
     "matematica/12-formas-cuadraticas.qmd",
     "matematica/13-derivada-gradiente.qmd",
+    "matematica/14-hessiana-taylor.qmd",
 }
 
 
