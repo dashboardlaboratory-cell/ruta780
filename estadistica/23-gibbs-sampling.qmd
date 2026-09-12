@@ -1,0 +1,544 @@
+---
+title: "Gibbs sampling desde cero"
+subtitle: "Estadística · Lección 23"
+nivel: L3
+modulo: estadistica
+fase: F5
+prereqs: [estadistica/22-metropolis-hastings, estadistica/12-normal-multivariante]
+siguientes: [estadistica/24-diagnostico-de-cadenas]
+libro: "Think Bayes 2e §19 MCMC"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="estadistica/23-gibbs-sampling"}
+[[L3]{.nivel .nivel-L3} **Derivación**]{.item}
+[**Fase** F5]{.item}
+[**Libro** Think Bayes 2e §19]{.item}
+[**Prereqs** [Metropolis-Hastings](22-metropolis-hastings.qmd) · [Normal multivariante](12-normal-multivariante.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Escribir las [condicionales completas]{.g data-t="condicional completa"} de un modelo y con ellas el muestreador de [Gibbs]{.g data-t="Gibbs sampling"}.
+2. Demostrar que Gibbs es Metropolis-Hastings con la condicional como propuesta, y que por eso su razón de aceptación vale exactamente uno.
+3. Demostrar que cada barrido deja invariante el objetivo, sin apoyarse en la lección 22.
+4. Demostrar que sobre una normal bivariante con correlación $r$ la cadena de Gibbs es autorregresiva de coeficiente $r^{2}$, calcular su factor de ineficiencia $(1+r^{2})/(1-r^{2})$ y deducir de ahí cuándo Gibbs deja de servir y qué hacer.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Estadística 22**: el balance detallado y Metropolis-Hastings. Gibbs se obtiene eligiendo la propuesta de una manera concreta, y todo lo demostrado allí sigue valiendo.
+- **Estadística 12**: las condicionales de una normal multivariante. Son el ejemplo donde todo sale cerrado, y también el que revela el defecto del método.
+- **Estadística 19**: la conjugación. Gibbs funciona cuando cada bloque de parámetros es conjugado **dado el resto**, aunque el modelo entero no lo sea.
+- **Estadística 5**: la correlación. Aquí es a la vez lo que hace interesante el problema y lo que hace lento al método.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Lección 24**: la cadena de Gibbs sobre parámetros correlacionados es el caso de libro donde los diagnósticos tienen que dar la alarma.
+- **Lección 25**: PyMC usa Gibbs para los bloques donde la condicional es conocida y otro muestreador para el resto; saber cuál es cuál explica sus tiempos.
+- **Estadística 15**: la imputación múltiple de datos faltantes es un Gibbs donde uno de los bloques son los propios datos que faltan.
+- **Estadística 13**: el modelo de regresión con varianza desconocida es el ejemplo estándar de condicionales completas, y aquí se resuelve entero.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Símbolo | Se lee | Significado |
+|---|---|---|
+| $\theta=(\theta_1,\dots,\theta_d)$ | theta | El vector de parámetros, partido en $d$ bloques |
+| $\theta_{-j}$ | theta menos jota | Todos los bloques menos el $j$-ésimo |
+| $\pi(\theta_j\mid\theta_{-j},x)$ | — | La condicional completa del bloque $j$ |
+| $r$ | erre | La correlación entre los dos parámetros de la sección 4 |
+| $\rho_k$ | rho sub ka | La autocorrelación de la cadena a retardo $k$ |
+| $\tau$ | tau | El factor de ineficiencia, $1+2\sum_k\rho_k$ |
+| $\text{IG}(\alpha,\beta)$ | i ge | La inversa-gamma: si $1/V\sim\text{Gamma}(\alpha,\beta)$ entonces $V\sim\text{IG}(\alpha,\beta)$ |
+:::
+
+## 1. Condicionales completas
+
+Metropolis-Hastings solo pide evaluar el objetivo salvo constante, y eso lo hace universal. El precio es que hay que elegir una propuesta, y elegirla mal cuesta el factor $\tau$ de la Proposición 22.9. Gibbs cambia ese trato: pide más al modelo y no pide nada al usuario.
+
+::: {.definicion}
+**Definición 23.1 (condicional completa).** Para una partición $\theta=(\theta_1,\dots,\theta_d)$, la condicional completa del bloque $j$ es la distribución de $\theta_j$ dados todos los demás y los datos,
+$$\pi(\theta_j\mid\theta_{-j},x)\;\propto\;\pi(\theta\mid x),$$
+donde la proporcionalidad es como función de $\theta_j$ con $\theta_{-j}$ fijo.
+:::
+
+La proporcionalidad merece un comentario, porque es la que hace practicable el método: para obtener la condicional completa **se toma el posterior conjunto y se tacha todo lo que no contenga $\theta_j$**. Lo que queda suele ser el núcleo de una densidad conocida, por la Proposición 19.2. Un modelo puede no ser conjugado en bloque y serlo bloque a bloque, y eso es lo normal.
+
+::: {.definicion}
+**Definición 23.2 (muestreador de Gibbs).** Desde el estado $\theta^{(t)}$, un **barrido** consiste en recorrer los bloques en orden y sortear cada uno de su condicional completa, usando siempre los valores más recientes de los demás:
+$$\theta_1^{(t+1)}\sim\pi(\cdot\mid\theta_2^{(t)},\dots,\theta_d^{(t)},x),\qquad
+\theta_2^{(t+1)}\sim\pi(\cdot\mid\theta_1^{(t+1)},\theta_3^{(t)},\dots,x),\ \dots$$
+:::
+
+No hay paso de aceptación ni parámetro que ajustar. La razón es la proposición siguiente.
+
+## 2. Por qué no hace falta aceptar nada
+
+::: {.proposicion}
+**Proposición 23.3 (Gibbs es Metropolis-Hastings con aceptación uno).** Sea la propuesta que cambia solo el bloque $j$ sorteándolo de su condicional completa,
+$$q(y\mid x)=\pi(y_j\mid x_{-j},\,\text{datos}),\qquad y_{-j}=x_{-j}.$$
+Entonces la razón de aceptación de la Definición 22.5 vale $\alpha(x,y)=1$ para todo par.
+:::
+
+::: {.demostracion}
+*Demostración.* Como $y_{-j}=x_{-j}$, escríbase $z=x_{-j}=y_{-j}$. Por la definición de condicional, $\pi(x)=\pi(x_j\mid z)\,\pi(z)$ y $\pi(y)=\pi(y_j\mid z)\,\pi(z)$, con la misma marginal $\pi(z)$ en los dos casos. Sustituyendo en la razón,
+$$\frac{\pi(y)\,q(x\mid y)}{\pi(x)\,q(y\mid x)}
+=\frac{\pi(y_j\mid z)\,\pi(z)\cdot\pi(x_j\mid z)}{\pi(x_j\mid z)\,\pi(z)\cdot\pi(y_j\mid z)}=1,$$
+porque $q(x\mid y)=\pi(x_j\mid y_{-j})=\pi(x_j\mid z)$ y $q(y\mid x)=\pi(y_j\mid z)$. Luego $\alpha=\min(1,1)=1$. [∎]{.fin-demo}
+:::
+
+La cancelación es total: la marginal $\pi(z)$ se va porque el bloque $z$ no se toca, y las dos condicionales se cruzan. Una propuesta que ya está distribuida como el objetivo condicional no puede mejorarse rechazándola.
+
+Conviene también demostrarlo por la vía directa, sin invocar la lección 22, porque la demostración es otra y aclara qué se conserva en cada paso.
+
+::: {.proposicion}
+**Proposición 23.4 (cada paso deja invariante el objetivo).** Si $\theta^{(t)}\sim\pi$ y se actualiza solo el bloque $j$ sorteándolo de $\pi(\cdot\mid\theta_{-j}^{(t)})$, entonces $\theta^{(t+1)}\sim\pi$. En consecuencia un barrido completo, que es la composición de $d$ pasos de ese tipo, también deja invariante $\pi$.
+:::
+
+::: {.demostracion}
+*Demostración.* Con $z=\theta_{-j}$, la densidad conjunta del nuevo estado es
+$$p(\theta_j^{(t+1)},z)=\underbrace{\pi(\theta_j^{(t+1)}\mid z)}_{\text{del sorteo}}\cdot\underbrace{\pi(z)}_{\text{marginal del estado viejo}},$$
+donde se usó que $z$ no cambia y que, por hipótesis, el estado viejo tenía marginal $\pi(z)$. Ese producto es exactamente $\pi(\theta_j^{(t+1)},z)$ por definición de condicional. Para el barrido completo basta componer: cada paso preserva $\pi$, luego la composición también. [∎]{.fin-demo}
+:::
+
+Obsérvese que la Proposición 23.4 **no** afirma el balance detallado, y de hecho un barrido completo en orden fijo no lo cumple: recorrer los bloques siempre en el mismo sentido introduce una dirección. Es el caso, anunciado en la lección 22, de una cadena con distribución estacionaria correcta y sin reversibilidad. La estacionariedad se demuestra directamente y basta.
+
+```{pyodide}
+import numpy as np
+
+# La Proposicion 23.3 en numeros: se calcula la razon de Metropolis-Hastings
+# para una propuesta de Gibbs sobre una normal bivariante y sale uno exacto.
+r = 0.8
+def log_conjunta(x, y):
+    q = (x * x - 2 * r * x * y + y * y) / (1 - r * r)
+    return -0.5 * q                                  # sin la constante
+
+def log_condicional_x(x, y):
+    m, v = r * y, 1 - r * r                          # x | y ~ N(r y, 1 - r^2)
+    return -0.5 * np.log(2 * np.pi * v) - (x - m)**2 / (2 * v)
+
+g = np.random.default_rng(4)
+peor = 0.0
+for _ in range(20000):
+    xv, yv = g.normal(0, 2), g.normal(0, 2)          # estado actual, cualquiera
+    xn = r * yv + np.sqrt(1 - r * r) * g.standard_normal()   # propuesta de Gibbs
+    # razon de la Definicion 22.5 con q = condicional completa
+    log_razon = ((log_conjunta(xn, yv) + log_condicional_x(xv, yv))
+                 - (log_conjunta(xv, yv) + log_condicional_x(xn, yv)))
+    peor = max(peor, abs(np.exp(log_razon) - 1.0))
+
+print("razon de aceptacion de Gibbs, maxima desviacion de 1 en 20 000 pares:")
+print("  %.3e" % peor)
+print("  por debajo de 1e-12 :", bool(peor < 1e-12))
+```
+
+## 3. El modelo normal con media y varianza desconocidas
+
+Este es el caso que justifica el método, porque el posterior conjunto no es de ninguna familia con nombre y las dos condicionales sí.
+
+Con datos $x_1,\dots,x_n$ normales de media $\mu$ y varianza $\sigma^2$, ambas desconocidas, y el prior $\pi(\mu,\sigma^2)\propto1/\sigma^2$, el posterior conjunto es proporcional a
+
+$$(\sigma^{2})^{-n/2-1}\exp\left(-\frac{1}{2\sigma^{2}}\sum_{i=1}^{n}(x_i-\mu)^{2}\right).$$
+
+Tachando lo que no depende de cada parámetro se leen las dos condicionales:
+
+::: {.proposicion}
+**Proposición 23.5 (condicionales completas del modelo normal).** Con el posterior anterior,
+$$\mu\mid\sigma^{2},x\;\sim\;\mathcal{N}\!\left(\bar{x},\;\frac{\sigma^{2}}{n}\right),
+\qquad
+\sigma^{2}\mid\mu,x\;\sim\;\text{IG}\!\left(\frac{n}{2},\;\frac{1}{2}\sum_{i=1}^{n}(x_i-\mu)^{2}\right).$$
+:::
+
+::: {.demostracion}
+*Demostración.* Para $\mu$, el único factor que la contiene es la exponencial. Usando la identidad $\sum_i(x_i-\mu)^2=\sum_i(x_i-\bar{x})^2+n(\bar{x}-\mu)^2$ y descartando el primer sumando, que no depende de $\mu$,
+$$\pi(\mu\mid\sigma^{2},x)\;\propto\;\exp\left(-\frac{n(\mu-\bar{x})^{2}}{2\sigma^{2}}\right),$$
+núcleo de una normal de media $\bar{x}$ y varianza $\sigma^{2}/n$. Para $\sigma^2$, con $S(\mu)=\sum_i(x_i-\mu)^2$ fijo,
+$$\pi(\sigma^{2}\mid\mu,x)\;\propto\;(\sigma^{2})^{-n/2-1}\exp\!\big(-\tfrac{S(\mu)}{2\sigma^{2}}\big),$$
+que es el núcleo de una $\text{IG}(n/2,\,S(\mu)/2)$. En ambos casos la Proposición 19.2 identifica la densidad. [∎]{.fin-demo}
+:::
+
+Ninguna de las dos actualizaciones es el posterior de nadie: son condicionales. El posterior marginal de $\mu$ sí se conoce en este caso —es una $t$ de Student, como en la lección 9— y por eso sirve de comprobación exacta.
+
+```{pyodide}
+import numpy as np
+
+# Gibbs para (mu, sigma^2) con prior 1/sigma^2, contra las marginales exactas.
+rng = np.random.default_rng(2026)
+datos = rng.normal(10.0, 2.0, 40)
+n = len(datos)
+xbar = datos.mean()
+s2 = datos.var(ddof=1)
+
+# exacto: mu | datos ~ t_{n-1}(xbar, s2/n)  y  sigma^2 | datos ~ IG((n-1)/2, (n-1)s2/2)
+sd_mu_exacta = np.sqrt(s2 / n * (n - 1) / (n - 3))
+media_s2_exacta = ((n - 1) * s2 / 2) / ((n - 1) / 2 - 1)
+print("n = %d   xbar = %.6f   s2 = %.6f" % (n, xbar, s2))
+print("exacto:  media de mu %.6f   sd de mu %.6f   media de sigma^2 %.6f"
+      % (xbar, sd_mu_exacta, media_s2_exacta))
+
+def gibbs(N, semilla):
+    g = np.random.default_rng(semilla)
+    mu, sig2 = xbar, s2
+    MU, S2 = np.empty(N), np.empty(N)
+    for i in range(N):
+        # Proposicion 23.5, primer bloque
+        mu = xbar + np.sqrt(sig2 / n) * g.standard_normal()
+        # segundo bloque: IG(a, b) se sortea como b / Gamma(a)
+        S = ((datos - mu) ** 2).sum()
+        sig2 = (S / 2) / g.gamma(n / 2)
+        MU[i], S2[i] = mu, sig2
+    return MU, S2
+
+MU, S2 = gibbs(40000, 11)
+MU, S2 = MU[2000:], S2[2000:]
+print("gibbs :  media de mu %.6f   sd de mu %.6f   media de sigma^2 %.6f"
+      % (MU.mean(), MU.std(ddof=1), S2.mean()))
+print()
+print("media de mu dentro de 0,005 de la exacta      :", bool(abs(MU.mean() - xbar) < 0.005))
+print("sd de mu dentro del 2 % de la exacta          :",
+      bool(abs(MU.std(ddof=1) / sd_mu_exacta - 1) < 0.02))
+print("media de sigma^2 dentro del 2 % de la exacta  :",
+      bool(abs(S2.mean() / media_s2_exacta - 1) < 0.02))
+```
+
+Nunca se calculó el posterior conjunto, ni su constante, ni la $t$ de Student. Solo se alternaron dos sorteos elementales, y el resultado reproduce las marginales exactas.
+
+## 4. Dónde se rompe
+
+El defecto de Gibbs se ve entero en el ejemplo más simple posible, y se puede demostrar.
+
+::: {.proposicion}
+**Proposición 23.6 (Gibbs sobre una normal bivariante es autorregresivo).** Sea el objetivo $\mathcal{N}(0,\Sigma)$ con $\Sigma=\begin{pmatrix}1&r\\r&1\end{pmatrix}$ y $|r|<1$. La cadena de Gibbs que actualiza primero $x$ y luego $y$ cumple
+$$x^{(t+1)}=r^{2}\,x^{(t)}+\varepsilon_t,$$
+con $\varepsilon_t$ independiente de $x^{(t)}$. En consecuencia $\rho_k=r^{2k}$ y
+$$\tau=1+2\sum_{k\ge1}r^{2k}=\frac{1+r^{2}}{1-r^{2}}.$$
+:::
+
+::: {.demostracion}
+*Demostración.* Por la lección 12, las condicionales de la normal bivariante estandarizada son $x\mid y\sim\mathcal{N}(ry,\,1-r^{2})$ y $y\mid x\sim\mathcal{N}(rx,\,1-r^{2})$. El barrido es entonces
+$$x^{(t+1)}=r\,y^{(t)}+\sqrt{1-r^{2}}\,\xi_t,\qquad y^{(t+1)}=r\,x^{(t+1)}+\sqrt{1-r^{2}}\,\eta_t,$$
+con $\xi_t,\eta_t$ normales estándar independientes. Sustituyendo la segunda igualdad, retrasada un paso, en la primera:
+$$x^{(t+1)}=r\big(r\,x^{(t)}+\sqrt{1-r^{2}}\,\eta_{t-1}\big)+\sqrt{1-r^{2}}\,\xi_t
+=r^{2}x^{(t)}+\varepsilon_t,$$
+con $\varepsilon_t=r\sqrt{1-r^{2}}\,\eta_{t-1}+\sqrt{1-r^{2}}\,\xi_t$, que es independiente de $x^{(t)}$ por serlo $\xi_t$ y $\eta_{t-1}$ de todo lo anterior. Un proceso autorregresivo de coeficiente $\phi$ tiene $\rho_k=\phi^{k}$; aquí $\phi=r^{2}$. Finalmente, sumando la serie geométrica,
+$$\tau=1+2\sum_{k\ge1}r^{2k}=1+\frac{2r^{2}}{1-r^{2}}=\frac{1+r^{2}}{1-r^{2}}.$$
+[∎]{.fin-demo}
+:::
+
+La fórmula es el diagnóstico entero. Con $r=0$ vale $\tau=1$: las muestras son independientes y Gibbs es óptimo. Con $r=0{,}9$ vale $9{,}5$; con $r=0{,}99$, casi cien; con $r=0{,}999$, mil. La causa es geométrica: Gibbs solo se mueve paralelo a los ejes, y un contorno muy alargado en diagonal deja un pasillo estrecho por el que hay que avanzar a pasitos ortogonales.
+
+```{pyodide}
+import numpy as np
+
+# Proposicion 23.6: rho_1 medido contra r^2, y tau medido contra la formula.
+def gibbs_bivariante(r, n, semilla):
+    g = np.random.default_rng(semilla)
+    x = y = 0.0
+    sd = np.sqrt(1 - r * r)
+    zx, zy = g.standard_normal(n), g.standard_normal(n)
+    X = np.empty(n)
+    for i in range(n):
+        x = r * y + sd * zx[i]
+        y = r * x + sd * zy[i]
+        X[i] = x
+    return X
+
+def autocorr_y_tau(m, kmax=400):
+    m = m - m.mean()
+    v = float((m * m).mean())
+    rho1 = float((m[:-1] * m[1:]).mean()) / v
+    tau = 1.0
+    for k in range(1, kmax):
+        rho = float((m[:-k] * m[k:]).mean()) / v
+        if rho <= 0:
+            break
+        tau += 2 * rho
+    return rho1, tau
+
+print("   r     rho1 medido     r^2      tau medido   (1+r^2)/(1-r^2)")
+for r in [0.0, 0.5, 0.9, 0.99]:
+    X = gibbs_bivariante(r, 120000, 7)[2000:]
+    rho1, tau = autocorr_y_tau(X)
+    print("%5.2f   %11.4f  %7.4f   %11.1f   %14.1f"
+          % (r, rho1, r * r, tau, (1 + r * r) / (1 - r * r)))
+print()
+print("rho1 coincide con r^2 dentro de 0,01 en los cuatro casos:",
+      all(abs(autocorr_y_tau(gibbs_bivariante(r, 120000, 7)[2000:])[0] - r * r) < 0.01
+          for r in [0.0, 0.5, 0.9, 0.99]))
+```
+
+El visual siguiente enseña de dónde sale la fórmula. El marco está anclado a la población —los ejes van de $-4$ a $4$ siempre, y la elipse dibujada es la de la distribución objetivo, no la de los puntos visitados—, así que subir la correlación estrecha el pasillo sin reescalar nada.
+
+```{=html}
+<div class="viz-gibbs">
+  <div class="controles">
+    <label>Correlación r <input id="gb-r" type="range" min="0" max="99" step="1" value="90"> <span id="gb-r-v">0,90</span></label>
+    <label>Barridos <input id="gb-n" type="range" min="20" max="600" step="20" value="120"> <span id="gb-n-v">120</span></label>
+    <button id="gb-otra" type="button">Otra cadena</button>
+  </div>
+  <svg id="gb-svg" viewBox="0 0 620 340" role="img" aria-label="Plano con los dos parametros. Una elipse fina marca el contorno de la distribucion objetivo y sobre ella la cadena de Gibbs dibuja una escalera de tramos horizontales y verticales alternados, que con correlacion alta avanza por un pasillo estrecho en diagonal."></svg>
+  <p class="lectura" id="gb-lectura"></p>
+</div>
+<style>
+.viz-gibbs { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-gibbs .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-gibbs label { display: flex; align-items: center; gap: .4rem; }
+.viz-gibbs input[type=range] { width: 110px; padding: 0; }
+.viz-gibbs button { font-size: .8rem; padding: .22rem .6rem; border-radius: 5px; cursor: pointer; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-gibbs svg { width: 100%; height: auto; display: block; }
+.viz-gibbs .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5.4em; line-height: 1.6; }
+.viz-gibbs .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_CAD = "#B45309", C_ELI = "var(--r-tinta,#1f2430)", C_PT = "#5f8a7d";
+  var svg = document.getElementById("gb-svg"), lec = document.getElementById("gb-lectura");
+  var cR = document.getElementById("gb-r"), eR = document.getElementById("gb-r-v");
+  var cN = document.getElementById("gb-n"), eN = document.getElementById("gb-n-v");
+  var bt = document.getElementById("gb-otra");
+  var semilla = 987654321;
+
+  // Marco anclado a la poblacion: los dos ejes van de -4 a 4 pase lo que pase.
+  var X0 = 170, X1 = 450, Y0 = 300, Y1 = 34, LIM = 4;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function mulberry32(s) {
+    return function () {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  var px = function (v) { return X0 + (X1 - X0) * (v + LIM) / (2 * LIM); };
+  var py = function (v) { return Y0 - (Y0 - Y1) * (v + LIM) / (2 * LIM); };
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var r = +cR.value / 100, n = +cN.value;
+    eR.textContent = r.toFixed(2).replace(".", ",");
+    eN.textContent = n;
+
+    // ejes
+    svg.appendChild(el("line", { x1: X0, y1: py(0).toFixed(1), x2: X1, y2: py(0).toFixed(1),
+      stroke: "var(--r-linea,#ddd)" }));
+    svg.appendChild(el("line", { x1: px(0).toFixed(1), y1: Y1, x2: px(0).toFixed(1), y2: Y0,
+      stroke: "var(--r-linea,#ddd)" }));
+    svg.appendChild(el("rect", { x: X0, y: Y1, width: X1 - X0, height: Y0 - Y1, fill: "none",
+      stroke: "var(--r-linea,#ccc)" }));
+    svg.appendChild(el("text", { x: X0, y: 20, "font-size": 11, "font-weight": 600,
+      fill: "var(--r-tinta,#222)" }, "la escalera de Gibbs sobre el contorno del objetivo"));
+
+    // elipse del objetivo: contorno a dos desviaciones, de la poblacion
+    var d = "";
+    for (var i = 0; i <= 180; i++) {
+      var a = 2 * Math.PI * i / 180;
+      var u = 2 * Math.cos(a), v = 2 * Math.sin(a);
+      // raiz de Sigma: [[1,0],[r, sqrt(1-r^2)]] aplicada a (u,v)
+      var xx = u, yy = r * u + Math.sqrt(1 - r * r) * v;
+      d += (i ? "L" : "M") + px(xx).toFixed(1) + " " + py(yy).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: d + "Z", fill: "none", stroke: C_ELI, "stroke-width": 1.2,
+      "stroke-dasharray": "4 3", "stroke-opacity": 0.6 }));
+
+    // la cadena: cada barrido son dos tramos, uno horizontal y otro vertical
+    var g = mulberry32(semilla), x = 0, y = 0, sd = Math.sqrt(1 - r * r);
+    function normal() {
+      var u1 = Math.max(g(), 1e-12), u2 = g();
+      return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    }
+    var cam = "M" + px(x).toFixed(1) + " " + py(y).toFixed(1), xs = [];
+    for (var i = 0; i < n; i++) {
+      x = r * y + sd * normal();
+      cam += "L" + px(x).toFixed(1) + " " + py(y).toFixed(1);   // tramo horizontal
+      y = r * x + sd * normal();
+      cam += "L" + px(x).toFixed(1) + " " + py(y).toFixed(1);   // tramo vertical
+      xs.push(x);
+    }
+    svg.appendChild(el("path", { d: cam, fill: "none", stroke: C_CAD, "stroke-width": 0.9,
+      "stroke-opacity": 0.85, "stroke-linejoin": "round" }));
+    svg.appendChild(el("circle", { cx: px(xs[xs.length - 1]).toFixed(1), cy: py(y).toFixed(1), r: 3.5,
+      fill: C_PT }));
+
+    // rho1 medido en esta cadena
+    var m = 0;
+    for (var i = 0; i < xs.length; i++) m += xs[i];
+    m /= xs.length;
+    var s0 = 0, s1 = 0;
+    for (var i = 0; i < xs.length; i++) s0 += (xs[i] - m) * (xs[i] - m);
+    for (var i = 0; i + 1 < xs.length; i++) s1 += (xs[i] - m) * (xs[i + 1] - m);
+    var rho1 = s1 / s0;
+    var tau = (1 + r * r) / (1 - r * r);
+
+    lec.innerHTML = "Correlación <span class='fx'>" + r.toFixed(2).replace(".", ",") +
+      "</span>: la Proposición 23.6 predice <span class='fx'>ρ₁ = r² = " +
+      (r * r).toFixed(3).replace(".", ",") + "</span> y <span class='fx'>τ = " +
+      tau.toFixed(1).replace(".", ",") + "</span>. En estos <span class='fx'>" + n +
+      "</span> barridos el ρ₁ medido vale <span class='fx'>" + rho1.toFixed(3).replace(".", ",") +
+      "</span>. Cada barrido son dos tramos, uno paralelo a cada eje: por eso con la elipse muy " +
+      "inclinada la cadena avanza por el pasillo a pasitos y tarda τ barridos en dar una muestra útil.";
+  }
+
+  [cR, cN].forEach(function (c) { c.addEventListener("input", dibujar); });
+  bt.addEventListener("click", function () { semilla = (semilla * 1664525 + 1013904223) >>> 0; dibujar(); });
+  dibujar();
+})();
+</script>
+```
+
+## 5. Qué hacer cuando se rompe
+
+La Proposición 23.6 también dice la solución, porque el problema no está en el objetivo sino en los **ejes**. Si se rota el sistema de coordenadas a los ejes principales de $\Sigma$ —los eigenvectores de la lección 9—, la correlación entre las nuevas coordenadas es cero y $\tau$ vuelve a uno. Muestrear ahí y deshacer la rotación da muestras del objetivo original.
+
+Eso es reparametrizar, y es la primera herramienta ante una cadena lenta. Importa **dónde** se aplica: rotar las columnas que una cadena lenta ya produjo no arregla nada, porque la lentitud está en el tiempo y no entre las columnas. Hay que muestrear en las coordenadas nuevas y deshacer la rotación al final. En un modelo real no se conoce $\Sigma$, pero se puede estimar de una cadena piloto, o quitar la correlación de raíz: centrar los predictores antes de una regresión elimina casi toda la correlación entre la ordenada y la pendiente, que es el caso de la lección 13.
+
+La segunda herramienta es cambiar de muestreador. Gibbs está atado a los ejes por construcción; los métodos que usan el gradiente del logaritmo del objetivo se mueven en cualquier dirección y no sufren esto de la misma manera. Es lo que hace PyMC por defecto, y la lección 25 lo verá desde fuera.
+
+```{pyodide}
+import numpy as np
+
+# La solucion de la seccion 5. Ojo: no basta rotar la salida de una cadena que
+# corrio en las coordenadas originales —eso descorrelaciona las dos columnas
+# entre si, no cada columna consigo misma en el tiempo—. Hay que correr Gibbs
+# EN las coordenadas rotadas y deshacer la rotacion al final.
+def tau_de(m, kmax=400):
+    m = m - m.mean()
+    v = float((m * m).mean())
+    t = 1.0
+    for k in range(1, kmax):
+        rho = float((m[:-k] * m[k:]).mean()) / v
+        if rho <= 0:
+            break
+        t += 2 * rho
+    return t
+
+def gibbs_original(r, n, semilla):
+    g = np.random.default_rng(semilla)
+    x = y = 0.0
+    sd = np.sqrt(1 - r * r)
+    zx, zy = g.standard_normal(n), g.standard_normal(n)
+    X, Y = np.empty(n), np.empty(n)
+    for i in range(n):
+        x = r * y + sd * zx[i]
+        y = r * x + sd * zy[i]
+        X[i], Y[i] = x, y
+    return X, Y
+
+def gibbs_rotado(r, n, semilla):
+    """En los ejes principales la covarianza es diagonal: las condicionales
+    completas no dependen la una de la otra y cada barrido da una muestra nueva."""
+    g = np.random.default_rng(semilla)
+    zu, zv = g.standard_normal(n), g.standard_normal(n)
+    U = np.sqrt(1 + r) * zu          # eigenvalor 1+r en la direccion (1,1)/raiz(2)
+    V = np.sqrt(1 - r) * zv          # eigenvalor 1-r en la direccion (1,-1)/raiz(2)
+    return U, V
+
+r = 0.99
+X, Y = gibbs_original(r, 120000, 7)
+X, Y = X[2000:], Y[2000:]
+print("sin rotar : tau de x = %.1f   (formula %.1f)" % (tau_de(X), (1 + r * r) / (1 - r * r)))
+
+# rotar la salida NO arregla nada: u sigue siendo la direccion larga
+U_mal = (X + Y) / np.sqrt(2)
+print("rotar la salida de esa misma cadena: tau de u = %.1f" % tau_de(U_mal))
+
+# muestrear en los ejes principales y deshacer la rotacion, si
+U, V = gibbs_rotado(r, 118000, 7)
+X2 = (U + V) / np.sqrt(2)
+Y2 = (U - V) / np.sqrt(2)
+print("gibbs en los ejes principales, y despues deshacer la rotacion:")
+print("  tau de x = %.2f" % tau_de(X2))
+print()
+print("la cadena rotada baja tau de mas de 50 a menos de 1,2 :",
+      bool(tau_de(X) > 50 and tau_de(X2) < 1.2))
+print("y sigue siendo la misma distribucion objetivo:")
+print("  var(x) = %.4f   contra 1" % X2.var())
+print("  corr(x, y) = %.4f   contra r = %.2f" % (np.corrcoef(X2, Y2)[0, 1], r))
+```
+
+## Ejercicios
+
+1. Demostrar que si los bloques se recorren en **orden aleatorio** en cada barrido, la cadena resultante sí cumple el balance detallado. Explicar por qué el orden fijo no lo cumple y por qué da igual.
+2. En la Proposición 23.5, comprobar que la condicional de $\sigma^2$ usa $S(\mu)=\sum_i(x_i-\mu)^2$ y no $\sum_i(x_i-\bar{x})^2$, y decir qué se estaría suponiendo al usar la segunda.
+3. Deducir de la Proposición 23.6 el $r$ a partir del cual hacen falta más de mil barridos para obtener diez muestras efectivas.
+4. Generalizar la Proposición 23.6 a tres bloques con matriz de covarianza equicorrelacionada, o explicar qué se complica al intentarlo.
+5. Demostrar que muestrear $(\mu,\sigma^2)$ con Gibbs y quedarse solo con la columna de $\mu$ da muestras de la marginal posterior de $\mu$, sin tener que integrar $\sigma^2$ a mano.
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Est 23**:
+
+1. Escribir `gibbs_normal(datos, N)` que devuelva las cadenas de $\mu$ y $\sigma^2$, y comparar el histograma de $\mu$ con la densidad $t$ exacta de la lección 9. Medir la distancia máxima entre las dos acumuladas y comprobar que baja como $1/\sqrt{N}$.
+2. Implementar Gibbs para la regresión lineal con varianza desconocida: condicionales normal para los coeficientes e inversa-gamma para $\sigma^2$. Comprobar contra los resultados cerrados de la lección 14 y medir el $\tau$ de cada coeficiente **antes y después** de centrar los predictores.
+3. Verificar la Proposición 23.6 en un barrido de cien valores de $r$ entre 0 y 0,999: dibujar $\tau$ medido contra la fórmula y localizar dónde la estimación de $\tau$ empieza a fallar por cadenas demasiado cortas.
+
+## Del libro
+
+*Think Bayes* se publica bajo licencia [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/), que permite citarlo textualmente. El capítulo de MCMC publica sus secciones sin numerar en la versión en línea, así que aquí se cita a nivel de capítulo.
+
+::: {.cita-libro}
+> MCMC, which stands for Markov chain Monte Carlo.
+>
+> [Downey, *Think Bayes* 2e, §19 *MCMC*]{.ref}
+:::
+
+El libro no escribe Gibbs: llama a PyMC, que elige el muestreador por su cuenta. Esta página lo deriva para que la elección de PyMC en la lección 25 se pueda leer, y sobre todo para que la Proposición 23.6 explique de antemano por qué unos modelos son rápidos y otros no.
+
+**Preguntas para leer §19 con lápiz:**
+
+1. Los modelos del capítulo declaran una distribución por parámetro. ¿Cuáles de esas declaraciones dan condicionales completas conocidas, y cuáles obligarían a un paso de aceptación?
+2. El capítulo repite que hay que mirar las trazas. ¿Qué tendría el aspecto de una traza de la cadena de la Proposición 23.6 con $r=0{,}99$, y en qué se distinguiría de una cadena sana?
+3. PyMC informa del número efectivo de muestras. ¿Con qué cantidad de esta lección se corresponde, y qué relación guarda con el $\tau$ que la Proposición 23.6 predice?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/gibbs-sampling.md`, enlazada a [[metropolis-hastings]], [[condicional-completa]] y [[normal-multivariante]]. Conviene rehacer a mano la Proposición 23.6: sustituir una recursión en la otra son dos líneas, y de ahí sale la única fórmula que hace falta para saber si Gibbs va a servir.
+
+```
+¿Qué es una condicional completa?::La distribución de un bloque de parámetros dados todos los demás y los datos; se obtiene tachando del posterior conjunto lo que no contiene ese bloque
+¿Qué es un barrido de Gibbs?::Recorrer los bloques en orden sorteando cada uno de su condicional completa, usando siempre los valores más recientes
+¿Cuánto vale la aceptación en Gibbs?::Uno exactamente: es Metropolis-Hastings con la condicional como propuesta, y todo se cancela
+¿Por qué se cancela?::La marginal del bloque que no se toca es la misma en ambos lados, y las dos condicionales se cruzan
+¿Cumple Gibbs el balance detallado?::Con orden fijo no; la estacionariedad se demuestra directamente y basta
+¿Cuándo sirve Gibbs?::Cuando cada bloque es conjugado dado el resto, aunque el modelo entero no lo sea
+¿Cuáles son las condicionales del modelo normal?::mu | sigma² ~ N(x̄, sigma²/n) y sigma² | mu ~ IG(n/2, Σ(xᵢ−mu)²/2)
+¿Qué estructura tiene la cadena sobre una normal bivariante?::Autorregresiva de coeficiente r²: x⁽ᵗ⁺¹⁾ = r²x⁽ᵗ⁾ + ruido
+¿Cuánto vale tau ahí?::(1+r²)/(1−r²): uno si r=0, 9,5 si r=0,9 y casi cien si r=0,99
+¿Por qué se vuelve lento?::Porque Gibbs solo se mueve paralelo a los ejes, y un contorno inclinado deja un pasillo estrecho
+¿Cuál es la primera solución?::Reparametrizar: rotar a los ejes principales, o centrar los predictores en una regresión
+¿Y la segunda?::Cambiar de muestreador: los que usan el gradiente no están atados a los ejes
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** Las Proposiciones 23.3, 23.4, 23.5 y 23.6 se demuestran aquí, a partir de la definición de condicional, de la razón de Metropolis-Hastings de la lección 22 y de las condicionales de la normal bivariante de la lección 12. Se comprueban además numéricamente: la razón de aceptación de Gibbs se evalúa en 20 000 pares de estados y se desvía de uno menos de $10^{-12}$; el muestreador del modelo normal reproduce la media exacta de $\mu$ dentro de $0{,}005$ y su desviación y la media de $\sigma^2$ dentro del 2 %; y la Proposición 23.6 se contrasta en cuatro correlaciones, con $\rho_1$ dentro de $0{,}01$ de $r^2$ en todas. La rotación de la sección 5 baja $\tau$ de más de 50 a menos de 3. El visual se contrastó antes de publicarse contra la fórmula en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** La razón de aceptación y el factor $\tau$ son la lección 22. Las condicionales de la normal multivariante son la lección 12. El reconocimiento de núcleos es la Proposición 19.2. La marginal $t$ de Student del modelo normal es la lección 9. Los ejes principales son la lección 9 de Matemática.
+
+**Lo que se enuncia sin demostrar.** Que un proceso autorregresivo de coeficiente $\phi$ tiene $\rho_k=\phi^k$ se usa en la Proposición 23.6 sin demostrarlo. Que la cadena converja a $\pi$ desde cualquier arranque exige irreducibilidad, que aquí se cumple pero no se verifica. La afirmación de la sección 5 sobre muestreadores basados en el gradiente se enuncia como contexto para la lección 25.
+
+**Lo que viene de los libros.**
+
+- [*Think Bayes* 2e](https://allendowney.github.io/ThinkBayes2/) (Downey, CC BY-NC-SA 4.0), §19 *MCMC* — citada textualmente una frase. El capítulo cubre el terreno con PyMC y no escribe ningún muestreador; publica sus secciones sin numerar, por lo que se cita a nivel de capítulo.
+
+**Lo que es mío, no del libro.** La Proposición 23.3 demostrada con la cancelación explícita, y la Proposición 23.4 demostrada por la vía directa para dejar claro que Gibbs con orden fijo **no** es reversible. La Proposición 23.6 entera —la estructura autorregresiva, $\rho_k=r^{2k}$ y la fórmula de $\tau$—, que convierte «Gibbs va lento con parámetros correlacionados» en un número que se puede calcular antes de correr nada. Y la comprobación de la sección 5 con la rotación.
+
+[Índice de Think Bayes 2e verificado el 12-09-2026: 193 secciones de los capítulos 1 a 18 y 20; el 19 publica sus secciones sin numerar.]{.sello}
+:::
