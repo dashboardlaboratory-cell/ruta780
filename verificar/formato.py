@@ -100,6 +100,7 @@ MIGRADAS = {
     "matematica/10-diagonalizacion.qmd",
     "matematica/11-svd.qmd",
     "matematica/12-formas-cuadraticas.qmd",
+    "matematica/13-derivada-gradiente.qmd",
 }
 
 
