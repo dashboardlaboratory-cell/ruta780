@@ -102,6 +102,7 @@ MIGRADAS = {
     "matematica/12-formas-cuadraticas.qmd",
     "matematica/13-derivada-gradiente.qmd",
     "matematica/14-hessiana-taylor.qmd",
+    "matematica/15-convexidad.qmd",
 }
 
 
