@@ -1,0 +1,613 @@
+---
+title: "Diagnóstico de cadenas"
+subtitle: "Estadística · Lección 24"
+nivel: L4
+modulo: estadistica
+fase: F5
+prereqs: [estadistica/23-gibbs-sampling, estadistica/22-metropolis-hastings]
+siguientes: [estadistica/25-pymc-en-produccion]
+libro: "—"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="estadistica/24-diagnostico-de-cadenas"}
+[[L4]{.nivel .nivel-L4} **Derivación**]{.item}
+[**Fase** F5]{.item}
+[**Libro** autocontenida]{.item}
+[**Prereqs** [Gibbs sampling](23-gibbs-sampling.qmd) · [Metropolis-Hastings](22-metropolis-hastings.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir [$\hat{R}$]{.g data-t="R de Gelman-Rubin"} a partir de la varianza dentro y entre cadenas, y demostrar la identidad exacta que lo expresa como cociente de esas dos dispersiones.
+2. Demostrar que con cadenas ya estacionarias $\hat{R}^{2}\approx1+(\tau-1)/n$, y convertir con eso el umbral habitual $\hat{R}<1{,}01$ en una afirmación sobre el número de muestras efectivas por cadena.
+3. Calcular el [error de Monte Carlo]{.g data-t="error de Monte Carlo"} de cualquier resumen y decidir con él cuántas cifras se pueden escribir.
+4. Construir un caso donde $\hat{R}$ da el visto bueno y la respuesta está mal, y explicar qué clase de fallo ningún diagnóstico de este tipo puede ver.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Estadística 22**: el factor de ineficiencia $\tau$ y el tamaño efectivo. Aquí se conectan con $\hat{R}$ por una fórmula, de modo que los dos diagnósticos dejan de ser independientes.
+- **Estadística 23**: la cadena de Gibbs sobre parámetros correlacionados, que es el banco de pruebas de toda la lección porque su $\tau$ se conoce exactamente.
+- **Estadística 4**: la descomposición de una varianza en la parte de dentro de los grupos y la parte de entre grupos. $\hat{R}$ es esa descomposición con las cadenas como grupos.
+- **Estadística 7**: el error estándar de una media. El error de Monte Carlo es el mismo objeto con $n_{\text{ef}}$ en lugar de $n$.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Lección 25**: PyMC reporta $\hat{R}$ y el tamaño efectivo en cada ajuste; esta lección es la que permite leerlos en vez de obedecerlos.
+- **Estadística 16**: un posterior mal muestreado da pronósticos mal calibrados, y el defecto no se distingue de un modelo malo si no se diagnostica antes la cadena.
+- **Estadística 21**: estimar una verosimilitud marginal desde una cadena exige mucha más precisión que estimar una media, y el error de Monte Carlo de la sección 4 dice cuánta.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Símbolo | Se lee | Significado |
+|---|---|---|
+| $m$ | eme | Número de cadenas independientes |
+| $n$ | ene | Longitud de cada cadena tras descartar el arranque |
+| $\bar\theta_j$ | theta barra sub jota | La media de la cadena $j$ |
+| $W$ | doble ve | La varianza media **dentro** de las cadenas |
+| $S_\mu^{2}$ | ese dos sub mu | La varianza muestral de las $m$ medias de cadena |
+| $B$ | be | La varianza **entre** cadenas, $n\,S_\mu^{2}$ |
+| $\hat{V}$ | ve gorro | El estimador combinado de la varianza del objetivo |
+| $\hat{R}$ | erre gorro | $\sqrt{\hat{V}/W}$, el diagnóstico de Gelman y Rubin |
+| $\tau$ | tau | El factor de ineficiencia de la Proposición 22.9 |
+:::
+
+## 1. Dos preguntas distintas
+
+Una cadena puede fallar de dos maneras y conviene no mezclarlas.
+
+La primera es **no haber llegado**: la cadena sigue arrastrando el punto donde arrancó y todavía no explora el objetivo. Eso se detecta comparando cadenas que arrancaron en sitios distintos, y es lo que mide $\hat{R}$.
+
+La segunda es **haber llegado pero con poca información**: la cadena está en el objetivo pero sus muestras se parecen tanto entre sí que mil iteraciones valen por diez. Eso se mide con el $\tau$ de la lección 22 y no necesita más de una cadena.
+
+Las dos preguntas no son independientes, y la sección 3 lo demuestra: con cadenas ya estacionarias, $\hat{R}$ queda determinado por $\tau$ y por $n$.
+
+## 2. La definición y lo que mide
+
+::: {.definicion}
+**Definición 24.1 ($\hat{R}$ de Gelman-Rubin).** Con $m$ cadenas de longitud $n$, sean
+$$W=\frac{1}{m}\sum_{j=1}^{m}s_j^{2},\qquad
+S_\mu^{2}=\frac{1}{m-1}\sum_{j=1}^{m}(\bar\theta_j-\bar\theta)^{2},\qquad
+B=n\,S_\mu^{2},$$
+con $s_j^2$ la varianza muestral de la cadena $j$. Se define
+$$\hat{V}=\frac{n-1}{n}\,W+\frac{B}{n},\qquad \hat{R}=\sqrt{\frac{\hat{V}}{W}}.$$
+:::
+
+La idea de fondo es la de un análisis de varianza con las cadenas como grupos. $W$ mide cuánto se mueve cada cadena por dentro; $S_\mu^2$, cuánto discrepan entre sí. Si todas exploran el mismo objetivo, lo segundo tiene que ser pequeño frente a lo primero.
+
+::: {.proposicion}
+**Proposición 24.2 (identidad exacta).** Para todo $m,n\ge2$,
+$$\hat{R}^{2}=1-\frac{1}{n}+\frac{S_\mu^{2}}{W}.$$
+:::
+
+::: {.demostracion}
+*Demostración.* Sustituyendo $B=n\,S_\mu^2$ en la definición de $\hat{V}$,
+$$\hat{V}=\frac{n-1}{n}W+\frac{n\,S_\mu^{2}}{n}=\Big(1-\frac1n\Big)W+S_\mu^{2}.$$
+Dividiendo entre $W$ queda el enunciado. [∎]{.fin-demo}
+:::
+
+La identidad quita todo el misterio: $\hat{R}^2-1$ es, salvo el término $1/n$ que se desvanece, **la razón entre la dispersión de las medias de cadena y la dispersión dentro de las cadenas**. Un $\hat{R}=1{,}01$ significa $S_\mu^2/W\approx0{,}02$: las medias de las cadenas discrepan entre sí un dos por ciento de lo que se mueve cada una por dentro.
+
+## 3. Qué valor tiene $\hat{R}$ cuando todo va bien
+
+Que las cadenas hayan convergido no hace $\hat{R}$ igual a uno: lo hace igual a algo que depende de $\tau$, y esa es la parte que suele faltar.
+
+::: {.proposicion}
+**Proposición 24.3 ($\hat{R}$ en el régimen estacionario).** Supóngase que las $m$ cadenas son independientes entre sí y estacionarias con el objetivo, de varianza $\sigma^2$ y factor de ineficiencia $\tau$ en el sentido de la Proposición 22.9. Entonces, para $n$ grande,
+$$E[S_\mu^{2}]=\frac{\sigma^{2}\tau}{n},\qquad E[W]\to\sigma^{2},\qquad\text{luego}\qquad
+E[\hat{R}^{2}]\;\approx\;1+\frac{\tau-1}{n}.$$
+:::
+
+::: {.demostracion}
+*Demostración.* Cada $\bar\theta_j$ es la media de una cadena estacionaria, así que por la Proposición 22.9 su varianza es $\sigma^2\tau/n$. Las $m$ medias son independientes entre sí y tienen todas la misma esperanza, luego su varianza muestral $S_\mu^2$ es insesgada para esa varianza: $E[S_\mu^2]=\sigma^2\tau/n$. Por otro lado $s_j^2$ estima la varianza marginal de la cadena, que es $\sigma^2$, con sesgo que tiende a cero; luego $E[W]\to\sigma^2$. Sustituyendo las dos en la Proposición 24.2,
+$$E[\hat{R}^{2}]\approx1-\frac1n+\frac{\sigma^{2}\tau/n}{\sigma^{2}}=1+\frac{\tau-1}{n}.$$
+[∎]{.fin-demo}
+:::
+
+::: {.proposicion}
+**Corolario 24.4 (qué dice el umbral).** Si se exige $\hat{R}\le1+\epsilon$ con $\epsilon$ pequeño, entonces aproximadamente
+$$\frac{n}{\tau}\;\gtrsim\;\frac{1}{2\epsilon}.$$
+Con el umbral habitual $\epsilon=0{,}01$ eso son unas **cincuenta muestras efectivas por cadena**.
+:::
+
+::: {.demostracion}
+*Demostración.* De la Proposición 24.3, $\hat{R}\le1+\epsilon$ equivale a $1+(\tau-1)/n\le(1+\epsilon)^2=1+2\epsilon+\epsilon^2$. Despreciando $\epsilon^2$ y aproximando $\tau-1$ por $\tau$, queda $\tau/n\le2\epsilon$, es decir $n/\tau\ge1/(2\epsilon)$. Con $\epsilon=0{,}01$, $n/\tau\ge50$. [∎]{.fin-demo}
+:::
+
+El corolario explica por qué $\hat{R}$ y el tamaño efectivo dicen casi lo mismo cuando las cadenas ya convergieron, y por qué aun así hay que mirar los dos: cincuenta muestras efectivas por cadena es un mínimo muy bajo para reportar un intervalo, y $\hat{R}$ se queda tranquilo mucho antes de que la precisión sea aceptable.
+
+```{pyodide}
+import numpy as np
+
+# Proposicion 24.3 contra la medicion, sobre la cadena de Gibbs de la leccion 23,
+# cuyo tau se conoce exactamente: (1+r^2)/(1-r^2).
+def gibbs_varias(r, m, n, quema, semilla):
+    """m cadenas a la vez: el bucle avanza un barrido y numpy lleva las m."""
+    g = np.random.default_rng(semilla)
+    x = np.zeros(m); y = np.zeros(m)
+    sd = np.sqrt(1 - r * r)
+    X = np.empty((m, n))
+    for i in range(quema + n):
+        x = r * y + sd * g.standard_normal(m)
+        y = r * x + sd * g.standard_normal(m)
+        if i >= quema:
+            X[:, i - quema] = x
+    return X
+
+def r_gorro(ch):
+    m, n = ch.shape
+    W = ch.var(1, ddof=1).mean()
+    S2 = ch.mean(1).var(ddof=1)
+    return np.sqrt(1 - 1 / n + S2 / W)          # Proposicion 24.2
+
+r = 0.99
+tau = (1 + r * r) / (1 - r * r)
+print("tau exacto de la Proposicion 23.6: %.1f" % tau)
+print()
+print("     n   R-hat medido   raiz(1+(tau-1)/n)   n_ef por cadena")
+for n in [500, 2000, 8000]:
+    medidos = [r_gorro(gibbs_varias(r, 40, n, 2000, 7000 + n + rep)) for rep in range(3)]
+    print("%6d   %12.4f   %17.4f   %15.1f"
+          % (n, np.mean(medidos), np.sqrt(1 + (tau - 1) / n), n / tau))
+print()
+print("el umbral R-hat < 1,01 se cruza cerca de n/tau = 50, como dice el Corolario 24.4")
+```
+
+Las tres filas siguen la fórmula de cerca. Y la última columna dice lo que importa: con $n=8000$ y $\tau\approx100$ hay ochenta muestras efectivas por cadena, que es poco, y $\hat{R}$ ya vale $1{,}007$.
+
+El visual siguiente deja ver las dos cosas a la vez. El marco está anclado a la población: los ejes no dependen de las cadenas que se dibujan.
+
+```{=html}
+<div class="viz-rhat">
+  <div class="controles">
+    <label>Correlación r <input id="rh-r" type="range" min="0" max="99" step="1" value="95"> <span id="rh-r-v">0,95</span></label>
+    <label>Longitud n <input id="rh-n" type="range" min="20" max="1200" step="20" value="200"> <span id="rh-n-v">200</span></label>
+    <button id="rh-otra" type="button">Otras cadenas</button>
+  </div>
+  <svg id="rh-svg" viewBox="0 0 620 340" role="img" aria-label="Cuatro trazas de cadenas que arrancan en puntos distintos, sobre un eje vertical fijo. A la derecha, dos barras comparan la dispersion entre las medias de cadena con la dispersion dentro de las cadenas, que es lo que R gorro mide."></svg>
+  <p class="lectura" id="rh-lectura"></p>
+</div>
+<style>
+.viz-rhat { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-rhat .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-rhat label { display: flex; align-items: center; gap: .4rem; }
+.viz-rhat input[type=range] { width: 110px; padding: 0; }
+.viz-rhat button { font-size: .8rem; padding: .22rem .6rem; border-radius: 5px; cursor: pointer; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-rhat svg { width: 100%; height: auto; display: block; }
+.viz-rhat .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5.4em; line-height: 1.6; }
+.viz-rhat .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var COL = ["#B45309", "#5f8a7d", "#7d6f9c", "#a6683f"];
+  var svg = document.getElementById("rh-svg"), lec = document.getElementById("rh-lectura");
+  var cR = document.getElementById("rh-r"), eR = document.getElementById("rh-r-v");
+  var cN = document.getElementById("rh-n"), eN = document.getElementById("rh-n-v");
+  var bt = document.getElementById("rh-otra");
+  var semilla = 24242424;
+
+  // Marco anclado a la poblacion: theta va de -8 a 8 pase lo que pase.
+  var X0 = 46, X1 = 430, Y0 = 280, Y1 = 34, LIM = 8;
+  var BX0 = 470, BX1 = 596;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function mulberry32(s) {
+    return function () {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  var py = function (v) { return Y0 - (Y0 - Y1) * (v + LIM) / (2 * LIM); };
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var r = +cR.value / 100, n = +cN.value;
+    eR.textContent = r.toFixed(2).replace(".", ",");
+    eN.textContent = n;
+
+    var arr = [[-6, -6], [6, 6], [-6, 6], [6, -6]];   // arranques dispersos
+    var g = mulberry32(semilla), sd = Math.sqrt(1 - r * r), cadenas = [];
+    function normal() {
+      var u1 = Math.max(g(), 1e-12), u2 = g();
+      return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    }
+    for (var j = 0; j < 4; j++) {
+      var x = arr[j][0], y = arr[j][1], v = [];
+      for (var i = 0; i < n; i++) { x = r * y + sd * normal(); y = r * x + sd * normal(); v.push(x); }
+      cadenas.push(v);
+    }
+
+    svg.appendChild(el("line", { x1: X0, y1: py(0).toFixed(1), x2: X1, y2: py(0).toFixed(1),
+      stroke: "var(--r-linea,#ddd)" }));
+    svg.appendChild(el("rect", { x: X0, y: Y1, width: X1 - X0, height: Y0 - Y1, fill: "none",
+      stroke: "var(--r-linea,#ccc)" }));
+    svg.appendChild(el("text", { x: X0, y: 20, "font-size": 11, "font-weight": 600,
+      fill: "var(--r-tinta,#222)" }, "cuatro cadenas, cuatro arranques  ·  eje fijo de −8 a 8"));
+    for (var j = 0; j < 4; j++) {
+      var d = "";
+      for (var i = 0; i < n; i++)
+        d += (i ? "L" : "M") + (X0 + (X1 - X0) * i / (n - 1)).toFixed(1) + " " + py(cadenas[j][i]).toFixed(1);
+      svg.appendChild(el("path", { d: d, fill: "none", stroke: COL[j], "stroke-width": 0.9,
+        "stroke-opacity": 0.85, "stroke-linejoin": "round" }));
+    }
+
+    // W, S2 y R gorro por la Proposicion 24.2
+    var medias = [], W = 0;
+    for (var j = 0; j < 4; j++) {
+      var s = 0;
+      for (var i = 0; i < n; i++) s += cadenas[j][i];
+      var mj = s / n; medias.push(mj);
+      var q = 0;
+      for (var i = 0; i < n; i++) q += (cadenas[j][i] - mj) * (cadenas[j][i] - mj);
+      W += q / (n - 1);
+    }
+    W /= 4;
+    var mg = (medias[0] + medias[1] + medias[2] + medias[3]) / 4, S2 = 0;
+    for (var j = 0; j < 4; j++) S2 += (medias[j] - mg) * (medias[j] - mg);
+    S2 /= 3;
+    var R = Math.sqrt(1 - 1 / n + S2 / W);
+
+    // dos barras: dispersion entre cadenas contra dispersion dentro
+    var esc = Math.max(W, S2, 1e-9), ALTO = Y0 - Y1;
+    function barra(x, val, color, etiqueta) {
+      var h = ALTO * Math.min(val / esc, 1);
+      svg.appendChild(el("rect", { x: x, y: (Y0 - h).toFixed(1), width: 48, height: Math.max(h, 1).toFixed(1),
+        fill: color, "fill-opacity": 0.85 }));
+      svg.appendChild(el("text", { x: x + 24, y: Y0 + 14, "font-size": 9.5, "text-anchor": "middle",
+        fill: "var(--r-tinta-suave,#777)" }, etiqueta));
+    }
+    barra(BX0, W, "#9aa3ab", "dentro W");
+    barra(BX0 + 66, S2, "#B45309", "entre S²");
+    svg.appendChild(el("text", { x: BX0, y: 20, "font-size": 11, "font-weight": 600,
+      fill: "var(--r-tinta,#222)" }, "lo que compara R̂"));
+
+    var tau = (1 + r * r) / (1 - r * r);
+    lec.innerHTML = "Con <span class='fx'>r = " + r.toFixed(2).replace(".", ",") + "</span> el τ exacto vale <span class='fx'>" +
+      tau.toFixed(1).replace(".", ",") + "</span>, así que la Proposición 24.3 predice <span class='fx'>R̂ ≈ " +
+      Math.sqrt(1 + (tau - 1) / n).toFixed(3).replace(".", ",") + "</span> una vez convergidas. Medido aquí: <span class='fx'>" +
+      R.toFixed(3).replace(".", ",") + "</span>, con <span class='fx'>S²/W = " + (S2 / W).toFixed(4).replace(".", ",") +
+      "</span>. Con n corto las cuatro trazas todavía recuerdan su arranque, las medias discrepan y la barra naranja " +
+      "es grande; al alargarlas se hunde. Y subir r alarga lo que hace falta para lo mismo.";
+  }
+
+  [cR, cN].forEach(function (c) { c.addEventListener("input", dibujar); });
+  bt.addEventListener("click", function () { semilla = (semilla * 1664525 + 1013904223) >>> 0; dibujar(); });
+  dibujar();
+})();
+</script>
+```
+
+## 4. Cuántas cifras se pueden escribir
+
+::: {.definicion}
+**Definición 24.5 (error de Monte Carlo).** Para un resumen que sea una media sobre la cadena, con desviación posterior $\sigma$ y tamaño efectivo total $n_{\text{ef}}$, el error de Monte Carlo es
+$$\text{EMC}=\frac{\sigma}{\sqrt{n_{\text{ef}}}}.$$
+:::
+
+::: {.proposicion}
+**Proposición 24.6 (cifras defendibles).** Escribir $k$ decimales de una media posterior exige $\text{EMC}\lesssim\tfrac12\cdot10^{-k}$, es decir
+$$n_{\text{ef}}\;\gtrsim\;4\,\sigma^{2}\,10^{2k}.$$
+:::
+
+::: {.demostracion}
+*Demostración.* El último decimal escrito es defendible si el error de muestreo no llega a cambiarlo, lo que pide $\text{EMC}\le\frac12 10^{-k}$. Elevando al cuadrado la Definición 24.5, $\sigma^2/n_{\text{ef}}\le\frac14 10^{-2k}$, y despejando queda el enunciado. [∎]{.fin-demo}
+:::
+
+La consecuencia práctica es incómoda y conviene tenerla presente: con $\sigma=0{,}124$, escribir **tres** decimales de la media posterior exige unas $61\,200$ muestras efectivas, que con $\tau=100$ son más de seis millones de iteraciones. La mayoría de los resultados publicados con MCMC llevan más cifras de las que su cadena sostiene.
+
+```{pyodide}
+import numpy as np
+
+# Cuantas muestras efectivas hace falta para cada decimal, y cuantas
+# iteraciones son eso con el tau de la cadena de Gibbs de la leccion 23.
+sigma = 0.1237          # desviacion posterior del ejemplo Beta(9,5) de la leccion 22
+print("sigma del posterior: %.4f" % sigma)
+print()
+print("decimales   n_ef necesario   iteraciones con tau=100")
+for k in [1, 2, 3, 4]:
+    nef = 4 * sigma**2 * 10**(2 * k)
+    print("%8d   %14.0f   %22.0f" % (k, nef, nef * 100))
+print()
+for nef in [100, 1000, 10000, 100000]:
+    print("  n_ef = %7d  ->  EMC = %.5f" % (nef, sigma / np.sqrt(nef)))
+```
+
+## 5. Lo que ningún $\hat{R}$ puede ver
+
+::: {.proposicion}
+**Proposición 24.7 (el punto ciego).** Supóngase que el objetivo tiene dos modas separadas por una región de probabilidad despreciable, y que las $m$ cadenas arrancan todas dentro de la misma moda y no la abandonan en $n$ pasos. Entonces cada cadena es aproximadamente estacionaria respecto del objetivo **restringido a esa moda**, de modo que $\hat{R}\to1$ y todos los diagnósticos basados en comparar cadenas dan el visto bueno, mientras el estimador de cualquier esperanza converge al valor de la moda visitada y no al del objetivo.
+:::
+
+::: {.demostracion}
+*Demostración.* Por hipótesis ninguna cadena cruza, así que las $m$ trayectorias son realizaciones de la misma cadena restringida al mismo subconjunto $A$. La Proposición 24.3 aplicada a ese objetivo restringido da $E[\hat{R}^2]\approx1+(\tau_A-1)/n\to1$. Por otro lado, para cualquier $f$,
+$$\frac1{mn}\sum_{j,i}f(\theta_{ji})\;\longrightarrow\;E[f\mid A]\neq E[f]$$
+salvo coincidencia, porque el objetivo pone masa $P(A)<1$ en $A$. El diagnóstico compara cadenas entre sí y todas coinciden; nada en la comparación mira fuera de $A$. [∎]{.fin-demo}
+:::
+
+::: {.ejemplo-libro}
+**Ejemplo 24.8.** Objetivo $0{,}7\,\mathcal{N}(4,1)+0{,}3\,\mathcal{N}(-4,1)$, de media verdadera $1{,}6$. Cuatro cadenas de Metropolis con paso $0{,}5$ arrancadas todas en $+4$: ninguna cruza en 20 000 pasos, $\hat{R}=1{,}0003$ y la media reportada es $4{,}00$. El diagnóstico es perfecto y la respuesta está mal por $2{,}4$. Repartiendo los arranques entre las dos modas, $\hat{R}$ sube a $1{,}80$ y la alarma suena, aunque la respuesta sigue siendo mala: lo que el diagnóstico detecta es que las cadenas discrepan, no que acierten.
+:::
+
+```{pyodide}
+import numpy as np
+
+# Proposicion 24.7: R-hat perfecto con la respuesta equivocada.
+def r_gorro(ch):
+    m, n = ch.shape
+    W = ch.var(1, ddof=1).mean()
+    S2 = ch.mean(1).var(ddof=1)
+    return np.sqrt(1 - 1 / n + S2 / W)
+
+SEP, PESO = 4.0, 0.7
+def log_objetivo(t):
+    return np.log(PESO * np.exp(-0.5 * (t - SEP)**2) + (1 - PESO) * np.exp(-0.5 * (t + SEP)**2))
+
+def metropolis(n, x0, semilla, paso=0.5):
+    g = np.random.default_rng(semilla)
+    x, lx = x0, log_objetivo(x0)
+    out = np.empty(n)
+    u, z = np.log(g.random(n)), g.standard_normal(n)
+    for i in range(n):
+        y = x + paso * z[i]
+        ly = log_objetivo(y)
+        if u[i] < ly - lx:
+            x, lx = y, ly
+        out[i] = x
+    return out
+
+media_real = PESO * SEP + (1 - PESO) * (-SEP)
+print("objetivo: %.1f N(%.0f,1) + %.1f N(%.0f,1)   media verdadera = %.2f"
+      % (PESO, SEP, 1 - PESO, -SEP, media_real))
+print()
+
+juntas = np.array([metropolis(20000, SEP, 400 + j) for j in range(4)])
+print("las cuatro arrancan en la moda de +%.0f:" % SEP)
+print("  R-hat = %.4f      media reportada = %.4f      error = %.2f"
+      % (r_gorro(juntas), juntas.mean(), abs(juntas.mean() - media_real)))
+print("  cruces al otro lado del cero: %d de %d" % ((juntas < 0).sum(), juntas.size))
+
+repartidas = np.array([metropolis(20000, SEP if j % 2 else -SEP, 500 + j) for j in range(4)])
+print()
+print("arranques repartidos entre las dos modas:")
+print("  R-hat = %.4f      media reportada = %.4f"
+      % (r_gorro(repartidas), repartidas.mean()))
+print("  medias por cadena:", np.round(repartidas.mean(1), 2).tolist())
+print()
+print("R-hat da el visto bueno con la respuesta mal:",
+      bool(r_gorro(juntas) < 1.01 and abs(juntas.mean() - media_real) > 2))
+```
+
+El visual siguiente deja mover la separación entre las modas y el reparto de los arranques, para ver dónde empieza y dónde acaba el punto ciego.
+
+```{=html}
+<div class="viz-ciego">
+  <div class="controles">
+    <label>Separación de las modas <input id="cg-s" type="range" min="5" max="45" step="1" value="40"> <span id="cg-s-v">4,0</span></label>
+    <label>Arranques <select id="cg-a">
+      <option value="juntos" selected>todos en la moda alta</option>
+      <option value="repartidos">repartidos</option>
+    </select></label>
+    <button id="cg-otra" type="button">Otras cadenas</button>
+  </div>
+  <svg id="cg-svg" viewBox="0 0 620 340" role="img" aria-label="A la izquierda cuatro trazas sobre un eje vertical fijo, que segun el reparto de arranques se quedan todas en una moda o se separan en dos grupos. A la derecha, girada, la densidad objetivo con sus dos modas y dos marcadores: la media verdadera y la media que reportan las cadenas."></svg>
+  <p class="lectura" id="cg-lectura"></p>
+</div>
+<style>
+.viz-ciego { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-ciego .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-ciego label { display: flex; align-items: center; gap: .4rem; }
+.viz-ciego input[type=range] { width: 110px; padding: 0; }
+.viz-ciego select { font-size: .85rem; padding: .2rem .4rem; border-radius: 5px; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-ciego button { font-size: .8rem; padding: .22rem .6rem; border-radius: 5px; cursor: pointer; border: 1px solid var(--r-linea, #ccc); background: transparent; color: inherit; }
+.viz-ciego svg { width: 100%; height: auto; display: block; }
+.viz-ciego .lectura { font-size: .85rem; margin-top: .75rem; min-height: 5.4em; line-height: 1.6; }
+.viz-ciego .lectura .fx { font-family: var(--bs-font-monospace, monospace); font-size: .95em; }
+</style>
+<script>
+(function () {
+  var COL = ["#B45309", "#5f8a7d", "#7d6f9c", "#a6683f"];
+  var C_REAL = "var(--r-tinta,#1f2430)", C_REP = "#B45309";
+  var svg = document.getElementById("cg-svg"), lec = document.getElementById("cg-lectura");
+  var cS = document.getElementById("cg-s"), eS = document.getElementById("cg-s-v");
+  var cA = document.getElementById("cg-a"), bt = document.getElementById("cg-otra");
+  var semilla = 13572468, PESO = 0.7, N = 900, PASO = 0.5;
+
+  // Marco anclado: el eje de theta va de -7 a 7 siempre.
+  var X0 = 46, X1 = 400, Y0 = 292, Y1 = 34, LIM = 7;
+  var HX0 = 440, HX1 = 596, DMAX = 0.32;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function mulberry32(s) {
+    return function () {
+      s |= 0; s = s + 0x6D2B79F5 | 0;
+      var t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  var py = function (v) { return Y0 - (Y0 - Y1) * (v + LIM) / (2 * LIM); };
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var sep = +cS.value / 10, repartidos = cA.value === "repartidos";
+    eS.textContent = sep.toFixed(1).replace(".", ",");
+
+    var dens = function (t) {
+      return PESO * Math.exp(-0.5 * (t - sep) * (t - sep)) / Math.sqrt(2 * Math.PI)
+           + (1 - PESO) * Math.exp(-0.5 * (t + sep) * (t + sep)) / Math.sqrt(2 * Math.PI);
+    };
+    var lobj = function (t) { return Math.log(Math.max(dens(t), 1e-300)); };
+
+    var g = mulberry32(semilla), cadenas = [];
+    function normal() {
+      var u1 = Math.max(g(), 1e-12), u2 = g();
+      return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    }
+    for (var j = 0; j < 4; j++) {
+      var x = repartidos ? (j % 2 ? sep : -sep) : sep;
+      var lx = lobj(x), v = [];
+      for (var i = 0; i < N; i++) {
+        var y = x + PASO * normal(), ly = lobj(y);
+        if (Math.log(Math.max(g(), 1e-300)) < ly - lx) { x = y; lx = ly; }
+        v.push(x);
+      }
+      cadenas.push(v);
+    }
+
+    svg.appendChild(el("rect", { x: X0, y: Y1, width: X1 - X0, height: Y0 - Y1, fill: "none",
+      stroke: "var(--r-linea,#ccc)" }));
+    svg.appendChild(el("text", { x: X0, y: 20, "font-size": 11, "font-weight": 600,
+      fill: "var(--r-tinta,#222)" }, "cuatro cadenas  ·  eje fijo de −7 a 7"));
+    svg.appendChild(el("text", { x: HX0, y: 20, "font-size": 11, "font-weight": 600,
+      fill: "var(--r-tinta,#222)" }, "el objetivo"));
+    for (var j = 0; j < 4; j++) {
+      var d = "";
+      for (var i = 0; i < N; i++)
+        d += (i ? "L" : "M") + (X0 + (X1 - X0) * i / (N - 1)).toFixed(1) + " " + py(cadenas[j][i]).toFixed(1);
+      svg.appendChild(el("path", { d: d, fill: "none", stroke: COL[j], "stroke-width": 0.9,
+        "stroke-opacity": 0.85, "stroke-linejoin": "round" }));
+    }
+
+    // densidad girada, con altura tope constante
+    var d2 = "";
+    for (var i = 0; i <= 240; i++) {
+      var t = -LIM + 2 * LIM * i / 240;
+      d2 += (i ? "L" : "M") + (HX0 + (HX1 - HX0) * Math.min(dens(t), DMAX) / DMAX).toFixed(1) + " " + py(t).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: d2, fill: "none", stroke: "#8fa9a6", "stroke-width": 1.8 }));
+
+    var mediaReal = PESO * sep + (1 - PESO) * (-sep);
+    var todas = 0, cuenta = 0, medias = [], W = 0;
+    for (var j = 0; j < 4; j++) {
+      var s = 0;
+      for (var i = 0; i < N; i++) { s += cadenas[j][i]; todas += cadenas[j][i]; cuenta++; }
+      var mj = s / N; medias.push(mj);
+      var q = 0;
+      for (var i = 0; i < N; i++) q += (cadenas[j][i] - mj) * (cadenas[j][i] - mj);
+      W += q / (N - 1);
+    }
+    W /= 4;
+    var mediaRep = todas / cuenta;
+    var mg = (medias[0] + medias[1] + medias[2] + medias[3]) / 4, S2 = 0;
+    for (var j = 0; j < 4; j++) S2 += (medias[j] - mg) * (medias[j] - mg);
+    S2 /= 3;
+    var R = Math.sqrt(1 - 1 / N + S2 / W);
+
+    function marca(v, color, txt) {
+      svg.appendChild(el("line", { x1: HX0 - 12, y1: py(v).toFixed(1), x2: HX1, y2: py(v).toFixed(1),
+        stroke: color, "stroke-width": 1.6, "stroke-dasharray": "4 3" }));
+      svg.appendChild(el("text", { x: HX0 - 14, y: (py(v) + 3).toFixed(1), "font-size": 9,
+        "text-anchor": "end", fill: color }, txt));
+    }
+    marca(mediaReal, C_REAL, "real");
+    marca(mediaRep, C_REP, "cadenas");
+
+    lec.innerHTML = "Separación <span class='fx'>" + sep.toFixed(1).replace(".", ",") +
+      "</span>, arranques <span class='fx'>" + (repartidos ? "repartidos" : "juntos") + "</span>. " +
+      "<span class='fx'>R̂ = " + R.toFixed(4).replace(".", ",") + "</span>; las cadenas reportan media <span class='fx'>" +
+      mediaRep.toFixed(2).replace(".", ",") + "</span> contra <span class='fx'>" +
+      mediaReal.toFixed(2).replace(".", ",") + "</span> verdadera. " +
+      "Con las modas juntas y la separación pequeña las cadenas cruzan y todo funciona; al separarlas dejan de " +
+      "cruzar y, arrancando todas en el mismo sitio, R̂ da el visto bueno con la respuesta equivocada. " +
+      "Repartir los arranques no arregla la cadena: solo hace que la discrepancia se vea.";
+  }
+
+  [cS, cA].forEach(function (c) { c.addEventListener("input", dibujar); });
+  cA.addEventListener("change", dibujar);
+  bt.addEventListener("click", function () { semilla = (semilla * 1664525 + 1013904223) >>> 0; dibujar(); });
+  dibujar();
+})();
+</script>
+```
+
+De la Proposición 24.7 salen las dos únicas defensas que hay, y ninguna es un número. La primera es **arrancar disperso**: tantas cadenas como se pueda, desde puntos alejados entre sí, porque solo así la discrepancia tiene oportunidad de aparecer. La segunda es saber qué forma puede tener el posterior antes de muestrearlo: una mezcla, una verosimilitud con simetrías, un modelo no identificable. El diagnóstico confirma lo que se sospecha; no descubre lo que no se miró.
+
+## 6. La lista
+
+Antes de reportar nada salido de una cadena, cuatro cosas:
+
+1. **$\hat{R}$ por parámetro**, no solo para el que interesa: un parámetro auxiliar mal muestreado contamina al resto. Umbral $1{,}01$, con el Corolario 24.4 en mente sobre lo poco que ese umbral exige.
+2. **Tamaño efectivo por parámetro**, y compararlo con lo que la Proposición 24.6 pide para las cifras que se piensan escribir.
+3. **Arranques dispersos y varias cadenas**, por la Proposición 24.7. Cuatro es el mínimo habitual y no es generoso.
+4. **La traza, mirada**. Los diagnósticos resumen; una traza con escalones planos o con un salto en medio dice cosas que ningún resumen recoge.
+
+## Ejercicios
+
+1. Demostrar a partir de la Proposición 24.2 que $\hat{R}\ge\sqrt{1-1/n}$ siempre, y que $\hat{R}<1$ es posible. ¿Qué significaría encontrarlo?
+2. Comprobar que $\hat{V}$ de la Definición 24.1 es un promedio ponderado de $W$ y de $B$, e identificar qué estima cada uno cuando las cadenas han convergido y cuando no.
+3. Usar el Corolario 24.4 para decir qué umbral de $\hat{R}$ haría falta para garantizar mil muestras efectivas por cadena.
+4. En la Proposición 24.6, calcular cuántas muestras efectivas hacen falta para escribir tres decimales de un cuantil extremo, sabiendo que la varianza del estimador de un cuantil al 1 % es mucho mayor que la de una media. ¿Por qué los cuantiles de las colas son lo último que converge?
+5. Construir un objetivo con dos modas **de igual peso** y demostrar que, arrancando todas las cadenas en una de ellas, la media reportada es correcta por simetría aunque el muestreo esté roto. ¿Qué resumen sí delataría el fallo?
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Est 24**:
+
+1. Escribir `diagnostico(cadenas)` que devuelva $\hat{R}$, el tamaño efectivo y el error de Monte Carlo de la media, y verificarlo contra la Proposición 24.3 sobre la cadena de Gibbs con $\tau$ conocido, para al menos cinco valores de $r$ y tres longitudes.
+2. Reproducir el Ejemplo 24.8 y barrer la separación de las modas de 1 a 6. Encontrar la separación a partir de la cual $\hat{R}$ deja de detectar el problema con arranques juntos, y relacionarla con la probabilidad de cruzar el valle en un paso.
+3. Implementar $\hat{R}$ **partido**: cortar cada cadena por la mitad y tratar las mitades como cadenas distintas. Comprobar que eso detecta una cadena con deriva lenta que el $\hat{R}$ ordinario deja pasar, y explicar por qué.
+
+## Del libro
+
+Ninguno de los libros con índice verificado en `verificar/indices.json` trata el diagnóstico de cadenas. *Think Bayes* usa PyMC y menciona de pasada las cantidades que la librería reporta, sin definirlas; los demás no entran en MCMC. Por eso esta lección es autocontenida y no cita texto de nadie: la regla 3 pide preferir una página que se demuestra sola a una referencia que no se puede verificar.
+
+Las cantidades tienen origen conocido —$\hat{R}$ es de Gelman y Rubin, y la variante partida y las correcciones posteriores son de la literatura de Stan—, pero como no hay una fuente abierta y verificada en el índice, aquí se enuncian y se demuestran desde cero en lugar de atribuirse a un texto que no se ha abierto.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/diagnostico-de-cadenas.md`, enlazada a [[metropolis-hastings]], [[gibbs-sampling]] y [[tamano-efectivo]]. Conviene rehacer a mano la Proposición 24.3: es la que convierte $\hat{R}$ de regla de pulgar en una consecuencia de $\tau$, y de ella sale el Corolario 24.4, que dice lo poco que el umbral habitual exige.
+
+```
+¿Qué dos fallos distintos puede tener una cadena?::No haber llegado al objetivo, y haber llegado con poca información; R̂ mide el primero y τ el segundo
+¿Qué compara R̂?::La dispersión entre las medias de varias cadenas contra la dispersión dentro de cada una
+¿Cuál es la identidad exacta de R̂?::R̂² = 1 − 1/n + S²_μ/W, sin aproximaciones
+¿Qué significa R̂ = 1,01?::Que las medias de las cadenas discrepan un 2 % de lo que se mueve cada cadena por dentro
+¿Cuánto vale R̂ con cadenas ya estacionarias?::E[R̂²] ≈ 1 + (τ−1)/n: queda determinado por τ y por n, no vale uno
+¿Qué exige realmente el umbral R̂ < 1,01?::Unas 50 muestras efectivas por cadena, que es muy poco para reportar un intervalo
+¿Qué es el error de Monte Carlo?::σ/√n_ef: el error estándar de la 7 con el tamaño efectivo en lugar de n
+¿Cuántas muestras hacen falta para k decimales?::n_ef ≳ 4σ²·10^(2k); con σ=0,124 y tres decimales, unas 61 200
+¿Cuál es el punto ciego de R̂?::Si todas las cadenas se quedan en la misma moda y no cruzan, R̂ tiende a uno con la respuesta mal
+¿Por qué no puede verlo?::Porque compara las cadenas entre sí, y todas coinciden; nada en la comparación mira fuera de la moda visitada
+¿Cuáles son las dos defensas?::Arrancar disperso con varias cadenas, y saber de antemano qué forma puede tener el posterior
+¿Qué mirar antes de reportar?::R̂ por parámetro, tamaño efectivo por parámetro, arranques dispersos, y la traza con los ojos
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** Todo. Las Proposiciones 24.2, 24.3, 24.6 y 24.7 y el Corolario 24.4 se demuestran aquí a partir de la Definición 24.1 y de la Proposición 22.9. Se comprueban además numéricamente: la Proposición 24.3 se contrasta sobre la cadena de Gibbs de la lección 23, cuyo $\tau$ se conoce exactamente, en tres longitudes con 40 cadenas cada una y coincidencia en la tercera cifra; la Proposición 24.7 se realiza en el Ejemplo 24.8 con cuatro cadenas de 20 000 pasos, cero cruces, $\hat{R}=1{,}0003$ y un error de $2{,}4$ en la media. Los dos visuales se contrastaron antes de publicarse contra las fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** El factor de ineficiencia $\tau$ y el tamaño efectivo son la Proposición 22.9. La fórmula $\tau=(1+r^2)/(1-r^2)$ de la cadena de Gibbs es la Proposición 23.6, y es lo que permite comparar contra un valor exacto en lugar de contra otra estimación. El error estándar de una media es la lección 7. La descomposición dentro/entre grupos es la lección 4.
+
+**Lo que se enuncia sin demostrar.** Que $E[W]\to\sigma^2$ en la Proposición 24.3 se argumenta pero no se acota: el sesgo de la varianza muestral de una serie correlacionada es de orden $\tau/n$ y se desprecia. La Proposición 24.7 supone que ninguna cadena cruza en $n$ pasos, lo cual es una hipótesis del enunciado y no un hecho demostrado. El $\hat{R}$ partido del reto 3 se propone sin desarrollarlo.
+
+**Lo que viene de los libros.** Nada. Ningún libro del índice verificado trata este material, y por la regla 3 no se cita lo que no se ha podido abrir. El origen de $\hat{R}$ es conocido y se menciona en la sección *Del libro* sin atribuirle texto.
+
+**Lo que es mío, no del libro.** La Proposición 24.2 escrita como identidad exacta, que quita el misterio a la definición. La Proposición 24.3, que ata $\hat{R}$ a $\tau$, y el Corolario 24.4, que traduce el umbral $1{,}01$ en «cincuenta muestras efectivas por cadena». La Proposición 24.6 sobre cifras defendibles. Y el Ejemplo 24.8, construido con pesos desiguales para que el fallo no se salve por simetría.
+
+[Lección autocontenida; ninguna cita de libro. Índices verificados el 12-09-2026.]{.sello}
+:::

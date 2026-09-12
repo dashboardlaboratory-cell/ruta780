@@ -87,6 +87,7 @@ MIGRADAS = {
     "estadistica/21-comparacion-de-modelos.qmd",
     "estadistica/22-metropolis-hastings.qmd",
     "estadistica/23-gibbs-sampling.qmd",
+    "estadistica/24-diagnostico-de-cadenas.qmd",
     "matematica/01-vectores-y-espacios.qmd",
     "matematica/02-matriz-como-transformacion.qmd",
     "matematica/03-espacio-columna.qmd",
