@@ -89,6 +89,7 @@ MIGRADAS = {
     "estadistica/23-gibbs-sampling.qmd",
     "estadistica/24-diagnostico-de-cadenas.qmd",
     "python/01-tipos-y-estructuras.qmd",
+    "python/02-funciones-y-scope.qmd",
     "matematica/01-vectores-y-espacios.qmd",
     "matematica/02-matriz-como-transformacion.qmd",
     "matematica/03-espacio-columna.qmd",

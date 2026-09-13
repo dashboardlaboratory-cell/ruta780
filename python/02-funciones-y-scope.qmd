@@ -1,12 +1,12 @@
 ---
-title: "Funciones, scope y argumentos"
+title: "Funciones, ámbito y argumentos"
 subtitle: "Python · Lección 2"
 nivel: L2
 modulo: python
 fase: F0
 prereqs: [python/01-tipos-y-estructuras]
 siguientes: [python/03-comprehensions]
-libro: "McKinney 3E, cap. 3"
+libro: "McKinney 3E, cap. 3 Built-In Data Structures, Functions, and Files"
 engine: markdown
 ---
 
@@ -14,160 +14,585 @@ engine: markdown
 [[L2]{.nivel .nivel-L2} **Derivación**]{.item}
 [**Fase** F0]{.item}
 [**Libro** McKinney cap. 3]{.item}
-[**Prereqs** [Tipos y estructuras](01-tipos-y-estructuras.qmd)]{.item}
+[**Prereqs** [Objetos y nombres](01-tipos-y-estructuras.qmd)]{.item}
 :::
 
-## La idea
+## Objetivo
 
-Una función en Python es un **objeto** como cualquier otro: se guarda en variables, se pasa como argumento, se devuelve desde otra función. Eso es lo que hace posible `df.apply(mi_funcion)` y todo el estilo funcional de pandas.
+Al terminar esta lección se puede:
 
-Y hay una regla de resolución de nombres — **LEGB** — que decide de dónde sale cada variable que una función menciona.
+1. Enunciar la regla [LEGB]{.g} y demostrar que la clasificación de un nombre como local ocurre al **compilar** el cuerpo, no al ejecutarlo, de donde sale el `UnboundLocalError`.
+2. Demostrar que llamar a una función vincula cada **parámetro** al mismo objeto que el [argumento]{.g}, y deducir qué operaciones dentro del cuerpo se observan fuera y cuáles no.
+3. Demostrar que las expresiones de [valor por defecto]{.g} se evalúan una sola vez, y que con un objeto mutable eso produce acumulación entre llamadas.
+4. Enunciar las cuatro clases de parámetro y demostrar que `*args` es siempre una tupla y `**kwargs` siempre un diccionario.
+5. Demostrar que un [cierre]{.g} captura la [celda]{.g} y no el valor, y explicar con ello por qué tres funciones creadas en un bucle devuelven todas lo mismo.
 
-## LEGB: dónde busca Python un nombre
+:::: {.hilo}
+::: {}
+#### De dónde viene
 
-Cuando dentro de una función escribes `x`, Python busca en este orden y se detiene en el primero que encuentre:
+- **Python 1, Definición 1.2**: el nombre como vínculo. Un ámbito es una tabla de vínculos, y la regla LEGB dice en qué tablas se busca y en qué orden.
+- **Python 1, Proposición 1.3**: la asignación no copia. Pasar un argumento es una asignación, así que tampoco copia, y de ahí sale la Proposición 2.7 entera.
+- **Python 1, Proposición 1.5**: toda mutación se observa por todos los alias. Aplicada al vínculo entre parámetro y argumento, decide qué se ve desde fuera de la función.
+- **Python 1, Definición 1.4**: mutable frente a inmutable. Es lo que separa el argumento por defecto inofensivo del que acumula.
+:::
 
-| Sigla | Ámbito | Qué es |
+::: {}
+#### Para qué sirve después
+
+- **Python 3**: una comprehension tiene su propio ámbito, y el clásico de las lambdas en un bucle es la Proposición 2.9 dentro de ese ámbito.
+- **Python 4**: el gestor de contexto `with` y los manejadores de excepción dependen de cuándo se vinculan y se desvinculan los nombres.
+- **Python 6**: `np.vectorize` y los `apply` reciben funciones como objetos, que es la Definición 2.1.
+- **Estadística 8**: la verosimilitud se pasa como función a un optimizador, y capturar los datos en un cierre es el patrón habitual para fijarlos.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
 |---|---|---|
-| **L** | Local | Dentro de la función actual |
-| **E** | Enclosing | En la función que la contiene, si está anidada |
-| **G** | Global | A nivel del módulo/archivo |
-| **B** | Built-in | `len`, `sum`, `print`… |
+| `def f(p): ...` | — | Crea un objeto función y lo vincula al nombre `f` |
+| parámetro | — | El nombre `p` de la firma. En esta lección es siempre el de una función, nunca el de una distribución, que es el sentido de Estadística 1 |
+| argumento | — | El objeto que se pasa en una llamada concreta y se empareja con un parámetro |
+| `f.__defaults__` | — | La tupla de objetos por defecto, fijada al definir `f` |
+| `f.__code__.co_varnames` | — | Los nombres que el compilador clasificó como locales |
+| `f.__closure__` | — | Las celdas que `f` captura de un ámbito que la contiene |
+| `*args` | asterisco args | Recoge los posicionales sobrantes, siempre en una tupla |
+| `**kwargs` | doble asterisco kwargs | Recoge los nombrados sobrantes, siempre en un diccionario |
+| $n$ | ene | El número de argumentos o de elementos, según el contexto |
+:::
+
+## 1. La función es un objeto
+
+::: {.definicion}
+**Definición 2.1 (objeto función).** La sentencia `def f(...): ...` ejecuta dos acciones: construye un **objeto función** y vincula el nombre `f` a ese objeto, exactamente como haría una asignación (Definición 1.2). El objeto lleva consigo, entre otros atributos:
+
+- `__code__`, el código compilado del cuerpo, con la clasificación de sus nombres;
+- `__defaults__`, la tupla de objetos por defecto;
+- `__closure__`, las celdas capturadas de ámbitos que lo contienen;
+- `__globals__`, la tabla de nombres del módulo donde se definió.
+
+Al ser un objeto corriente, una función se guarda en una colección, se pasa como argumento y se devuelve desde otra función.
+:::
+
+Todo lo que sigue en esta lección se lee en esos atributos, y por eso se puede comprobar sin adivinar.
+
+## 2. Ámbitos y la regla LEGB
+
+::: {.definicion}
+**Definición 2.2 (ámbito y regla LEGB).** Un **ámbito** es una tabla de vínculos entre nombres y objetos. Al resolver un nombre mencionado dentro de una función, Python consulta cuatro ámbitos en este orden y se detiene en el primero que lo vincule:
+
+| Sigla | Ámbito | Dónde está |
+|---|---|---|
+| **L** | local | el cuerpo de la función en ejecución |
+| **E** | envolvente | el cuerpo de las funciones que la contienen, de dentro afuera |
+| **G** | global | la tabla de nombres del módulo |
+| **B** | integrado | el módulo `builtins`, con `len`, `sum`, `print` |
+
+Si ninguno lo vincula, se lanza `NameError`.
+:::
 
 ```{pyodide}
 x = "global"
 
 def externa():
-    x = "enclosing"
+    x = "envolvente"
     def interna():
         x = "local"
-        print("dentro de interna:", x)
-    interna()
-    print("dentro de externa:", x)
+        return x
+    return interna(), x
 
-externa()
-print("a nivel módulo:", x)
+def solo_envolvente():
+    x = "envolvente"
+    def interna():
+        return x                  # no hay x local: sube un ambito
+    return interna()
+
+def solo_global():
+    def interna():
+        return x                  # tampoco hay envolvente: sube al modulo
+    return interna()
+
+print("L gana sobre E y G :", externa()[0])
+print("E gana sobre G     :", solo_envolvente())
+print("G cuando no hay E  :", solo_global())
+print("B, el ultimo recurso:", len.__module__)
 ```
 
-Quita la línea `x = "local"` y vuelve a correr: `interna` ya no encuentra `x` localmente y sube al ámbito *enclosing*.
+Cada línea corta la búsqueda en un ámbito distinto sin cambiar el nombre buscado: la única diferencia entre los tres casos es cuál de las tablas vincula `x`.
 
-::: {.callout-warning}
-## El error que todos cometen
+::: {.proposicion}
+**Proposición 2.3 (el ámbito lo decide la asignación, no la posición).** Si un nombre aparece como destino de una asignación en algún punto del cuerpo de una función, entonces **toda** aparición de ese nombre en ese cuerpo se resuelve como local, incluidas las anteriores a la asignación. Leerlo antes de vincularlo lanza `UnboundLocalError`, sin consultar los ámbitos envolvente, global ni integrado.
+:::
 
-Asignar a un nombre dentro de una función lo vuelve **local para toda la función**, incluso antes de la línea de asignación.
+::: {.demostracion}
+*Demostración.* El cuerpo de una función se compila una sola vez, al ejecutar el `def` y antes de cualquier llamada. Durante esa compilación el compilador recorre el cuerpo entero y clasifica cada nombre: los que aparecen como destino de una asignación quedan registrados como locales en `__code__.co_varnames`. La clasificación es una propiedad del cuerpo completo, no del punto del texto, porque el recorrido termina antes de que se ejecute nada.
+
+Hecha la clasificación, cada lectura de un nombre local se compila a una instrucción que lee directamente la celda local y **no** tiene ninguna rama que consulte otros ámbitos. Si en el momento de ejecutarla la celda todavía no tiene valor, la instrucción lanza `UnboundLocalError`. Los ámbitos envolvente, global e integrado no se consultan porque la instrucción compilada no los menciona. [∎]{.fin-demo}
+:::
+
+La demostración se comprueba sin ejecutar la función: basta con mirar cómo quedó clasificado el nombre, porque la clasificación existe desde antes de la primera llamada.
 
 ```{pyodide}
 contador = 0
 
-def incrementar_mal():
-    try:
-        contador = contador + 1   # UnboundLocalError
-    except UnboundLocalError as e:
-        print("UnboundLocalError:", e)
+def lee_nada_mas():
+    return contador                    # solo lectura: el nombre es global
 
-incrementar_mal()
+def asigna_al_final():
+    y = contador                       # esta lectura ya es local
+    contador = 1                       # ...por culpa de esta linea, mas abajo
+    return y
+
+print("lee_nada_mas   -> locales:", lee_nada_mas.__code__.co_varnames)
+print("asigna_al_final-> locales:", asigna_al_final.__code__.co_varnames)
+print("la clasificacion existe antes de llamar:", "contador" in asigna_al_final.__code__.co_varnames)
+print()
+
+print("lee_nada_mas():", lee_nada_mas())
+try:
+    asigna_al_final()
+except UnboundLocalError:
+    print("asigna_al_final() -> UnboundLocalError, aun con contador global = 0")
 ```
 
-Python ve la asignación, marca `contador` como local, y al intentar leerlo del lado derecho todavía no existe. La solución no es `global` — es **devolver el valor** y reasignarlo fuera. Las funciones que mutan estado global son la fuente número uno de bugs irreproducibles en notebooks.
+El nombre `contador` aparece en `co_varnames` de la segunda función y no en el de la primera, y el único cambio entre ellas es una asignación situada **después** de la lectura. La clasificación se consulta antes de llamar, lo que confirma que ocurrió al compilar.
+
+El remedio no pasa por `global`, que reintroduce el estado compartido que la Proposición 1.5 hace difícil de rastrear, sino por devolver el valor y reasignarlo fuera. Una función cuyo resultado depende solo de sus argumentos se puede probar en aislamiento y da lo mismo en cada ejecución.
+
+El visual siguiente recorre la búsqueda de un nombre por los cuatro ámbitos. El marco es fijo: lo que se mueve es el marcador de la búsqueda y el ámbito donde se detiene.
+
+```{=html}
+<div class="viz-legb">
+  <div class="controles">
+    <label>Quién vincula el nombre
+      <select id="lb-def">
+        <option value="0">local, envolvente y global</option>
+        <option value="1" selected>envolvente y global</option>
+        <option value="2">solo global</option>
+        <option value="3">nadie: solo el integrado</option>
+      </select>
+    </label>
+    <label>Paso de la búsqueda <input id="lb-paso" type="range" min="0" max="3" step="1" value="2"> <span id="lb-paso-v">2</span></label>
+  </div>
+  <svg id="lb-svg" viewBox="0 0 620 300" role="img" aria-label="Los cuatro ambitos apilados de local a integrado. Un marcador desciende por ellos segun el paso de la busqueda y se detiene en el primero que vincula el nombre; a la derecha se indica que objeto se obtiene."></svg>
+  <p class="lectura" id="lb-lectura"></p>
+</div>
+<style>
+.viz-legb { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-legb .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-legb label { display: flex; align-items: center; gap: .4rem; }
+.viz-legb input[type=range] { width: 130px; padding: 0; }
+.viz-legb select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-legb svg { width: 100%; height: auto; display: block; }
+.viz-legb .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_SI = "#0F6E68", C_NO = "#B45309";
+  var svg = document.getElementById("lb-svg"), lec = document.getElementById("lb-lectura");
+  var cd = document.getElementById("lb-def"), cp = document.getElementById("lb-paso");
+  var ep = document.getElementById("lb-paso-v");
+
+  // Marco constante: cuatro filas fijas, independientes de los datos.
+  var BX = 150, BW = 300, BH = 46, BY0 = 42, GAP = 14;
+  var NOM = ["Local", "Envolvente", "Global", "Integrado"];
+  var SIG = ["L", "E", "G", "B"];
+  // que ambitos vinculan el nombre, por opcion
+  var VINC = [[1,1,1,1],[0,1,1,1],[0,0,1,1],[0,0,0,1]];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function fy(i) { return BY0 + i * (BH + GAP); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var op = +cd.value, paso = +cp.value;
+    ep.textContent = String(paso);
+    var v = VINC[op];
+    var parada = 0;
+    while (parada < 3 && !v[parada]) parada++;
+    var visitado = Math.min(paso, parada);
+
+    svg.appendChild(el("text", { x: 20, y: 26, "font-size": 11.5, fill: C_T, opacity: 0.7 },
+      "la búsqueda de un nombre desciende L → E → G → B y se detiene en el primero que lo vincula"));
+
+    for (var i = 0; i < 4; i++) {
+      var activo = i <= visitado;
+      var vincula = !!v[i];
+      svg.appendChild(el("rect", { x: BX, y: fy(i), width: BW, height: BH, rx: 6,
+        fill: "none", stroke: vincula ? C_SI : C_L,
+        "stroke-width": (i === visitado && visitado === parada) ? 2.4 : 1.3,
+        "stroke-opacity": activo ? 1 : 0.4 }));
+      svg.appendChild(el("text", { x: BX + 16, y: fy(i) + 28, "font-size": 13, fill: C_T,
+        opacity: activo ? 1 : 0.45 }, SIG[i] + " · " + NOM[i]));
+      svg.appendChild(el("text", { x: BX + BW - 16, y: fy(i) + 28, "text-anchor": "end",
+        "font-size": 12, fill: vincula ? C_SI : C_NO, opacity: activo ? 1 : 0.45,
+        "font-family": "var(--bs-font-monospace,monospace)" },
+        vincula ? 'x = "' + NOM[i].toLowerCase() + '"' : "sin x"));
+    }
+
+    // marcador de la busqueda, a la izquierda
+    var my = fy(visitado) + BH / 2;
+    svg.appendChild(el("circle", { cx: 104, cy: my.toFixed(1), r: 8, fill: C_SI,
+      stroke: "#fff", "stroke-width": 1.6 }));
+    svg.appendChild(el("path", { d: "M112 " + my.toFixed(1) + " L" + (BX - 6) + " " + my.toFixed(1),
+      stroke: C_SI, "stroke-width": 1.8, fill: "none" }));
+    svg.appendChild(el("path", { d: "M" + (BX - 6) + " " + my.toFixed(1) + " L" + (BX - 14) + " " +
+      (my - 4.5).toFixed(1) + " L" + (BX - 14) + " " + (my + 4.5).toFixed(1) + " Z",
+      fill: C_SI, stroke: "none" }));
+    // resultado, a la derecha del ambito donde para
+    if (visitado === parada) {
+      svg.appendChild(el("path", { d: "M" + (BX + BW + 6) + " " + my.toFixed(1) + " L" + (BX + BW + 44) +
+        " " + my.toFixed(1), stroke: C_SI, "stroke-width": 1.6, fill: "none" }));
+      svg.appendChild(el("text", { x: BX + BW + 50, y: my + 4.5, "font-size": 12, fill: C_SI },
+        "se devuelve"));
+    }
+
+    var nom = NOM[parada].toLowerCase();
+    if (visitado < parada) {
+      lec.innerHTML = "Paso " + paso + ". La búsqueda va por <strong>" + NOM[visitado] +
+        "</strong>, que no vincula el nombre, así que continúa hacia abajo.";
+    } else if (op === 3) {
+      lec.innerHTML = "Paso " + paso + ". Ningún ámbito del programa vincula <code>x</code>: la búsqueda llega al ámbito <strong>integrado</strong>. " +
+        "Si tampoco estuviera ahí, el resultado sería <code>NameError</code>.";
+    } else {
+      lec.innerHTML = "Paso " + paso + ". La búsqueda se detiene en <strong>" + NOM[parada] +
+        "</strong> y devuelve <code>\"" + nom + "\"</code>. Los ámbitos de más abajo existen y vinculan el mismo nombre, " +
+        "y no se consultan: LEGB se detiene en el primero que acierta.";
+    }
+  }
+
+  cd.addEventListener("change", dibujar);
+  cp.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+El caso del `UnboundLocalError` queda fuera de este dibujo a propósito: ahí la búsqueda ni siquiera empieza, porque la Proposición 2.3 la resolvió al compilar y la lectura va directa a la celda local.
+
+## 3. Cómo se pasan los argumentos
+
+::: {.proposicion}
+**Proposición 2.4 (el argumento se pasa por vínculo).** Al llamar `f(a)`, el parámetro correspondiente queda vinculado al mismo objeto que `a`, sin copiarlo. En consecuencia:
+
+1. reasignar el parámetro dentro del cuerpo no afecta al vínculo de `a`;
+2. mutar el objeto a través del parámetro sí se observa desde `a`.
 :::
 
-## Argumentos: los cuatro tipos
+::: {.demostracion}
+*Demostración.* El paso de argumentos vincula cada parámetro al objeto que resulta de evaluar la expresión correspondiente en la llamada. Evaluar el nombre `a` devuelve el objeto al que `a` está vinculado (Definición 1.2), de modo que la situación es la de la Proposición 1.3 con el parámetro en el papel de `b`: parámetro y `a` son alias.
+
+Para (1), reasignar el parámetro es una asignación cuyo destino es un nombre local del ámbito de la función, que por la Proposición 2.3 es una celda distinta de la de `a`; solo cambia ese vínculo local, y al terminar la llamada el ámbito local desaparece.
+
+Para (2), mutar conserva la identidad del objeto (Definición 1.4), así que basta aplicar la Proposición 1.5 a los dos alias. [∎]{.fin-demo}
+:::
+
+Las dos consecuencias explican por qué la misma llamada parece a veces copiar y a veces no: lo que cambia es la operación que el cuerpo ejecuta, y no la forma de pasar el argumento, que es siempre la misma.
 
 ```{pyodide}
-def reporte(sucursal, mes, *extras, moneda="USD", **opciones):
-    print("sucursal:", sucursal)
-    print("mes:", mes)
-    print("extras (posicionales sobrantes):", extras)
-    print("moneda (por defecto):", moneda)
-    print("opciones (nombradas sobrantes):", opciones)
+def reasigna(xs):
+    xs = xs + [99]                 # construye una lista nueva y revincula el parametro
+    return xs
 
-reporte("multiplaza", 9, "ticket", "trx", moneda="PAB", incluir_iva=True)
+def muta(xs):
+    xs.append(99)                  # muta el objeto compartido
+    return xs
+
+a = [1, 2]
+fuera = reasigna(a)
+print("reasigna | a =", a, "| devuelto =", fuera, "| a is devuelto:", a is fuera)
+
+b = [1, 2]
+fuera = muta(b)
+print("muta     | b =", b, "| devuelto =", fuera, "| b is devuelto:", b is fuera)
+
+def ve_la_identidad(xs):
+    return id(xs)
+
+c = [1, 2]
+print()
+print("el parametro es alias del argumento:", ve_la_identidad(c) == id(c))
 ```
 
-- **Posicionales**: `sucursal`, `mes` — obligatorios, por orden.
-- **`*extras`**: recoge los posicionales de más en una tupla.
-- **Por defecto**: `moneda="USD"` — opcional.
-- **`**opciones`**: recoge los nombrados de más en un diccionario.
+La última línea es la proposición medida: la identidad que ve el cuerpo y la que ve quien llama coinciden, de modo que no hubo copia en ningún punto.
 
-## La trampa del argumento mutable por defecto
+::: {.definicion}
+**Definición 2.5 (las cuatro clases de parámetro).** En la firma de una función, cada parámetro pertenece a una de estas clases:
 
-Este es un clásico de entrevista, y algo que vas a ver en código real.
+| Clase | Forma | Recibe |
+|---|---|---|
+| posicional o nombrado | `p` | por posición o por nombre |
+| variádico posicional | `*args` | los posicionales sobrantes |
+| solo nombrado | tras `*args` o tras `*` | únicamente por nombre |
+| variádico nombrado | `**kwargs` | los nombrados sobrantes |
+
+Un **valor por defecto**, `p=expr`, es un modificador que hace opcional al parámetro.
+:::
+
+::: {.proposicion}
+**Proposición 2.6 (tipos de los variádicos).** En toda llamada, `args` queda vinculado a una tupla y `kwargs` a un diccionario, incluso cuando no sobra ningún argumento, en cuyo caso son la tupla vacía y el diccionario vacío. Un parámetro solo nombrado nunca se puede llenar por posición.
+:::
+
+::: {.demostracion}
+*Demostración.* El emparejamiento recorre primero los argumentos posicionales de la llamada asignándolos por orden a los parámetros de la primera clase; los que sobran se recogen construyendo una tupla con ellos, y la construcción produce una tupla también cuando la secuencia recogida está vacía. Los nombrados se asignan por nombre, y los que no corresponden a ningún parámetro declarado se recogen en un diccionario, igualmente vacío si no sobra ninguno.
+
+Para la segunda parte, los parámetros situados tras `*args` o tras un `*` solitario quedan fuera del recorrido posicional por construcción: ese recorrido termina cuando `*args` absorbe el resto. La única vía que queda para llenarlos es el emparejamiento por nombre. [∎]{.fin-demo}
+:::
+
+Que los variádicos tengan tipo fijo importa porque permite escribir el cuerpo sin comprobar antes si llegó algo: `len(args)` y `kwargs.items()` funcionan siempre.
 
 ```{pyodide}
-def agregar_mal(item, bolsa=[]):
+def firma(a, b, *extras, escala=1.0, **opciones):
+    print("a =", a, "| b =", b)
+    print("extras  :", extras, type(extras).__name__)
+    print("escala  :", escala)
+    print("opciones:", opciones, type(opciones).__name__)
+
+firma(1, 2, 3, 4, escala=0.5, tolerancia=1e-6)
+print()
+firma(1, 2)                                   # sin sobrantes: tupla y dict vacios
+print()
+
+# 'escala' va tras *extras, asi que un quinto posicional NO la llena:
+# lo absorbe extras y escala se queda en su valor por defecto.
+firma(1, 2, 3, 4, 0.5)
+print()
+
+# Con un * solitario no hay donde absorberlo, y el emparejamiento falla.
+def estricta(a, *, escala=1.0):
+    return escala
+
+print("por nombre si:", estricta(1, escala=0.5))
+try:
+    estricta(1, 0.5)
+except TypeError as e:
+    print("por posicion no -> TypeError:", e)
+```
+
+## 4. Los valores por defecto se evalúan una vez
+
+::: {.proposicion}
+**Proposición 2.7 (evaluación única de los valores por defecto).** Las expresiones de valor por defecto se evalúan al ejecutar la sentencia `def`, una sola vez, y los objetos resultantes quedan guardados en `f.__defaults__`. Toda llamada que omita ese argumento vincula el parámetro a **ese mismo objeto**.
+
+**Corolario.** Si el objeto por defecto es de tipo mutable, toda mutación hecha en una llamada se observa en las siguientes, por la Proposición 1.5.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Definición 2.1, `def` construye el objeto función. Para hacerlo necesita los objetos por defecto, así que evalúa entonces sus expresiones y guarda los resultados en el atributo `__defaults__` del objeto recién construido. La sentencia `def` se ejecuta una sola vez, luego esas expresiones se evalúan una sola vez.
+
+En una llamada que omita el argumento, el emparejamiento toma el objeto guardado en `__defaults__` y vincula el parámetro a él, sin reevaluar nada: la expresión original ya no existe en el objeto función, solo su resultado. Todas esas llamadas vinculan por tanto su parámetro al mismo objeto, y son alias entre sí en el sentido de la Definición 1.2. El corolario es la Proposición 1.5 aplicada a esos alias. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+def acumula(item, bolsa=[]):
     bolsa.append(item)
     return bolsa
 
-print(agregar_mal("a"))
-print(agregar_mal("b"))    # esperabas ['b'] y obtienes ['a', 'b']
-print(agregar_mal("c"))
+print("defaults al definir:", acumula.__defaults__)
+print("identidad del objeto por defecto:", id(acumula.__defaults__[0]) == id(acumula.__defaults__[0]))
+guardada = acumula.__defaults__[0]
+
+print()
+print("llamada 1:", acumula("a"))
+print("llamada 2:", acumula("b"))
+print("llamada 3:", acumula("c"))
+print()
+print("defaults tras las llamadas:", acumula.__defaults__)
+print("sigue siendo el mismo objeto:", acumula.__defaults__[0] is guardada)
 ```
 
-::: {.derivacion}
-**Por qué la lista se acumula entre llamadas**
+Las tres llamadas devuelven `['a']`, `['a', 'b']` y `['a', 'b', 'c']`, y el objeto guardado en `__defaults__` es el mismo antes y después: no hubo tres listas sino una, mutada tres veces.
 
-::: {.paso}
-El `def` se ejecuta **una sola vez**, cuando Python lee el archivo — no en cada llamada. En ese momento evalúa las expresiones de los valores por defecto.
-:::
-::: {.paso}
-`[]` se evalúa entonces y produce **un** objeto lista. Ese objeto se guarda en el atributo `__defaults__` de la función.
-:::
-::: {.paso}
-Cada llamada sin el argumento `bolsa` no crea una lista nueva: reutiliza **ese mismo objeto** guardado.
-:::
-::: {.paso}
-`bolsa.append(item)` es un método mutador sobre un objeto mutable (Lección 1): modifica el objeto compartido en su lugar. Por eso persiste entre llamadas.
-:::
-
-Compruébalo:
-:::
+El remedio es un centinela inmutable. `None` sirve porque es un objeto único, de modo que `is None` lo identifica sin ambigüedad (Proposición 1.7), y la construcción del objeto mutable pasa al cuerpo, que sí se ejecuta en cada llamada.
 
 ```{pyodide}
-def agregar_mal(item, bolsa=[]):
-    bolsa.append(item)
-    return bolsa
-
-print("defaults guardados:", agregar_mal.__defaults__)
-agregar_mal("x")
-print("defaults después de llamar:", agregar_mal.__defaults__)
-```
-
-El patrón correcto usa `None` como centinela:
-
-```{pyodide}
-def agregar_bien(item, bolsa=None):
+def acumula_bien(item, bolsa=None):
     if bolsa is None:
-        bolsa = []          # lista nueva en CADA llamada
+        bolsa = []                 # objeto nuevo en CADA llamada
     bolsa.append(item)
     return bolsa
 
-print(agregar_bien("a"))
-print(agregar_bien("b"))
+print("llamada 1:", acumula_bien("a"))
+print("llamada 2:", acumula_bien("b"))
+print("defaults:", acumula_bien.__defaults__)
+print()
+propia = ["x"]
+acumula_bien("y", propia)
+print("con bolsa propia, se muta la del llamador:", propia)
 ```
 
-Nota que aquí sí se usa `is None` y no `== None` — exactamente la regla de la Lección 1.
+La última línea recuerda que el centinela arregla la acumulación entre llamadas y no altera la Proposición 2.4: cuando el llamador pasa su propia lista, la función la muta, y eso sigue siendo visible desde fuera.
 
-## Funciones como objetos
+## 5. Cierres: se captura la celda
+
+::: {.definicion}
+**Definición 2.8 (celda y cierre).** Cuando una función anidada menciona un nombre local de una función que la contiene, el intérprete no guarda ese nombre en una celda ordinaria del marco, sino en una **celda** compartida, que sobrevive al retorno de la función externa. La función interna guarda una referencia a esa celda en su atributo `__closure__`, y al conjunto de la función con sus celdas se le llama **cierre**.
+:::
+
+::: {.proposicion}
+**Proposición 2.9 (el cierre captura la celda, no el valor).** Sea `g` definida dentro de `f` y que menciona un nombre local `v` de `f`. Entonces el valor que `g` observa al llamarla es el que la celda de `v` contenga **en el instante de la llamada**, y no el que contenía cuando se definió `g`.
+
+**Corolario.** Si dentro de un bucle se crean varias funciones que mencionan la variable del bucle, todas comparten una única celda, y al llamarlas después del bucle todas devuelven el último valor.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Definición 2.8 lo que `g` guarda es una referencia a la celda, no a su contenido. La lectura de `v` dentro de `g` se compila a una instrucción que, en el momento de ejecutarse, lee el contenido actual de esa celda. Definir `g` no ejecuta su cuerpo, así que esa lectura no ocurre al definirla; ocurre al llamarla, y entonces devuelve lo que la celda tenga en ese momento.
+
+Para el corolario, un bucle no crea un ámbito propio: la variable del bucle es un único nombre del ámbito que lo contiene, y por tanto una única celda, que cada iteración revincula. Las funciones creadas en iteraciones distintas guardan referencias a esa misma celda. Al llamarlas después del bucle, todas leen su contenido final, que es el valor de la última iteración. [∎]{.fin-demo}
+:::
 
 ```{pyodide}
-def aplicar_dos_veces(f, valor):
-    return f(f(valor))
+def contador_desde(inicio):
+    n = inicio
+    def siguiente():
+        return n                    # lee la celda, no una copia de inicio
+    def avanzar():
+        nonlocal n
+        n += 1
+    return siguiente, avanzar
 
-def doblar(x):
-    return x * 2
+sig, avz = contador_desde(10)
+print("recien creado :", sig())
+avz(); avz()
+print("tras avanzar  :", sig(), "<- la misma funcion, otro valor")
+print("celdas capturadas:", len(sig.__closure__), "| contenido:", sig.__closure__[0].cell_contents)
 
-print(aplicar_dos_veces(doblar, 5))
-print(aplicar_dos_veces(lambda x: x + 3, 5))
+print()
+# El corolario: tres funciones creadas en un bucle comparten una celda
+funcs = [lambda: i for i in range(3)]
+print("resultados:", [f() for f in funcs])
+print("comparten la misma celda:", funcs[0].__closure__[0] is funcs[2].__closure__[0])
 
-operaciones = {"doblar": doblar, "cuadrado": lambda x: x ** 2}
-print(operaciones["cuadrado"](7))
+# Fijar el valor por la via de la Proposicion 2.7: un default se evalua al definir
+fijas = [lambda i=i: i for i in range(3)]
+print("con i=i por defecto:", [f() for f in fijas])
+print("y estas no capturan nada:", fijas[0].__closure__)
 ```
 
-`lambda` es solo una función anónima de una expresión. Úsala para funciones de una línea que se pasan como argumento; para cualquier otra cosa, `def` con nombre es más legible.
+Las tres lambdas del bucle devuelven `[2, 2, 2]` y comparten literalmente la misma celda. Las que fijan el valor con un argumento por defecto devuelven `[0, 1, 2]` y su `__closure__` es `None`: no capturan nada, porque la Proposición 2.7 congeló el valor al definirlas. Los dos mecanismos de la lección se encuentran aquí, y el segundo es el que resuelve al primero.
 
-## Ejercicio 1 — Arreglar el default mutable
+```{=html}
+<div class="viz-cierre">
+  <div class="controles">
+    <label>Cómo se escribe la lambda
+      <select id="cc-modo">
+        <option value="0" selected>lambda: i   (captura la celda)</option>
+        <option value="1">lambda i=i: i   (fija el valor)</option>
+      </select>
+    </label>
+    <label>Iteración <input id="cc-it" type="range" min="0" max="3" step="1" value="1"> <span id="cc-it-v">1</span></label>
+  </div>
+  <svg id="cc-svg" viewBox="0 0 620 300" role="img" aria-label="A la izquierda las funciones creadas hasta la iteracion actual; a la derecha la celda o celdas de las que leen. En el modo de captura todas apuntan a una unica celda cuyo contenido cambia; en el modo de valor fijado cada funcion tiene su propia celda con el valor congelado."></svg>
+  <p class="lectura" id="cc-lectura"></p>
+</div>
+<style>
+.viz-cierre { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-cierre .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-cierre label { display: flex; align-items: center; gap: .4rem; }
+.viz-cierre input[type=range] { width: 130px; padding: 0; }
+.viz-cierre select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-cierre svg { width: 100%; height: auto; display: block; }
+.viz-cierre .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_F = "#B45309", C_C = "#0F6E68";
+  var svg = document.getElementById("cc-svg"), lec = document.getElementById("cc-lectura");
+  var cm = document.getElementById("cc-modo"), ci = document.getElementById("cc-it");
+  var ei = document.getElementById("cc-it-v");
 
-Corrige la función para que cada llamada sin `registro` arranque con un diccionario vacío.
+  // Marco constante.
+  var FX = 60, FW = 150, FH = 40, FY0 = 62, GAP = 20;
+  var CX = 380, CW = 120, CH = 40;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function fy(i) { return FY0 + i * (FH + GAP); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var modo = +cm.value, it = +ci.value;
+    ei.textContent = it < 3 ? String(it) : "fin";
+    var creadas = Math.min(it + 1, 3);          // funciones ya creadas
+    var valor = it < 3 ? it : 2;                // contenido de la celda compartida
+
+    svg.appendChild(el("text", { x: 20, y: 28, "font-size": 11.5, fill: C_T, opacity: 0.7 },
+      it < 3 ? "durante la iteración i = " + it : "terminado el bucle, i quedó en 2"));
+    svg.appendChild(el("text", { x: FX, y: 50, "font-size": 11.5, fill: C_T, opacity: 0.62 }, "funciones"));
+    svg.appendChild(el("text", { x: CX, y: 50, "font-size": 11.5, fill: C_T, opacity: 0.62 },
+      modo === 0 ? "celda compartida" : "valor por defecto de cada una"));
+
+    for (var k = 0; k < creadas; k++) {
+      svg.appendChild(el("rect", { x: FX, y: fy(k), width: FW, height: FH, rx: 5,
+        fill: "none", stroke: C_F, "stroke-width": 1.4 }));
+      svg.appendChild(el("text", { x: FX + FW / 2, y: fy(k) + FH / 2 + 4.5, "text-anchor": "middle",
+        "font-size": 12.5, fill: C_T, "font-family": "var(--bs-font-monospace,monospace)" },
+        modo === 0 ? "funcs[" + k + "]" : "fijas[" + k + "]"));
+
+      var destY = modo === 0 ? fy(1) + FH / 2 : fy(k) + FH / 2;
+      var x1 = FX + FW, y1 = fy(k) + FH / 2, x2 = CX - 8, y2 = destY;
+      svg.appendChild(el("path", { d: "M" + x1 + " " + y1.toFixed(1) + " L" + x2 + " " + y2.toFixed(1),
+        stroke: C_C, "stroke-width": 1.5, fill: "none", "stroke-opacity": 0.85 }));
+      var ang = Math.atan2(y2 - y1, x2 - x1);
+      svg.appendChild(el("path", { d: "M" + x2 + " " + y2.toFixed(1) +
+        " L" + (x2 - 8 * Math.cos(ang - 0.4)).toFixed(1) + " " + (y2 - 8 * Math.sin(ang - 0.4)).toFixed(1) +
+        " L" + (x2 - 8 * Math.cos(ang + 0.4)).toFixed(1) + " " + (y2 - 8 * Math.sin(ang + 0.4)).toFixed(1) + " Z",
+        fill: C_C, stroke: "none" }));
+
+      if (modo === 1) {
+        svg.appendChild(el("rect", { x: CX, y: fy(k), width: CW, height: CH, rx: 5,
+          fill: "none", stroke: C_C, "stroke-width": 1.4 }));
+        svg.appendChild(el("text", { x: CX + CW / 2, y: fy(k) + CH / 2 + 4.5, "text-anchor": "middle",
+          "font-size": 13, fill: C_T, "font-family": "var(--bs-font-monospace,monospace)" }, "i = " + k));
+      }
+    }
+    if (modo === 0) {
+      svg.appendChild(el("rect", { x: CX, y: fy(1), width: CW, height: CH, rx: 5,
+        fill: "none", stroke: C_C, "stroke-width": 2.2 }));
+      svg.appendChild(el("text", { x: CX + CW / 2, y: fy(1) + CH / 2 + 4.5, "text-anchor": "middle",
+        "font-size": 13, fill: C_T, "font-family": "var(--bs-font-monospace,monospace)" }, "i = " + valor));
+    }
+
+    var res = [];
+    for (var j = 0; j < creadas; j++) res.push(modo === 0 ? valor : j);
+    svg.appendChild(el("text", { x: FX, y: 276, "font-size": 12.5, fill: C_T,
+      "font-family": "var(--bs-font-monospace,monospace)" },
+      "[f() for f in " + (modo === 0 ? "funcs" : "fijas") + "] = [" + res.join(", ") + "]"));
+
+    lec.innerHTML = modo === 0
+      ? ("Las " + creadas + " funciones creadas hasta aquí apuntan a <strong>una sola celda</strong>, que ahora contiene <code>" +
+         valor + "</code>. Llamarlas a todas devuelve ese mismo valor, porque la lectura ocurre al llamar y no al definir (Proposición 2.9).")
+      : ("Cada función guarda <strong>su propio</strong> valor por defecto, evaluado al definirla (Proposición 2.7). No hay celda compartida: <code>__closure__</code> es <code>None</code>, y llamarlas devuelve " +
+         "[" + res.join(", ") + "].");
+  }
+
+  cm.addEventListener("change", dibujar);
+  ci.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+Avanzar la iteración con el primer modo deja siempre una sola celda y cambia su contenido; con el segundo aparece una celda por función y los contenidos quedan congelados. El estado «fin» es el que se observa al llamar a las funciones después del bucle, y es donde las dos escrituras dan resultados distintos.
+
+## Ejercicios
+
+### Ejercicio 1 — Arreglar el valor por defecto
+
+Corregir la función para que cada llamada sin `registro` arranque con un diccionario vacío.
 
 ```{pyodide}
 #| exercise: ex_default
@@ -176,14 +601,14 @@ def registrar(evento, registro=______):
     registro[evento] = registro.get(evento, 0) + 1
     return registro
 
-primera  = registrar("venta")
-segunda  = registrar("venta")
+primera = registrar("alta")
+segunda = registrar("alta")
 print("primera:", primera, "| segunda:", segunda)
 segunda
 ```
 
 ::: {.hint exercise="ex_default"}
-Usa `None` como valor por defecto y, en la primera línea del cuerpo, crea el diccionario si el argumento llegó como `None`. Recuerda comparar con `is`, no con `==`.
+Por la Proposición 2.7 el objeto por defecto se construye una sola vez, así que el diccionario tiene que construirse en el cuerpo. `None` sirve de centinela, y se detecta con `is` por la Proposición 1.7.
 :::
 
 ::: {.solution exercise="ex_default"}
@@ -194,8 +619,8 @@ def registrar(evento, registro=None):
     registro[evento] = registro.get(evento, 0) + 1
     return registro
 
-primera  = registrar("venta")
-segunda  = registrar("venta")
+primera = registrar("alta")
+segunda = registrar("alta")
 print("primera:", primera, "| segunda:", segunda)
 segunda
 ```
@@ -204,18 +629,55 @@ segunda
 ```{pyodide}
 #| exercise: ex_default
 #| check: true
-if result == {"venta": 1}:
-    feedback = {"correct": True, "message": "Correcto: cada llamada arranca limpia.", "type": "success"}
-elif result == {"venta": 2}:
-    feedback = {"correct": False, "message": "Se está acumulando: el diccionario por defecto se comparte entre llamadas.", "type": "error"}
+if result == {"alta": 1}:
+    feedback = {"correct": True, "message": "Correcto: cada llamada arranca con un diccionario propio.", "type": "success"}
+elif result == {"alta": 2}:
+    feedback = {"correct": False, "message": "Se acumula: el diccionario por defecto se comparte entre llamadas (Proposición 2.7).", "type": "error"}
 else:
-    feedback = {"correct": False, "message": f"Esperaba {{'venta': 1}} y obtuve {result}.", "type": "error"}
+    feedback = {"correct": False, "message": f"Esperaba {{'alta': 1}} y obtuve {result}.", "type": "error"}
 feedback
 ```
 
-## Ejercicio 2 — Sin estado global
+### Ejercicio 2 — Fijar el valor capturado
 
-Reescribe esta función para que no dependa de una variable global: debe recibir el total actual y devolver el nuevo.
+Completar la lista de funciones para que la $k$-ésima devuelva $k$, en lugar de devolver todas el último valor.
+
+```{pyodide}
+#| exercise: ex_cierre
+funcs = [______ for k in range(4)]
+
+print([f() for f in funcs])
+[f() for f in funcs]
+```
+
+::: {.hint exercise="ex_cierre"}
+Con `lambda: k` las cuatro comparten una celda, por el corolario de la Proposición 2.9. Un parámetro con valor por defecto se evalúa al definir cada lambda, que es justo el instante en que `k` vale lo que se quiere congelar.
+:::
+
+::: {.solution exercise="ex_cierre"}
+```{pyodide}
+funcs = [lambda k=k: k for k in range(4)]
+
+print([f() for f in funcs])
+[f() for f in funcs]
+```
+:::
+
+```{pyodide}
+#| exercise: ex_cierre
+#| check: true
+if result == [0, 1, 2, 3]:
+    feedback = {"correct": True, "message": "Correcto: el valor quedó congelado al definir cada función.", "type": "success"}
+elif result == [3, 3, 3, 3]:
+    feedback = {"correct": False, "message": "Las cuatro comparten la misma celda y leen su contenido final (Proposición 2.9).", "type": "error"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba [0, 1, 2, 3] y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 3 — Sin estado compartido
+
+Reescribir la acumulación para que la función reciba el total actual y devuelva el nuevo, sin asignar a ningún nombre de fuera.
 
 ```{pyodide}
 #| exercise: ex_puro
@@ -223,15 +685,15 @@ def acumular(______):
     ______
 
 total = 0
-for venta in [120.5, 89.0, 240.25]:
-    total = acumular(total, venta)
+for valor in [120.5, 89.0, 240.25]:
+    total = acumular(total, valor)
 
 print("total:", total)
 round(total, 2)
 ```
 
 ::: {.hint exercise="ex_puro"}
-La función debe recibir dos parámetros (el acumulado y el nuevo valor) y devolver su suma. No debe asignar a ninguna variable de fuera.
+La función recibe dos parámetros —el acumulado y el nuevo valor— y devuelve su suma. Asignar al nombre de fuera obligaría a `global`, y por la Proposición 2.3 esa asignación cambiaría además la clasificación del nombre dentro del cuerpo.
 :::
 
 ::: {.solution exercise="ex_puro"}
@@ -240,8 +702,8 @@ def acumular(total, valor):
     return total + valor
 
 total = 0
-for venta in [120.5, 89.0, 240.25]:
-    total = acumular(total, venta)
+for valor in [120.5, 89.0, 240.25]:
+    total = acumular(total, valor)
 
 print("total:", total)
 round(total, 2)
@@ -252,7 +714,7 @@ round(total, 2)
 #| exercise: ex_puro
 #| check: true
 if abs(result - 449.75) < 1e-9:
-    feedback = {"correct": True, "message": "Correcto. Una función que solo depende de sus argumentos es reproducible y testeable.", "type": "success"}
+    feedback = {"correct": True, "message": "Correcto. Una función que solo depende de sus argumentos da lo mismo en cada ejecución.", "type": "success"}
 else:
     feedback = {"correct": False, "message": f"Esperaba 449.75 y obtuve {result}.", "type": "error"}
 feedback
@@ -260,39 +722,58 @@ feedback
 
 ## Reto
 
-En `proyectos/notebooks/F0-retos.ipynb`:
+En `proyectos/notebooks/F0-retos.ipynb`, sección **Py 2**:
 
-1. Escribe un decorador `@cronometrar` que imprima cuánto tardó la función que envuelve. Necesitarás `time.perf_counter` y `functools.wraps`.
-2. Escribe `componer(f, g)` que devuelva una función nueva equivalente a `f(g(x))`. Verifica que `componer(doblar, incrementar)(5)` da 12.
-3. Explica, en dos líneas, por qué `sorted(lista, key=lambda x: x[1])` ordena por el segundo elemento. ¿Qué recibe `key` y qué hace `sorted` con lo que devuelve?
+1. Escribir un decorador `@cronometrar` con `time.perf_counter` y `functools.wraps`, y comprobar con `__wrapped__` y `__name__` qué se pierde exactamente al omitir `wraps`. Anotar en `50-Errores/` qué herramientas dejan de funcionar sin él.
+2. Escribir `componer(f, g)` que devuelva una función equivalente a `f(g(x))`, y generalizarla a `componer(*fs)`. Comprobar contra la Proposición 2.9 que componer dentro de un bucle sobre una lista de funciones necesita fijar el valor, y medir qué devuelve la versión que no lo fija.
+3. Construir una función que acepte los mismos argumentos por posición y por nombre, y usar `inspect.signature` para escribir un `emparejar(f, *a, **k)` que diga a qué parámetro va a parar cada argumento. Contrastarlo contra la Proposición 2.6 con un parámetro solo nombrado.
+
+## Del libro
+
+*Python for Data Analysis* 3E trata funciones, ámbito y argumentos dentro de su capítulo 3, *Built-In Data Structures, Functions, and Files*. El sitio del libro declara que su contenido no se puede copiar ni reproducir, así que se cita número y título y no se le atribuye ninguna frase.
+
+**Preguntas para leer el capítulo 3 con lápiz:**
+
+1. El capítulo señala que una función sin `return` explícito devuelve `None`. Con la Definición 2.1, ¿en qué se distingue eso de una función que no termina, y por qué `None` es la elección natural dado que es un objeto único?
+2. El capítulo presenta las funciones que devuelven varios valores. Con la Definición 2.5, ¿qué objeto se construye realmente al escribir `return a, b`, y por qué el desempaquetado del llamador funciona sin que la función sepa nada de él?
+3. La sección sobre funciones anónimas introduce `lambda` y su uso como argumento `key`. Con la Proposición 2.9, ¿qué diferencia hay entre pasar `lambda x: x[1]` y pasar una función definida con `def` que mencione un nombre del ámbito envolvente, si ese nombre cambia entre la definición y la llamada?
 
 ## Para el Cerebro
 
-Lee **McKinney cap. 3** (secciones de funciones) con estas preguntas escritas antes:
-
-1. ¿Qué devuelve una función que no tiene `return`?
-2. ¿Puede una función devolver varios valores? ¿Qué está pasando realmente?
-3. ¿Qué es un *closure* y por qué una función anidada puede leer variables de la de afuera después de que esta terminó?
+Nota nueva en `10-Conceptos/ambito-y-cierres.md`, enlazada a [[objetos-y-nombres]], [[cierre]] y [[valor-por-defecto]]. Conviene rehacer a mano la demostración de la Proposición 2.9 y su corolario: la primera parte depende solo de que la lectura ocurre al llamar, y el corolario añade el hecho de que un bucle no abre un ámbito propio. Separar esas dos piezas explica por qué la comprehension del Ejercicio 2 se comporta igual pese a tener su propio ámbito.
 
 ```
-¿Qué significa LEGB?::Local, Enclosing, Global, Built-in — el orden en que Python resuelve un nombre
-¿Cuándo se evalúan los valores por defecto de una función?::Una sola vez, al definir la función, no en cada llamada
-¿Cuál es el patrón correcto para un default mutable?::Usar None como centinela y crear el objeto dentro del cuerpo
-¿Qué recoge *args y qué recoge **kwargs?::*args los posicionales sobrantes en una tupla; **kwargs los nombrados en un dict
-¿Por qué asignar a un nombre dentro de una función puede dar UnboundLocalError?::La asignación lo marca local para toda la función, incluso antes de esa línea
+¿Qué hace exactamente `def`?::Construye un objeto función y vincula el nombre a él, como una asignación
+¿Qué significa LEGB?::Local, Envolvente, Global, Integrado: el orden en que se busca un nombre
+¿Cuándo se decide que un nombre es local?::Al compilar el cuerpo, si aparece como destino de una asignación en cualquier punto
+¿Por qué sale UnboundLocalError?::La lectura se compiló como local y la celda aún no tiene valor; no se consulta ningún otro ámbito
+¿Dónde se lee esa clasificación?::En `f.__code__.co_varnames`, disponible antes de la primera llamada
+¿Cómo se pasa un argumento?::Vinculando el parámetro al mismo objeto; reasignarlo no se ve fuera, mutarlo sí
+¿Cuándo se evalúan los valores por defecto?::Una sola vez, al ejecutar el `def`; quedan en `f.__defaults__`
+¿Qué pasa con un valor por defecto mutable?::Todas las llamadas que lo omiten comparten el objeto, y las mutaciones se acumulan
+¿Cuál es el patrón correcto?::None como centinela, y construir el objeto dentro del cuerpo
+¿De qué tipo son *args y **kwargs?::Siempre tupla y diccionario, vacíos si no sobra nada
+¿Qué captura un cierre?::La celda, no el valor: lee su contenido en el instante de la llamada
+¿Qué devuelven `[lambda: i for i in range(3)]`?::[2, 2, 2]: las tres comparten una celda con el valor final
+¿Cómo se congela el valor?::`lambda i=i: i`, que lo evalúa al definir; su `__closure__` queda en None
 ```
-
 
 ::: {#fuentes .fuentes}
 ### Fuentes
 
-**Lo que esta página demuestra sola.** Los ejercicios corren en tu navegador.
+**Lo que esta página demuestra sola.** Las Proposiciones 2.3, 2.4, 2.6, 2.7 y 2.9 se demuestran a partir de la Definición 2.1 y del modelo de nombres de la lección 1, y cada una se comprueba ejecutándola: que `contador` aparece en `co_varnames` de la función que lo asigna al final y no en la que solo lo lee, y que la clasificación ya está antes de llamar; que el parámetro y el argumento tienen la misma identidad, con `reasigna` dejando la lista en `[1, 2]` y `muta` en `[1, 2, 99]`; que `extras` y `opciones` son tupla y diccionario incluso vacíos, y que un `*` solitario convierte en `TypeError` el intento de llenar un parámetro solo nombrado por posición; que `__defaults__` guarda el mismo objeto antes y después de tres llamadas que devuelven `['a']`, `['a', 'b']` y `['a', 'b', 'c']`; y que las tres lambdas de un bucle devuelven `[2, 2, 2]` compartiendo literalmente la misma celda, mientras que las que fijan el valor por defecto devuelven `[0, 1, 2]` con `__closure__` en `None`. Los dos visuales se contrastaron contra estas mismas afirmaciones en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** El nombre como vínculo es la Definición 1.2 y que la asignación no copia es la Proposición 1.3. Que toda mutación se observa por todos los alias es la Proposición 1.5, usada en el corolario de la Proposición 2.7 y en la parte (2) de la Proposición 2.4. Que `None` se identifica con `is` por ser un objeto único es la Proposición 1.7. La distinción mutable frente a inmutable es la Definición 1.4.
+
+**Lo que se enuncia sin demostrar.** Que el compilador registra los nombres asignados en `co_varnames` y compila sus lecturas a una instrucción sin caída a otros ámbitos, y que las celdas de cierre sobreviven al retorno de la función externa: las dos son parte de la implementación del lenguaje y aquí se toman como especificación, aunque la página las comprueba leyendo los atributos correspondientes. El orden exacto del algoritmo de emparejamiento de argumentos se describe sin derivarlo de una fuente primaria.
 
 **Lo que viene de los libros.**
 
-- [*Python for Data Analysis* 3E](https://wesmckinney.com/book/) (McKinney — libro abierto), §3 *Built-In Data Structures, Functions, and Files*
+- [*Python for Data Analysis*, 3ª edición](https://wesmckinney.com/book/) (Wes McKinney, O'Reilly, 2022), capítulo 3 *Built-In Data Structures, Functions, and Files* — citado por número y título, sin transcribir texto.
 
-[Índices verificados el 11-09-2026 contra el índice publicado de cada libro.]{.sello}
+**Lo que es mío, no del libro.** La Proposición 2.3 enunciada como un resultado sobre el momento de la compilación y no como una advertencia práctica, con `co_varnames` usado como la evidencia que se puede leer antes de llamar. La Proposición 2.4 derivada de la 1.3 en lugar de presentarse como una regla aparte de paso de parámetros. Y el cierre de la sección 5, donde las Proposiciones 2.7 y 2.9 se encuentran: el mismo mecanismo que causa el problema del valor por defecto mutable es el que resuelve el de la captura en un bucle.
+
+[Índices verificados el 12-09-2026 contra el índice publicado del sitio oficial del libro.]{.sello}
 :::
 
 → Siguiente: [Comprehensions e iteradores](03-comprehensions.qmd)
