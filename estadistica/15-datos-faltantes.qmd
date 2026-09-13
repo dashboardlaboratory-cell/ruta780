@@ -11,6 +11,7 @@ engine: markdown
 pyodide:
   packages:
     - numpy
+    - scikit-learn
 ---
 
 ::: {.meta-leccion data-leccion="estadistica/15-datos-faltantes"}
@@ -1111,6 +1112,46 @@ print(f"EE teorico de b1 con todo completo, sigma/sqrt(SCX) = {sigma/np.sqrt(n*s
 ```
 
 El resultado sorprende hasta que se mira la Proposición 15.7. Seleccionar según $x$ no sesga ni $\hat\beta_1$ ni $\hat\beta_0$, y solo encarece: SCX cae a menos de la mitad y el error estándar de $\hat\beta_1$ sube de $7{,}03$ a $10{,}61$, que es la Proposición 14.2 cobrando su factura. Seleccionar según el error $\varepsilon$ es MNAR y aun así deja $\hat\beta_1$ intacto —el sesgo se lo lleva entero $\hat\beta_0$, $-118{,}5$—, porque truncar los errores por igual en todas las columnas desplaza la recta sin inclinarla. Solo cuando la selección depende de $y$, que mezcla $x$ y $\varepsilon$, la pendiente se sesga: $-11{,}56$, casi el 10 %. MNAR no arruina todo lo que se calcule: arruina lo que dependa de la parte que la selección toca.
+
+## Contraste con la librería
+
+Esta lección es de nivel **L3**. Rellenar con la media es una línea de NumPy y también una llamada a `SimpleImputer`; lo interesante no es que coincidan, sino lo que las dos le hacen a la varianza.
+
+```{pyodide}
+import numpy as np
+from sklearn.impute import SimpleImputer
+
+rng = np.random.default_rng(15)
+N = 400
+v = rng.normal(10, 3, size=N)
+falta = rng.uniform(size=N) < 0.30          # MCAR: la falta no depende del valor
+obs = v.copy()
+obs[falta] = np.nan
+m = int((~falta).sum())                      # cuantos quedan observados
+
+# --- A mano ---
+mano = np.where(np.isnan(obs), np.nanmean(obs), obs)
+
+# --- La libreria ---
+lib = SimpleImputer(strategy="mean").fit_transform(obs.reshape(-1, 1)).ravel()
+
+print("observados: %d de %d" % (m, N))
+print("las dos imputaciones coinciden: %.2e" % np.abs(mano - lib).max())
+print()
+print("varianza de los datos completos : %.4f" % np.var(v, ddof=1))
+print("varianza tras imputar           : %.4f" % np.var(mano, ddof=1))
+print("razon observada                 : %.4f" % (np.var(mano, ddof=1) / np.var(v, ddof=1)))
+print("razon teorica (m-1)/(n-1)       : %.4f" % ((m - 1) / (N - 1)))
+print()
+print("la teoria acierta dentro del 2%:",
+      bool(abs(np.var(mano, ddof=1) / np.var(v, ddof=1) / ((m - 1) / (N - 1)) - 1) < 0.02))
+```
+
+Las dos implementaciones dan exactamente el mismo vector: la librería no hace nada que la línea de NumPy no haga.
+
+Lo que sí hace, y es el motivo de esta sección, es **hacerlo fácil de no pensar**. La razón de varianzas observada cae junto al $(m-1)/(n-1)$ que predice la Proposición 15.7: rellenar con la media **encoge la varianza en proporción a la fracción que faltaba**, porque los valores imputados no aportan dispersión alguna. Con un 30 % de huecos, la varianza se queda en torno a dos tercios de la real.
+
+Y esa es la trampa: el vector imputado se ve completo, entra en cualquier cálculo posterior sin protestar, y arrastra una varianza demasiado pequeña que hunde la cobertura de todo intervalo que se construya con ella. `SimpleImputer` no avisa. La lección sí, y por eso la proposición está antes que la herramienta.
 
 ## Reto
 
