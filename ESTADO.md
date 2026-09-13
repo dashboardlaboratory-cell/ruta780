@@ -1,9 +1,12 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **12-09-2026**, tras publicar Estadística 15, 16 y 17 y
-reescribir las nueve lecciones de Matemática desde Claude Code. **Estadística y
-Matemática quedan completas y al día con el molde nuevo**; lo único que sigue
-en el molde viejo son las seis lecciones de Python.
+Última actualización: **13-09-2026**, tras reescribir las seis lecciones de
+Python al molde nuevo. **Los tres módulos escritos quedan completos y al día:
+48 lecciones de 48.** No queda ninguna lección en el molde viejo.
+
+Antes de esto, el 12-09-2026 se habían publicado Estadística 18 a 24 —las
+bayesianas, desbloqueadas al verificar el índice entero de Think Bayes— y
+Matemática 10 a 18, que cerraron ese módulo.
 
 `CLAUDE.md` tiene las reglas, que cambian poco. Este archivo tiene el estado y
 la lista de trabajo, que cambia cada semana. Si los dos se contradicen, manda
@@ -61,19 +64,22 @@ hay que empezar a hacer:
 
 | Módulo | Publicadas | Total | Al día con el molde |
 |---|---|---|---|
-| Estadística | 17 | 17 (+8 bayesianas) | **17 de 17** |
-| Matemática | 9 | 18 | **9 de 9** |
-| Python | 6 | ~12 | 0 de 6 |
+| Estadística | 24 | 24 | **24 de 24** |
+| Matemática | 18 | 18 | **18 de 18** |
+| Python | 6 | 6 | **6 de 6** |
 
-- **32 lecciones** publicadas, **26** cumplen el molde nuevo.
-- **60 visuales**, todos auditados; ninguno con el fallo de la regla 19b.
-- **332 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`.
-- Glosario: **126 términos + 41 símbolos**.
-- Lo único que queda en el molde viejo son `python/01` a `python/06`, y están
-  detrás de la decisión del punto 6.
-- Índices verificados: Think Stats 3e (75 secciones), MML (80), Think Bayes 2e
-  (20 capítulos + cap. 2), McKinney 3E (capítulos + las 6 secciones del cap. 7,
-  traídas el 12-09-2026) e ISLP (solo capítulos).
+- **48 lecciones** publicadas, **48** cumplen el molde nuevo. Cero pendientes.
+- **102 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
+  Quedan tres avisos de no idempotencia, todos anteriores a esta tanda.
+- **818 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **225 celdas** que el gate ejecuta en cada build.
+- Glosario: **236 términos + 43 símbolos**. Las **41 entradas** que añadió la
+  tanda de Python son todas de tipo `termino`: no se añadió ningún símbolo
+  global, que es donde están las colisiones ya auditadas del punto 6.
+- Índices verificados: Think Stats 3e (75 secciones), MML (80), **Think Bayes 2e
+  (20 capítulos y 193 secciones, traídas enteras el 12-09-2026; el capítulo 19
+  publica las suyas sin numerar)**, McKinney 3E (capítulos + las 6 secciones del
+  cap. 7) e ISLP (solo capítulos).
 
 Para el estado exacto en cualquier momento:
 
@@ -115,14 +121,19 @@ párrafo y dominando a Bonferroni, BH enunciado con la demostración solo del ca
 $m_0=m$ —el resto declarado en Fuentes—, y el vistazo repetido: del 5 % al 35 %
 mirando entre $n=20$ y $n=400$. Tres visuales.
 
-Quedan **Estadística 18–24, las bayesianas**, y están bloqueadas: de Think Bayes
-2e solo se verificaron las secciones del capítulo 2. Traer el resto del índice es
-el primer paso de esa fase, no el último.
+**Estadística 18–24, las bayesianas, ya están publicadas.** Estaban bloqueadas
+por el índice de Think Bayes 2e, del que solo se había verificado el capítulo 2;
+se trajo el índice entero y se escribieron las siete: teorema de Bayes, priors
+conjugados, distribuciones predictivas, comparación de modelos,
+Metropolis-Hastings, Gibbs y diagnóstico de cadenas. Con ellas el módulo queda
+en 24 de 24.
 
-### 3.2 Matemática: terminada
+### 3.2 Matemática: terminada, 18 de 18
 
-Las nueve publicadas están en el molde nuevo. El 12-09-2026 se reescribieron las
-siete que faltaban:
+Las nueve primeras se reescribieron el 12-09-2026 y ese mismo día se añadieron
+las nueve restantes, de la 10 a la 18: diagonalización, SVD, formas cuadráticas,
+derivada y gradiente, hessiana y Taylor, convexidad, descenso de gradiente,
+método de Newton y Lagrange con KKT. Lo que sigue describe la primera tanda:
 
 - **01** define el espacio vectorial por sus dos operaciones, demuestra que dos
   vectores del plano con determinante no nulo generan todo $\mathbb{R}^2$ con
@@ -151,29 +162,99 @@ ese preajuste. Se cambió el arranque a una posición que no coincide con ningú
 preajuste. Es el mismo tipo de error que la regla 19b persigue, y esta vez lo
 cazó `visuales.py` en vez de Luis.
 
-### 3.3 Reescribir Python 01–06
+### 3.3 Python 01–06: hechas, y el molde que se decidió
 
-Las más alejadas del molde y las que más contexto de empresa arrastran
-(`python/03-comprehensions.qmd` es la peor). Ojo: el molde de
-definición → proposición → demostración **no encaja** en una lección de
-programación. Antes de tocarlas hay que decidir qué significa el molde aquí:
-probablemente `.hilo` + notación + glosario sí, y definiciones numeradas no.
-**Esa decisión está sin tomar y conviene tomarla con Luis.**
+Reescritas el 13-09-2026. La duda era si definición → proposición → demostración
+encajaba en programación. **Sí encaja, y la decisión tomada fue mantener el molde
+entero, definiciones numeradas incluidas**, con esta lectura:
 
-### 3.4 El orden acordado con Luis (12-09-2026)
+- las **definiciones** enuncian la semántica del lenguaje —objeto, vínculo,
+  mutabilidad, ámbito, iterador, gestor de contexto, array— tomando la
+  especificación como el sistema de partida, igual que un curso de matemática
+  toma unos axiomas;
+- las **proposiciones** son invariantes que se siguen de esa semántica, no
+  descripciones de comportamiento: que la asignación no copia, que la
+  clasificación de un nombre como local ocurre al compilar, que una cláusula
+  `except` situada tras una superclase suya es inalcanzable, que la indexación
+  avanzada no puede devolver una vista;
+- las **demostraciones** se apoyan en esa especificación y, cuando el resultado
+  es de coste, en aritmética corriente —la serie geométrica del `append`
+  amortizado, la aritmética módulo $2^b$ del `int8`—;
+- **todo se comprueba contando, nunca cronometrando** (regla 7): una clase que
+  cuenta sus comparaciones en lugar de un `timeit`, `co_varnames` leído antes de
+  la primera llamada, `np.shares_memory`, `__defaults__` antes y después.
 
-Est 16 y 17 primero —hechas—, Estadística 01 y 02 de calentamiento —hechas—, y
-Matemática 04 → 05 → 06 —hechas—. Lo que sigue, en este orden:
+Lo que este molde aporta sobre el anterior es que las reglas dejan de ser
+consejos. «Captura lo específico primero» pasa a ser un resultado de
+alcanzabilidad; «no uses un default mutable» pasa a ser un corolario de que las
+expresiones por defecto se evalúan una vez; «borrar un dato luego no basta» pasa
+a ser un corolario de que el identificador de un commit depende de su contenido.
 
-Matemática 03 → 02 → 01 → 07 también está hecha. Lo que sigue:
+Tres resultados se demuestran como **imposibilidades**, que es lo que mejor
+explica las asimetrías del lenguaje: una lista no puede ser clave sin dejar la
+entrada inalcanzable (1.11), una cláusula tras su superclase no la alcanza
+ninguna excepción (4.4), y una selección arbitraria no admite descripción con
+paso constante y por eso no puede ser vista (6.3).
 
-1. **La pasada de regla 15** sobre las cinco páginas de Python baratas (01, 02,
-   04, 05 y 06): cambiar el ejemplo por dados, pesos al nacer o ingresos, sin
-   tocar la estructura. Se puede hacer sin decidir nada del molde.
-2. **Traer los índices de Think Bayes**, capítulos 3 al 20, para desbloquear
-   Estadística 18–24.
-3. **Decidir el molde de Python** (punto 6) y reescribir `python/01–06`.
-4. **Seguir Matemática por la 10 en adelante**, que están sin escribir.
+Detalles de la tanda:
+
+- **01** objetos, nombres y estructuras: 8 proposiciones, incluido el `append`
+  amortizado con la cota $g/(g-1)$ y el caso degenerado $g\to1$ medido.
+- **02** ámbito y cierres: el `UnboundLocalError` demostrado desde el momento de
+  la compilación, y el encuentro entre las Proposiciones 2.7 y 2.9 —el mecanismo
+  que causa el problema del default mutable es el que resuelve el de la captura
+  en un bucle—.
+- **03** iteradores, comprehensions y generadores: el cortocircuito con la cuenta
+  exacta $k+1$ frente a $n$, y el corolario que separa «la comprehension abre un
+  ámbito» de «ese ámbito es uno, no uno por iteración».
+- **04** archivos, excepciones y contextos: la cláusula inalcanzable, el `return`
+  en `finally`, y la ventana entre comprobar y abrir medida borrando el archivo
+  dentro de esa misma ventana.
+- **05** entorno reproducible: `id_blob` con `hashlib` reproduce byte a byte lo
+  que devuelve `git hash-object`, contrastado contra la herramienta, y de ahí
+  sale por inducción que alterar un commit cambia el id de todos sus
+  descendientes.
+- **06** NumPy: las seis proposiciones salen de una sola fórmula, la del
+  desplazamiento de un elemento.
+
+**Dos cosas que encontró el gate durante la tanda**, y que conviene recordar:
+
+1. En `python/05` el visual de la cadena de commits cambiaba de color pero no
+   movía un solo píxel. `visuales.py` lo marcó, y es exactamente el fallo de la
+   regla 19b: la firma del SVG cambiaba y el dibujo no. Se arregló añadiendo un
+   marcador que se desplaza con el control.
+2. El ejercicio 2 de `python/06` traía de la versión vieja un `check` que
+   esperaba `2750.0` cuando la suma correcta es `1800.0`. El mensaje de acierto
+   ya decía «solo pasa la segunda», así que el número llevaba mal desde el
+   principio y nadie lo había corrido.
+
+**Y una colisión de glosario, esta vez de término y no de símbolo:** `parámetro`
+ya existía con el sentido estadístico («un número que describe a la población,
+como μ o σ»), así que marcarlo en Python habría puesto un tooltip que miente.
+Se aplicó la regla del punto 6: fuera del glosario global, y declarado en la
+tabla `::: {.notacion}` de la lección. Conviene barrer el resto de términos
+buscando el mismo problema.
+
+### 3.4 Qué sigue ahora (13-09-2026)
+
+Los cuatro puntos del plan anterior están hechos: la pasada de regla 15 sobre
+Python, los índices de Think Bayes, el molde de Python con sus seis lecciones, y
+Matemática de la 10 a la 18. **No queda nada pendiente de los módulos escritos.**
+
+Lo que sigue, en orden de coste creciente:
+
+1. **Las decisiones del punto 6 que siguen abiertas**, y son baratas: las
+   colisiones de `T`, `Q`, `B` y `p` en el glosario global, el barrido de
+   términos en busca de más colisiones como la de `parámetro`, y qué hacer con
+   el cuaderno de retos, que solo llega a Est 5 y Mat 7 mientras las lecciones
+   lo citan mucho más adelante. Ahora son **catorce** secciones de retos
+   pendientes: las diez de antes más las de Py 1 a Py 6, que las lecciones
+   nuevas ya citan.
+2. **Series de tiempo, ML e Inferencia causal** están vacías en el sidebar. ML
+   necesita ISLP, cuyo índice está verificado solo a nivel de capítulo; causal
+   necesita *Causal Inference for the Brave and True*, que no está verificado y
+   por tanto no es citable.
+3. **Fase 2**: traer los índices de ESL y fast.ai antes de citarlos.
 
 ### 3.5 Estadística 01 y 02: hechas
 
@@ -352,9 +433,17 @@ falla el build. Codificar el SVG en base64.
 
 ## 6. Decisiones pendientes
 
-- **Qué molde usan las lecciones de Python.** Definición → proposición →
-  demostración no encaja en programación. Hay que decidirlo antes de reescribir
-  `python/01–06`.
+- ~~**Qué molde usan las lecciones de Python.**~~ **Decidido el 13-09-2026**: se
+  mantiene el molde completo, definiciones numeradas incluidas, leyendo la
+  especificación del lenguaje como el sistema de partida. El detalle está en el
+  punto 3.3, y las seis lecciones ya están escritas así.
+- **Barrer el glosario buscando colisiones de término**, no solo de símbolo. Al
+  escribir Python 2 apareció una: `parámetro` estaba registrado con el sentido
+  estadístico y habría puesto un tooltip falso en la lección de funciones. Se
+  resolvió sacándolo de esa lección y declarándolo en su tabla de notación, que
+  es la misma regla acordada para los símbolos. Falta comprobar si hay más:
+  candidatos probables son `función`, `argumento`, `dominio`, `imagen`, `error`
+  y `varianza`.
 - **Fase 2 y libros sin verificar.** ESL, *Causal Inference for the Brave and
   True* y fast.ai **no son citables** hasta traer sus índices. Think Bayes 2e
   solo tiene verificadas las secciones del capítulo 2; para las lecciones 18–24
