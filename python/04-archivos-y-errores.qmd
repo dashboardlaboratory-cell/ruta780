@@ -1,176 +1,541 @@
 ---
-title: "Archivos, errores y módulos"
+title: "Archivos, excepciones y gestores de contexto"
 subtitle: "Python · Lección 4"
-nivel: L3
+nivel: L2
 modulo: python
 fase: F0
 prereqs: [python/03-comprehensions]
 siguientes: [python/05-entorno-uv-git]
-libro: "McKinney 3E, cap. 3"
+libro: "McKinney 3E, cap. 6 Data Loading, Storage, and File Formats"
 engine: markdown
 ---
 
 ::: {.meta-leccion data-leccion="python/04-archivos-y-errores"}
-[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[[L2]{.nivel .nivel-L2} **Derivación**]{.item}
 [**Fase** F0]{.item}
-[**Libro** McKinney cap. 3]{.item}
-[**Prereqs** [Comprehensions](03-comprehensions.qmd)]{.item}
+[**Libro** McKinney cap. 6]{.item}
+[**Prereqs** [Iteradores y generadores](03-comprehensions.qmd)]{.item}
 :::
 
-## La idea
+## Objetivo
 
-Tres cosas que separan un script de notebook de código que otra persona puede correr: **cerrar lo que abres**, **fallar con un mensaje útil**, y **poder importarse sin ejecutarse**.
+Al terminar esta lección se puede:
 
-## Archivos: siempre con `with`
+1. Enunciar el protocolo del [gestor de contexto]{.g} y demostrar que su salida se ejecuta aunque el cuerpo lance una [excepción]{.g} o retorne.
+2. Demostrar que el primer manejador compatible gana, y con ello que colocar una superclase antes de su subclase deja al segundo manejador **inalcanzable**.
+3. Demostrar que un `return` dentro de `finally` descarta la excepción en vuelo, y por qué eso convierte un error en un resultado silencioso.
+4. Demostrar que un objeto archivo es un [iterador]{.g} de líneas, y deducir que recorrerlo mantiene la memoria acotada por la Proposición 3.8.
+5. Demostrar que comprobar antes de actuar deja una ventana entre la comprobación y el uso, y que capturar la excepción no la tiene.
 
-```{pyodide}
-# El sistema de archivos aquí es virtual, dentro del navegador. Funciona igual.
-with open("ventas.csv", "w", encoding="utf-8") as f:
-    f.write("sucursal,venta,trx\n")
-    f.write("multiplaza,4200.0,140\n")
-    f.write("costa,1800.0,45\n")
-    f.write("brisas,3100.0,100\n")
+:::: {.hilo}
+::: {}
+#### De dónde viene
 
-with open("ventas.csv", encoding="utf-8") as f:
-    contenido = f.read()
-
-print(contenido)
-```
-
-`with` garantiza que el archivo se cierra **aunque el bloque lance una excepción**. Sin `with`, un error a media lectura deja el descriptor abierto; con miles de archivos, el proceso se queda sin descriptores y muere con un error que no dice nada.
-
-::: {.callout-important}
-## `encoding="utf-8"` siempre
-
-El encoding por defecto depende del sistema operativo. Tu código funcionará en tu Mac y fallará en el servidor de la empresa con `UnicodeDecodeError` en la primera tilde. Escríbelo explícito, siempre.
+- **Python 3, Definición 3.1 y Proposición 3.2**: el protocolo de iteración. Un archivo abierto es un iterador de líneas, y se agota igual que cualquier otro.
+- **Python 3, Proposición 3.8**: la memoria de un iterador perezoso. Es lo que permite recorrer un archivo mayor que la memoria disponible.
+- **Python 2, Definición 2.2**: la regla LEGB. El nombre que `with ... as f` vincula vive en el ámbito que lo contiene, no en uno propio, y sigue vinculado tras el bloque.
+- **Python 1, Definición 1.1**: el objeto con su identidad. Un archivo abierto es un objeto con estado, y cerrarlo es una operación sobre él.
 :::
 
-Leer línea por línea, sin cargar todo (Lección 3: el objeto archivo es un generador):
+::: {}
+#### Para qué sirve después
+
+- **Python 5**: el entorno reproducible y el control de versiones dependen de leer y escribir archivos de configuración con codificación explícita.
+- **Python 6**: `np.loadtxt` y `np.save` son gestores de contexto por dentro, y fallan con las mismas excepciones.
+- **Estadística 15**: los datos faltantes llegan casi siempre como un campo vacío en un archivo de texto, y distinguir el vacío del cero empieza en la lectura.
+- **Proyectos**: todo cuaderno que lea datos de disco depende de la Proposición 4.8 para no romperse cuando el archivo cambia debajo.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| `with c as v:` | — | Entra en el gestor `c`, vincula `v` y garantiza la salida |
+| `raise E(msg)` | — | Lanza una excepción de la clase `E` |
+| `except E:` | — | Captura `E` y toda clase que herede de ella |
+| `finally:` | — | Bloque que se ejecuta salga como salga el `try` |
+| `f.read()` | — | Lee el archivo entero en memoria |
+| `for l in f:` | — | Recorre el archivo línea a línea, sin cargarlo |
+| $n$ | ene | El número de líneas o de bytes del archivo |
+:::
+
+## 1. Gestores de contexto
+
+::: {.definicion}
+**Definición 4.1 (gestor de contexto).** Un objeto es un **gestor de contexto** si define dos métodos:
+
+- `__enter__()`, que se ejecuta al entrar en el bloque y cuyo resultado es lo que `as` vincula;
+- `__exit__(tipo, valor, traza)`, que se ejecuta al salir, recibiendo la excepción que esté en vuelo o tres `None` si no hay ninguna.
+
+La sentencia `with c as v: cuerpo` equivale a llamar a `c.__enter__()`, vincular su resultado a `v`, ejecutar el cuerpo, y llamar a `c.__exit__(...)` al terminar.
+:::
+
+::: {.proposicion}
+**Proposición 4.2 (la salida está garantizada).** El método `__exit__` se ejecuta exactamente una vez por cada `__enter__` que haya tenido éxito, y lo hace tanto si el cuerpo termina normalmente como si ejecuta un `return`, un `break` o un `continue`, y también si lanza una excepción. En este último caso, si `__exit__` devuelve un valor falso la excepción continúa propagándose.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Definición 4.1 la sentencia `with` equivale a un `try` cuyo bloque protegido es el cuerpo y cuyo `finally` es la llamada a `__exit__`. Basta entonces con la semántica de `finally`: su bloque se ejecuta antes de que el control abandone el `try` por cualquiera de sus salidas, que son la terminación normal, las tres sentencias de transferencia y la propagación de una excepción. Como el `finally` se instala solo después de que `__enter__` haya retornado sin error, hay una llamada a `__exit__` por cada entrada con éxito y ninguna por las entradas fallidas.
+
+Para la última parte, la propagación de la excepción se suprime únicamente cuando `__exit__` devuelve un valor verdadero; con un valor falso —incluido `None`, que es lo que devuelve una función sin `return`— la excepción se relanza al salir. [∎]{.fin-demo}
+:::
 
 ```{pyodide}
-with open("ventas.csv", encoding="utf-8") as f:
-    encabezado = next(f).strip().split(",")
-    filas = [dict(zip(encabezado, linea.strip().split(","))) for linea in f]
+class Vigilante:
+    """Un gestor de contexto que deja constancia de por donde salio el cuerpo."""
+    def __init__(self, traza):
+        self.traza = traza
+    def __enter__(self):
+        self.traza.append("entra")
+        return self
+    def __exit__(self, tipo, valor, tb):
+        self.traza.append("sale, con excepcion=%s" % (tipo.__name__ if tipo else "ninguna"))
+        return False                       # falso: la excepcion sigue su camino
 
-for fila in filas:
-    print(fila)
-```
+def salida_normal(t):
+    with Vigilante(t):
+        t.append("cuerpo")
 
-Para CSV real usa el módulo `csv` o pandas — manejan comas dentro de comillas, saltos de línea en campos y encodings raros. Lo de arriba es para entender qué hacen por dentro.
+def salida_por_return(t):
+    with Vigilante(t):
+        t.append("cuerpo")
+        return "devuelto"
 
-```{pyodide}
-import csv, io
+def salida_por_excepcion(t):
+    with Vigilante(t):
+        t.append("cuerpo")
+        raise ValueError("algo falla")
 
-crudo = 'sucursal,nota\n"costa del este","vende cafe, te y pan"\n'
-
-for fila in csv.DictReader(io.StringIO(crudo)):
-    print(fila)
-# La coma dentro de las comillas NO partió el campo.
-```
-
-## Rutas: `pathlib`, no concatenar strings
-
-```{pyodide}
-from pathlib import Path
-
-base = Path("datos")
-archivo = base / "2026" / "ventas.csv"     # el / funciona como separador
-
-print("ruta:", archivo)
-print("nombre:", archivo.name)
-print("extensión:", archivo.suffix)
-print("carpeta padre:", archivo.parent)
-print("cambiar extensión:", archivo.with_suffix(".parquet"))
-```
-
-`Path` resuelve solo la diferencia entre `/` de macOS y `\` de Windows. Concatenar strings con `+` o con `os.path.join` funciona, pero `pathlib` se lee mejor y trae `.exists()`, `.mkdir(parents=True)`, `.glob()` y `.read_text()` incluidos.
-
-## Errores: capturar lo específico
-
-```{pyodide}
-def dividir(a, b):
+for f in [salida_normal, salida_por_return, salida_por_excepcion]:
+    t = []
     try:
-        return a / b
-    except ZeroDivisionError:
-        print("  -> división por cero, devuelvo None")
-        return None
-    except TypeError as e:
-        print(f"  -> tipo incorrecto: {e}")
-        return None
-    finally:
-        print("  (finally corre siempre)")
-
-print("10/2 =", dividir(10, 2))
-print("10/0 =", dividir(10, 0))
-print("10/'a' =", dividir(10, "a"))
+        f(t)
+    except ValueError:
+        t.append("capturada fuera")
+    print("%-22s %s" % (f.__name__ + ":", " -> ".join(t)))
 ```
 
-::: {.callout-warning}
-## Nunca `except:` pelado
+Las tres salidas pasan por `sale`, y en la tercera la excepción sigue viva después: `__exit__` la vio, devolvió falso, y la propagación continuó hasta el `except` de fuera.
 
-```python
-try:
-    hacer_algo()
-except:          # ← captura TODO, incluido Ctrl-C y errores de memoria
-    pass         # ← y lo tira a la basura en silencio
-```
+El caso de uso corriente es el archivo, cuyo `__exit__` lo cierra. Sin `with`, una excepción entre la apertura y el cierre deja el descriptor abierto, y en un cuaderno que se ejecuta muchas veces eso se acumula.
 
-Eso convierte un bug en un misterio. Captura la excepción **específica** que sabes que puede ocurrir, y si de verdad necesitas capturar amplio, usa `except Exception as e:` y **registra** `e`.
+## 2. Excepciones: quién captura qué
+
+::: {.definicion}
+**Definición 4.3 (jerarquía de excepciones).** Las excepciones son clases que heredan de `BaseException`. Casi todas las que interesan heredan de `Exception`, y por debajo hay una jerarquía: `OSError` es la raíz de los errores del sistema de archivos, y `FileNotFoundError` y `PermissionError` heredan de ella; `ArithmeticError` es la raíz de `ZeroDivisionError`.
+
+Una cláusula `except E` captura una excepción si su clase es `E` o hereda de `E`.
 :::
 
-Lanzar tus propios errores, con mensaje útil:
+::: {.proposicion}
+**Proposición 4.4 (el primer manejador compatible gana, y los demás pueden quedar inalcanzables).** Ante una excepción, las cláusulas `except` se prueban en el orden escrito y se ejecuta la primera cuya clase sea compatible; las restantes no se prueban. En consecuencia, si una cláusula `except A` precede a una `except B` con `B` subclase de `A`, la segunda es **inalcanzable**: ninguna excepción puede llegar a ella.
+:::
+
+::: {.demostracion}
+*Demostración.* La primera parte es la semántica de la sentencia: la prueba recorre las cláusulas en orden textual y transfiere el control a la primera compatible, sin examinar el resto.
+
+Para la segunda, sea `e` una excepción cualquiera que llegue a la cláusula `except B`. Para llegar hasta ella tuvo que resultar incompatible con `A`, es decir, la clase de `e` no es `A` ni hereda de `A`. Por otro lado, para que la cláusula `except B` la capture, la clase de `e` debe ser `B` o heredar de `B`; y como `B` hereda de `A`, en ambos casos la clase de `e` heredaría de `A`, contra lo anterior. No existe por tanto ninguna `e` que alcance y active esa cláusula. [∎]{.fin-demo}
+:::
+
+La conclusión práctica es el orden: de la más específica a la más general. El caso extremo es `except Exception` en primer lugar, que deja inalcanzable a todo lo que venga detrás.
 
 ```{pyodide}
-def ticket_promedio(venta, trx):
-    if trx <= 0:
-        raise ValueError(f"trx debe ser positivo, recibí {trx}")
-    return venta / trx
+def con_orden(malo, e):
+    """malo=True pone la superclase primero, y deja la subclase inalcanzable."""
+    try:
+        raise e
+    except (OSError if malo else FileNotFoundError):
+        return "capturada por la PRIMERA clausula"
+    except (FileNotFoundError if malo else OSError):
+        return "capturada por la SEGUNDA clausula"
 
-print(ticket_promedio(4200, 140))
+print("FileNotFoundError es subclase de OSError:", issubclass(FileNotFoundError, OSError))
+print()
+for malo in [False, True]:
+    etiqueta = "superclase primero" if malo else "subclase primero"
+    print("%-20s FileNotFoundError -> %s" % (etiqueta, con_orden(malo, FileNotFoundError("x"))))
+    print("%-20s PermissionError   -> %s" % ("", con_orden(malo, PermissionError("x"))))
+print()
+print("con la superclase primero, la segunda clausula no la alcanza ninguna excepcion")
+```
 
+Con la subclase escrita primero, cada excepción va a parar a la cláusula que le corresponde. Con la superclase primero, las dos terminan en la primera y la segunda no se ejecuta jamás, que es la Proposición 4.4 medida sobre los dos únicos casos posibles.
+
+```{=html}
+<div class="viz-except">
+  <div class="controles">
+    <label>Orden de las cláusulas
+      <select id="ex-orden">
+        <option value="0" selected>específica primero</option>
+        <option value="1">general primero</option>
+      </select>
+    </label>
+    <label>Excepción lanzada <input id="ex-tipo" type="range" min="0" max="3" step="1" value="1"> <span id="ex-tipo-v">PermissionError</span></label>
+  </div>
+  <svg id="ex-svg" viewBox="0 0 620 280" role="img" aria-label="Las clausulas except en el orden escrito. Se marca cual captura la excepcion lanzada y cuales quedan inalcanzables por estar despues de una superclase suya."></svg>
+  <p class="lectura" id="ex-lectura"></p>
+</div>
+<style>
+.viz-except { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-except .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-except label { display: flex; align-items: center; gap: .4rem; }
+.viz-except input[type=range] { width: 140px; padding: 0; }
+.viz-except select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-except svg { width: 100%; height: auto; display: block; }
+.viz-except .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_OK = "#0F6E68", C_NO = "#B45309";
+  var svg = document.getElementById("ex-svg"), lec = document.getElementById("ex-lectura");
+  var co = document.getElementById("ex-orden"), ct = document.getElementById("ex-tipo");
+  var et = document.getElementById("ex-tipo-v");
+
+  // Marco constante.
+  var BX = 130, BW = 330, BH = 44, BY0 = 60, GAP = 16;
+  var TIPOS = ["FileNotFoundError", "PermissionError", "ZeroDivisionError", "ValueError"];
+  // que clausula (por nombre) captura cada tipo
+  var HEREDA = {
+    "FileNotFoundError": ["FileNotFoundError", "OSError", "Exception"],
+    "PermissionError":   ["PermissionError", "OSError", "Exception"],
+    "ZeroDivisionError": ["ZeroDivisionError", "Exception"],
+    "ValueError":        ["ValueError", "Exception"]
+  };
+  var ESPEC = ["FileNotFoundError", "OSError", "Exception"];
+  var GEN   = ["Exception", "OSError", "FileNotFoundError"];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function fy(i) { return BY0 + i * (BH + GAP); }
+  // una clausula C es inalcanzable si alguna anterior A cumple que C hereda de A
+  function inalcanzable(orden, i) {
+    for (var j = 0; j < i; j++) {
+      var anterior = orden[j];
+      if (anterior === "Exception") return true;
+      if (anterior === "OSError" && (orden[i] === "FileNotFoundError" || orden[i] === "PermissionError")) return true;
+      if (anterior === orden[i]) return true;
+    }
+    return false;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var modo = +co.value, ti = +ct.value;
+    var tipo = TIPOS[ti];
+    et.textContent = tipo;
+    var orden = modo === 0 ? ESPEC : GEN;
+    var compat = HEREDA[tipo];
+    var gana = -1;
+    for (var i = 0; i < orden.length; i++) {
+      if (compat.indexOf(orden[i]) !== -1) { gana = i; break; }
+    }
+
+    svg.appendChild(el("text", { x: 20, y: 32, "font-size": 11.5, fill: C_T, opacity: 0.72 },
+      "raise " + tipo + "(...)  — las cláusulas se prueban de arriba abajo"));
+
+    for (var k = 0; k < orden.length; k++) {
+      var muerta = inalcanzable(orden, k);
+      var activa = k === gana;
+      var probada = k <= (gana < 0 ? orden.length - 1 : gana);
+      svg.appendChild(el("rect", { x: BX, y: fy(k), width: BW, height: BH, rx: 6, fill: "none",
+        stroke: activa ? C_OK : (muerta ? C_NO : C_L),
+        "stroke-width": activa ? 2.6 : (muerta ? 1.8 : 1.2),
+        "stroke-dasharray": muerta ? "5 4" : "none",
+        "stroke-opacity": probada || muerta ? 1 : 0.4 }));
+      svg.appendChild(el("text", { x: BX + 16, y: fy(k) + 27, "font-size": 12.5, fill: C_T,
+        opacity: probada || muerta ? 1 : 0.45,
+        "font-family": "var(--bs-font-monospace,monospace)" }, "except " + orden[k] + ":"));
+      if (muerta) {
+        svg.appendChild(el("text", { x: BX + BW - 14, y: fy(k) + 27, "text-anchor": "end",
+          "font-size": 11.5, fill: C_NO }, "inalcanzable"));
+      } else if (activa) {
+        svg.appendChild(el("text", { x: BX + BW - 14, y: fy(k) + 27, "text-anchor": "end",
+          "font-size": 11.5, fill: C_OK }, "captura"));
+      }
+    }
+
+    // marcador del recorrido, a la izquierda
+    var my = fy(gana < 0 ? orden.length - 1 : gana) + BH / 2;
+    svg.appendChild(el("circle", { cx: 92, cy: my.toFixed(1), r: 7, fill: C_OK, stroke: "#fff", "stroke-width": 1.5 }));
+    svg.appendChild(el("path", { d: "M99 " + my.toFixed(1) + " L" + (BX - 6) + " " + my.toFixed(1),
+      stroke: C_OK, "stroke-width": 1.7, fill: "none" }));
+
+    var muertas = 0;
+    for (var q = 0; q < orden.length; q++) if (inalcanzable(orden, q)) muertas++;
+    lec.innerHTML = "Se ejecuta la cláusula <code>except " + orden[gana] + "</code>, la primera compatible. " +
+      (muertas > 0
+        ? ("Las <strong>" + muertas + "</strong> de abajo están marcadas como inalcanzables: toda excepción que pudieran capturar hereda de una clase escrita antes, así que ninguna llega (Proposición 4.4).")
+        : "Ninguna cláusula queda inalcanzable, porque cada una precede a sus superclases.");
+  }
+
+  co.addEventListener("change", dibujar);
+  ct.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+Con el orden general primero, dos de las tres cláusulas quedan marcadas como inalcanzables sea cual sea la excepción lanzada: el dibujo no depende del tipo elegido en ese modo, y esa independencia es justamente lo que la proposición afirma.
+
+::: {.proposicion}
+**Proposición 4.5 (`finally` con `return` descarta la excepción).** Si el bloque `finally` ejecuta un `return`, la excepción que estuviera propagándose se descarta y la función retorna normalmente. El llamador no recibe ninguna señal de que hubo un error.
+:::
+
+::: {.demostracion}
+*Demostración.* La propagación de una excepción es una de las salidas del `try`, y por la semántica de `finally` su bloque se ejecuta antes de completarla. Un `return` en ese bloque es a su vez una transferencia de control que abandona la función, y solo puede haber una salida efectiva: la que se ejecuta en último lugar. Como el `return` del `finally` ocurre después de que la propagación quedara suspendida, es él quien determina la salida, y la excepción suspendida se descarta sin llegar nunca al llamador. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+def traga(x):
+    try:
+        return 10 / x
+    except ZeroDivisionError:
+        raise                          # se relanza...
+    finally:
+        return -1                      # ...y este return la descarta
+
+def honesta(x):
+    try:
+        return 10 / x
+    finally:
+        pass                           # sin return: la excepcion sigue viva
+
+print("traga(2)  =", traga(2), "  <- tambien pisa el resultado bueno")
+print("traga(0)  =", traga(0), "  <- el ZeroDivisionError desaparecio")
 try:
-    ticket_promedio(4200, 0)
-except ValueError as e:
-    print("capturado:", e)
+    honesta(0)
+except ZeroDivisionError:
+    print("honesta(0) -> ZeroDivisionError llega al llamador")
 ```
 
-Un mensaje que incluye **el valor que causó el problema** te ahorra media hora de debugging. `"trx inválido"` no sirve; `"trx debe ser positivo, recibí 0"` sí.
+El visual siguiente recorre las cuatro salidas posibles de un `try` completo. El marco es fijo: los cinco bloques ocupan siempre el mismo sitio, y lo que cambia es cuáles se ejecutan.
 
-## Módulos y el guardián `__main__`
+```{=html}
+<div class="viz-flujo">
+  <div class="controles">
+    <label>Qué ocurre en el try
+      <select id="fl-caso">
+        <option value="0">termina sin error</option>
+        <option value="1" selected>lanza, y hay except compatible</option>
+        <option value="2">lanza, y no hay except compatible</option>
+        <option value="3">ejecuta un return</option>
+      </select>
+    </label>
+    <label>Paso <input id="fl-paso" type="range" min="0" max="4" step="1" value="2"> <span id="fl-paso-v">2</span></label>
+  </div>
+  <svg id="fl-svg" viewBox="0 0 620 300" role="img" aria-label="Los bloques try, except, else y finally y la salida de la funcion. Se marcan los que se han ejecutado hasta el paso actual y los que quedan saltados segun lo que ocurra en el cuerpo del try."></svg>
+  <p class="lectura" id="fl-lectura"></p>
+</div>
+<style>
+.viz-flujo { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-flujo .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-flujo label { display: flex; align-items: center; gap: .4rem; }
+.viz-flujo input[type=range] { width: 130px; padding: 0; }
+.viz-flujo select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-flujo svg { width: 100%; height: auto; display: block; }
+.viz-flujo .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_OK = "#0F6E68", C_NO = "#B45309";
+  var svg = document.getElementById("fl-svg"), lec = document.getElementById("fl-lectura");
+  var cc = document.getElementById("fl-caso"), cp = document.getElementById("fl-paso");
+  var ep = document.getElementById("fl-paso-v");
 
-Cuando escribes `mi_script.py` y alguien hace `import mi_script`, **todo el archivo se ejecuta**. Si tenía código suelto al final, ese código corre en el import — casi nunca es lo que quieres.
+  // Marco constante: cinco bloques en posiciones fijas.
+  var BX = 150, BW = 320, BH = 40, BY0 = 34, GAP = 12;
+  var NOM = ["try:", "except E:", "else:", "finally:", "sale de la función"];
+  // por caso: que bloques se ejecutan
+  var CORRE = [
+    [1, 0, 1, 1, 1],   // sin error: try, else, finally, sale
+    [1, 1, 0, 1, 1],   // excepcion capturada: try, except, finally, sale
+    [1, 0, 0, 1, 0],   // excepcion NO capturada: try, finally, y propaga
+    [1, 0, 0, 1, 1]    // return en el try: try, finally, sale
+  ];
+  var NOTA = [
+    "el else corre solo si el try terminó sin excepción",
+    "el except compatible corre; el else se salta",
+    "sin except compatible, tras el finally la excepción se propaga",
+    "el return queda pendiente: primero corre el finally"
+  ];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function fy(i) { return BY0 + i * (BH + GAP); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var caso = +cc.value, paso = +cp.value;
+    ep.textContent = String(paso);
+    var corre = CORRE[caso];
+
+    // secuencia real de bloques ejecutados, en orden
+    var sec = [];
+    for (var i = 0; i < 5; i++) if (corre[i]) sec.push(i);
+    var hechos = Math.min(paso + 1, sec.length);
+    var actual = sec[Math.min(hechos - 1, sec.length - 1)];
+
+    for (var k = 0; k < 5; k++) {
+      var pos = sec.indexOf(k);
+      var ejecutado = pos !== -1 && pos < hechos;
+      var saltado = corre[k] === 0;
+      svg.appendChild(el("rect", { x: BX, y: fy(k), width: BW, height: BH, rx: 6, fill: "none",
+        stroke: saltado ? C_L : (ejecutado ? C_OK : C_L),
+        "stroke-width": (k === actual && ejecutado) ? 2.6 : (ejecutado ? 1.7 : 1.1),
+        "stroke-dasharray": saltado ? "5 4" : "none",
+        "stroke-opacity": saltado ? 0.55 : (ejecutado ? 1 : 0.45) }));
+      svg.appendChild(el("text", { x: BX + 16, y: fy(k) + 25, "font-size": 12.5, fill: C_T,
+        opacity: saltado ? 0.5 : (ejecutado ? 1 : 0.5),
+        "font-family": "var(--bs-font-monospace,monospace)" }, NOM[k]));
+      if (saltado) {
+        svg.appendChild(el("text", { x: BX + BW - 14, y: fy(k) + 25, "text-anchor": "end",
+          "font-size": 11.5, fill: C_NO, opacity: 0.9 }, "se salta"));
+      }
+    }
+
+    // marcador del punto de ejecucion
+    var my = fy(actual) + BH / 2;
+    svg.appendChild(el("circle", { cx: 108, cy: my.toFixed(1), r: 7, fill: C_OK, stroke: "#fff", "stroke-width": 1.5 }));
+    svg.appendChild(el("path", { d: "M115 " + my.toFixed(1) + " L" + (BX - 6) + " " + my.toFixed(1),
+      stroke: C_OK, "stroke-width": 1.7, fill: "none" }));
+
+    // si la excepcion se propaga, marcarlo a la derecha del finally
+    if (caso === 2 && hechos >= sec.length) {
+      svg.appendChild(el("path", { d: "M" + (BX + BW + 6) + " " + (fy(3) + BH / 2) + " L" + (BX + BW + 40) +
+        " " + (fy(3) + BH / 2), stroke: C_NO, "stroke-width": 1.7, fill: "none" }));
+      svg.appendChild(el("text", { x: BX + BW + 46, y: fy(3) + BH / 2 + 4.5, "font-size": 11.5, fill: C_NO }, "propaga"));
+    }
+
+    lec.innerHTML = "Paso " + paso + " de " + (sec.length - 1) + ". Se ha ejecutado <code>" + NOM[actual] +
+      "</code>. " + NOTA[caso].charAt(0).toUpperCase() + NOTA[caso].slice(1) +
+      ". El <code>finally</code> aparece en los cuatro casos, que es la Proposición 4.2.";
+  }
+
+  cc.addEventListener("change", dibujar);
+  cp.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+La función con `return` en el `finally` devuelve $-1$ en los dos casos: pisa el resultado correcto cuando no hay error y oculta el error cuando lo hay. Un `finally` debe limpiar y no decidir el valor de retorno.
+
+## 3. Archivos
+
+::: {.definicion}
+**Definición 4.6 (apertura de un archivo).** `open(ruta, modo, encoding=...)` devuelve un objeto archivo. El modo indica lectura (`"r"`), escritura truncando (`"w"`), añadido (`"a"`) y si el contenido se trata como texto o como bytes (`"b"`). En modo texto, `encoding` fija cómo se traducen los bytes a caracteres; omitirlo deja la elección al sistema, con lo que el mismo archivo se lee distinto en dos máquinas.
+:::
+
+::: {.proposicion}
+**Proposición 4.7 (un archivo de texto es un iterador de líneas).** Un objeto archivo abierto en modo texto es un iterador en el sentido de la Definición 3.1: `iter(f) is f`. Por tanto recorrerlo con un `for` entrega sus $n$ líneas de una en una manteniendo viva una sola a la vez (Proposición 3.8), y un segundo recorrido sobre el mismo objeto entrega cero líneas (Proposición 3.2).
+:::
+
+::: {.demostracion}
+*Demostración.* El objeto archivo define `__next__`, que lee hasta el siguiente salto de línea y devuelve el fragmento, y lanza `StopIteration` al llegar al final; y define `__iter__` devolviéndose a sí mismo. Eso es exactamente la Definición 3.1, luego es un iterador, y las dos consecuencias son las Proposiciones 3.8 y 3.2 aplicadas a él. La posición del archivo es el estado que hace de posición del iterador, y por eso el segundo recorrido arranca en el final. [∎]{.fin-demo}
+:::
 
 ```{pyodide}
-codigo = '''
-def ticket(venta, trx):
-    return venta / trx
+import os, tempfile
 
-if __name__ == "__main__":
-    # Esto SOLO corre si ejecutas el archivo directamente:
-    #   python analisis.py
-    # No corre si alguien hace: import analisis
-    print("ticket de prueba:", ticket(4200, 140))
-'''
+with tempfile.TemporaryDirectory() as carpeta:
+    ruta = os.path.join(carpeta, "datos.csv")
+    with open(ruta, "w", encoding="utf-8") as f:
+        f.write("ciudad,mm\n")
+        for i in range(5):
+            f.write("c%d,%d\n" % (i, 100 * i))
 
-with open("analisis.py", "w", encoding="utf-8") as f:
-    f.write(codigo)
+    with open(ruta, encoding="utf-8") as f:
+        print("el archivo es su propio iterador:", iter(f) is f)
+        print("primera linea:", repr(next(f)))
+        print("resto         :", len(list(f)), "lineas")
+        print("segundo recorrido:", len(list(f)), "lineas  <- agotado")
 
-import analisis
-print("importado sin ejecutar el bloque de prueba")
-print("uso la función:", analisis.ticket(3100, 100))
+    # Recorrido perezoso: nunca hay mas de una linea viva
+    with open(ruta, encoding="utf-8") as f:
+        next(f)                                   # descartar el encabezado
+        total = 0
+        for linea in f:
+            total += int(linea.strip().split(",")[1])
+    print()
+    print("suma leyendo linea a linea:", total)
+
+    # Sin encoding explicito el resultado depende de la maquina (Definicion 4.6)
+    with open(ruta, "rb") as f:
+        crudo = f.read()
+    print("los mismos bytes en disco :", len(crudo), "bytes")
 ```
 
-`__name__` vale `"__main__"` cuando el archivo se ejecuta directamente, y el nombre del módulo cuando se importa. Ese `if` es la línea que separa un script de una librería reutilizable — y es lo que vas a usar en cada archivo de `scratch/`.
+El archivo se comporta igual que el generador de la lección 3, y por la misma razón: es un iterador. Procesar un archivo de diez gigabytes con el bucle de la segunda parte usa la memoria de una línea, mientras que `f.read()` la pediría entera.
 
-## Ejercicio 1 — Leer con manejo de error
+::: {.proposicion}
+**Proposición 4.8 (comprobar antes deja una ventana; capturar no).** Sea una operación que consulta si un archivo existe y, en caso afirmativo, lo abre. Entre la consulta y la apertura el estado del sistema de archivos puede cambiar, de modo que la comprobación no garantiza el éxito de la apertura y hace falta manejar el fallo igualmente. Intentar la apertura y capturar `FileNotFoundError` no tiene esa ventana, porque la existencia y la apertura ocurren en la misma operación.
+:::
 
-Completa la función para que devuelva el contenido del archivo, o la cadena `"no existe"` si el archivo no está, sin dejar que la excepción se propague.
+::: {.demostracion}
+*Demostración.* La consulta devuelve un valor que describe el estado en el instante en que se hizo. Entre ese instante y el de la apertura hay un intervalo no nulo, durante el cual otro proceso —o el mismo programa en otro hilo— puede borrar o crear el archivo, sin que nada lo impida. Si lo borra, la apertura falla pese a que la consulta dijo que existía; luego el código que solo comprueba está incompleto, y el que además captura la excepción hace la comprobación redundante.
+
+La apertura, en cambio, resuelve la existencia y obtiene el descriptor en una sola operación del sistema operativo, que no puede quedar interrumpida a la mitad por otro proceso. No hay por tanto ningún estado intermedio observable en el que la respuesta cambie. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import os, tempfile
+
+with tempfile.TemporaryDirectory() as carpeta:
+    ruta = os.path.join(carpeta, "efimero.txt")
+    with open(ruta, "w", encoding="utf-8") as f:
+        f.write("contenido")
+
+    # Comprobar y actuar, con el archivo desapareciendo en medio
+    existe = os.path.exists(ruta)
+    os.remove(ruta)                     # aqui entra otro proceso, en la ventana
+    print("la comprobacion dijo que existia:", existe)
+    try:
+        open(ruta, encoding="utf-8")
+        print("y la apertura funciono")
+    except FileNotFoundError:
+        print("y la apertura fallo igual: la comprobacion no garantizaba nada")
+
+    print()
+    # Capturar: una sola operacion, sin ventana
+    def leer_seguro(r):
+        try:
+            with open(r, encoding="utf-8") as f:
+                return f.read()
+        except FileNotFoundError:
+            return None
+    print("leer_seguro sobre el borrado:", leer_seguro(ruta))
+    with open(ruta, "w", encoding="utf-8") as f:
+        f.write("vuelve")
+    print("leer_seguro sobre el repuesto:", leer_seguro(ruta))
+```
+
+La comprobación devolvió cierto y la apertura falló de todos modos. El manejo del fallo hace falta en los dos estilos, y con el segundo es lo único que hace falta.
+
+## Ejercicios
+
+### Ejercicio 1 — Leer con manejo de error
+
+Completar la función para que devuelva el contenido del archivo, o la cadena `"no existe"` cuando el archivo no está, sin dejar escapar la excepción y sin capturar de más.
 
 ```{pyodide}
 #| exercise: ex_leer
-from pathlib import Path
-
-Path("existe.txt").write_text("hola", encoding="utf-8")
+import os, tempfile
+carpeta = tempfile.mkdtemp()
+presente = os.path.join(carpeta, "presente.txt")
+ausente = os.path.join(carpeta, "ausente.txt")
+open(presente, "w", encoding="utf-8").write("hola")
 
 def leer_seguro(ruta):
     try:
@@ -178,20 +543,22 @@ def leer_seguro(ruta):
     except ______:
         return "no existe"
 
-print(leer_seguro("existe.txt"))
-print(leer_seguro("fantasma.txt"))
-leer_seguro("fantasma.txt")
+print(leer_seguro(presente))
+print(leer_seguro(ausente))
+leer_seguro(ausente)
 ```
 
 ::: {.hint exercise="ex_leer"}
-La excepción que lanza `open()` cuando el archivo no está es `FileNotFoundError`. Para leer, usa `with open(ruta, encoding="utf-8") as f: return f.read()`.
+La excepción concreta es `FileNotFoundError`. Capturar `OSError` funcionaría, pero por la Proposición 4.4 se tragaría también los permisos. Para leer, `with open(ruta, encoding="utf-8") as f: return f.read()`.
 :::
 
 ::: {.solution exercise="ex_leer"}
 ```{pyodide}
-from pathlib import Path
-
-Path("existe.txt").write_text("hola", encoding="utf-8")
+import os, tempfile
+carpeta = tempfile.mkdtemp()
+presente = os.path.join(carpeta, "presente.txt")
+ausente = os.path.join(carpeta, "ausente.txt")
+open(presente, "w", encoding="utf-8").write("hola")
 
 def leer_seguro(ruta):
     try:
@@ -200,9 +567,9 @@ def leer_seguro(ruta):
     except FileNotFoundError:
         return "no existe"
 
-print(leer_seguro("existe.txt"))
-print(leer_seguro("fantasma.txt"))
-leer_seguro("fantasma.txt")
+print(leer_seguro(presente))
+print(leer_seguro(ausente))
+leer_seguro(ausente)
 ```
 :::
 
@@ -210,56 +577,60 @@ leer_seguro("fantasma.txt")
 #| exercise: ex_leer
 #| check: true
 if result == "no existe":
-    feedback = {"correct": True, "message": "Correcto: capturaste FileNotFoundError sin tragarte otros errores.", "type": "success"}
+    feedback = {"correct": True, "message": "Correcto: se capturó FileNotFoundError sin tragarse ningún otro error.", "type": "success"}
 else:
     feedback = {"correct": False, "message": f"Esperaba 'no existe' y obtuve {result!r}.", "type": "error"}
 feedback
 ```
 
-## Ejercicio 2 — Validar con `raise`
+### Ejercicio 2 — Validar con `raise`
 
-Escribe la validación: si alguna venta es negativa, lanza `ValueError` con un mensaje que incluya el valor ofensor.
+Escribir la validación: si alguna medición es negativa, lanzar `ValueError` con un mensaje que incluya el valor ofensor.
 
 ```{pyodide}
 #| exercise: ex_raise
-def total_ventas(ventas):
-    for v in ventas:
+def total(mediciones):
+    for v in mediciones:
         if ______:
             raise ______
-    return sum(ventas)
+    return sum(mediciones)
 
-print(total_ventas([100, 200, 50]))
+print(total([100, 200, 50]))
+try:
+    total([100, -30, 50])
+except ValueError as e:
+    print("ValueError:", e)
 
 try:
-    total_ventas([100, -30, 50])
+    total([100, -30, 50])
 except ValueError as e:
-    print("capturado:", e)
-    mensaje = str(e)
-
-mensaje
+    resultado = str(e)
+resultado
 ```
 
 ::: {.hint exercise="ex_raise"}
-La condición es `v < 0`. El mensaje debe contener el número: usa un f-string, por ejemplo `f"venta negativa: {v}"`.
+La condición es `v < 0`. El mensaje se construye con una f-string que incluya `v`, por ejemplo `f"medición negativa: {v}"`. `ValueError` es la clase adecuada cuando el tipo es correcto y el valor no.
 :::
 
 ::: {.solution exercise="ex_raise"}
 ```{pyodide}
-def total_ventas(ventas):
-    for v in ventas:
+def total(mediciones):
+    for v in mediciones:
         if v < 0:
-            raise ValueError(f"venta negativa: {v}")
-    return sum(ventas)
+            raise ValueError(f"medición negativa: {v}")
+    return sum(mediciones)
 
-print(total_ventas([100, 200, 50]))
+print(total([100, 200, 50]))
+try:
+    total([100, -30, 50])
+except ValueError as e:
+    print("ValueError:", e)
 
 try:
-    total_ventas([100, -30, 50])
+    total([100, -30, 50])
 except ValueError as e:
-    print("capturado:", e)
-    mensaje = str(e)
-
-mensaje
+    resultado = str(e)
+resultado
 ```
 :::
 
@@ -267,50 +638,117 @@ mensaje
 #| exercise: ex_raise
 #| check: true
 if isinstance(result, str) and "-30" in result:
-    feedback = {"correct": True, "message": "Correcto: el mensaje incluye el valor que causó el problema.", "type": "success"}
+    feedback = {"correct": True, "message": "Correcto: el mensaje incluye el valor ofensor, que es lo que hace depurable el error.", "type": "success"}
 elif isinstance(result, str):
-    feedback = {"correct": False, "message": "Lanzaste el error, pero el mensaje no incluye el valor (-30). Ese dato es lo que ahorra tiempo al depurar.", "type": "warning"}
+    feedback = {"correct": False, "message": "Se lanzó el ValueError, pero el mensaje no dice cuál fue el valor.", "type": "warning"}
 else:
-    feedback = {"correct": False, "message": "No se capturó un ValueError con mensaje.", "type": "error"}
+    feedback = {"correct": False, "message": f"Esperaba el mensaje del ValueError y obtuve {result!r}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 3 — Ordenar las cláusulas
+
+Reordenar las dos cláusulas para que ninguna quede inalcanzable y cada excepción vaya a la suya.
+
+```{pyodide}
+#| exercise: ex_orden
+def clasificar(e):
+    try:
+        raise e
+    except ______:
+        return "archivo"
+    except ______:
+        return "sistema"
+
+print(clasificar(FileNotFoundError("x")))
+print(clasificar(PermissionError("x")))
+[clasificar(FileNotFoundError("x")), clasificar(PermissionError("x"))]
+```
+
+::: {.hint exercise="ex_orden"}
+`FileNotFoundError` hereda de `OSError`. Por la Proposición 4.4 la subclase tiene que ir primero, o la superclase la deja inalcanzable.
+:::
+
+::: {.solution exercise="ex_orden"}
+```{pyodide}
+def clasificar(e):
+    try:
+        raise e
+    except FileNotFoundError:
+        return "archivo"
+    except OSError:
+        return "sistema"
+
+print(clasificar(FileNotFoundError("x")))
+print(clasificar(PermissionError("x")))
+[clasificar(FileNotFoundError("x")), clasificar(PermissionError("x"))]
+```
+:::
+
+```{pyodide}
+#| exercise: ex_orden
+#| check: true
+if result == ["archivo", "sistema"]:
+    feedback = {"correct": True, "message": "Correcto: la subclase primero, así ninguna cláusula queda inalcanzable.", "type": "success"}
+elif result == ["archivo", "archivo"]:
+    feedback = {"correct": False, "message": "OSError quedó primero y capturó las dos: la segunda cláusula es inalcanzable (Proposición 4.4).", "type": "error"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba ['archivo', 'sistema'] y obtuve {result}.", "type": "error"}
 feedback
 ```
 
 ## Reto
 
-En `proyectos/notebooks/F0-retos.ipynb`:
+En `proyectos/notebooks/F0-retos.ipynb`, sección **Py 4**:
 
-1. Escribe `cargar_ventas(ruta)` que lea un CSV con `csv.DictReader`, convierta `venta` a `float` y `trx` a `int`, y lance `ValueError` con el **número de línea** si alguna fila tiene datos inválidos.
-2. Crea `scratch/io_utils.py` con esa función y su bloque `if __name__ == "__main__":` de prueba. Impórtala desde un notebook y confirma que el bloque de prueba no corre.
-3. Escribe un `context manager` propio con `contextlib.contextmanager` que cronometre el bloque: `with cronometro("carga"): ...` debe imprimir cuánto tardó.
+1. Escribir un gestor de contexto con `contextlib.contextmanager` que mida el tiempo del bloque, y comprobar contra la Proposición 4.2 que la medición se registra también cuando el cuerpo lanza. Anotar en `50-Errores/` qué hay que hacer para que el `yield` del generador sobreviva a la excepción.
+2. Leer un archivo de un millón de líneas de las dos formas —`f.read().split()` y el bucle perezoso— y medir la memoria máxima con `tracemalloc`. Contrastar la razón observada contra la Proposición 3.8, y comprobar que el resultado numérico es el mismo por los dos caminos.
+3. Construir un `except` con tres cláusulas donde la segunda sea inalcanzable, y escribir una función que lo detecte automáticamente recorriendo las clases con `issubclass`. Comprobarla contra la demostración de la Proposición 4.4.
+
+## Del libro
+
+*Python for Data Analysis* 3E trata la lectura y escritura de archivos en su capítulo 6, *Data Loading, Storage, and File Formats*. El sitio del libro declara que su contenido no se puede copiar ni reproducir, así que se cita número y título y no se le atribuye ninguna frase.
+
+**Preguntas para leer el capítulo 6 con lápiz:**
+
+1. El capítulo presenta la lectura por trozos de archivos grandes. Con la Proposición 4.7 y la 3.8, ¿qué gana leer por trozos frente a leer línea a línea, y en qué caso la diferencia deja de importar?
+2. El capítulo insiste en declarar la codificación al leer texto. Con la Definición 4.6, ¿por qué un archivo que se lee bien en una máquina puede fallar en otra sin que el archivo haya cambiado, y qué error concreto aparece?
+3. La sección sobre formatos binarios contrasta el texto con los formatos propios. Con la Proposición 4.7, ¿por qué el recorrido perezoso por líneas no tiene equivalente inmediato en un formato binario de registros de longitud variable?
 
 ## Para el Cerebro
 
-Lee **McKinney cap. 3** (archivos y excepciones) con estas preguntas escritas antes:
-
-1. ¿Qué diferencia hay entre abrir un archivo en modo `"w"`, `"a"` y `"x"`?
-2. ¿Qué es un *context manager* y qué dos métodos debe implementar?
-3. ¿Qué hace `else` en un `try/except/else/finally` y cuándo sirve?
+Nota nueva en `10-Conceptos/contextos-y-excepciones.md`, enlazada a [[iteracion-perezosa]], [[gestor-de-contexto]] y [[excepcion]]. Conviene rehacer a mano la demostración de la Proposición 4.4: es un argumento por contradicción de tres líneas, y verlo escrito explica por qué la regla «de lo específico a lo general» no es una convención de estilo sino la única ordenación en que todas las cláusulas son alcanzables.
 
 ```
-¿Qué garantiza `with` al abrir un archivo?::Que se cierra aunque el bloque lance una excepción
-¿Por qué escribir encoding="utf-8" explícito?::El default depende del SO; sin él, el código rompe en otra máquina
-¿Por qué nunca usar `except:` pelado?::Captura todo, incluido Ctrl-C, y esconde bugs
-¿Qué debe incluir un buen mensaje de error?::El valor concreto que causó el problema
-¿Qué vale __name__ al ejecutar un archivo directamente?::"__main__"; al importarlo vale el nombre del módulo
-¿Por qué pathlib y no concatenar strings?::Resuelve separadores por SO y trae exists, mkdir, glob y read_text
+¿Qué dos métodos definen un gestor de contexto?::__enter__, cuyo resultado vincula el as, y __exit__, que recibe la excepción en vuelo
+¿Cuándo se ejecuta __exit__?::Siempre que __enter__ tuvo éxito: salida normal, return, break, continue o excepción
+¿Cómo suprime __exit__ una excepción?::Devolviendo un valor verdadero; con None o falso, la excepción sigue propagándose
+¿Qué cláusula except se ejecuta?::La primera compatible en orden textual; las siguientes no se prueban
+¿Cuándo queda una cláusula inalcanzable?::Cuando una anterior captura una superclase suya: ninguna excepción puede llegar
+¿En qué orden se escriben?::De la más específica a la más general; es la única ordenación sin cláusulas muertas
+¿Qué hace un return dentro de finally?::Descarta la excepción en vuelo y pisa el valor de retorno: el error desaparece
+¿Es un archivo un iterador?::Sí: iter(f) is f. Se agota, y recorrerlo mantiene viva una sola línea
+¿Por qué declarar encoding?::Sin él la traducción de bytes a caracteres la elige el sistema, y el mismo archivo se lee distinto
+¿Por qué no comprobar antes de abrir?::Entre la comprobación y la apertura hay una ventana en la que el archivo puede desaparecer
+¿Qué se hace en su lugar?::Intentar la apertura y capturar FileNotFoundError: existencia y apertura en una sola operación
 ```
-
 
 ::: {#fuentes .fuentes}
 ### Fuentes
 
-**Lo que esta página demuestra sola.** Los ejercicios corren en tu navegador.
+**Lo que esta página demuestra sola.** Las Proposiciones 4.2, 4.4, 4.5, 4.7 y 4.8 se demuestran a partir de la equivalencia entre `with` y `try/finally`, de la semántica de las cláusulas `except` y del protocolo de iteración de la lección 3; cada una se comprueba ejecutándola: que las tres salidas del cuerpo —normal, por `return` y por excepción— pasan las tres por `__exit__`, y que tras verla la excepción sigue viva; que con la subclase primero cada excepción va a su cláusula y con la superclase primero las dos van a la primera; que una función con `return` en el `finally` devuelve $-1$ tanto con entrada válida como con división por cero, mientras la versión sin ese `return` deja llegar el `ZeroDivisionError`; que `iter(f) is f` y que el segundo recorrido entrega cero líneas; y que una comprobación de existencia que devolvió cierto va seguida de una apertura que falla. Los dos visuales se contrastaron contra estas mismas afirmaciones en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** El protocolo de iteración es la Definición 3.1, que un iterador se agota es la Proposición 3.2 y que un recorrido perezoso mantiene la memoria acotada es la 3.8. La regla LEGB es la Definición 2.2. Que un objeto tiene identidad constante es la Definición 1.1.
+
+**Lo que se enuncia sin demostrar.** Que la sentencia `with` está especificada como el `try/finally` equivalente, y que un objeto archivo implementa `__next__` leyendo hasta el salto de línea: las dos son parte de la definición del lenguaje y de su biblioteca, y aquí se toman como tales, aunque la página comprueba sus consecuencias. En la Proposición 4.8 se supone que la apertura es una operación que el sistema operativo no interrumpe a la mitad, sin entrar en las garantías concretas de cada sistema de archivos.
 
 **Lo que viene de los libros.**
 
-- [*Python for Data Analysis* 3E](https://wesmckinney.com/book/) (McKinney — libro abierto), §3 *Built-In Data Structures, Functions, and Files*
+- [*Python for Data Analysis*, 3ª edición](https://wesmckinney.com/book/) (Wes McKinney, O'Reilly, 2022), capítulo 6 *Data Loading, Storage, and File Formats* — citado por número y título, sin transcribir texto.
 
-[Índices verificados el 11-09-2026 contra el índice publicado de cada libro.]{.sello}
+**Lo que es mío, no del libro.** La Proposición 4.4 enunciada como un resultado de alcanzabilidad y demostrada por contradicción, en lugar de presentarse como el consejo de estilo «captura lo específico». La Proposición 4.5, que trata el `return` en `finally` como un teorema sobre cuál de dos salidas gana y no como una curiosidad. Y la Proposición 4.8, que convierte la discusión habitual entre comprobar y capturar en un argumento sobre una ventana temporal, medido ejecutando el borrado dentro de esa misma ventana.
+
+[Índices verificados el 12-09-2026 contra el índice publicado del sitio oficial del libro.]{.sello}
 :::
 
-→ Siguiente: [Entorno: uv, git y el repo](05-entorno-uv-git.qmd)
+→ Siguiente: [Entorno reproducible: uv y git](05-entorno-uv-git.qmd)
