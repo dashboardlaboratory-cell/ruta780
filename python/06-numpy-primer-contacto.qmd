@@ -1,218 +1,533 @@
 ---
-title: "NumPy: primer contacto"
+title: "NumPy: búfer, vistas y difusión"
 subtitle: "Python · Lección 6"
-nivel: L3
+nivel: L2
 modulo: python
 fase: F0
 prereqs: [python/05-entorno-uv-git]
-siguientes: [matematica/01-vectores-y-espacios]
-libro: "McKinney 3E, cap. 4"
+siguientes: []
+libro: "McKinney 3E, cap. 4 NumPy Basics: Arrays and Vectorized Computation"
+engine: markdown
 pyodide:
   packages:
     - numpy
-engine: markdown
 ---
 
 ::: {.meta-leccion data-leccion="python/06-numpy-primer-contacto"}
-[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[[L2]{.nivel .nivel-L2} **Derivación**]{.item}
 [**Fase** F0]{.item}
 [**Libro** McKinney cap. 4]{.item}
-[**Prereqs** [Entorno](05-entorno-uv-git.qmd)]{.item}
+[**Prereqs** [Entorno reproducible](05-entorno-uv-git.qmd)]{.item}
 :::
 
-## La idea
+## Objetivo
 
-Una lista de Python guarda **punteros** a objetos dispersos en memoria. Un array de NumPy guarda **los números mismos**, contiguos, todos del mismo tipo. De esa sola diferencia sale todo: la velocidad, el broadcasting, y la razón por la que toda la ciencia de datos en Python se apoya en NumPy.
+Al terminar esta lección se puede:
 
-Esta es la última lección de la Fase 0 y el puente hacia la matemática: a partir de la semana 3, cada cosa que derives la vas a implementar aquí.
+1. Enunciar de qué está hecho un [array]{.g}: un búfer plano, un [dtype]{.g}, una forma y unos [pasos]{.g data-t="paso"}, y calcular la posición de cualquier elemento a partir de ellos.
+2. Demostrar que una rebanada devuelve una [vista]{.g} que comparte el búfer, y reconocer en ello la Proposición 1.5 sobre otro objeto.
+3. Demostrar que la [indexación avanzada]{.g} devuelve una copia, y por qué la asimetría con la rebanada no es evitable.
+4. Demostrar que transponer no mueve ningún dato, y deducir el coste de la operación.
+5. Enunciar la regla de la [difusión]{.g} y demostrar que no duplica memoria.
+6. Demostrar que un dtype entero de ancho fijo hace la aritmética modular, y que la igualdad exacta entre flotantes no sirve como prueba.
 
-## Vectorización: por qué es rápido
+:::: {.hilo}
+::: {}
+#### De dónde viene
 
-```{pyodide}
-import numpy as np
-import time
-
-n = 1_000_000
-lista = list(range(n))
-array = np.arange(n)
-
-t0 = time.perf_counter()
-res_lista = [x * 2 for x in lista]
-t_lista = time.perf_counter() - t0
-
-t0 = time.perf_counter()
-res_array = array * 2
-t_array = time.perf_counter() - t0
-
-print(f"lista (comprehension): {t_lista*1000:7.1f} ms")
-print(f"array  (vectorizado):  {t_array*1000:7.1f} ms")
-print(f"NumPy es ~{t_lista/t_array:.0f}x más rápido")
-```
-
-::: {.derivacion}
-**De dónde sale la diferencia**
-
-::: {.paso}
-En la lista, cada elemento es un objeto `int` de Python completo: un encabezado con el tipo, un contador de referencias y el valor. Están esparcidos por la memoria, y la lista guarda punteros a ellos.
-:::
-::: {.paso}
-Multiplicar recorre la lista elemento por elemento. En cada paso el intérprete tiene que: seguir el puntero, mirar el tipo, decidir qué `__mul__` llamar, crear un objeto nuevo. Ese despacho por tipo ocurre **un millón de veces**.
-:::
-::: {.paso}
-El array guarda un millón de `int64` pegados, en un solo bloque contiguo, con el tipo declarado **una vez** en el array, no en cada elemento.
-:::
-::: {.paso}
-`array * 2` baja a un bucle en C que ya sabe el tipo: sin despacho, sin objetos intermedios, y con los datos contiguos la CPU los trae en bloque a la caché y usa instrucciones SIMD que procesan varios números por ciclo.
+- **Python 1, Proposición 1.5**: toda mutación se observa por todos los alias. Una vista de NumPy es exactamente eso, con el búfer en el papel del objeto compartido.
+- **Python 1, Definición 1.8**: copia superficial frente a profunda. `view()` y `copy()` son esa misma distinción con otros nombres.
+- **Python 3, Proposición 3.8**: la memoria de lo que no se materializa. La difusión es el caso extremo: una dimensión entera con paso cero.
+- **Python 5**: el entorno con versiones fijadas es lo que hace que los números de esta lección salgan iguales en cualquier máquina.
 :::
 
-La lección práctica: **si escribes un `for` sobre un array de NumPy, casi siempre hay una forma vectorizada, y es de 10 a 100 veces más rápida.**
+::: {}
+#### Para qué sirve después
+
+- **Matemática 1 a 12**: vectores, matrices, productos y descomposiciones se escriben directamente sobre arrays.
+- **Matemática 16 y 17**: el descenso de gradiente y el método de Newton operan sobre vectores, y su coste por iteración es el de estas operaciones.
+- **Estadística 6 y 11**: el teorema central del límite y el bootstrap sortean matrices enteras de una vez, y la Proposición 6.6 explica cómo se centran sin copiar.
+- **Estadística 13**: la regresión por mínimos cuadrados es un producto de matrices y una resolución de sistema, y nada más.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| `a.shape` | — | La forma: cuántos elementos tiene cada dimensión |
+| `a.dtype` | — | El tipo de todos los elementos, idéntico para todos |
+| `a.strides` | — | Cuántos bytes hay que avanzar por cada paso en cada dimensión |
+| `a.base` | — | El array cuyo búfer comparte, o `None` si es dueño del suyo |
+| `a[2:5]` | — | Una rebanada; devuelve una vista |
+| `a[[2, 4]]` | — | Indexación avanzada; devuelve una copia |
+| $n$ | ene | El número de elementos |
 :::
 
-## El array y sus atributos
+## 1. De qué está hecho un array
 
-```{pyodide}
-import numpy as np
+::: {.definicion}
+**Definición 6.1 (array).** Un **array** de NumPy consta de cuatro piezas:
 
-a = np.array([[1.0, 2.0, 3.0],
-              [4.0, 5.0, 6.0]])
+- un **búfer** de memoria contigua con todos los bytes de los datos;
+- un **dtype**, el tipo común a todos los elementos, de ancho fijo y conocido;
+- una **forma**, la tupla con el tamaño de cada dimensión;
+- unos **pasos**, la tupla que dice cuántos bytes se avanzan al incrementar en uno el índice de cada dimensión.
 
-print("array:\n", a)
-print("shape (filas, columnas):", a.shape)
-print("ndim (dimensiones):", a.ndim)
-print("dtype (tipo):", a.dtype)
-print("size (total de elementos):", a.size)
-```
+La posición del elemento de índices $(i_0,\dots,i_{d-1})$ dentro del búfer es
+$$\text{desplazamiento} = \sum_{k=0}^{d-1} i_k\, s_k,$$
+con $s_k$ el paso de la dimensión $k$. Nada más hace falta: la forma y los pasos determinan por completo cómo se lee el búfer.
+:::
 
-`shape` es lo que vas a mirar mil veces cuando algo no cuadre. El 90 % de los errores en NumPy y en cualquier framework de ML son errores de forma.
+Que el dtype tenga ancho fijo es lo que permite esa fórmula. Una lista de Python guarda referencias a objetos que pueden estar en cualquier sitio y ser de cualquier tipo, de modo que no hay ninguna aritmética que dé la posición del elemento $i$.
 
 ```{pyodide}
 import numpy as np
 
-print("ceros:\n", np.zeros((2, 3)))
-print("\nidentidad:\n", np.eye(3))
-print("\nrango:", np.arange(0, 10, 2))
-print("\n5 puntos entre 0 y 1:", np.linspace(0, 1, 5))
-
-rng = np.random.default_rng(42)      # generador con semilla: reproducible
-print("\nnormales:", rng.normal(size=4).round(3))
+a = np.arange(12, dtype=np.int64).reshape(3, 4)
+print("contenido:")
+print(a)
+print()
+print("forma :", a.shape)
+print("dtype :", a.dtype, "| ancho en bytes:", a.dtype.itemsize)
+print("pasos :", a.strides)
+print()
+i, j = 2, 1
+desplazamiento = i * a.strides[0] + j * a.strides[1]
+print("el elemento [%d, %d] esta en el byte %d del bufer" % (i, j, desplazamiento))
+print("y su indice plano es %d, que es el valor %d" % (desplazamiento // a.dtype.itemsize, a[i, j]))
+print()
+print("la formula da el mismo valor que indexar:", a[i, j] == a.ravel()[desplazamiento // a.dtype.itemsize])
 ```
 
-::: {.callout-tip}
-## Usa `default_rng`, no `np.random.seed`
+Los pasos de este array son `(32, 8)`: avanzar una fila cuesta cuatro elementos de ocho bytes, y avanzar una columna cuesta uno.
 
-`np.random.default_rng(semilla)` crea un generador independiente. La API vieja (`np.random.seed` + `np.random.normal`) usa estado global: dos partes de tu código pueden pisarse el estado sin que te enteres, y tus resultados dejan de ser reproducibles.
+## 2. Vistas: el búfer compartido
+
+::: {.proposicion}
+**Proposición 6.2 (la rebanada devuelve una vista).** Rebanar un array devuelve un array nuevo que comparte el búfer del original, con otra forma y otros pasos. En consecuencia, escribir en la rebanada modifica el original, y viceversa.
 :::
 
-## Indexado: vistas y máscaras
+::: {.demostracion}
+*Demostración.* Una rebanada selecciona los elementos cuyos índices forman una progresión aritmética en cada dimensión. Por la Definición 6.1, el desplazamiento de un elemento es una función lineal de sus índices, así que la subfamilia seleccionada se describe con un desplazamiento inicial y unos pasos multiplicados por el salto de la rebanada: es de nuevo la misma fórmula sobre el mismo búfer. NumPy construye por tanto el array resultante apuntando al búfer existente en lugar de copiar bytes.
+
+Compartido el búfer, escribir en una posición a través de cualquiera de los dos arrays altera los mismos bytes, y leerla por el otro devuelve el valor nuevo. Esa es la Proposición 1.5 con el búfer en el papel del objeto mutado y los dos arrays en el de los alias. [∎]{.fin-demo}
+:::
+
+::: {.proposicion}
+**Proposición 6.3 (la indexación avanzada devuelve una copia).** Indexar con una lista de índices o con una máscara booleana devuelve un array nuevo con su propio búfer. Las escrituras sobre el resultado no afectan al original.
+:::
+
+::: {.demostracion}
+*Demostración.* Los índices seleccionados por una lista arbitraria o por una máscara no forman en general una progresión aritmética: entre dos posiciones consecutivas del resultado puede haber saltos distintos. La Definición 6.1 exige un único paso por dimensión, de modo que no existe ninguna elección de forma y pasos que describa esa selección sobre el búfer original. La única forma de representar el resultado como array es reunir sus elementos en un búfer propio, y eso es una copia.
+
+Como el búfer es propio, escribir en él no toca los bytes del original, y no hay ninguna relación de alias entre ambos. [∎]{.fin-demo}
+:::
+
+La asimetría entre las dos proposiciones incomoda hasta que se ve de dónde sale: no es una decisión de diseño sino la consecuencia de que un array solo sabe describir progresiones aritméticas.
 
 ```{pyodide}
 import numpy as np
 
-a = np.arange(12).reshape(3, 4)
-print("a:\n", a)
-print("\nfila 1:", a[1])
-print("columna 2:", a[:, 2])
-print("submatriz [0:2, 1:3]:\n", a[0:2, 1:3])
+a = np.arange(10)
+
+rebanada = a[2:6]
+avanzada = a[[2, 3, 4, 5]]
+mascara = a[a % 2 == 0]
+
+print("rebanada comparte memoria :", np.shares_memory(a, rebanada))
+print("avanzada comparte memoria :", np.shares_memory(a, avanzada))
+print("mascara comparte memoria  :", np.shares_memory(a, mascara))
+print()
+print("a.base es None (es dueno)        :", a.base is None)
+print("rebanada.base es a               :", rebanada.base is a)
+print()
+
+rebanada[0] = 999
+print("tras escribir en la rebanada, a =", a)
+avanzada[0] = -1
+print("tras escribir en la avanzada, a =", a, " <- intacto")
+print()
+print("para desligarse a proposito: a[2:6].copy()")
+suelta = a[2:6].copy()
+suelta[0] = 0
+print("tras escribir en la copia,    a =", a)
 ```
 
-::: {.callout-warning}
-## Una rebanada es una VISTA, no una copia
+La escritura en la rebanada deja `a` con un 999 en la posición 2; la escritura en el resultado de la indexación avanzada no cambia nada. Cuál de las dos se obtuvo se decide mirando `np.shares_memory`, no la forma de la expresión.
 
-Esto conecta directo con la Lección 1, pero con un giro: en listas, `lista[:]` **copia**. En NumPy, `array[:]` **no copia** — te da una ventana al mismo bloque de memoria.
+::: {.proposicion}
+**Proposición 6.4 (transponer no mueve datos).** La transpuesta de un array es una vista que comparte el búfer y cuyos pasos son los del original en orden inverso. Su coste no depende del número de elementos.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea `a` de forma $(m, n)$ y pasos $(s_0, s_1)$. El elemento $(i, j)$ de la transpuesta es el $(j, i)$ de `a`, cuyo desplazamiento es $j s_0 + i s_1$ por la Definición 6.1. Esa expresión es la fórmula de la definición aplicada a un array de forma $(n, m)$ y pasos $(s_1, s_0)$ sobre el mismo búfer.
+
+Existe por tanto una descripción del resultado que reutiliza el búfer, y construirla consiste en permutar dos tuplas de longitud igual al número de dimensiones, que no depende del número de elementos. No se lee ni se escribe ningún dato. [∎]{.fin-demo}
 :::
 
 ```{pyodide}
 import numpy as np
 
-original = np.arange(6)
-vista = original[2:5]
-vista[0] = 999                  # modifico la vista...
+a = np.arange(6).reshape(2, 3)
+t = a.T
 
-print("vista:", vista)
-print("original:", original, " <- ¡también cambió!")
-print("¿comparte memoria?", np.shares_memory(original, vista))
-
-copia = original[2:5].copy()    # copia explícita
-copia[0] = -1
-print("\ntras modificar la copia, original:", original)
+print("a.shape  :", a.shape, "| a.strides  :", a.strides)
+print("t.shape  :", t.shape, "| t.strides  :", t.strides, " <- los mismos, invertidos")
+print("comparten memoria:", np.shares_memory(a, t))
+print()
+a[0, 0] = 100
+print("escribir en a[0,0] se ve en t[0,0]:", t[0, 0] == 100)
+print()
+print("a es contiguo por filas    :", a.flags["C_CONTIGUOUS"])
+print("t es contiguo por columnas :", t.flags["F_CONTIGUOUS"])
+print("y t NO es contiguo por filas:", not t.flags["C_CONTIGUOUS"])
 ```
 
-Indexado booleano — la herramienta que más vas a usar:
+La transpuesta deja de ser contigua por filas, y por eso una operación que recorra sus elementos en ese orden salta por el búfer en lugar de avanzar de ocho en ocho bytes. El dato no se movió; lo que cambió es el orden en que se recorre.
+
+```{=html}
+<div class="viz-vista">
+  <div class="controles">
+    <label>Cómo se obtuvo
+      <select id="vv-modo">
+        <option value="0" selected>a[2:6]  (rebanada)</option>
+        <option value="1">a[[2,3,4,5]]  (avanzada)</option>
+        <option value="2">a.copy()[2:6]  (copia)</option>
+      </select>
+    </label>
+    <label>Posición que se escribe <input id="vv-pos" type="range" min="0" max="3" step="1" value="1"> <span id="vv-pos-v">1</span></label>
+  </div>
+  <svg id="vv-svg" viewBox="0 0 620 260" role="img" aria-label="Arriba el bufer del array original con diez celdas; abajo el resultado con cuatro. Se marca la celda que se escribe en el resultado y, si comparten bufer, la celda del original que cambia."></svg>
+  <p class="lectura" id="vv-lectura"></p>
+</div>
+<style>
+.viz-vista { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-vista .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-vista label { display: flex; align-items: center; gap: .4rem; }
+.viz-vista input[type=range] { width: 140px; padding: 0; }
+.viz-vista select { font-size: .85rem; padding: .1rem .25rem; font-family: var(--bs-font-monospace, monospace); }
+.viz-vista svg { width: 100%; height: auto; display: block; }
+.viz-vista .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_ES = "#B45309", C_CO = "#0F6E68";
+  var svg = document.getElementById("vv-svg"), lec = document.getElementById("vv-lectura");
+  var cm = document.getElementById("vv-modo");
+  var cp = document.getElementById("vv-pos"), ep = document.getElementById("vv-pos-v");
+
+  var N = 10, M = 4;
+  // Marco constante.
+  var X0 = 60, CW = 50, CH = 42, Y1 = 72, Y2 = 186;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function celda(x, y, txt, color, grueso, relleno) {
+    svg.appendChild(el("rect", { x: x.toFixed(1), y: y, width: CW - 5, height: CH, rx: 4,
+      fill: relleno ? color : "none", "fill-opacity": relleno ? 0.18 : 0,
+      stroke: color, "stroke-width": grueso ? 2.4 : 1.1,
+      "stroke-opacity": grueso ? 1 : 0.55 }));
+    svg.appendChild(el("text", { x: (x + (CW - 5) / 2).toFixed(1), y: y + CH / 2 + 4.5,
+      "text-anchor": "middle", "font-size": 12, fill: C_T,
+      "font-family": "var(--bs-font-monospace,monospace)" }, txt));
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var modo = +cm.value, pos = +cp.value;
+    ep.textContent = String(pos);
+    var comparte = modo === 0;
+    var origen = 2 + pos;                     // los tres modos toman a[2:6]
+
+    svg.appendChild(el("text", { x: X0, y: 46, "font-size": 11.5, fill: C_T, opacity: 0.72 },
+      "búfer del array original a  (10 elementos)"));
+    for (var i = 0; i < N; i++) {
+      var tocada = comparte && i === origen;
+      celda(X0 + i * CW, Y1, tocada ? "99" : String(i), tocada ? C_ES : C_L, tocada, tocada);
+    }
+
+    svg.appendChild(el("text", { x: X0, y: 160, "font-size": 11.5, fill: C_T, opacity: 0.72 },
+      comparte ? "resultado: misma memoria, otra forma y otros pasos"
+               : "resultado: búfer propio"));
+    for (var k = 0; k < M; k++) {
+      var esc = k === pos;
+      celda(X0 + k * CW, Y2, esc ? "99" : String(2 + k), esc ? C_ES : (comparte ? C_L : C_CO), esc, esc);
+    }
+
+    // enlace entre la celda escrita y su origen: se DESPLAZA con el control
+    var xr = X0 + pos * CW + (CW - 5) / 2;
+    if (comparte) {
+      var xo = X0 + origen * CW + (CW - 5) / 2;
+      svg.appendChild(el("path", { d: "M" + xr.toFixed(1) + " " + Y2 + " L" + xo.toFixed(1) + " " + (Y1 + CH),
+        stroke: C_ES, "stroke-width": 1.8, fill: "none" }));
+    } else {
+      svg.appendChild(el("path", { d: "M" + xr.toFixed(1) + " " + Y2 + " L" + xr.toFixed(1) + " " + (Y2 - 22),
+        stroke: C_CO, "stroke-width": 1.8, fill: "none", "stroke-dasharray": "4 4" }));
+      svg.appendChild(el("text", { x: xr.toFixed(1), y: Y2 - 28, "text-anchor": "middle",
+        "font-size": 11, fill: C_CO }, "sin enlace"));
+    }
+
+    lec.innerHTML = comparte
+      ? ("Escribir en la posición <strong>" + pos + "</strong> del resultado escribe en la posición <strong>" +
+         origen + "</strong> del búfer original: es la misma memoria (Proposición 6.2), y <code>a</code> queda alterado.")
+      : (modo === 1
+         ? "La indexación avanzada no se puede describir con un paso constante, así que reúne los elementos en un búfer propio (Proposición 6.3). Escribir aquí no toca <code>a</code>."
+         : "<code>copy()</code> pide un búfer propio explícitamente. Escribir aquí no toca <code>a</code>, que es justo lo que se buscaba al pedirlo.");
+  }
+
+  cm.addEventListener("change", dibujar);
+  cp.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Difusión
+
+::: {.definicion}
+**Definición 6.5 (difusión).** Dos formas son compatibles cuando, alineadas por la derecha, cada par de dimensiones cumple que son iguales o que alguna vale 1. La forma del resultado toma en cada posición el máximo de las dos, y las dimensiones de tamaño 1 se recorren repitiendo su único elemento.
+:::
+
+::: {.proposicion}
+**Proposición 6.6 (la difusión no duplica memoria).** Una dimensión difundida se representa dando paso **cero** a esa dimensión. En consecuencia, la difusión no copia el operando menor ni reserva memoria proporcional a la forma del resultado.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea un operando con tamaño 1 en la dimensión $k$ que ha de recorrerse $m$ veces. Por la Definición 6.1 el desplazamiento del elemento es $\sum_i i_i s_i$; tomando $s_k = 0$, el término correspondiente se anula para todo valor del índice $i_k$, de modo que los $m$ valores del índice apuntan al mismo byte. La lectura entrega entonces el único elemento existente cuantas veces haga falta, sin que ese elemento esté almacenado más de una vez.
+
+La construcción solo modifica la tupla de pasos, cuyo tamaño es el número de dimensiones; no se reserva ni se escribe ningún búfer. [∎]{.fin-demo}
+:::
 
 ```{pyodide}
 import numpy as np
 
-ventas = np.array([4200.0, 1800.0, 3100.0, 950.0, 5400.0])
-trx    = np.array([140, 45, 100, 30, 160])
+lluvia = np.array([[4200.0, 1800.0, 3100.0],
+                   [ 950.0, 2400.0, 1500.0]])
 
-mascara = trx > 50
-print("máscara:", mascara)
-print("ventas de sucursales con más de 50 trx:", ventas[mascara])
-print("ticket promedio de esas:", (ventas[mascara] / trx[mascara]).round(2))
-print("\ncuántas cumplen:", mascara.sum())      # True suma 1
-print("¿alguna?", mascara.any(), "| ¿todas?", mascara.all())
+media_col = lluvia.mean(axis=0)                 # forma (3,)
+media_fil = lluvia.mean(axis=1, keepdims=True)  # forma (2, 1)
+
+print("lluvia     :", lluvia.shape)
+print("media_col  :", media_col.shape, "-> se difunde sobre las filas")
+print("media_fil  :", media_fil.shape, "-> se difunde sobre las columnas")
+print()
+print("centrado por columnas, primera fila:", (lluvia - media_col)[0].round(2))
+print("centrado por filas,   primera fila:", (lluvia - media_fil)[0].round(2))
+print()
+
+# La difusion se representa con paso cero: no hay copia
+vista = np.broadcast_to(media_col, (2, 3))
+print("forma difundida :", vista.shape)
+print("pasos difundidos:", vista.strides, " <- el primero es 0")
+print("comparte memoria con el original:", np.shares_memory(vista, media_col))
+print()
+
+# Sin keepdims las formas no alinean
+try:
+    lluvia - lluvia.mean(axis=1)
+except ValueError:
+    print("sin keepdims, (2,3) contra (2,) no alinea -> ValueError")
+print("con keepdims, (2,3) contra (2,1) si alinea:", (lluvia - media_fil).shape)
 ```
 
-## Broadcasting
+El paso cero de la primera dimensión es la proposición hecha número: la vista de forma `(2, 3)` se apoya en los tres valores que ya existían, y la memoria no crece. El `keepdims` del segundo caso existe justamente para que la alineación por la derecha funcione.
 
-Cuando operas dos arrays de formas distintas, NumPy intenta **estirar** el más chico. La regla: compara las formas de derecha a izquierda; dos dimensiones son compatibles si son iguales o si una de ellas es 1.
+```{=html}
+<div class="viz-difusion">
+  <div class="controles">
+    <label>Qué se resta
+      <select id="df-modo">
+        <option value="0" selected>media por columnas, forma (3,)</option>
+        <option value="1">media por filas, forma (2,1)</option>
+      </select>
+    </label>
+    <label>Celda del resultado <input id="df-c" type="range" min="0" max="5" step="1" value="2"> <span id="df-c-v">[0,2]</span></label>
+  </div>
+  <svg id="df-svg" viewBox="0 0 620 260" role="img" aria-label="La matriz de dos filas por tres columnas y, al lado, el operando menor. Se marca la celda del resultado elegida y cual de los elementos del operando menor se reutiliza para calcularla."></svg>
+  <p class="lectura" id="df-lectura"></p>
+</div>
+<style>
+.viz-difusion { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-difusion .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-difusion label { display: flex; align-items: center; gap: .4rem; }
+.viz-difusion input[type=range] { width: 140px; padding: 0; }
+.viz-difusion select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-difusion svg { width: 100%; height: auto; display: block; }
+.viz-difusion .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_A = "#B45309", C_B = "#0F6E68";
+  var svg = document.getElementById("df-svg"), lec = document.getElementById("df-lectura");
+  var cm = document.getElementById("df-modo");
+  var cc = document.getElementById("df-c"), ec = document.getElementById("df-c-v");
+
+  // Marco constante.
+  var AX = 56, AY = 74, CW = 62, CH = 46;
+  var BX = 330, BY = 74;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function celda(x, y, txt, color, grueso) {
+    svg.appendChild(el("rect", { x: x.toFixed(1), y: y.toFixed(1), width: CW - 6, height: CH, rx: 4,
+      fill: grueso ? color : "none", "fill-opacity": grueso ? 0.18 : 0,
+      stroke: color, "stroke-width": grueso ? 2.4 : 1.1, "stroke-opacity": grueso ? 1 : 0.5 }));
+    svg.appendChild(el("text", { x: (x + (CW - 6) / 2).toFixed(1), y: (y + CH / 2 + 4.5).toFixed(1),
+      "text-anchor": "middle", "font-size": 12, fill: C_T,
+      "font-family": "var(--bs-font-monospace,monospace)" }, txt));
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var modo = +cm.value, c = +cc.value;
+    var fi = Math.floor(c / 3), co = c % 3;
+    ec.textContent = "[" + fi + "," + co + "]";
+
+    svg.appendChild(el("text", { x: AX, y: 50, "font-size": 11.5, fill: C_T, opacity: 0.72 },
+      "lluvia, forma (2, 3)"));
+    for (var i = 0; i < 2; i++) {
+      for (var j = 0; j < 3; j++) {
+        var sel = (i === fi && j === co);
+        celda(AX + j * CW, AY + i * (CH + 8), "a" + i + j, sel ? C_A : C_L, sel);
+      }
+    }
+
+    var etiqueta = modo === 0 ? "media_col, forma (3,)" : "media_fil, forma (2, 1)";
+    svg.appendChild(el("text", { x: BX, y: 50, "font-size": 11.5, fill: C_T, opacity: 0.72 }, etiqueta));
+    var usado;
+    if (modo === 0) {
+      for (var j2 = 0; j2 < 3; j2++) {
+        celda(BX + j2 * CW, BY, "m" + j2, j2 === co ? C_B : C_L, j2 === co);
+      }
+      usado = { x: BX + co * CW + (CW - 6) / 2, y: BY + CH };
+    } else {
+      for (var i2 = 0; i2 < 2; i2++) {
+        celda(BX, BY + i2 * (CH + 8), "m" + i2, i2 === fi ? C_B : C_L, i2 === fi);
+      }
+      usado = { x: BX + (CW - 6) / 2, y: BY + fi * (CH + 8) + CH };
+    }
+
+    // enlace desde la celda seleccionada hasta el elemento reutilizado
+    var sx = AX + co * CW + (CW - 6) / 2, sy = AY + fi * (CH + 8) + CH;
+    svg.appendChild(el("path", { d: "M" + sx.toFixed(1) + " " + sy.toFixed(1) +
+      " L" + ((sx + usado.x) / 2).toFixed(1) + " " + (sy + 34).toFixed(1) +
+      " L" + usado.x.toFixed(1) + " " + usado.y.toFixed(1),
+      stroke: C_B, "stroke-width": 1.8, fill: "none" }));
+
+    var reusos = modo === 0 ? 2 : 3;
+    lec.innerHTML = "Para la celda <code>[" + fi + "," + co + "]</code> se reutiliza <code>m" +
+      (modo === 0 ? co : fi) + "</code>, el mismo elemento que usan las otras <strong>" + (reusos - 1) +
+      "</strong> celdas de su " + (modo === 0 ? "columna" : "fila") +
+      ". No hay copia: la dimensión difundida lleva paso cero (Proposición 6.6).";
+  }
+
+  cm.addEventListener("change", dibujar);
+  cc.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Dos trampas del cálculo numérico
+
+::: {.proposicion}
+**Proposición 6.7 (el dtype de ancho fijo hace la aritmética modular).** Sea un dtype entero con signo de $b$ bits. Las operaciones sobre él se realizan módulo $2^b$ en complemento a dos, de modo que el resultado de sumar dos valores representables puede ser un valor negativo. El resultado es determinista y no una corrupción.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Definición 6.1 todos los elementos ocupan exactamente $b$ bits, y el resultado de una operación se escribe en una celda del mismo ancho. La suma exacta de dos enteros de $b$ bits puede requerir $b+1$ bits; al truncar a los $b$ bits bajos se obtiene el representante del resultado módulo $2^b$. En complemento a dos, el conjunto de representantes es $[-2^{b-1}, 2^{b-1}-1]$, y el representante de $2^{b-1}$ en ese conjunto es $2^{b-1} - 2^b = -2^{b-1}$.
+
+Con $b=8$: sumar $1$ a $127$ da $128$, cuyo representante es $128 - 256 = -128$. El resultado está determinado por la aritmética modular y es el mismo en cualquier máquina. [∎]{.fin-demo}
+:::
+
+::: {.proposicion}
+**Proposición 6.8 (la igualdad exacta entre flotantes no sirve como prueba).** Existen valores decimales $x$, $y$, $z$ con $x+y=z$ en los racionales cuya representación en punto flotante binario cumple $\hat{x}+\hat{y}\ne\hat{z}$. Por tanto una comparación con `==` puede fallar sobre un cálculo correcto, y la comprobación debe hacerse con una tolerancia.
+:::
+
+::: {.demostracion}
+*Demostración.* Un flotante binario representa exactamente los racionales de la forma $m\,2^{e}$ con $m$ entero de precisión acotada. El número $1/10$ no es de esa forma, porque su denominador tiene un factor 5, así que se almacena redondeado. Tómense $x=0{,}1$, $y=0{,}2$, $z=0{,}3$: los tres se redondean, y la suma de los dos primeros redondeados se redondea a su vez al sumarse. No hay ninguna razón para que ese doble redondeo coincida con el redondeo de $z$, y de hecho no coincide: la suma da un valor mayor que $\hat{z}$ en una unidad en el último lugar.
+
+Como la desigualdad procede del redondeo y no de un error de cálculo, la comprobación correcta es que la diferencia esté por debajo de una tolerancia acorde con la precisión, que es lo que hace `np.allclose`. [∎]{.fin-demo}
+:::
 
 ```{pyodide}
 import numpy as np
 
-ventas = np.array([[4200.0, 3100.0],      # sucursal 1: ene, feb
-                   [1800.0,  950.0]])      # sucursal 2: ene, feb
+# Proposicion 6.7: aritmetica modulo 2^8
+a = np.array([127], dtype=np.int8)
+uno = np.array([1], dtype=np.int8)
+with np.errstate(over="ignore"):
+    suma = a + uno
+print("int8: 127 + 1 =", int(suma[0]), " <- 128 - 256")
+print("el rango de int8 es [%d, %d]" % (np.iinfo(np.int8).min, np.iinfo(np.int8).max))
+print("es determinista, no corrupcion:", int(suma[0]) == 127 + 1 - 256)
+print()
+grande = np.array([2**62], dtype=np.int64)
+print("int64 aguanta 2^62:", int(grande[0]) == 2**62)
+print("un int de Python no tiene ancho fijo:", 2**200 > 0)
+print()
 
-# Restar el promedio de cada COLUMNA (mes)
-promedio_mes = ventas.mean(axis=0)          # shape (2,)
-print("promedio por mes:", promedio_mes)
-print("centrado por mes:\n", ventas - promedio_mes)
-
-# Restar el promedio de cada FILA (sucursal) — hay que ajustar la forma
-promedio_suc = ventas.mean(axis=1, keepdims=True)   # shape (2, 1)
-print("\npromedio por sucursal:\n", promedio_suc)
-print("centrado por sucursal:\n", ventas - promedio_suc)
+# Proposicion 6.8: el redondeo binario
+print("0.1 + 0.2 == 0.3          :", 0.1 + 0.2 == 0.3)
+print("la diferencia es          : %.1e" % abs((0.1 + 0.2) - 0.3))
+print("np.allclose(0.1+0.2, 0.3) :", bool(np.allclose(0.1 + 0.2, 0.3)))
+print()
+x = np.array([0.1, 0.2, 0.3])
+print("suma acumulada con == exacto:", bool(x[:2].sum() == x[2]))
+print("y con tolerancia            :", bool(np.isclose(x[:2].sum(), x[2])))
 ```
 
-`axis=0` recorre **hacia abajo** (colapsa filas, deja una por columna). `axis=1` recorre **a lo ancho**. `keepdims=True` conserva la dimensión como 1 en vez de eliminarla, que es lo que permite el broadcasting por filas. Memoriza esos tres: son la fuente eterna de confusión.
+El entero de ancho fijo da $-128$ y el de Python no desborda nunca, porque no tiene ancho fijo. La suma de flotantes falla la igualdad exacta por una diferencia del orden de $10^{-17}$, que es el redondeo de la representación y no un error del cálculo. Las dos proposiciones son la razón de la regla 7 del proyecto: se afirma la propiedad, no el dígito.
 
-## Ejercicio 1 — Vectorizar un bucle
+## Ejercicios
 
-Reescribe el cálculo sin ningún `for`, usando operaciones de NumPy.
+### Ejercicio 1 — Vectorizar
+
+Calcular la media diaria de cada ciudad sin ningún bucle, dividiendo los dos arrays elemento a elemento.
 
 ```{pyodide}
 #| exercise: ex_vect
 import numpy as np
+mm   = np.array([4200.0, 1800.0, 3100.0, 950.0])
+dias = np.array([140, 45, 100, 30])
 
-ventas = np.array([4200.0, 1800.0, 3100.0, 950.0])
-trx    = np.array([140, 45, 100, 30])
+# Con bucle seria:
+#   medias = []
+#   for m, d in zip(mm, dias):
+#       medias.append(m / d)
 
-# Versión con bucle (la que hay que reemplazar):
-# tickets = []
-# for v, t in zip(ventas, trx):
-#     tickets.append(v / t)
+medias = ______
 
-tickets = ______
-
-print(tickets.round(2))
-tickets.round(2)
+print(medias.round(2))
+medias.round(2)
 ```
 
 ::: {.hint exercise="ex_vect"}
-La división entre dos arrays del mismo shape es elemento a elemento. No necesitas zip ni bucle: es una sola operación.
+Dividir dos arrays de la misma forma opera elemento a elemento. Es una sola expresión, sin `zip` y sin `for`.
 :::
 
 ::: {.solution exercise="ex_vect"}
 ```{pyodide}
 import numpy as np
+mm   = np.array([4200.0, 1800.0, 3100.0, 950.0])
+dias = np.array([140, 45, 100, 30])
 
-ventas = np.array([4200.0, 1800.0, 3100.0, 950.0])
-trx    = np.array([140, 45, 100, 30])
+medias = mm / dias
 
-tickets = ventas / trx
-
-print(tickets.round(2))
-tickets.round(2)
+print(medias.round(2))
+medias.round(2)
 ```
 :::
 
@@ -222,22 +537,21 @@ tickets.round(2)
 import numpy as np
 esperado = np.array([30.0, 40.0, 31.0, 31.67])
 if isinstance(result, np.ndarray) and result.shape == (4,) and np.allclose(result, esperado, atol=0.01):
-    feedback = {"correct": True, "message": "Correcto: una sola operación vectorizada reemplaza el bucle entero.", "type": "success"}
+    feedback = {"correct": True, "message": "Correcto: una sola operación sustituye al bucle entero.", "type": "success"}
 else:
     feedback = {"correct": False, "message": f"Esperaba {esperado} y obtuve {result}.", "type": "error"}
 feedback
 ```
 
-## Ejercicio 2 — Máscara booleana
+### Ejercicio 2 — Máscara booleana
 
-Calcula la venta **total** de las sucursales cuyo ticket promedio supera 32, sin usar bucles.
+Sumar los milímetros de las ciudades cuya media diaria supera 32, sin bucles.
 
 ```{pyodide}
 #| exercise: ex_mask
 import numpy as np
-
-ventas = np.array([4200.0, 1800.0, 3100.0, 950.0])
-trx    = np.array([140, 45, 100, 30])
+mm   = np.array([4200.0, 1800.0, 3100.0, 950.0])
+dias = np.array([140, 45, 100, 30])
 
 total = ______
 
@@ -246,17 +560,16 @@ float(total)
 ```
 
 ::: {.hint exercise="ex_mask"}
-Primero construye la máscara: `(ventas / trx) > 32`. Después úsala para indexar `ventas` y suma el resultado con `.sum()`.
+`mm / dias > 32` produce un array de booleanos de la misma forma. Indexar `mm` con él selecciona los elementos donde vale cierto, y por la Proposición 6.3 devuelve una copia, que aquí da igual porque solo se suma.
 :::
 
 ::: {.solution exercise="ex_mask"}
 ```{pyodide}
 import numpy as np
+mm   = np.array([4200.0, 1800.0, 3100.0, 950.0])
+dias = np.array([140, 45, 100, 30])
 
-ventas = np.array([4200.0, 1800.0, 3100.0, 950.0])
-trx    = np.array([140, 45, 100, 30])
-
-total = ventas[(ventas / trx) > 32].sum()
+total = mm[mm / dias > 32].sum()
 
 print(total)
 float(total)
@@ -267,105 +580,113 @@ float(total)
 #| exercise: ex_mask
 #| check: true
 if abs(result - 1800.0) < 1e-6:
-    feedback = {"correct": True, "message": "Correcto: los tickets son 30.0, 40.0, 31.0 y 31.67 — solo el segundo supera 32, así que el total es su venta.", "type": "success"}
+    feedback = {"correct": True, "message": "Correcto: las medias son 30, 40, 31 y 31.67, así que solo pasa la segunda.", "type": "success"}
 elif abs(result - 10050.0) < 1e-6:
-    feedback = {"correct": False, "message": "Sumaste todas las ventas: falta aplicar la máscara al indexar.", "type": "warning"}
+    feedback = {"correct": False, "message": "Se sumaron las cuatro: falta aplicar la máscara antes de sumar.", "type": "warning"}
 else:
-    feedback = {"correct": False, "message": f"Esperaba 1800.0 y obtuve {result}. Tickets: 30.0, 40.0, 31.0, 31.67 — solo uno supera 32.", "type": "error"}
+    feedback = {"correct": False, "message": f"Esperaba 1800.0 y obtuve {result}.", "type": "error"}
 feedback
 ```
 
-## Ejercicio 3 — Broadcasting con `keepdims`
+### Ejercicio 3 — Difusión con `keepdims`
 
-Centra la matriz **por filas**: a cada elemento réstale el promedio de su propia fila.
+Centrar la matriz restando a cada fila su propia media, de modo que las medias por fila del resultado queden en cero.
 
 ```{pyodide}
 #| exercise: ex_bcast
 import numpy as np
-
-m = np.array([[10.0, 20.0, 30.0],
-              [40.0, 50.0, 60.0]])
+lluvia = np.array([[4200.0, 1800.0, 3100.0],
+                   [ 950.0, 2400.0, 1500.0]])
 
 centrada = ______
 
-print(centrada)
-centrada
+print(centrada.round(2))
+np.abs(centrada.mean(axis=1)).max()
 ```
 
 ::: {.hint exercise="ex_bcast"}
-`m.mean(axis=1)` da shape `(2,)`, que no alinea para restar por filas. Necesitas `keepdims=True` para obtener shape `(2, 1)`, que sí hace broadcasting a lo ancho.
+`lluvia.mean(axis=1)` tiene forma `(2,)`, que alineada por la derecha contra `(2, 3)` no cumple la Definición 6.5. Con `keepdims=True` la forma pasa a `(2, 1)`, que sí alinea.
 :::
 
 ::: {.solution exercise="ex_bcast"}
 ```{pyodide}
 import numpy as np
+lluvia = np.array([[4200.0, 1800.0, 3100.0],
+                   [ 950.0, 2400.0, 1500.0]])
 
-m = np.array([[10.0, 20.0, 30.0],
-              [40.0, 50.0, 60.0]])
+centrada = lluvia - lluvia.mean(axis=1, keepdims=True)
 
-centrada = m - m.mean(axis=1, keepdims=True)
-
-print(centrada)
-centrada
+print(centrada.round(2))
+np.abs(centrada.mean(axis=1)).max()
 ```
 :::
 
 ```{pyodide}
 #| exercise: ex_bcast
 #| check: true
-import numpy as np
-esperado = np.array([[-10.0, 0.0, 10.0], [-10.0, 0.0, 10.0]])
-if isinstance(result, np.ndarray) and result.shape == (2, 3) and np.allclose(result, esperado):
-    feedback = {"correct": True, "message": "Correcto. keepdims=True es lo que hace que el broadcasting alinee por filas.", "type": "success"}
-elif isinstance(result, np.ndarray):
-    feedback = {"correct": False, "message": f"Shape {result.shape}. Sin keepdims restaste por columnas en vez de por filas.", "type": "warning"}
+if result < 1e-9:
+    feedback = {"correct": True, "message": "Correcto: las medias por fila quedan en cero salvo redondeo, que es la Proposición 6.8.", "type": "success"}
 else:
-    feedback = {"correct": False, "message": "Esperaba un array de NumPy.", "type": "error"}
+    feedback = {"correct": False, "message": f"Las medias por fila deberían anularse y la mayor quedó en {result}. ¿Se centró por el eje correcto?", "type": "error"}
 feedback
 ```
 
 ## Reto
 
-En `proyectos/notebooks/F0-retos.ipynb`. Este es además el primer archivo de `scratch/`:
+En `proyectos/notebooks/F0-retos.ipynb`, sección **Py 6**:
 
-1. Crea `scratch/distancias.py` con `distancias_pares(X)`, que reciba una matriz `(n, d)` de `n` puntos en `d` dimensiones y devuelva la matriz `(n, n)` de distancias euclidianas entre todos los pares — **sin ningún bucle**, solo broadcasting. Pista: `X[:, None, :] - X[None, :, :]` tiene shape `(n, n, d)`.
-2. Escribe el test que la compara contra `scipy.spatial.distance.cdist` y falla si difieren en más de `1e-9`.
-3. Mide cuánto tarda tu versión contra una con dos `for` anidados para `n = 500`. Anota la razón en tu nota.
+1. Escribir una función que, dados `shape` y `strides`, devuelva el índice plano de unos índices cualesquiera, y comprobarla contra `np.ravel_multi_index` sobre un array transpuesto y sobre una rebanada con salto. Anotar en `50-Errores/` qué ocurre cuando el array no es contiguo.
+2. Construir un caso en el que una vista inadvertida corrompa un cálculo: normalizar por columnas una rebanada y observar el efecto en el original. Repararlo con `copy()` y comprobar con `np.shares_memory` que la reparación surtió efecto.
+3. Medir la Proposición 6.7 barriendo `int8`, `int16` y `int32`: encontrar para cada uno el menor número de duplicaciones que produce un valor negativo, y contrastarlo contra $b$. Comprobar además que el mismo cálculo con enteros de Python no desborda nunca.
 
-Esto es exactamente el patrón de todo el resto del plan: derivar, implementar sin librería, verificar contra la librería.
+## Del libro
+
+*Python for Data Analysis* 3E trata este material en su capítulo 4, *NumPy Basics: Arrays and Vectorized Computation*. El sitio del libro declara que su contenido no se puede copiar ni reproducir, así que se cita número y título y no se le atribuye ninguna frase.
+
+**Preguntas para leer el capítulo 4 con lápiz:**
+
+1. El capítulo insiste en que las rebanadas de un array son vistas, a diferencia de las de una lista. Con las Proposiciones 6.2 y 6.3, ¿qué propiedad del búfer obliga a esa diferencia, y por qué la lista no puede ofrecer vistas aunque quisiera?
+2. El capítulo presenta las funciones universales y el argumento `out`. Con la Definición 6.1, ¿qué se ahorra exactamente al escribir en un `out` existente, y en qué caso ese ahorro desaparece?
+3. La sección sobre difusión muestra el uso de `np.newaxis`. Con la Definición 6.5 y la Proposición 6.6, ¿por qué añadir un eje de tamaño 1 no cuesta memoria, y qué distingue esa operación de un `repeat`?
 
 ## Para el Cerebro
 
-Lee **McKinney cap. 4** completo con estas preguntas escritas antes:
-
-1. ¿Qué es el `strides` de un array y cómo permite que `reshape` y la transpuesta no copien datos?
-2. ¿Qué diferencia hay entre *fancy indexing* (con una lista de índices) y una rebanada, en cuanto a copias?
-3. ¿Qué hace `np.where` y por qué reemplaza un `if/else` dentro de un bucle?
+Nota nueva en `10-Conceptos/arrays-y-vistas.md`, enlazada a [[objetos-y-nombres]], [[vista]] y [[difusion]]. Conviene rehacer a mano la demostración de la Proposición 6.3: es la única de la lección que demuestra una **imposibilidad**, y ver por qué una selección arbitraria no se puede describir con un paso constante explica de un golpe la asimetría con la rebanada.
 
 ```
-¿Por qué un array de NumPy es más rápido que una lista?::Datos contiguos de un solo tipo; el bucle baja a C sin despacho por tipo ni objetos intermedios
-¿Una rebanada de array de NumPy es copia o vista?::Vista: comparte memoria con el original
-¿Cómo se fuerza una copia en NumPy?::Con el método .copy()
-¿Qué recorre axis=0 y qué recorre axis=1?::axis=0 colapsa filas (resultado por columna); axis=1 colapsa columnas (resultado por fila)
-¿Para qué sirve keepdims=True?::Conserva la dimensión colapsada como 1, permitiendo broadcasting por filas
-Regla de broadcasting::Comparar shapes de derecha a izquierda; compatibles si son iguales o si una es 1
-¿Por qué default_rng y no np.random.seed?::default_rng crea un generador independiente; la API vieja usa estado global compartido
+¿De qué está hecho un array?::Un búfer contiguo, un dtype de ancho fijo, una forma y unos pasos
+¿Cómo se localiza el elemento (i,j)?::Su desplazamiento en bytes es i·s0 + j·s1, con s los pasos
+¿Qué devuelve `a[2:6]`?::Una vista: comparte el búfer, y escribir en ella modifica a
+¿Qué devuelve `a[[2,3]]` o `a[mask]`?::Una copia con búfer propio: escribir en ella no toca a
+¿Por qué esa asimetría?::Una rebanada es una progresión aritmética; una selección arbitraria no, y un array solo sabe describir progresiones
+¿Cómo se comprueba cuál es cuál?::np.shares_memory(a, b), o mirar b.base
+¿Qué cuesta transponer?::Permutar la tupla de pasos: no se mueve ningún dato, y el coste no depende de n
+¿Cuándo alinean dos formas?::Alineadas por la derecha, cada par debe ser igual o tener algún 1
+¿Cómo se representa una dimensión difundida?::Con paso cero: todos los índices apuntan al mismo byte, así que no hay copia
+¿Para qué sirve keepdims?::Para conservar el eje reducido con tamaño 1 y que la alineación por la derecha funcione
+¿Qué da 127 + 1 en int8?::−128: la aritmética es módulo 2^8 en complemento a dos, y es determinista
+¿Por qué 0.1 + 0.2 != 0.3?::1/10 no es exacto en binario; los tres se redondean y los redondeos no coinciden
+¿Cómo se comparan flotantes?::Con tolerancia: np.isclose o np.allclose, nunca con ==
 ```
 
-::: {.callout-note}
 ## Fin de la Fase 0
 
-Con esto cierra el refresco de Python. La semana 3 arranca [Matemática · Álgebra lineal](../matematica/index.qmd) y [Estadística](../estadistica/index.qmd), intercaladas. Pídelas el viernes.
-:::
+Con esta lección se cierra el módulo de Python. Lo que sigue construye sobre él: **Matemática 1** empieza con vectores y espacios, escritos directamente sobre los arrays de esta lección, y **Estadística 1** con variables aleatorias.
 
 ::: {#fuentes .fuentes}
 ### Fuentes
 
-**Lo que esta página demuestra sola.** Los ejercicios corren en tu navegador con NumPy real vía Pyodide.
+**Lo que esta página demuestra sola.** Las Proposiciones 6.2, 6.3, 6.4, 6.6, 6.7 y 6.8 se demuestran a partir de la fórmula del desplazamiento de la Definición 6.1, y cada una se comprueba ejecutándola: que la rebanada comparte memoria y la indexación avanzada y la máscara no, y que escribir en la primera deja un 999 en el original mientras que escribir en las otras no lo altera; que la transpuesta tiene los pasos invertidos, comparte memoria y deja de ser contigua por filas; que la vista difundida a la forma `(2, 3)` tiene paso 0 en la primera dimensión y comparte memoria con los tres valores de partida, y que sin `keepdims` la resta lanza `ValueError`; que `127 + 1` en `int8` da exactamente $-128$, que es $128-256$; y que `0.1 + 0.2 == 0.3` es falso con una diferencia del orden de $10^{-17}$ mientras que `np.allclose` la acepta. Los dos visuales se contrastaron contra estas mismas afirmaciones en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** Que toda mutación se observa por todos los alias es la Proposición 1.5, aquí aplicada al búfer compartido. La distinción entre copia superficial y profunda es la Definición 1.8. Que lo que no se materializa no ocupa memoria es la Proposición 3.8. Que el entorno con versiones fijadas hace reproducibles estos números es la Proposición 5.4.
+
+**Lo que se enuncia sin demostrar.** Que NumPy elige devolver una vista siempre que la selección se pueda describir con forma y pasos: la página demuestra que **puede** describirse y comprueba que **lo hace**, pero la decisión es de la implementación. Que el redondeo de la suma de $0{,}1$ y $0{,}2$ cae una unidad en el último lugar por encima del de $0{,}3$ se comprueba numéricamente y no se deriva del estándar. El comportamiento del desbordamiento de enteros con signo se toma del modelo de complemento a dos que NumPy documenta.
 
 **Lo que viene de los libros.**
 
-- [*Python for Data Analysis* 3E](https://wesmckinney.com/book/) (McKinney — libro abierto), §4 *NumPy Basics: Arrays and Vectorized Computation*
+- [*Python for Data Analysis*, 3ª edición](https://wesmckinney.com/book/) (Wes McKinney, O'Reilly, 2022), capítulo 4 *NumPy Basics: Arrays and Vectorized Computation* — citado por número y título, sin transcribir texto.
 
-[Índices verificados el 11-09-2026 contra el índice publicado de cada libro.]{.sello}
+**Lo que es mío, no del libro.** La Proposición 6.3 escrita como un resultado de imposibilidad —una selección arbitraria no admite descripción con paso constante— en lugar de como la regla empírica «la indexación avanzada copia». La Proposición 6.6 derivada del paso cero y comprobada leyendo `strides`, que convierte la difusión en una consecuencia de la Definición 6.1 y no en una regla aparte. Y el cierre de la sección 4, que enlaza las dos trampas numéricas con la regla 7 del propio proyecto: la razón por la que estas páginas afirman propiedades y no dígitos.
+
+[Índices verificados el 12-09-2026 contra el índice publicado del sitio oficial del libro.]{.sello}
 :::

@@ -93,6 +93,7 @@ MIGRADAS = {
     "python/03-comprehensions.qmd",
     "python/04-archivos-y-errores.qmd",
     "python/05-entorno-uv-git.qmd",
+    "python/06-numpy-primer-contacto.qmd",
     "matematica/01-vectores-y-espacios.qmd",
     "matematica/02-matriz-como-transformacion.qmd",
     "matematica/03-espacio-columna.qmd",
