@@ -1,0 +1,563 @@
+---
+title: "Aprendizaje estadístico: sesgo, varianza y error"
+subtitle: "Machine Learning · Lección 1"
+nivel: L2
+modulo: ml
+fase: F2
+prereqs: [estadistica/07-estimacion, estadistica/13-regresion-primeros-principios]
+siguientes: []
+libro: "ISLP §2.2 Assessing Model Accuracy"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="ml/01-aprendizaje-estadistico"}
+[[L2]{.nivel .nivel-L2} **Derivación**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §2.2]{.item}
+[**Prereqs** [Estimación](../estadistica/07-estimacion.qmd) · [Regresión](../estadistica/13-regresion-primeros-principios.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Enunciar qué problema resuelve el aprendizaje estadístico y qué parte del error **no se puede bajar** por buen que sea el método.
+2. Demostrar la descomposición del error esperado en [sesgo]{.g} al cuadrado, varianza y [error irreducible]{.g}, y medir los tres términos por separado.
+3. Explicar por qué un modelo más [flexible]{.g data-t="flexibilidad"} baja el sesgo y sube la varianza, y por qué el error total tiene forma de U.
+4. Demostrar que el error de entrenamiento **subestima** al de prueba en una cantidad que se puede calcular, y que crece con el número de parámetros.
+5. Reconocer el [sobreajuste]{.g} por lo que es: un error de entrenamiento que baja mientras el de prueba sube.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Estadística 7**: la definición de sesgo y de varianza de un estimador, y el compromiso entre ambos. Esta lección es ese compromiso aplicado a una predicción en lugar de a un parámetro.
+- **Estadística 13**: la regresión por mínimos cuadrados, que es el modelo sobre el que se miden las dos cantidades.
+- **Estadística 17**: mirar los datos muchas veces infla el error de tipo I. Aquí reaparece como el error de entrenamiento que se mira a sí mismo.
+- **Álgebra 6**: la proyección que resuelve los mínimos cuadrados, y su número de condición.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **ML 4**: la validación cruzada existe para estimar el error de prueba sin tener un conjunto de prueba, y su razón de ser es la Proposición 1.5 de esta página.
+- **ML 5**: la regularización acepta un poco de sesgo a cambio de mucha varianza menos, que es la Proposición 1.3 usada como herramienta de diseño.
+- **ML 8**: el bagging baja varianza sin tocar el sesgo, y el boosting hace lo contrario.
+- **Estadística 16**: el Brier se descompone igual que el error cuadrático, en piezas que se leen por separado.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Símbolo | Se lee | Significado |
+|---|---|---|
+| $f$ | efe | La relación verdadera entre las variables, desconocida |
+| $\hat{f}$ | efe sombrero | Lo que el método estima a partir de los datos |
+| $\varepsilon$ | épsilon | El ruido: lo que $X$ no puede explicar de $Y$ |
+| $\sigma^2$ | sigma cuadrado | La varianza del ruido, el error irreducible |
+| $x_0$ | equis sub cero | Un punto concreto donde se evalúa el error |
+| $n$ | ene | El tamaño de la muestra de entrenamiento |
+| $p$ | pe | El número de parámetros que el modelo ajusta |
+:::
+
+## 1. El problema y su suelo
+
+::: {.definicion}
+**Definición 1.1 (el modelo del aprendizaje supervisado).** Se supone que existe una función $f$ desconocida y que cada observación cumple
+$$Y = f(X) + \varepsilon,$$
+con $\varepsilon$ independiente de $X$, de media cero y varianza $\sigma^2$. A partir de una muestra se construye una estimación $\hat{f}$, y el objetivo es que $\hat{f}(x_0)$ prediga bien el valor de $Y$ en un punto $x_0$ **que no se usó para construirla**.
+
+El término $\varepsilon$ recoge todo lo que $X$ no puede explicar: variables no medidas, error de medición, azar genuino.
+:::
+
+::: {.proposicion}
+**Proposición 1.2 (hay un suelo que ningún método baja).** Sea $\hat{f}$ cualquier estimación construida con datos independientes de la observación nueva, y sea $Y_0=f(x_0)+\varepsilon_0$ esa observación. Entonces
+$$E\big[(Y_0-\hat{f}(x_0))^2\big] \;\ge\; \sigma^2,$$
+con igualdad únicamente si $\hat{f}(x_0)=f(x_0)$ con probabilidad uno.
+:::
+
+::: {.demostracion}
+*Demostración.* Escríbase la diferencia separando el ruido nuevo:
+$$Y_0-\hat{f}(x_0) = \big(f(x_0)-\hat{f}(x_0)\big) + \varepsilon_0 .$$
+Al elevar al cuadrado y tomar esperanza aparece un doble producto, y ese doble producto se anula: $\varepsilon_0$ tiene media cero y es independiente de $\hat{f}(x_0)$, que se construyó con otros datos. Queda
+$$E\big[(Y_0-\hat{f}(x_0))^2\big] = E\big[(f(x_0)-\hat{f}(x_0))^2\big] + \sigma^2 .$$
+El primer sumando es la esperanza de un cuadrado, luego no es negativo, y se anula solo si $\hat{f}(x_0)=f(x_0)$ casi seguramente. [∎]{.fin-demo}
+:::
+
+Ese $\sigma^2$ es el **error irreducible**, y conviene tenerlo presente desde el principio: un modelo que alcanzara la verdad exacta seguiría equivocándose en esa cantidad. Comparar el error de un método contra cero es comparar contra un objetivo imposible; lo que se compara es contra $\sigma^2$.
+
+## 2. La descomposición
+
+::: {.proposicion}
+**Proposición 1.3 (sesgo, varianza y ruido).** Con las hipótesis de la Definición 1.1,
+$$E\big[(Y_0-\hat{f}(x_0))^2\big] \;=\; \underbrace{\big(E[\hat{f}(x_0)]-f(x_0)\big)^2}_{\text{sesgo}^2} \;+\; \underbrace{\operatorname{Var}\big(\hat{f}(x_0)\big)}_{\text{varianza}} \;+\; \underbrace{\sigma^2}_{\text{irreducible}},$$
+donde la esperanza y la varianza se toman **sobre las muestras de entrenamiento posibles**.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la demostración de la Proposición 1.2, basta descomponer $E[(f(x_0)-\hat{f}(x_0))^2]$. Escríbase $\mu=E[\hat{f}(x_0)]$ y súmese y réstese:
+$$f(x_0)-\hat{f}(x_0) = \big(f(x_0)-\mu\big) + \big(\mu-\hat{f}(x_0)\big).$$
+Al elevar al cuadrado y tomar esperanza, el primer término es una constante y da $(f(x_0)-\mu)^2$; el segundo da $E[(\hat{f}(x_0)-\mu)^2]=\operatorname{Var}(\hat{f}(x_0))$; y el doble producto se anula porque $E[\mu-\hat{f}(x_0)]=0$ y el otro factor es constante. Sumando el $\sigma^2$ de la Proposición 1.2 se obtiene el enunciado. [∎]{.fin-demo}
+:::
+
+Los tres términos responden a preguntas distintas. El **sesgo** pregunta si el método apunta al sitio correcto en promedio; un modelo demasiado rígido para la forma de $f$ no puede apuntar bien por muchos datos que reciba. La **varianza** pregunta cuánto se mueve la predicción al cambiar la muestra; un modelo muy flexible se adapta a cada muestra concreta y por eso se mueve mucho. El **ruido** no pregunta nada sobre el método.
+
+La celda mide los tres términos por separado sorteando dos mil muestras de entrenamiento y ajustando en cada una un polinomio, para nueve grados distintos.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(1)
+f = lambda x: np.sin(2 * x) + 0.5 * x      # la verdad, que el metodo no conoce
+sigma, n, x0, REP = 0.35, 40, 1.1, 2000
+xs = np.linspace(0, 3, n)
+
+print("%6s %11s %11s %11s %11s %11s" % ("grado", "sesgo^2", "varianza", "ruido", "suma", "MSE medido"))
+for g in range(1, 10):
+    preds = np.empty(REP)
+    for r in range(REP):
+        y = f(xs) + rng.normal(0, sigma, size=n)      # otra muestra de entrenamiento
+        preds[r] = np.polyval(np.polyfit(xs, y, g), x0)
+    sesgo2 = (preds.mean() - f(x0))**2
+    var = preds.var()
+    ynew = f(x0) + rng.normal(0, sigma, size=REP)     # una observacion NUEVA en x0
+    mse = np.mean((ynew - preds)**2)
+    print("%6d %11.5f %11.5f %11.5f %11.5f %11.5f"
+          % (g, sesgo2, var, sigma**2, sesgo2 + var + sigma**2, mse))
+
+print()
+print("el ruido sigma^2 = %.4f es el mismo en las nueve filas" % sigma**2)
+print("y ningun grado consigue un MSE por debajo de el (Proposicion 1.2)")
+```
+
+Las dos últimas columnas coinciden dentro del error de simulación: **la suma de los tres términos es el error medido**, que es la Proposición 1.3 comprobada nueve veces. No coinciden en todos los decimales porque ambas son estimaciones Monte Carlo con dos mil réplicas, y esa discrepancia es lo que se declara en las afirmaciones de esta página, no un dígito concreto.
+
+Leyendo la tabla por columnas se ve el compromiso. El sesgo al cuadrado cae de $0{,}305$ en el grado 1 hasta anularse a partir del grado 5. La varianza hace lo contrario: sube de $0{,}003$ a $0{,}020$. Y el total, que es la suma, baja primero y sube después.
+
+```{=html}
+<div class="viz-sv">
+  <div class="controles">
+    <label>Flexibilidad (grado) <input id="sv-g" type="range" min="1" max="9" step="1" value="3"> <span id="sv-g-v">3</span></label>
+    <label>Qué mostrar
+      <select id="sv-modo">
+        <option value="0" selected>las tres piezas</option>
+        <option value="1">solo el error total</option>
+      </select>
+    </label>
+  </div>
+  <svg id="sv-svg" viewBox="0 0 620 300" role="img" aria-label="A la izquierda una barra apilada con sesgo al cuadrado, varianza y ruido para el grado elegido. A la derecha la curva del error total frente al grado, con forma de U y un marcador sobre el grado elegido."></svg>
+  <p class="lectura" id="sv-lectura"></p>
+</div>
+<style>
+.viz-sv { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-sv .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-sv label { display: flex; align-items: center; gap: .4rem; }
+.viz-sv input[type=range] { width: 140px; padding: 0; }
+.viz-sv select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-sv svg { width: 100%; height: auto; display: block; }
+.viz-sv .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_S = "#B45309", C_V = "#0F6E68", C_R = "#6B7280";
+  var svg = document.getElementById("sv-svg"), lec = document.getElementById("sv-lectura");
+  var cg = document.getElementById("sv-g"), eg = document.getElementById("sv-g-v");
+  var cm = document.getElementById("sv-modo");
+
+  // Valores MEDIDOS por la celda de esta pagina: [grado, sesgo^2, varianza]
+  var MED = [[1,0.30469,0.00339],[2,0.21784,0.00607],[3,0.00680,0.00890],
+             [4,0.00513,0.00882],[5,0.00001,0.01370],[6,0.00000,0.01276],
+             [7,0.00001,0.01619],[8,0.00000,0.01876],[9,0.00000,0.01989]];
+  var RUIDO = 0.1225;
+
+  // Marco constante, anclado a una escala fija y no a los datos.
+  var BX = 60, BW = 90, BY0 = 60, BH = 190, VMAX = 0.46;
+  var PX0 = 250, PX1 = 580, PY0 = 250, PY1 = 60;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function alt(v) { return v / VMAX * BH; }
+  function px(g) { return PX0 + (g - 1) / 8 * (PX1 - PX0); }
+  function py(v) { return PY0 - v / VMAX * (PY0 - PY1); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var g = +cg.value, modo = +cm.value;
+    eg.textContent = String(g);
+    var d = MED[g - 1], s2 = d[1], va = d[2], tot = s2 + va + RUIDO;
+
+    // --- barra apilada ---
+    svg.appendChild(el("text", { x: BX, y: 44, "font-size": 11.5, fill: C_T, opacity: 0.72 },
+      "grado " + g));
+    var y = BY0 + BH;
+    var piezas = modo === 0
+      ? [[RUIDO, C_R, "ruido"], [va, C_V, "varianza"], [s2, C_S, "sesgo²"]]
+      : [[tot, C_T, "error total"]];
+    for (var i = 0; i < piezas.length; i++) {
+      var h = alt(piezas[i][0]);
+      y -= h;
+      svg.appendChild(el("rect", { x: BX, y: y.toFixed(1), width: BW, height: Math.max(h, 0.5).toFixed(1),
+        fill: piezas[i][1], "fill-opacity": 0.30, stroke: piezas[i][1], "stroke-width": 1.4 }));
+      if (h > 12) {
+        svg.appendChild(el("text", { x: BX + BW + 8, y: (y + h / 2 + 4).toFixed(1), "font-size": 11,
+          fill: piezas[i][1] }, piezas[i][2] + " " + piezas[i][0].toFixed(4)));
+      }
+    }
+    svg.appendChild(el("line", { x1: BX - 6, y1: BY0 + BH, x2: BX + BW + 6, y2: BY0 + BH,
+      stroke: C_L, "stroke-width": 1.2 }));
+
+    // --- curva del error total, siempre completa ---
+    var dpath = "";
+    for (var k = 0; k < 9; k++) {
+      var t = MED[k][1] + MED[k][2] + RUIDO;
+      dpath += (k ? " L" : "M") + px(k + 1).toFixed(1) + " " + py(t).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: dpath, stroke: C_T, "stroke-width": 1.8, fill: "none",
+      "stroke-opacity": 0.75 }));
+    // el suelo del error irreducible
+    svg.appendChild(el("line", { x1: PX0, y1: py(RUIDO).toFixed(1), x2: PX1, y2: py(RUIDO).toFixed(1),
+      stroke: C_R, "stroke-width": 1.3, "stroke-dasharray": "5 4" }));
+    svg.appendChild(el("text", { x: PX1 + 4, y: py(RUIDO) + 4, "font-size": 10.5, fill: C_R }, "σ²"));
+
+    for (var q = 1; q <= 9; q += 2) {
+      svg.appendChild(el("text", { x: px(q).toFixed(1), y: PY0 + 18, "text-anchor": "middle",
+        "font-size": 10.5, fill: C_T, opacity: 0.6 }, String(q)));
+    }
+    svg.appendChild(el("text", { x: (PX0 + PX1) / 2, y: PY0 + 36, "text-anchor": "middle",
+      "font-size": 11, fill: C_T, opacity: 0.7 }, "grado del polinomio"));
+
+    // marcador sobre la curva: se desplaza con el control
+    svg.appendChild(el("circle", { cx: px(g).toFixed(1), cy: py(tot).toFixed(1), r: 6,
+      fill: C_T, stroke: "#fff", "stroke-width": 1.6 }));
+
+    lec.innerHTML = "Grado <strong>" + g + "</strong>: sesgo² <strong>" + s2.toFixed(4) +
+      "</strong>, varianza <strong>" + va.toFixed(4) + "</strong>, ruido " + RUIDO.toFixed(4) +
+      ". Error total <strong>" + tot.toFixed(4) + "</strong>. " +
+      (g <= 2 ? "Modelo demasiado rígido: casi todo el error es sesgo."
+              : (g >= 7 ? "Modelo demasiado flexible: el sesgo ya es cero y solo crece la varianza."
+                        : "Cerca del mínimo: el sesgo ya cayó y la varianza aún no ha subido."));
+  }
+
+  cg.addEventListener("input", dibujar);
+  cm.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+La curva de la derecha nunca baja de la línea discontinua, que es $\sigma^2$. Esa línea es la Proposición 1.2 dibujada, y explica por qué el mínimo de la U está donde está: a partir del grado 5 el sesgo ya es cero y lo único que puede hacer el error es subir.
+
+## 3. Por qué el error de entrenamiento engaña
+
+::: {.definicion}
+**Definición 1.4 (error de entrenamiento y error de prueba).** El **error de entrenamiento** es el error medio sobre las mismas observaciones que se usaron para construir $\hat{f}$. El **error de prueba** es el error medio sobre observaciones nuevas, no usadas en la construcción.
+:::
+
+::: {.proposicion}
+**Proposición 1.5 (el error de entrenamiento subestima, y se sabe cuánto).** Sea un modelo lineal con $p$ parámetros ajustado por mínimos cuadrados sobre $n$ observaciones con ruido de varianza $\sigma^2$. Entonces
+$$E[\text{MSE}_{\text{entrena}}] = \sigma^2\frac{n-p}{n}, \qquad E[\text{MSE}_{\text{prueba}}] = \sigma^2\frac{n+p}{n},$$
+de modo que la brecha entre ambos vale exactamente $2\sigma^2 p/n$ y **crece con el número de parámetros**.
+:::
+
+::: {.demostracion}
+*Demostración.* El ajuste por mínimos cuadrados proyecta $y$ sobre el subespacio generado por las $p$ columnas (lección de Álgebra 6), y el residuo es la proyección sobre el complemento ortogonal, de dimensión $n-p$. La esperanza de la suma de cuadrados residual es entonces $\sigma^2(n-p)$, y dividiendo por $n$ se obtiene la primera fórmula.
+
+Para la segunda, evalúese el ajuste sobre observaciones nuevas en los mismos puntos. El error en cada punto es el ruido nuevo más la desviación del ajuste, que son independientes; la esperanza del cuadrado es $\sigma^2$ más la varianza del ajuste en ese punto. Sumando sobre los $n$ puntos, la varianza total del ajuste es $\sigma^2 p$, porque la proyección vive en un subespacio de dimensión $p$. Queda $\sigma^2 n + \sigma^2 p$, y dividiendo por $n$ sale la segunda fórmula.
+
+Restando, la brecha es $2\sigma^2p/n$. [∎]{.fin-demo}
+:::
+
+La celda mide las dos cantidades en el caso más desfavorable imaginable: cuando la verdad es que **ningún predictor sirve**. Así, todo el ajuste que el modelo consiga es ruido memorizado.
+
+```{pyodide}
+import numpy as np
+
+# La verdad es beta = 0: NO hay nada que aprender. Cualquier ajuste es ruido.
+rng = np.random.default_rng(1)
+n, sigma, REP = 60, 1.0, 3000
+
+print("%4s %11s %11s %11s %11s %11s %11s"
+      % ("p", "entrena", "teoria", "prueba", "teoria", "brecha", "teoria"))
+for p in [2, 6, 15]:
+    tr = np.empty(REP); te = np.empty(REP)
+    for r in range(REP):
+        X = np.column_stack([np.ones(n)] + [rng.normal(size=n) for _ in range(p - 1)])
+        y = rng.normal(0, sigma, size=n)
+        b = np.linalg.lstsq(X, y, rcond=None)[0]
+        tr[r] = np.mean((y - X @ b)**2)
+        te[r] = np.mean((rng.normal(0, sigma, size=n) - X @ b)**2)
+    print("%4d %11.4f %11.4f %11.4f %11.4f %11.4f %11.4f"
+          % (p, tr.mean(), sigma**2 * (n - p) / n,
+             te.mean(), sigma**2 * (n + p) / n,
+             te.mean() - tr.mean(), 2 * sigma**2 * p / n))
+
+print()
+print("el error de entrenamiento BAJA al anadir variables inutiles")
+print("y el de prueba SUBE, en la misma cantidad y en sentido contrario")
+```
+
+Las tres parejas de columnas cuadran con la teoría. Lo que hay que mirar es la dirección: al pasar de 2 a 15 parámetros **el error de entrenamiento baja** de $0{,}96$ a $0{,}75$, y **el de prueba sube** de $1{,}03$ a $1{,}25$. Y la verdad de este experimento es que no hay nada que aprender.
+
+Ahí está todo el asunto. Un error de entrenamiento que mejora no dice nada por sí solo, porque **mejora incluso cuando el modelo está aprendiendo ruido**. La única cifra que informa es la medida sobre datos que el modelo no vio.
+
+::: {.definicion}
+**Definición 1.6 (sobreajuste).** Un modelo **sobreajusta** cuando, al aumentar su flexibilidad, su error de entrenamiento sigue bajando mientras el de prueba sube. Por la Proposición 1.3, eso ocurre cuando el aumento de varianza supera a la reducción de sesgo.
+:::
+
+```{=html}
+<div class="viz-tr">
+  <div class="controles">
+    <label>Parámetros p <input id="tr-p" type="range" min="1" max="40" step="1" value="15"> <span id="tr-p-v">15</span></label>
+    <label>Tamaño de la muestra
+      <select id="tr-n">
+        <option value="60" selected>n = 60</option>
+        <option value="120">n = 120</option>
+        <option value="300">n = 300</option>
+      </select>
+    </label>
+  </div>
+  <svg id="tr-svg" viewBox="0 0 620 280" role="img" aria-label="Las dos curvas del error esperado frente al numero de parametros: la de entrenamiento baja y la de prueba sube, separandose. Un marcador senala el valor elegido y la brecha entre ambas."></svg>
+  <p class="lectura" id="tr-lectura"></p>
+</div>
+<style>
+.viz-tr { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-tr .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-tr label { display: flex; align-items: center; gap: .4rem; }
+.viz-tr input[type=range] { width: 150px; padding: 0; }
+.viz-tr select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-tr svg { width: 100%; height: auto; display: block; }
+.viz-tr .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_TR = "#0F6E68", C_TE = "#B45309";
+  var svg = document.getElementById("tr-svg"), lec = document.getElementById("tr-lectura");
+  var cp = document.getElementById("tr-p"), ep = document.getElementById("tr-p-v");
+  var cn = document.getElementById("tr-n");
+
+  // Marco constante: escala fija de 0 a 2, e indices de 1 a 40.
+  var X0 = 60, X1 = 560, Y0 = 230, Y1 = 40, PMAX = 40, VMAX = 2.0;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(p) { return X0 + (p - 1) / (PMAX - 1) * (X1 - X0); }
+  function py(v) { return Y0 - v / VMAX * (Y0 - Y1); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var p = +cp.value, n = +cn.value;
+    ep.textContent = String(p);
+    // Formulas EXACTAS de la Proposicion 1.5, con sigma = 1
+    var tr = (n - p) / n, te = (n + p) / n;
+
+    svg.appendChild(el("line", { x1: X0, y1: Y0, x2: X1, y2: Y0, stroke: C_L, "stroke-width": 1.2 }));
+    svg.appendChild(el("line", { x1: X0, y1: Y0, x2: X0, y2: Y1, stroke: C_L, "stroke-width": 1.2 }));
+    svg.appendChild(el("line", { x1: X0, y1: py(1).toFixed(1), x2: X1, y2: py(1).toFixed(1),
+      stroke: C_L, "stroke-width": 1.1, "stroke-dasharray": "5 4" }));
+    svg.appendChild(el("text", { x: X1 + 4, y: py(1) + 4, "font-size": 10.5, fill: C_T, opacity: 0.6 }, "σ²"));
+
+    var dtr = "", dte = "";
+    for (var k = 1; k <= PMAX; k++) {
+      dtr += (k === 1 ? "M" : " L") + px(k).toFixed(1) + " " + py(Math.max(0, (n - k) / n)).toFixed(1);
+      dte += (k === 1 ? "M" : " L") + px(k).toFixed(1) + " " + py((n + k) / n).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: dtr, stroke: C_TR, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("path", { d: dte, stroke: C_TE, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("text", { x: X1 + 4, y: py((n + PMAX) / n) + 4, "font-size": 11, fill: C_TE }, "prueba"));
+    svg.appendChild(el("text", { x: X1 + 4, y: py((n - PMAX) / n) + 4, "font-size": 11, fill: C_TR }, "entrena"));
+
+    // la brecha en el punto elegido: segmento vertical que se desplaza
+    svg.appendChild(el("line", { x1: px(p).toFixed(1), y1: py(tr).toFixed(1),
+      x2: px(p).toFixed(1), y2: py(te).toFixed(1), stroke: C_T, "stroke-width": 1.4,
+      "stroke-dasharray": "3 3" }));
+    svg.appendChild(el("circle", { cx: px(p).toFixed(1), cy: py(tr).toFixed(1), r: 5, fill: C_TR,
+      stroke: "#fff", "stroke-width": 1.4 }));
+    svg.appendChild(el("circle", { cx: px(p).toFixed(1), cy: py(te).toFixed(1), r: 5, fill: C_TE,
+      stroke: "#fff", "stroke-width": 1.4 }));
+
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y0 + 34, "text-anchor": "middle",
+      "font-size": 11, fill: C_T, opacity: 0.7 }, "número de parámetros p"));
+
+    lec.innerHTML = "Con <strong>n = " + n + "</strong> y <strong>p = " + p +
+      "</strong>: el error de entrenamiento esperado es <strong>" + tr.toFixed(3) +
+      "</strong> y el de prueba <strong>" + te.toFixed(3) + "</strong>. La brecha vale <strong>" +
+      (te - tr).toFixed(3) + "</strong> = 2p/n. " +
+      (n > 60 ? "Con más datos la misma p abre menos brecha: es el denominador." :
+                "Añadir parámetros separa las dos curvas en proporción a p.");
+  }
+
+  cp.addEventListener("input", dibujar);
+  cn.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+Las dos curvas salen de las fórmulas exactas de la Proposición 1.5, no de una simulación. Cambiar el tamaño de la muestra mueve las dos a la vez: la brecha es $2p/n$, así que **más datos permiten más parámetros con la misma penalización**. Esa razón, y no una regla de estilo, es la que hay detrás de la costumbre de exigir muchas más observaciones que variables.
+
+## Ejercicios
+
+### Ejercicio 1 — Dónde está el mínimo
+
+Localizar el grado que minimiza el error total, usando la descomposición en lugar del error medido.
+
+```{pyodide}
+#| exercise: ex_min
+import numpy as np
+
+sesgo2 = np.array([0.30469, 0.21784, 0.00680, 0.00513, 0.00001, 0.00000, 0.00001, 0.00000, 0.00000])
+varianza = np.array([0.00339, 0.00607, 0.00890, 0.00882, 0.01370, 0.01276, 0.01619, 0.01876, 0.01989])
+ruido = 0.1225
+
+total = ______
+mejor_grado = ______
+
+print("errores totales:", np.round(total, 5))
+print("grado optimo:", mejor_grado)
+int(mejor_grado)
+```
+
+::: {.hint exercise="ex_min"}
+Por la Proposición 1.3 el total es la suma de los tres términos, y el ruido es el mismo para todos. `np.argmin` devuelve la posición del mínimo, empezando en cero; los grados empiezan en uno.
+:::
+
+::: {.solution exercise="ex_min"}
+```{pyodide}
+import numpy as np
+
+sesgo2 = np.array([0.30469, 0.21784, 0.00680, 0.00513, 0.00001, 0.00000, 0.00001, 0.00000, 0.00000])
+varianza = np.array([0.00339, 0.00607, 0.00890, 0.00882, 0.01370, 0.01276, 0.01619, 0.01876, 0.01989])
+ruido = 0.1225
+
+total = sesgo2 + varianza + ruido
+mejor_grado = int(np.argmin(total)) + 1
+
+print("errores totales:", np.round(total, 5))
+print("grado optimo:", mejor_grado)
+int(mejor_grado)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_min
+#| check: true
+if result == 6:
+    feedback = {"correct": True, "message": "Correcto: el grado 6 tiene sesgo nulo y la menor varianza entre los que lo consiguen.", "type": "success"}
+elif result == 5:
+    feedback = {"correct": False, "message": "Muy cerca: el grado 5 ya anula el sesgo, pero el 6 tiene algo menos de varianza.", "type": "warning"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 6 y obtuve {result}. Recuerda que argmin cuenta desde cero.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2 — Cuántos parámetros caben
+
+Calcular cuántos parámetros se pueden permitir para que la brecha entre entrenamiento y prueba no supere $0{,}1\,\sigma^2$, con $n = 500$.
+
+```{pyodide}
+#| exercise: ex_p
+n = 500
+brecha_maxima = 0.1        # en unidades de sigma^2
+
+p_maximo = ______
+
+print("con n =", n, "caben hasta", p_maximo, "parametros")
+int(p_maximo)
+```
+
+::: {.hint exercise="ex_p"}
+Por la Proposición 1.5 la brecha vale $2p/n$ en unidades de $\sigma^2$. Despejar $p$ y quedarse con la parte entera.
+:::
+
+::: {.solution exercise="ex_p"}
+```{pyodide}
+n = 500
+brecha_maxima = 0.1
+
+p_maximo = int(brecha_maxima * n / 2)
+
+print("con n =", n, "caben hasta", p_maximo, "parametros")
+int(p_maximo)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_p
+#| check: true
+if result == 25:
+    feedback = {"correct": True, "message": "Correcto: 2p/n = 0.1 da p = 25, o sea una observación por cada 20.", "type": "success"}
+elif result == 50:
+    feedback = {"correct": False, "message": "Falta el factor 2: la brecha es 2p/n, no p/n.", "type": "error"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 25 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 1**:
+
+1. Repetir la medición de la Proposición 1.3 en varios puntos $x_0$ a la vez y comprobar que el grado que minimiza el error **depende del punto**: en el interior del rango gana un grado más alto que en los extremos. Relacionarlo con la varianza de un polinomio cerca de los bordes.
+2. Comprobar la Proposición 1.5 con un modelo cuya verdad **no** sea nula, y verificar que las fórmulas siguen valiendo: el sesgo del modelo correcto no altera la brecha, que sigue siendo $2\sigma^2p/n$. Anotar en `50-Errores/` por qué eso es sorprendente a primera vista.
+3. Medir qué le pasa a la descomposición cuando $n$ crece con el grado fijo. Comprobar que la varianza baja como $1/n$ y el sesgo no se mueve, y deducir qué parte del error se arregla con más datos y cuál no.
+
+## Del libro
+
+*An Introduction to Statistical Learning with Applications in Python* trata este material en §2.2 *Assessing Model Accuracy*, dentro de su capítulo 2 *Statistical Learning*. El libro es de acceso libre; aquí se cita número y título y no se transcribe texto.
+
+**Preguntas para leer §2.2 con lápiz:**
+
+1. La sección presenta la descomposición del error esperado en sus tres piezas. Con la Proposición 1.3, ¿por qué el término del ruido aparece sumado y no multiplicado, y qué hipótesis de la Definición 1.1 es la que lo permite?
+2. §2.2 muestra la curva del error de prueba con su forma de U y la del error de entrenamiento bajando siempre. Con la Proposición 1.5, ¿por qué la segunda no tiene mínimo, y qué habría que penalizarle para que lo tuviera?
+3. La sección distingue el error de entrenamiento del de prueba. Con la Definición 1.4 y la 1.6, ¿por qué un modelo que interpola exactamente los datos tiene error de entrenamiento cero y sin embargo puede ser el peor de todos?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/sesgo-varianza.md`, enlazada a [[estimacion]] y a [[sintesis-estadistica]]. Conviene rehacer a mano la demostración de la Proposición 1.3: son dos veces el mismo truco —sumar y restar una cantidad para que el doble producto se anule— y reconocerlo hace que la descomposición deje de parecer una fórmula que memorizar.
+
+```
+¿Qué supone el modelo del aprendizaje supervisado?::Y = f(X) + ε, con ε de media cero, varianza σ² e independiente de X
+¿Qué es el error irreducible?::σ², la varianza del ruido. Ningún método baja de ahí, ni siquiera el que acierte f exactamente
+¿Cuáles son las tres piezas del error esperado?::Sesgo al cuadrado, varianza del estimador, y el ruido σ²
+¿Sobre qué se toman la esperanza y la varianza?::Sobre las muestras de entrenamiento posibles, no sobre los puntos
+¿Qué mide el sesgo?::Si el método apunta al sitio correcto en promedio; un modelo rígido no puede, por muchos datos que reciba
+¿Qué mide la varianza?::Cuánto se mueve la predicción al cambiar la muestra; un modelo flexible se mueve mucho
+¿Por qué el error total tiene forma de U?::Al ganar flexibilidad el sesgo cae y la varianza sube; el mínimo está donde se cruzan las pendientes
+¿Cuánto vale el error de entrenamiento esperado?::σ²(n−p)/n: BAJA al añadir parámetros, aunque sean inútiles
+¿Y el de prueba?::σ²(n+p)/n: SUBE en la misma cantidad
+¿Cuánto vale la brecha?::2σ²p/n, y por eso más datos permiten más parámetros
+¿Qué es sobreajustar?::Que el error de entrenamiento baje mientras el de prueba sube
+¿Por qué no basta con mirar el error de entrenamiento?::Mejora incluso cuando el modelo solo memoriza ruido; con β = 0 baja de 0.96 a 0.75
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** Las Proposiciones 1.2, 1.3 y 1.5 se demuestran aquí a partir de la Definición 1.1 y de la geometría de la proyección de Álgebra 6, y las tres se comprueban ejecutándolas: que la suma de sesgo al cuadrado, varianza y ruido reproduce el error medido en los nueve grados, dentro del error de simulación de dos mil réplicas; que el sesgo cae de $0{,}305$ a cero mientras la varianza sube de $0{,}003$ a $0{,}020$, con el mínimo del total en el grado 6; y que con $\beta=0$, es decir sin nada que aprender, el error de entrenamiento baja de $0{,}96$ a $0{,}75$ al pasar de 2 a 15 parámetros mientras el de prueba sube de $1{,}03$ a $1{,}25$, cuadrando las seis cifras con $\sigma^2(n\mp p)/n$. Los dos visuales usan esas mismas cantidades: el primero las medidas por la celda, el segundo las fórmulas exactas.
+
+**Lo que se usa de otras lecciones sin repetir.** La definición de sesgo y varianza de un estimador es de Estadística 7. Que los mínimos cuadrados proyectan sobre el espacio columna, y que el residuo vive en el complemento ortogonal de dimensión $n-p$, es de Álgebra 6. La regresión lineal es de Estadística 13.
+
+**Lo que se enuncia sin demostrar.** Que la esperanza de la suma de cuadrados residual de una proyección vale $\sigma^2$ por la dimensión del complemento: se usa en la Proposición 1.5 apelando a la geometría, sin desarrollar el argumento con la distribución de formas cuadráticas, que Estadística 14 declara en sus propias Fuentes. Las discrepancias entre la suma de los tres términos y el error medido son error de Monte Carlo y no se cuantifican con un intervalo.
+
+**Lo que viene de los libros.**
+
+- [*An Introduction to Statistical Learning with Applications in Python*](https://www.statlearning.com/) (James, Witten, Hastie, Tibshirani & Taylor, Springer, 2023), §2.2 *Assessing Model Accuracy* — citada por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La elección de medir los tres términos **por separado** en vez de dibujar solo la curva del error, que es lo que convierte la descomposición en algo observable. La Proposición 1.5 con sus dos fórmulas cerradas y la brecha $2\sigma^2p/n$ explícita, en lugar del enunciado cualitativo habitual. Y el experimento con $\beta=0$: no es un caso extremo escogido para asustar sino el único en que la conclusión es inequívoca, porque cualquier mejora del error de entrenamiento es, con certeza, ruido memorizado.
+
+[Índice de ISLP verificado el 13-09-2026 contra los marcadores del PDF oficial.]{.sello}
+:::
