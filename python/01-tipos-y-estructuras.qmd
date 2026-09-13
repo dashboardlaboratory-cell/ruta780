@@ -1,140 +1,666 @@
 ---
-title: "Tipos y estructuras de datos"
+title: "Objetos, nombres y estructuras de datos"
 subtitle: "Python · Lección 1"
 nivel: L2
 modulo: python
 fase: F0
 prereqs: []
 siguientes: [python/02-funciones-y-scope]
-libro: "McKinney 3E, cap. 2–3"
+libro: "McKinney 3E, cap. 3 Built-In Data Structures, Functions, and Files"
 engine: markdown
 ---
 
 ::: {.meta-leccion data-leccion="python/01-tipos-y-estructuras"}
 [[L2]{.nivel .nivel-L2} **Derivación**]{.item}
 [**Fase** F0]{.item}
-[**Libro** McKinney cap. 2–3]{.item}
+[**Libro** McKinney cap. 3]{.item}
 [**Prereqs** ninguno]{.item}
 :::
 
-## La idea
+## Objetivo
 
-En Python una variable no *contiene* un valor: **apunta** a un objeto. Esa sola frase explica el 80 % de los bugs que te van a morder en pandas y NumPy. Todo lo demás en esta lección es consecuencia.
+Al terminar esta lección se puede:
 
-Los objetos se parten en dos familias: **inmutables** (no se pueden modificar, solo reemplazar) y **mutables** (se modifican en su lugar, y todos los que apuntan a ellos ven el cambio).
+1. Enunciar qué es un [objeto]{.g} en Python —[identidad]{.g}, tipo y valor— y demostrar que la asignación vincula nombres a objetos sin copiarlos.
+2. Demostrar la asimetría de `+=` entre un tipo [mutable]{.g} y uno [inmutable]{.g}, que es el origen del [alias]{.g} inadvertido.
+3. Demostrar por qué una [copia superficial]{.g} deja de proteger en cuanto la colección tiene un nivel de anidamiento.
+4. Demostrar que un tipo mutable con igualdad por contenido no puede ser [hashable]{.g} sin dejar sus claves inalcanzables, que es la razón exacta por la que una [lista]{.g} no sirve de clave y una [tupla]{.g} sí.
+5. Contar el trabajo de `in` sobre una lista y sobre un [conjunto]{.g}, y demostrar que `append` cuesta `O(1)` [amortizado]{.g data-t="coste amortizado"}.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Ninguna lección previa.** Esta es la puerta de entrada de la ruta, y arranca del modelo de datos del lenguaje, que se toma como la especificación a partir de la cual se demuestra todo lo demás.
+- De ahí salen las tres piezas que el resto de esta lección usa sin volver a justificarlas: que todo dato es un objeto con identidad constante, que un nombre es un vínculo y no un cajón, y que `==` lo decide el tipo mediante `__eq__`.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 2**: el argumento por defecto mutable y la captura por cierre son la Proposición 1.5 actuando dentro de una función.
+- **Python 3**: una comprehension construye un objeto nuevo en cada iteración, y la Proposición 1.9 explica cuándo ese objeto nuevo sigue compartiendo interior.
+- **Python 6**: una vista de NumPy es exactamente un alias sobre el mismo búfer, y `copy()` frente a `view()` es la Definición 1.8 con otro nombre.
+- **Estadística 11**: el remuestreo bootstrap sortea índices y construye muestras; hacerlo con listas anidadas sin copiar es el fallo que la Proposición 1.9 predice.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| `x = obj` | — | Vincula el nombre `x` al objeto `obj`; nunca copia |
+| `id(x)` | id de equis | La identidad del objeto al que `x` está vinculado |
+| `x is y` | equis is ye | Cierto exactamente cuando `id(x) == id(y)` |
+| `x == y` | equis igual igual ye | Igualdad de valor; la decide `type(x).__eq__` |
+| `type(x)` | — | El tipo del objeto, constante durante su vida |
+| `hash(x)` | — | El entero con el que una tabla hash coloca a `x` |
+| $n$ | ene | El número de elementos de una colección |
+| `O(1)`, `O(n)` | o de uno, o de ene | Cota superior del trabajo en función de $n$ |
+:::
+
+## 1. Objetos, nombres y vínculos
+
+::: {.definicion}
+**Definición 1.1 (objeto).** Todo dato de Python es un **objeto**, caracterizado por tres cosas:
+
+- su **identidad**, un entero que lo distingue de cualquier otro objeto vivo y que `id()` devuelve. La identidad se fija al crearlo y no cambia nunca;
+- su **tipo**, que `type()` devuelve y que tampoco cambia;
+- su **valor**, que según el tipo puede cambiar o no.
+
+El operador `is` compara identidades: `x is y` equivale por definición a `id(x) == id(y)`.
+:::
+
+::: {.definicion}
+**Definición 1.2 (nombre y vínculo).** Un **nombre** es un identificador del programa. La asignación `x = e` evalúa la expresión `e`, obtiene un objeto, y establece un **vínculo** entre el nombre `x` y ese objeto. Dos nombres vinculados al mismo objeto se llaman **alias** el uno del otro.
+:::
+
+La Definición 1.2 describe una operación sobre la tabla de nombres, no sobre la memoria del objeto. Esa distinción es la que produce el primer resultado.
+
+::: {.proposicion}
+**Proposición 1.3 (la asignación no copia).** Tras ejecutar `b = a`, la expresión `a is b` vale `True`.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Definición 1.2, la asignación evalúa primero el lado derecho. Evaluar un nombre consiste en seguir su vínculo y devolver el objeto vinculado, de modo que evaluar `a` devuelve el objeto $O$ al que `a` está vinculado, sin construir nada. La asignación establece entonces un vínculo entre `b` y ese mismo $O$. Ahora los dos nombres están vinculados a $O$, luego `id(a)` e `id(b)` son ambos la identidad de $O$, que por la Definición 1.1 es un único entero. Por tanto `id(a) == id(b)`, que es la definición de `a is b`. [∎]{.fin-demo}
+:::
+
+La proposición vale para todo tipo, mutable o no, y para todo tamaño de objeto: el coste de una asignación no depende de cuántos elementos tenga la colección asignada, porque no se recorre ninguno.
+
+## 2. Mutabilidad: cuándo el alias se nota
+
+::: {.definicion}
+**Definición 1.4 (mutable e inmutable).** Un tipo es **mutable** si admite alguna operación que cambia el valor de uno de sus objetos conservando su identidad. Es **inmutable** en caso contrario.
 
 | Inmutables | Mutables |
 |---|---|
-| `int`, `float`, `bool`, `str`, `tuple`, `frozenset` | `list`, `dict`, `set`, y casi todo objeto propio |
+| `int`, `float`, `bool`, `str`, `tuple`, `frozenset`, `bytes` | `list`, `dict`, `set`, `bytearray` |
+:::
 
-## Por qué importa: el experimento
+::: {.proposicion}
+**Proposición 1.5 (toda mutación es visible por todos los alias).** Si `a is b` y una operación muta el objeto a través de `b`, entonces el cambio se observa también a través de `a`.
+:::
 
-Corre esto y mira los identificadores. `id()` devuelve la dirección del objeto.
+::: {.demostracion}
+*Demostración.* Sea $O$ el objeto al que ambos nombres están vinculados. Por la Definición 1.4, mutar conserva la identidad de $O$, así que después de la operación $O$ sigue siendo el mismo objeto y ningún vínculo se ha tocado: la mutación actúa sobre el objeto, no sobre la tabla de nombres. Evaluar `a` sigue devolviendo $O$ por la Definición 1.2, y $O$ es ahora el objeto ya modificado. Luego el cambio se observa por `a`. [∎]{.fin-demo}
+:::
+
+Las dos proposiciones anteriores se comprueban en una celda. El punto que conviene mirar es `id`, no el contenido: lo que la Proposición 1.3 afirma es una igualdad de identidades.
 
 ```{pyodide}
 a = [1, 2, 3]
-b = a              # b NO es una copia: es otro nombre para el mismo objeto
-b.append(4)
+b = a                      # Proposicion 1.3: vincula b al MISMO objeto
+b.append(4)                # Definicion 1.4: list es mutable, esto conserva la identidad
 
 print("a =", a)
 print("b =", b)
-print("¿mismo objeto?", a is b, "| id iguales:", id(a) == id(b))
+print("a is b            :", a is b)
+print("id(a) == id(b)    :", id(a) == id(b))
+print("la mutacion por b se ve en a:", a == [1, 2, 3, 4])
 ```
 
-Ahora el mismo experimento con un inmutable:
+La celda imprime `a is b            : True` y `a = [1, 2, 3, 4]`: un solo objeto con dos nombres, y una mutación que los dos ven.
+
+::: {.proposicion}
+**Proposición 1.6 (asimetría de `+=`).** Sea `b = a`. Si `a` está vinculado a una lista, tras `b += [9]` sigue cumpliéndose `a is b`, y `a` termina con el elemento añadido. Si `a` está vinculado a un entero, tras `b += 9` la expresión `a is b` pasa a valer `False` y el valor al que `a` está vinculado no cambia.
+:::
+
+::: {.demostracion}
+*Demostración.* La forma `b += e` se resuelve en dos etapas. Primero Python busca `type(b).__iadd__`; si existe, la llama y vincula `b` al objeto que devuelva. Si no existe, evalúa `b + e` mediante `__add__` y vincula `b` al objeto que resulte.
+
+`list` define `__iadd__`, y esa implementación extiende la lista en el sitio y devuelve **el mismo objeto**. La revinculación posterior vincula `b` a un objeto al que ya estaba vinculado, de modo que no cambia nada: `a is b` se conserva, y por la Proposición 1.5 el elemento añadido se observa desde `a`.
+
+`int` no define `__iadd__`, porque por la Definición 1.4 es inmutable y ninguna operación puede cambiar el valor de un entero conservando su identidad. Python evalúa entonces `b + 9`, que construye un objeto entero **nuevo**, y vincula `b` a él. El vínculo de `a` no participa en esa operación y sigue apuntando al objeto original, cuyo valor no se ha tocado. Luego `a is b` es falso y `a` conserva su valor. [∎]{.fin-demo}
+:::
+
+El mismo razonamiento explica la diferencia entre `b += [9]` y `b = b + [9]` sobre una lista: la segunda forma no pasa por `__iadd__`, construye una lista nueva y revincula solo a `b`, con lo que `a` queda intacta. Las dos expresiones se leen casi igual y hacen cosas distintas.
 
 ```{pyodide}
-x = 10
-y = x
-y += 1             # no modifica el 10: crea un 11 nuevo y reapunta y
+# Caso mutable: += pasa por __iadd__, que muta en el sitio
+a = [1, 2]; b = a
+b += [9]
+print("lista   | a =", a, "| a is b:", a is b)
 
-print("x =", x, "| y =", y)
-print("¿mismo objeto?", x is y)
+# Caso inmutable: no hay __iadd__, se construye un objeto nuevo
+c = 10; d = c
+d += 9
+print("entero  | c =", c, "| d =", d, "| c is d:", c is d)
+
+# Misma lista, pero con b = b + [...] en vez de b += [...]
+e = [1, 2]; f = e
+f = f + [9]
+print("lista + | e =", e, "| f =", f, "| e is f:", e is f)
+
+print()
+print("list tiene __iadd__:", hasattr(list, "__iadd__"))
+print("int tiene __iadd__ :", hasattr(int, "__iadd__"))
 ```
 
-::: {.derivacion}
-**Por qué `y += 1` no toca a `x`**
+La última pareja de líneas es la demostración ejecutada: `list` define `__iadd__` e `int` no, y de ahí sale todo lo demás. Con `f = f + [9]` la lista original queda en `e = [1, 2]`, mientras que con `b += [9]` termina en `a = [1, 2, 9]`.
 
-::: {.paso}
-`x = 10` crea el objeto `10` y hace que el nombre `x` apunte a él.
-:::
-::: {.paso}
-`y = x` hace que `y` apunte **al mismo objeto**. No hay copia. Hasta aquí, idéntico al caso de la lista.
-:::
-::: {.paso}
-`y += 1` sobre un `int` no puede modificar el objeto — los enteros son inmutables. Python evalúa `10 + 1`, obtiene un objeto `11` nuevo, y reapunta `y` hacia él. `x` sigue apuntando al `10` original.
-:::
-::: {.paso}
-En la lista, `b.append(4)` **sí** puede modificar el objeto, porque las listas son mutables. No se crea nada nuevo: `a` y `b` siguen apuntando al mismo objeto, que ahora tiene cuatro elementos.
+El visual siguiente recorre las tres operaciones paso a paso sobre una lista anidada, dibujando los nombres a la izquierda y los objetos a la derecha. El marco es fijo: lo que se mueve son los vínculos y los objetos que se crean.
+
+```{=html}
+<div class="viz-vinculos">
+  <div class="controles">
+    <label>Operación
+      <select id="tv-op">
+        <option value="0" selected>b = a</option>
+        <option value="1">b = a[:]</option>
+        <option value="2">b = deepcopy(a)</option>
+      </select>
+    </label>
+    <label>Paso <input id="tv-paso" type="range" min="0" max="3" step="1" value="2"> <span id="tv-paso-v">2</span></label>
+  </div>
+  <svg id="tv-svg" viewBox="0 0 620 300" role="img" aria-label="A la izquierda los nombres a y b como cajas; a la derecha los objetos de lista con sus celdas y las sublistas a las que apuntan. Las flechas muestran a que objeto esta vinculado cada nombre segun la operacion elegida y el paso de la ejecucion."></svg>
+  <p class="lectura" id="tv-lectura"></p>
+</div>
+<style>
+.viz-vinculos { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-vinculos .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-vinculos label { display: flex; align-items: center; gap: .4rem; }
+.viz-vinculos input[type=range] { width: 130px; padding: 0; }
+.viz-vinculos select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-vinculos svg { width: 100%; height: auto; display: block; }
+.viz-vinculos .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+.viz-vinculos .lectura code { font-size: .95em; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_A = "#0F6E68", C_B = "#B45309", C_L = "var(--r-linea,#ddd)";
+  var svg = document.getElementById("tv-svg"), lec = document.getElementById("tv-lectura");
+  var cop = document.getElementById("tv-op"), cpa = document.getElementById("tv-paso");
+  var epa = document.getElementById("tv-paso-v");
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // Marco constante: las coordenadas no dependen de los datos dibujados.
+  var NX = 42, NYA = 74, NYB = 150, NW = 54, NH = 30;
+  var OX = 224, OYA = 62, OYB = 138, CW = 40, CH = 26;
+  var SX = 430, SY1 = 40, SY2 = 96, SY3 = 178, SY4 = 234;
+
+  function caja(x, y, w, h, txt, color) {
+    svg.appendChild(el("rect", { x: x, y: y, width: w, height: h, rx: 4,
+      fill: "none", stroke: color, "stroke-width": 1.4 }));
+    svg.appendChild(el("text", { x: x + w / 2, y: y + h / 2 + 4.5, "text-anchor": "middle",
+      "font-size": 13, fill: C_T, "font-family": "var(--bs-font-monospace,monospace)" }, txt));
+  }
+  function flecha(x1, y1, x2, y2, color) {
+    svg.appendChild(el("path", { d: "M" + x1.toFixed(1) + " " + y1.toFixed(1) +
+      " L" + x2.toFixed(1) + " " + y2.toFixed(1), stroke: color, "stroke-width": 1.6, fill: "none" }));
+    var ang = Math.atan2(y2 - y1, x2 - x1);
+    svg.appendChild(el("path", { d: "M" + x2.toFixed(1) + " " + y2.toFixed(1) +
+      " L" + (x2 - 8 * Math.cos(ang - 0.4)).toFixed(1) + " " + (y2 - 8 * Math.sin(ang - 0.4)).toFixed(1) +
+      " L" + (x2 - 8 * Math.cos(ang + 0.4)).toFixed(1) + " " + (y2 - 8 * Math.sin(ang + 0.4)).toFixed(1) + " Z",
+      fill: color, stroke: "none" }));
+  }
+  function fila(x, y, vals, color) {
+    for (var i = 0; i < vals.length; i++) {
+      svg.appendChild(el("rect", { x: x + i * CW, y: y, width: CW, height: CH,
+        fill: "none", stroke: color, "stroke-width": 1.2 }));
+      svg.appendChild(el("text", { x: x + i * CW + CW / 2, y: y + CH / 2 + 4.5,
+        "text-anchor": "middle", "font-size": 12, fill: C_T,
+        "font-family": "var(--bs-font-monospace,monospace)" }, vals[i]));
+    }
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var op = +cop.value, paso = +cpa.value;
+    epa.textContent = String(paso);
+
+    svg.appendChild(el("rect", { x: 16, y: 16, width: 588, height: 268, rx: 8,
+      fill: "none", stroke: C_L }));
+    svg.appendChild(el("text", { x: 42, y: 40, "font-size": 11.5, fill: C_T, opacity: 0.62 }, "nombres"));
+    svg.appendChild(el("text", { x: 224, y: 40, "font-size": 11.5, fill: C_T, opacity: 0.62 }, "listas externas"));
+    svg.appendChild(el("text", { x: 430, y: 26, "font-size": 11.5, fill: C_T, opacity: 0.62 }, "sublistas"));
+
+    // Estado del modelo: a = [[1,2],[3]]; la sublista 0 recibe un 9 en el paso 3.
+    var mut = paso >= 3;
+    var s1 = mut ? "[1, 2, 9]" : "[1, 2]";
+    var hayB = paso >= 1;
+    var copiaB = hayB && op > 0;          // b apunta a una lista externa propia
+    var propias = hayB && op === 2;       // b tiene ademas sublistas propias
+
+    caja(NX, NYA, NW, NH, "a", C_A);
+    if (hayB) caja(NX, NYB, NW, NH, "b", C_B);
+
+    fila(OX, OYA, ["*", "*"], C_A);
+    if (copiaB) fila(OX, OYB, ["*", "*"], C_B);
+
+    // sublistas de a
+    caja(SX, SY1, 116, CH, s1, C_A);
+    caja(SX, SY2, 116, CH, "[3]", C_A);
+    // sublistas propias de b, solo con deepcopy
+    if (propias) {
+      caja(SX, SY3, 116, CH, "[1, 2]", C_B);
+      caja(SX, SY4, 116, CH, "[3]", C_B);
+    }
+
+    // vinculos de los nombres
+    flecha(NX + NW, NYA + NH / 2, OX - 6, OYA + CH / 2, C_A);
+    if (hayB) flecha(NX + NW, NYB + NH / 2, OX - 6, (copiaB ? OYB : OYA) + CH / 2, C_B);
+
+    // celdas de a hacia sus sublistas
+    flecha(OX + CW / 2, OYA, SX - 6, SY1 + CH / 2, C_A);
+    flecha(OX + CW + CW / 2, OYA + CH, SX - 6, SY2 + CH / 2, C_A);
+    // celdas de la lista externa de b
+    if (copiaB) {
+      flecha(OX + CW / 2, OYB + CH, SX - 6, (propias ? SY3 : SY1) + CH / 2, C_B);
+      flecha(OX + CW + CW / 2, OYB + CH, SX - 6, (propias ? SY4 : SY2) + CH / 2, C_B);
+    }
+
+    var nom = ["b = a", "b = a[:]", "b = deepcopy(a)"][op];
+    var txt;
+    if (paso === 0) {
+      txt = "Paso 0. Solo existe <code>a = [[1, 2], [3]]</code>: una lista externa de dos celdas, cada una vinculada a una sublista.";
+    } else if (paso === 1) {
+      txt = "Paso 1. <code>" + nom + "</code>. " + (op === 0
+        ? "No se construye ningún objeto: <code>b</code> queda vinculado a la misma lista externa (Proposición 1.3)."
+        : (op === 1
+          ? "Se construye una lista externa nueva, pero sus dos celdas quedan vinculadas a las <em>mismas</em> sublistas (Definición 1.8)."
+          : "Se construyen la lista externa y las dos sublistas, todas nuevas."));
+    } else if (paso === 2) {
+      txt = "Paso 2. A punto de ejecutar <code>b[0].append(9)</code>. La sublista que va a mutar es la que alcanza la primera celda de <code>b</code>: " +
+        (op === 2 ? "una sublista propia de <code>b</code>." : "la misma que alcanza la primera celda de <code>a</code>.");
+    } else {
+      txt = "Paso 3. Tras <code>b[0].append(9)</code>, " + (op === 2
+        ? "<code>a</code> conserva <code>[[1, 2], [3]]</code>: la copia profunda es la única que aísla."
+        : "<code>a</code> pasa a ser <code>[[1, 2, 9], [3]]</code>. " + (op === 0
+          ? "Con el alias era esperable (Proposición 1.5); "
+          : "Con la copia superficial sorprende, y es la Proposición 1.9: ") +
+          "la mutación ocurrió dentro de una sublista compartida.");
+    }
+    lec.innerHTML = txt;
+  }
+
+  cop.addEventListener("change", dibujar);
+  cpa.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+Con `b = a` los dos nombres alcanzan la misma lista externa desde el paso 1. Con `b = a[:]` hay dos listas externas y dos únicas sublistas, compartidas. Solo con la copia profunda hay cuatro sublistas, y es el único caso en que el paso 3 deja `a` intacta.
+
+## 3. Identidad e igualdad
+
+::: {.proposicion}
+**Proposición 1.7 (identidad implica igualdad, salvo que el tipo lo impida).** Si `a is b` y `type(a)` hereda `__eq__` de `object` sin redefinirla, entonces `a == b` vale `True`. La hipótesis sobre `__eq__` es necesaria: existe un objeto `x` con `x is x` verdadero y `x == x` falso.
 :::
 
-La regla: `+=` sobre inmutable **reapunta**; un método mutador sobre mutable **modifica en su lugar**.
+::: {.demostracion}
+*Demostración.* Para la primera parte, `object.__eq__(a, b)` devuelve `True` cuando `a is b`, y `NotImplemented` en cualquier otro caso. Si el tipo no la redefine, evaluar `a == b` con `a is b` cierto invoca esa implementación y obtiene `True`.
+
+Para la segunda, tómese `x = float("nan")`. Su tipo redefine `__eq__` siguiendo la norma IEEE 754, que exige que un NaN no sea igual a nada, ni siquiera a sí mismo. Como `x` está vinculado a un único objeto, `x is x` vale `True` por la Definición 1.1, mientras que `x == x` vale `False`. [∎]{.fin-demo}
 :::
 
-## `==` contra `is`
-
-- `==` pregunta **¿valen lo mismo?**
-- `is` pregunta **¿son el mismo objeto en memoria?**
+El recíproco tampoco vale: dos objetos distintos pueden ser iguales, que es el caso corriente de dos listas con el mismo contenido. Las dos preguntas son independientes, y de ahí la regla práctica: `is` se reserva para `None`, `True` y `False`, que son objetos únicos, y toda comparación de valor se escribe con `==`.
 
 ```{pyodide}
 p = [1, 2, 3]
 q = [1, 2, 3]
+print("p == q:", p == q, "| p is q:", p is q)     # iguales y distintos
 
-print("p == q:", p == q)    # True: mismo contenido
-print("p is q:", p is q)    # False: dos objetos distintos
+x = float("nan")
+print("x is x:", x is x, "| x == x:", x == x)     # el mismo objeto, y no igual
+
+print()
+print("None es un objeto unico:", None is None)
+print("hereda __eq__ de object :", list.__eq__ is not object.__eq__)
+print("float redefine __eq__   :", float.__eq__ is not object.__eq__)
 ```
 
-::: {.callout-warning}
-## El único uso correcto de `is`
+La salida muestra `p == q: True | p is q: False` y `x is x: True | x == x: False`: las dos implicaciones fallan en direcciones opuestas, y por eso ninguna de las dos preguntas sustituye a la otra.
 
-`is` se usa con `None`, `True` y `False`, y con nada más. Escribe `if x is None:`, nunca `if x == None:`. Para comparar valores, siempre `==`.
+## 4. Copias
+
+::: {.definicion}
+**Definición 1.8 (copia superficial y copia profunda).** Dada una colección `x`, una **copia superficial** es un objeto `y` del mismo tipo, distinto de `x`, cuyos elementos son los **mismos objetos** que los de `x`. Una **copia profunda** es un objeto `y` distinto de `x` cuyos elementos son copias profundas de los de `x`, de modo que ningún objeto alcanzable desde `y` es alcanzable desde `x`.
+
+Producen copias superficiales `x[:]`, `x.copy()`, `list(x)` y `copy.copy(x)`; la copia profunda la da `copy.deepcopy(x)`.
 :::
 
-## Copias: superficial contra profunda
+::: {.proposicion}
+**Proposición 1.9 (alcance de la copia superficial).** Sea `y` una copia superficial de una lista `x`. Entonces `y is not x`, pero `y[i] is x[i]` para todo índice `i`. En consecuencia, si el elemento `x[i]` es de tipo mutable, toda mutación suya se observa desde `y`, y la copia no aísla.
+:::
+
+::: {.demostracion}
+*Demostración.* Que `y is not x` y que `y[i] is x[i]` son la Definición 1.8 escrita con `is`. Supóngase ahora que `x[i]` es mutable y se muta. Los nombres `x[i]` e `y[i]` alcanzan el mismo objeto, así que la situación es la de la Proposición 1.5 con esos dos nombres en lugar de `a` y `b`, y el cambio se observa desde `y[i]`. [∎]{.fin-demo}
+:::
+
+La copia superficial protege exactamente un nivel: el de la colección externa. Añadir o quitar elementos de `y` deja `x` intacta, porque eso muta la colección externa, que sí es propia. Mutar un elemento compartido atraviesa la copia. Una colección de objetos inmutables no distingue entre las dos copias, porque ninguno de sus elementos admite mutación.
 
 ```{pyodide}
 import copy
 
-original  = [[1, 2], [3, 4]]
-superf    = original[:]                 # copia superficial: nueva lista externa...
-profunda  = copy.deepcopy(original)     # ...copia profunda: todo nuevo
+x = [[1, 2], [3, 4]]
+superficial = x[:]
+profunda = copy.deepcopy(x)
 
-original[0].append(99)                  # modifico una sublista del original
+print("superficial is x     :", superficial is x)
+print("superficial[0] is x[0]:", superficial[0] is x[0])   # Proposicion 1.9
+print("profunda[0] is x[0]   :", profunda[0] is x[0])
+print()
 
-print("original:", original)
-print("superficial:", superf, "  <- también cambió")
-print("profunda:", profunda, "  <- intacta")
+x[0].append(99)                      # mutar un elemento compartido
+print("x           :", x)
+print("superficial :", superficial)
+print("profunda    :", profunda)
+print()
+
+superficial.append([5, 6])           # mutar la coleccion externa, que si es propia
+print("tras append en la copia, x sigue con", len(x), "elementos")
 ```
 
-La copia superficial duplica el contenedor de afuera, pero sus elementos siguen siendo **los mismos objetos**. Con listas de listas, diccionarios anidados o DataFrames con objetos adentro, esto te va a morder.
+La copia superficial acompaña a `x` en `[[1, 2, 99], [3, 4]]` y la profunda se queda en `[[1, 2], [3, 4]]`. Añadir un elemento a la copia superficial deja `x` con 2 elementos, que es el nivel donde la copia sí protege.
 
-## Las cuatro estructuras
+## 5. Claves: qué exige un diccionario
+
+::: {.definicion}
+**Definición 1.10 (hashable).** Un objeto es **hashable** si cumple dos condiciones:
+
+1. `hash(obj)` existe y devuelve el mismo entero durante toda la vida del objeto;
+2. la igualdad es compatible con el hash: si `a == b`, entonces `hash(a) == hash(b)`.
+
+Un [diccionario]{.g} coloca cada clave en un cubo determinado por `hash`, y dentro del cubo la localiza comparando con `==`. Las dos condiciones son justamente lo que esa búsqueda necesita.
+:::
+
+::: {.proposicion}
+**Proposición 1.11 (por qué una lista no puede ser clave).** Sea `T` un tipo mutable cuya igualdad compara contenidos y cuyo hash se calcula a partir del contenido. Entonces existe una secuencia de operaciones legales tras la cual una clave de tipo `T` insertada en un diccionario queda **inalcanzable**: ninguna consulta la encuentra, aunque siga almacenada.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea `k` un objeto de tipo `T` con contenido $C$, y sea `d = {k: v}`. En la inserción el diccionario guarda la entrada en el cubo determinado por $h_1=\texttt{hash}(k)$, que por hipótesis se calcula a partir de $C$. Mútese ahora `k` para que su contenido pase a ser $C'\ne C$; la Definición 1.4 garantiza que la identidad se conserva, de modo que el diccionario sigue guardando la misma entrada, en el mismo cubo $h_1$.
+
+Hay dos formas de consultar, y ninguna llega:
+
+- consultar por el contenido nuevo, `d[k']` con `k'` de contenido $C'$, calcula $h_2=\texttt{hash}(k')$ a partir de $C'$. Como el hash depende del contenido, en general $h_2\ne h_1$, y la búsqueda mira en un cubo donde la entrada no está;
+- consultar por el contenido viejo, con `k''` de contenido $C$, calcula $h_1$ y llega al cubo correcto, pero allí compara con `==` contra la clave almacenada, cuyo contenido es ahora $C'$. La comparación falla, y la búsqueda concluye que la clave no está.
+
+La entrada ocupa espacio y aparece al recorrer el diccionario, y ninguna consulta la recupera. Para evitar este estado, Python declara `list.__hash__ = None`, con lo que `hash()` sobre una lista lanza `TypeError` y el problema se detecta en la inserción en vez de silenciosamente después. `tuple` sí es hashable, porque es inmutable y $C$ no puede cambiar; pero una tupla que contenga una lista deja de serlo, porque su hash se calcula a partir del de sus elementos. [∎]{.fin-demo}
+:::
 
 ```{pyodide}
-lista = [1, 2, 2, 3]          # ordenada, mutable, admite repetidos
-tupla = (1, 2, 2, 3)          # ordenada, INMUTABLE, admite repetidos
-conj  = {1, 2, 2, 3}          # sin orden, mutable, SIN repetidos
-dicc  = {"a": 1, "b": 2}      # pares clave→valor, mutable, claves únicas
+# Un tipo mutable con igualdad e hash por contenido: exactamente la hipotesis
+# de la Proposicion 1.11. Python lo prohibe; aqui se construye a mano para ver
+# por que lo prohibe.
+class ListaHashable(list):
+    def __hash__(self):
+        return hash(tuple(self))
 
-print("lista:", lista)
-print("tupla:", tupla)
-print("conjunto:", conj, " <- el 2 repetido desapareció")
-print("dict:", dicc, "| claves:", list(dicc.keys()))
+k = ListaHashable([1, 2])
+d = {k: "valor"}
+print("recien insertada, se encuentra:", d[ListaHashable([1, 2])])
+
+k.append(3)                                   # mutacion legal: la identidad se conserva
+
+print()
+print("la entrada sigue almacenada:", len(d) == 1)
+for clave in d:
+    print("y al recorrer el dict aparece:", list(clave))
+try:
+    d[ListaHashable([1, 2, 3])]               # consulta por el contenido nuevo
+    print("encontrada por contenido nuevo")
+except KeyError:
+    print("por contenido nuevo -> KeyError: el cubo es otro")
+try:
+    d[ListaHashable([1, 2])]                  # consulta por el contenido viejo
+    print("encontrada por contenido viejo")
+except KeyError:
+    print("por contenido viejo -> KeyError: el cubo acierta y el == falla")
+
+print()
+print("por eso list no es hashable:", list.__hash__ is None)
+print("y tuple si lo es           :", tuple.__hash__ is not None)
+try:
+    hash((1, [2]))
+except TypeError:
+    print("una tupla con una lista dentro -> TypeError")
 ```
 
-Costo de buscar un elemento — importa cuando la colección crece:
+Las dos consultas fallan por motivos distintos —una por el cubo, la otra por la comparación— y la entrada sigue ahí, visible al recorrer el diccionario. Eso es la Proposición 1.11 ejecutada.
 
-| Operación | `list` | `set` / `dict` |
-|---|---|---|
-| `x in coleccion` | O(n) — recorre todo | O(1) — tabla hash |
-| Insertar al final | O(1) | O(1) |
-| Mantener orden | sí | sí (dict, desde 3.7) |
+## 6. Qué cuesta cada estructura
 
-Si vas a preguntar "¿está este elemento?" muchas veces, usa `set`. Con 100 000 elementos la diferencia es de segundos a microsegundos.
+::: {.definicion}
+**Definición 1.12 (las cuatro estructuras integradas).** Para una colección de $n$ elementos:
 
-## Ejercicio 1 — Aliasing
+| | Orden | Mutable | Repetidos | Claves |
+|---|---|---|---|---|
+| `list` | sí | sí | sí | — |
+| `tuple` | sí | no | sí | — |
+| `set` | de inserción | sí | no | hashables |
+| `dict` | de inserción | sí | claves únicas | hashables |
+:::
 
-Haz que `copia` sea una copia **independiente** de `datos`, de modo que agregarle un elemento no altere el original.
+::: {.proposicion}
+**Proposición 1.13 (coste de la pertenencia).** Sea $n$ el número de elementos. Evaluar `x in lista` realiza $n$ comparaciones en el peor caso, que es el de un elemento ausente. Evaluar `x in conjunto` realiza un cálculo de `hash` y un número esperado `O(1)` de comparaciones, con independencia de $n$.
+:::
+
+::: {.demostracion}
+*Demostración.* Sobre una lista, `in` recorre las posiciones en orden y compara con `==` hasta hallar una igual. Si el elemento está ausente, ninguna comparación tiene éxito y el recorrido llega al final habiendo hecho exactamente $n$ comparaciones; ese es el peor caso, y es $\Theta(n)$.
+
+Sobre un conjunto, `in` calcula `hash(x)`, que por la Definición 1.10 no depende de $n$, y con él obtiene el cubo. Bajo la hipótesis de reparto uniforme y factor de carga acotado —que la implementación mantiene redimensionando la tabla cuando se llena—, el número esperado de elementos por cubo está acotado por una constante, así que el número esperado de comparaciones también lo está. [∎]{.fin-demo}
+:::
+
+La demostración se puede ejecutar sin cronómetro. Basta con un tipo que cuente cuántas veces se le compara y cuántas se le pide el hash: el conteo es exacto y da igual en toda máquina, mientras que un tiempo medido no lo sería (regla 7).
+
+```{pyodide}
+class Espia(int):
+    """Un entero que lleva la cuenta de sus comparaciones y de sus hashes."""
+    eq = 0
+    hsh = 0
+    def __eq__(self, otro):
+        Espia.eq += 1
+        return int(self) == int(otro)
+    def __hash__(self):
+        Espia.hsh += 1
+        return int(self)
+
+for n in [100, 1000, 10000]:
+    lista = [Espia(i) for i in range(n)]
+    conjunto = set(lista)
+    ausente = Espia(-1)
+
+    Espia.eq = Espia.hsh = 0
+    ausente in lista
+    eq_lista = Espia.eq
+
+    Espia.eq = Espia.hsh = 0
+    ausente in conjunto
+    eq_conj, hsh_conj = Espia.eq, Espia.hsh
+
+    print("n = %6d | comparaciones en lista: %6d | en conjunto: %d (con %d hash)"
+          % (n, eq_lista, eq_conj, hsh_conj))
+
+print()
+print("en la lista el trabajo es exactamente n; en el conjunto no depende de n")
+```
+
+Las comparaciones sobre la lista son $100$, $1000$ y $10\,000$ —exactamente $n$, como afirma la demostración— y sobre el conjunto son $0$ en los tres casos, con un único cálculo de `hash`. Lo que separa a las dos estructuras no es una constante multiplicativa sino la forma misma de la función: una crece con $n$ y la otra no.
+
+::: {.proposicion}
+**Proposición 1.14 (`append` cuesta `O(1)` amortizado).** Una lista que crece reservando espacio para $g\cdot m$ elementos cuando se llena con $m$, para un factor fijo $g>1$, realiza en $n$ operaciones `append` consecutivas menos de $\dfrac{g}{g-1}\,n$ copias de elementos en total. El coste medio por `append` está por tanto acotado por una constante.
+:::
+
+::: {.demostracion}
+*Demostración.* Las reubicaciones ocurren cuando la capacidad se agota. Si la capacidad tras la $k$-ésima reubicación es $m_k$, la siguiente ocurre al llegar a $m_k$ elementos y copia $m_k$ de ellos. Las capacidades forman una progresión geométrica de razón $g$, así que las reubicaciones que caben antes de llegar a $n$ elementos copian $m_0, m_0g, m_0g^2,\dots$ elementos, todas ellas con $m_k< n$.
+
+Sumando hacia atrás desde la última, cuyo tamaño es menor que $n$, el total copiado está acotado por
+$$n + \frac{n}{g} + \frac{n}{g^2} + \cdots = n\sum_{j\ge0} g^{-j} = \frac{n}{1-1/g} = \frac{g}{g-1}\,n.$$
+El total es lineal en $n$, luego el coste medio por operación está acotado por $g/(g-1)$, una constante que no depende de $n$. [∎]{.fin-demo}
+:::
+
+Con $g=2$ la cota es $2n$: cada elemento se copia, en media, menos de dos veces por muchos `append` que se hagan. La cota degenera cuando $g\to1$: una lista que creciera de uno en uno tendría $g/(g-1)\to\infty$, y en efecto copiaría del orden de $n^2/2$ elementos.
+
+```{pyodide}
+def copias_totales(n, g):
+    """Copias hechas por n append con crecimiento de factor g."""
+    capacidad, largo, copias = 1, 0, 0
+    while largo < n:
+        if largo == capacidad:
+            copias += largo                      # reubicar: copiar lo que hay
+            capacidad = max(capacidad + 1, int(capacidad * g))
+        largo += 1
+    return copias
+
+n = 100000
+print("%6s  %12s  %10s  %12s" % ("g", "copias", "copias/n", "cota g/(g-1)"))
+for g in [2.0, 1.5, 1.125]:
+    c = copias_totales(n, g)
+    print("%6.3f  %12d  %10.4f  %12.4f" % (g, c, c / n, g / (g - 1)))
+print()
+print("crecimiento de uno en uno (g = 1), que la cota no cubre:")
+c1 = copias_totales(10000, 1.0)
+print("  n = 10000 -> %d copias, es decir n^2/2 = %d" % (c1, 10000 * 9999 // 2))
+print("  copias/n =", c1 // 10000, "en vez de una constante pequena")
+```
+
+Con $g=2$ el total sale en $1{,}3107$ copias por `append`, por debajo de la cota $2$; con $g=1{,}125$ sube a $8{,}2353$ frente a una cota de $9$. Creciendo de uno en uno, las $10\,000$ operaciones cuestan $49\,995\,000$ copias, que es $n^2/2$: el coste medio pasa a ser proporcional a $n$ y la propiedad amortizada desaparece.
+
+El visual siguiente contrasta las dos formas de coste de la Proposición 1.13. El marco está anclado a los ejes, no a los datos: lo que se mueve al cambiar $n$ es el marcador sobre la curva.
+
+```{=html}
+<div class="viz-coste">
+  <div class="controles">
+    <label>Tamaño n <input id="cv-n" type="range" min="2" max="5" step="0.05" value="3"> <span id="cv-n-v">1 000</span></label>
+    <label>Estructura
+      <select id="cv-est">
+        <option value="0" selected>list</option>
+        <option value="1">set</option>
+      </select>
+    </label>
+  </div>
+  <svg id="cv-svg" viewBox="0 0 620 300" role="img" aria-label="Comparaciones que hace el operador in frente al tamano de la coleccion, en ejes logaritmicos. Una recta creciente para la lista y una recta horizontal para el conjunto, con un marcador sobre la curva de la estructura elegida en el tamano elegido."></svg>
+  <p class="lectura" id="cv-lectura"></p>
+</div>
+<style>
+.viz-coste { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-coste .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-coste label { display: flex; align-items: center; gap: .4rem; }
+.viz-coste input[type=range] { width: 150px; padding: 0; }
+.viz-coste select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-coste svg { width: 100%; height: auto; display: block; }
+.viz-coste .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_LI = "#B45309", C_SE = "#0F6E68";
+  var svg = document.getElementById("cv-svg"), lec = document.getElementById("cv-lectura");
+  var cn = document.getElementById("cv-n"), en = document.getElementById("cv-n-v");
+  var ce = document.getElementById("cv-est");
+
+  // Marco constante, anclado a los ejes y no a los datos (regla 19b).
+  var X0 = 70, X1 = 560, Y0 = 252, Y1 = 40;
+  var EMIN = 2, EMAX = 5;           // n de 100 a 100 000
+  var VMIN = 0, VMAX = 5;           // log10 de las comparaciones
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(e) { return X0 + (e - EMIN) / (EMAX - EMIN) * (X1 - X0); }
+  function py(v) { return Y0 - (v - VMIN) / (VMAX - VMIN) * (Y0 - Y1); }
+  function miles(x) {
+    return Math.round(x).toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var e = +cn.value, est = +ce.value, n = Math.pow(10, e);
+    en.textContent = miles(n);
+
+    // ejes
+    svg.appendChild(el("line", { x1: X0, y1: Y0, x2: X1, y2: Y0, stroke: C_L, "stroke-width": 1.2 }));
+    svg.appendChild(el("line", { x1: X0, y1: Y0, x2: X0, y2: Y1, stroke: C_L, "stroke-width": 1.2 }));
+    for (var k = EMIN; k <= EMAX; k++) {
+      svg.appendChild(el("line", { x1: px(k), y1: Y0, x2: px(k), y2: Y0 + 5, stroke: C_L }));
+      svg.appendChild(el("text", { x: px(k), y: Y0 + 19, "text-anchor": "middle",
+        "font-size": 11, fill: C_T, opacity: 0.7 }, miles(Math.pow(10, k))));
+    }
+    for (var v = VMIN; v <= VMAX; v++) {
+      svg.appendChild(el("line", { x1: X0 - 5, y1: py(v), x2: X0, y2: py(v), stroke: C_L }));
+      svg.appendChild(el("text", { x: X0 - 10, y: py(v) + 4, "text-anchor": "end",
+        "font-size": 11, fill: C_T, opacity: 0.7 }, miles(Math.pow(10, v))));
+    }
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y0 + 38, "text-anchor": "middle",
+      "font-size": 11.5, fill: C_T, opacity: 0.72 }, "n, elementos de la colección"));
+    svg.appendChild(el("text", { x: 18, y: 26, "font-size": 11.5, fill: C_T, opacity: 0.72 },
+      "comparaciones que hace  x in coleccion  (peor caso)"));
+
+    // las dos curvas, siempre dibujadas
+    svg.appendChild(el("path", { d: "M" + px(EMIN).toFixed(1) + " " + py(EMIN).toFixed(1) +
+      " L" + px(EMAX).toFixed(1) + " " + py(EMAX).toFixed(1),
+      stroke: C_LI, "stroke-width": est === 0 ? 2.4 : 1.2, fill: "none",
+      "stroke-opacity": est === 0 ? 1 : 0.35 }));
+    svg.appendChild(el("path", { d: "M" + px(EMIN).toFixed(1) + " " + py(0).toFixed(1) +
+      " L" + px(EMAX).toFixed(1) + " " + py(0).toFixed(1),
+      stroke: C_SE, "stroke-width": est === 1 ? 2.4 : 1.2, fill: "none",
+      "stroke-opacity": est === 1 ? 1 : 0.35 }));
+    svg.appendChild(el("text", { x: px(EMAX) + 6, y: py(EMAX) + 4, "font-size": 11.5,
+      fill: C_LI, opacity: est === 0 ? 1 : 0.5 }, "list: n"));
+    svg.appendChild(el("text", { x: px(EMAX) + 6, y: py(0) + 4, "font-size": 11.5,
+      fill: C_SE, opacity: est === 1 ? 1 : 0.5 }, "set: 1"));
+
+    // marcador sobre la curva elegida
+    var val = est === 0 ? e : 0;
+    var cx = px(e), cy = py(val);
+    svg.appendChild(el("line", { x1: cx, y1: Y0, x2: cx, y2: cy, stroke: C_L, "stroke-width": 1,
+      "stroke-dasharray": "3 3" }));
+    svg.appendChild(el("circle", { cx: cx.toFixed(1), cy: cy.toFixed(1), r: 6,
+      fill: est === 0 ? C_LI : C_SE, stroke: "#fff", "stroke-width": 1.6 }));
+
+    var comp = est === 0 ? Math.round(n) : 1;
+    lec.innerHTML = "Con <strong>n = " + miles(n) + "</strong>, buscar un elemento ausente en una <code>" +
+      (est === 0 ? "list" : "set") + "</code> cuesta <strong>" + miles(comp) + "</strong> comparaci" +
+      (comp === 1 ? "ón" : "ones") + ". " + (est === 0
+        ? "La recta tiene pendiente 1 en ejes logarítmicos, que es la firma de un coste proporcional a n (Proposición 1.13)."
+        : "La recta es horizontal: el trabajo no depende de n, solo de un cálculo de hash.");
+  }
+
+  cn.addEventListener("input", dibujar);
+  ce.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+En ejes logarítmicos un coste proporcional a $n$ es una recta de pendiente $1$ y un coste constante es una recta horizontal. La distancia vertical entre ambas en el extremo derecho son cinco órdenes de magnitud, y esa distancia crece con $n$ sin tope.
+
+## Ejercicios
+
+### Ejercicio 1 — Romper el alias
+
+Hacer que `copia` sea independiente de `datos`, de modo que añadirle un elemento deje el original intacto.
 
 ```{pyodide}
 #| exercise: ex_alias
@@ -148,7 +674,7 @@ datos
 ```
 
 ::: {.hint exercise="ex_alias"}
-`copia = datos` no sirve: crea un alias. Necesitas una lista nueva con los mismos elementos. Hay tres formas: rebanada completa, el método `.copy()`, o el constructor `list()`.
+`copia = datos` queda descartado por la Proposición 1.3: vincula un segundo nombre al mismo objeto. Hace falta construir una lista nueva con los mismos elementos, y la Definición 1.8 da tres formas de hacerlo.
 :::
 
 ::: {.solution exercise="ex_alias"}
@@ -169,13 +695,13 @@ datos
 if result == [10, 20, 30]:
     feedback = {"correct": True, "message": "Correcto: el original quedó intacto.", "type": "success"}
 else:
-    feedback = {"correct": False, "message": f"`datos` quedó en {result}. Si cambió, hiciste un alias en vez de una copia.", "type": "error"}
+    feedback = {"correct": False, "message": f"`datos` quedó en {result}. Si cambió, la asignación creó un alias en vez de una copia (Proposición 1.3).", "type": "error"}
 feedback
 ```
 
-## Ejercicio 2 — Elegir la estructura
+### Ejercicio 2 — Elegir la estructura
 
-De una lista de códigos de producto con repetidos, obtén los códigos **únicos**, ordenados de menor a mayor, como una lista.
+De una lista de identificadores con repetidos, obtener los identificadores únicos, ordenados de menor a mayor, como una lista.
 
 ```{pyodide}
 #| exercise: ex_unicos
@@ -187,7 +713,7 @@ unicos
 ```
 
 ::: {.hint exercise="ex_unicos"}
-Un `set` elimina duplicados pero no tiene orden. `sorted()` recibe cualquier iterable y siempre devuelve una lista. Puedes componer ambos en una sola expresión.
+Un `set` descarta los repetidos por la Definición 1.12, pero su orden es el de inserción y no el de magnitud. `sorted()` acepta cualquier iterable y devuelve siempre una lista. Las dos operaciones se componen en una sola expresión.
 :::
 
 ::: {.solution exercise="ex_unicos"}
@@ -205,24 +731,24 @@ unicos
 #| check: true
 esperado = [112, 304, 450, 887]
 if result == esperado:
-    feedback = {"correct": True, "message": "Correcto. `sorted(set(...))` es el idiom estándar para esto.", "type": "success"}
+    feedback = {"correct": True, "message": "Correcto. `sorted(set(...))` es la composición estándar para esto.", "type": "success"}
 elif sorted(list(result)) == esperado:
-    feedback = {"correct": False, "message": "Los elementos están bien pero falta ordenarlos, o el tipo no es una lista.", "type": "warning"}
+    feedback = {"correct": False, "message": "Los elementos son los correctos, pero falta ordenarlos o el tipo no es una lista.", "type": "warning"}
 else:
     feedback = {"correct": False, "message": f"Esperaba {esperado} y obtuve {result}.", "type": "error"}
 feedback
 ```
 
-## Ejercicio 3 — Conteo con diccionario
+### Ejercicio 3 — Conteo con diccionario
 
-Cuenta cuántas veces aparece cada sucursal. Devuelve un `dict` de sucursal a conteo.
+Contar cuántas veces aparece cada cara en una serie de tiradas de un dado. El resultado es un `dict` de cara a conteo.
 
 ```{pyodide}
 #| exercise: ex_conteo
-ventas = ["multiplaza", "costa", "multiplaza", "brisas", "costa", "multiplaza"]
+tiradas = [3, 1, 3, 6, 1, 3]
 
 conteo = {}
-for sucursal in ventas:
+for cara in tiradas:
     ______
 
 print(conteo)
@@ -230,16 +756,16 @@ conteo
 ```
 
 ::: {.hint exercise="ex_conteo"}
-La primera vez que ves una sucursal, la clave todavía no existe y `conteo[sucursal] += 1` lanza `KeyError`. Usa `conteo.get(sucursal, 0)` para obtener 0 cuando la clave falta.
+La primera vez que aparece una cara la clave todavía no existe, y `conteo[cara] += 1` lanza `KeyError`. El método `conteo.get(cara, 0)` devuelve 0 cuando la clave falta, lo que permite escribir el paso en una sola línea.
 :::
 
 ::: {.solution exercise="ex_conteo"}
 ```{pyodide}
-ventas = ["multiplaza", "costa", "multiplaza", "brisas", "costa", "multiplaza"]
+tiradas = [3, 1, 3, 6, 1, 3]
 
 conteo = {}
-for sucursal in ventas:
-    conteo[sucursal] = conteo.get(sucursal, 0) + 1
+for cara in tiradas:
+    conteo[cara] = conteo.get(cara, 0) + 1
 
 print(conteo)
 conteo
@@ -249,9 +775,9 @@ conteo
 ```{pyodide}
 #| exercise: ex_conteo
 #| check: true
-esperado = {"multiplaza": 3, "costa": 2, "brisas": 1}
+esperado = {3: 3, 1: 2, 6: 1}
 if result == esperado:
-    feedback = {"correct": True, "message": "Correcto. En producción usarías collections.Counter, pero ahora sabes qué hace por dentro.", "type": "success"}
+    feedback = {"correct": True, "message": "Correcto. En producción se usa collections.Counter, que hace exactamente esto.", "type": "success"}
 else:
     feedback = {"correct": False, "message": f"Esperaba {esperado} y obtuve {result}.", "type": "error"}
 feedback
@@ -259,43 +785,57 @@ feedback
 
 ## Reto
 
-En `proyectos/notebooks/F0-retos.ipynb`, sin mirar esta lección:
+En `proyectos/notebooks/F0-retos.ipynb`, sección **Py 1**:
 
-1. Escribe una función que reciba una lista de listas y devuelva una copia profunda **sin usar** `copy.deepcopy` — solo comprehensions o bucles.
-2. Mide con `timeit` cuánto tarda `x in lista` contra `x in conjunto` para 100 000 elementos, buscando un elemento que **no** existe (el peor caso). Anota la razón entre ambos tiempos.
-3. Explica en una línea por qué una `tuple` puede ser clave de un `dict` pero una `list` no.
+1. Escribir una copia profunda para listas anidadas sin usar `copy.deepcopy`, solo con recursión, y comprobar contra la Proposición 1.9 que ningún objeto alcanzable desde la copia lo es desde el original. Comprobar además qué ocurre con una lista que se contiene a sí misma, y anotar en `50-Errores/` por qué `copy.deepcopy` sí la soporta.
+2. Medir la Proposición 1.14 sobre la implementación real: registrar `sys.getsizeof` de una lista tras cada `append` hasta $n=100\,000$, contar las reubicaciones, y estimar el factor de crecimiento $g$ a partir de la razón entre capacidades consecutivas. Contrastar la cota $g/(g-1)$ contra el número de copias observado.
+3. Construir un diccionario cuya clave quede inalcanzable siguiendo la Proposición 1.11, y escribir después la versión correcta usando una tupla. Explicar en una línea por qué `frozenset` es hashable y `set` no.
+
+## Del libro
+
+*Python for Data Analysis* 3E trata este material en su capítulo 3, *Built-In Data Structures, Functions, and Files*. El sitio del libro declara que su contenido no se puede copiar ni reproducir, así que se cita número y título y no se le atribuye ninguna frase.
+
+**Preguntas para leer el capítulo 3 con lápiz:**
+
+1. El capítulo presenta `list`, `tuple`, `dict` y `set` con sus operaciones. Con la Definición 1.12 y la Proposición 1.11, ¿cuál de las cuatro propiedades de la tabla —orden, mutabilidad, repetidos, claves— es la que obliga a que las claves sean hashables, y por qué las otras tres no lo obligan?
+2. El capítulo muestra el desempaquetado de tuplas y el intercambio `a, b = b, a`. Con la Definición 1.2, ¿por qué ese intercambio funciona sin variable auxiliar, y qué se evalúa antes de qué?
+3. La sección sobre diccionarios introduce `setdefault` y `defaultdict`. Con la Definición 1.10, ¿qué gana `defaultdict` sobre el `get(clave, 0)` del Ejercicio 3, y en qué caso la diferencia se vuelve un error silencioso?
 
 ## Para el Cerebro
 
-Lee **McKinney cap. 2–3** con estas tres preguntas escritas antes de empezar:
-
-1. ¿Qué diferencia hay entre `a = a + [1]` y `a += [1]` sobre una lista? (Hay una, y es importante.)
-2. ¿Por qué los argumentos por defecto mutables son una trampa en Python?
-3. ¿Qué requisito debe cumplir un objeto para ser clave de un diccionario?
-
-Flashcards para pegar en tu nota:
+Nota nueva en `10-Conceptos/objetos-y-nombres.md`, enlazada a [[mutabilidad]], [[hashable]] y [[coste-amortizado]]. Conviene rehacer a mano la demostración de la Proposición 1.11: usa la constancia de la identidad una vez y la dependencia del hash respecto del contenido dos, y ver dónde entra cada pieza explica por qué `tuple` se salva y `list` no.
 
 ```
-¿Qué pregunta `is` y qué pregunta `==`?::`is` pregunta si son el mismo objeto en memoria; `==` si valen lo mismo
-¿Cuándo se usa `is` correctamente?::Solo con None, True y False
-¿Por qué `y += 1` sobre un int no afecta a `x = y`?::Los int son inmutables: crea un objeto nuevo y reapunta y
-¿Qué copia una copia superficial?::Solo el contenedor externo; los elementos siguen siendo los mismos objetos
-Costo de `x in lista` vs `x in set`::O(n) contra O(1)
-¿Por qué una tupla puede ser clave de dict y una lista no?::La clave debe ser hashable, y el hash exige inmutabilidad
+¿Qué tres cosas caracterizan a un objeto?::Identidad (constante), tipo (constante) y valor (según el tipo, puede cambiar)
+¿Qué hace exactamente `b = a`?::Vincula el nombre b al mismo objeto; no copia nada, y su coste no depende del tamaño
+¿Qué pregunta `is` y qué pregunta `==`?::`is` compara identidades; `==` compara valores y lo decide `__eq__` del tipo
+¿Cuándo se usa `is`?::Solo con None, True y False, que son objetos únicos
+¿Por qué `x == x` puede ser falso?::Si x es float('nan'): float redefine `__eq__` según IEEE 754
+¿Por qué `b += [9]` afecta a `a` y `b = b + [9]` no?::`+=` llama a `list.__iadd__`, que muta en el sitio; `+` construye una lista nueva
+¿Por qué `d += 9` sobre un int no afecta a `c`?::int no define `__iadd__`: se evalúa c + 9, se crea un objeto nuevo y se revincula solo d
+¿Qué protege una copia superficial?::Solo la colección externa; sus elementos siguen siendo los mismos objetos
+¿Qué exige la Definición 1.10 a una clave?::Hash constante durante su vida, y compatible con ==: si a == b entonces hash(a) == hash(b)
+¿Por qué una lista no puede ser clave?::Al mutarla, la entrada queda inalcanzable: por el contenido nuevo falla el cubo, por el viejo falla el ==
+¿Por qué una tupla con una lista dentro no es hashable?::Su hash se calcula desde el de sus elementos, y la lista no tiene
+Comparaciones de `x in lista` frente a `x in set`::Exactamente n en el peor caso, frente a O(1) esperado más un hash
+¿Por qué `append` es O(1) amortizado?::Con crecimiento geométrico de factor g, n appends copian menos de g/(g−1)·n elementos
+¿Qué pasa si la lista creciera de uno en uno?::La cota g/(g−1) diverge y el total de copias pasa a ser n²/2
 ```
-
 
 ::: {#fuentes .fuentes}
 ### Fuentes
 
-**Lo que esta página demuestra sola.** Los ejercicios de esta página corren en tu navegador: si tu código pasa el check, pasó de verdad.
+**Lo que esta página demuestra sola.** Las Proposiciones 1.3, 1.5, 1.6, 1.7, 1.9, 1.11, 1.13 y 1.14 se demuestran aquí a partir del modelo de datos del lenguaje —identidad constante, el nombre como vínculo, y la resolución de `+=` por `__iadd__` con caída a `__add__`— y de la aritmética de la serie geométrica en el caso de la 1.14. Cada una se comprueba además ejecutándola: que `a is b` tras la asignación; que `list` define `__iadd__` e `int` no, con `a = [1, 2, 9]` frente a `e = [1, 2]`; que `p == q` es cierto con `p is q` falso y que `x is x` es cierto con `x == x` falso para un NaN; que la copia superficial comparte sublistas y la profunda no; que las dos consultas a una clave mutada fallan por motivos distintos mientras la entrada sigue en el diccionario; que `in` sobre la lista hace exactamente $n$ comparaciones para $n=100$, $1000$ y $10\,000$ y sobre el conjunto hace cero con un solo hash; y que el total de copias por `append` queda en $1{,}3107n$ con $g=2$ frente a una cota de $2n$, y en $49\,995\,000$ creciendo de uno en uno. Los dos visuales se contrastaron contra estas mismas afirmaciones en todo el rango de sus controles.
+
+**Lo que se enuncia sin demostrar.** Que la implementación de `list.__iadd__` extiende en el sitio y devuelve el mismo objeto, y que `object.__eq__` devuelve `True` sobre identidad y `NotImplemented` en otro caso: las dos son parte de la especificación del lenguaje y aquí se toman como tales, aunque la página las comprueba. En la Proposición 1.13 la parte del conjunto usa la hipótesis de reparto uniforme del hash y de factor de carga acotado, que la implementación mantiene al redimensionar la tabla y que esta lección no demuestra. En la Proposición 1.14 se supone que la reubicación copia los elementos uno a uno con coste unitario.
 
 **Lo que viene de los libros.**
 
-- [*Python for Data Analysis* 3E](https://wesmckinney.com/book/) (McKinney — libro abierto), §2 *Python Language Basics, IPython, and Jupyter Notebooks*
-- [*Python for Data Analysis* 3E](https://wesmckinney.com/book/) (McKinney — libro abierto), §3 *Built-In Data Structures, Functions, and Files*
+- [*Python for Data Analysis*, 3ª edición](https://wesmckinney.com/book/) (Wes McKinney, O'Reilly, 2022), capítulo 3 *Built-In Data Structures, Functions, and Files* — citado por número y título, sin transcribir texto.
 
-[Índices verificados el 11-09-2026 contra el índice publicado de cada libro.]{.sello}
+**Lo que es mío, no del libro.** El molde de esta lección: enunciar la semántica del lenguaje como definiciones y demostrar los invariantes que se siguen de ella, en lugar de describir comportamientos por enumeración. La Proposición 1.11 escrita como un resultado de imposibilidad con las dos consultas fallando por motivos distintos, y la clase `ListaHashable` construida para poder ejecutar el estado que Python prohíbe. La clase `Espia`, que sustituye el cronómetro por un conteo exacto de comparaciones y hace la Proposición 1.13 reproducible en cualquier máquina, como exige la regla 7. Y la Proposición 1.14 con la cota $g/(g-1)$ explícita y el caso degenerado $g\to1$ medido, en vez del enunciado habitual con $g=2$.
+
+[Índices verificados el 12-09-2026 contra el índice publicado del sitio oficial del libro.]{.sello}
 :::
 
-→ Siguiente: [Funciones, scope y argumentos](02-funciones-y-scope.qmd)
+→ Siguiente: [Funciones, ámbito y argumentos](02-funciones-y-scope.qmd)
