@@ -11,7 +11,7 @@ en la tabla del punto 2.
 
 Antes de esto, el 12-09-2026 se habían publicado Estadística 18 a 24 —las
 bayesianas, desbloqueadas al verificar el índice entero de Think Bayes— y
-Matemática 10 a 18, que cerraron ese módulo.
+Álgebra 10 a 18, que cerraron ese módulo.
 
 `CLAUDE.md` tiene las reglas, que cambian poco. Este archivo tiene el estado y
 la lista de trabajo, que cambia cada semana. Si los dos se contradicen, manda
@@ -70,7 +70,7 @@ hay que empezar a hacer:
 | Módulo | Publicadas | Planeadas | Al día con el molde | Falta escribir |
 |---|---|---|---|---|
 | Estadística | 25 | 25 | **25 de 25** | — |
-| Matemática | 18 | 18 | **18 de 18** | — |
+| Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 6 | 16 | **6 de 6** | 07 a 16, la Fase 1 |
 | Series de tiempo | 0 | 11 | — | todas |
 | Machine Learning | 0 | 90 | — | todas |
@@ -141,7 +141,7 @@ conjugados, distribuciones predictivas, comparación de modelos,
 Metropolis-Hastings, Gibbs y diagnóstico de cadenas. Con ellas el módulo queda
 en 24 de 24.
 
-### 3.2 Matemática: terminada, 18 de 18
+### 3.2 Álgebra: terminada, 18 de 18
 
 Las nueve primeras se reescribieron el 12-09-2026 y ese mismo día se añadieron
 las nueve restantes, de la 10 a la 18: diagonalización, SVD, formas cuadráticas,
@@ -252,7 +252,7 @@ buscando el mismo problema.
 
 Los cuatro puntos del plan anterior están hechos: la pasada de regla 15 sobre
 Python, los índices de Think Bayes, el molde de Python con sus seis lecciones, y
-Matemática de la 10 a la 18. **No queda nada pendiente de los módulos escritos.**
+Álgebra de la 10 a la 18. **No queda nada pendiente de los módulos escritos.**
 
 Lo que sigue, en orden de coste creciente:
 
@@ -482,7 +482,7 @@ falla el build. Codificar el SVG en base64.
   Si alguna lección futura lo necesita demostrado, hay que decidir dónde va.
 - **El cuaderno de retos va por Estadística 5.** Las lecciones 6 a 15 cierran
   con «en `proyectos/notebooks/F1-retos.ipynb`, sección **Est N**», y ese
-  cuaderno solo tiene secciones hasta Estadística 5 y Matemática 7. O se
+  cuaderno solo tiene secciones hasta Estadística 5 y Álgebra 7. O se
   escriben las diez que faltan —tres retos por lección, como las que ya están—,
   o se quita la referencia del bloque *Reto*. Encontrado al publicar Est 15;
   sin decidir.
