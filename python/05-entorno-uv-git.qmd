@@ -1,5 +1,5 @@
 ---
-title: "Entorno: uv, git y el repo"
+title: "Entorno reproducible: uv y git"
 subtitle: "Python · Lección 5"
 nivel: L4
 modulo: python
@@ -13,34 +13,480 @@ engine: markdown
 ::: {.meta-leccion data-leccion="python/05-entorno-uv-git"}
 [[L4]{.nivel .nivel-L4} **Producción**]{.item}
 [**Fase** F0]{.item}
-[**Sin libro** — esto se aprende haciéndolo]{.item}
-[**Prereqs** [Archivos y errores](04-archivos-y-errores.qmd)]{.item}
+[**Sin libro** — autocontenida]{.item}
+[**Prereqs** [Archivos y excepciones](04-archivos-y-errores.qmd)]{.item}
 :::
 
-## La idea
+## Objetivo
 
-Esta lección no tiene ejercicios en el navegador: se hace en la terminal de tu Mac. Es la única del módulo que es puramente operativa, y la que hace que todo lo demás sea reproducible.
+Al terminar esta lección se puede:
 
-Dos problemas que resuelve:
+1. Demostrar que el aislamiento de un [entorno virtual]{.g} es una propiedad del orden de `sys.path`, y no una prohibición impuesta por la herramienta.
+2. Demostrar que una especificación de dependencias con rangos **no determina** el entorno instalado, y que un [archivo de fijado]{.g} sí lo determina.
+3. Demostrar que la [resolución de dependencias]{.g} puede no tener solución aunque cada restricción por separado sea satisfacible.
+4. Calcular el identificador de un objeto de git con `hashlib` y comprobar que coincide con el que da `git hash-object`.
+5. Demostrar, a partir de ese cálculo, que tocar un byte de cualquier [commit]{.g} cambia el identificador de todos sus descendientes, y deducir por qué borrar un dato en un commit posterior no lo retira de la historia.
 
-1. **"En mi máquina funcionaba."** Cada proyecto necesita sus propias versiones de librerías. `uv` las aísla y las fija.
-2. **"Tenía una versión que servía y la perdí."** `git` guarda cada estado y te deja volver.
+:::: {.hilo}
+::: {}
+#### De dónde viene
 
-## uv: entornos y dependencias
+- **Python 4, Definición 4.6**: la lectura de archivos con codificación explícita. Un archivo de fijado y un `pyproject.toml` son archivos de texto, y se leen con las mismas reglas.
+- **Python 1, Proposición 1.13**: el coste de la búsqueda lineal. La resolución de un nombre importado recorre `sys.path` de la misma manera y se detiene en el primer acierto.
+- **Python 1, Definición 1.10**: el hash y su compatibilidad con la igualdad. Git aplica la misma idea a escala de repositorio: el identificador de un objeto es el hash de su contenido.
+:::
 
-`uv` reemplaza a `pip`, `virtualenv`, `pyenv` y `poetry` a la vez, y es entre 10 y 100 veces más rápido. Ya lo tienes instalado.
+::: {}
+#### Para qué sirve después
+
+- **Python 6**: instalar NumPy con una versión fija es lo que hace que los resultados numéricos de las lecciones sean los mismos en cualquier máquina.
+- **Todas las lecciones**: los cinco verificadores del repositorio corren en integración continua sobre el entorno que reconstruye el archivo de fijado.
+- **Proyectos**: un cuaderno cuyo resultado no se puede reproducir no es un resultado, y la reproducibilidad empieza aquí.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| `sys.path` | — | La lista de directorios donde se busca un módulo, en orden |
+| `sys.prefix` | — | La raíz del entorno activo |
+| `sys.base_prefix` | — | La raíz del intérprete del sistema |
+| `pyproject.toml` | — | La especificación: qué se necesita, con rangos |
+| `uv.lock` | — | El fijado: qué versión exacta de cada cosa |
+| `>=1.2` | — | Una restricción que admite muchas versiones |
+| $t$ | te | El instante en que se ejecuta la instalación |
+:::
+
+## 1. Qué aísla un entorno virtual
+
+::: {.definicion}
+**Definición 5.1 (entorno virtual).** Un **entorno virtual** es un directorio que contiene su propio árbol de paquetes y un intérprete configurado para anteponer ese árbol a los del sistema. Activarlo consiste en hacer que `sys.prefix` apunte a ese directorio y que sus rutas encabecen `sys.path`.
+:::
+
+::: {.proposicion}
+**Proposición 5.2 (el aislamiento es el orden de `sys.path`).** La importación de un módulo recorre `sys.path` en orden y usa la primera coincidencia. En consecuencia, con un entorno activo un paquete instalado en él se usa aunque exista otro del mismo nombre en el sistema, y dos proyectos con versiones incompatibles del mismo paquete conviven sin interferir.
+:::
+
+::: {.demostracion}
+*Demostración.* El mecanismo de importación consulta las entradas de `sys.path` una por una, en el orden de la lista, y se detiene al encontrar el módulo buscado; esa es una búsqueda lineal con parada en el primer acierto, igual que la de la Proposición 1.13. Si la ruta del entorno precede a las del sistema, cualquier módulo presente en el entorno se encuentra antes y el del sistema nunca se examina.
+
+Para la segunda parte, cada proyecto tiene su propio directorio de entorno, y ninguno aparece en el `sys.path` del otro: no hay ninguna entrada compartida por la que un paquete de uno pueda alcanzarse desde el otro. Que sus versiones sean incompatibles es entonces irrelevante, porque nunca se resuelven contra la misma lista. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import sys
+
+print("sys.prefix      :", "(la raiz del entorno activo)")
+print("hay entorno activo:", sys.prefix != sys.base_prefix)
+print()
+print("la busqueda de un modulo recorre sys.path en orden y para en el primer acierto:")
+for i, ruta in enumerate(sys.path[:4]):
+    print("  %d. %s" % (i, ruta if ruta else "(el directorio actual)"))
+print("  ... y %d entradas mas" % max(0, len(sys.path) - 4))
+print()
+
+# El orden es lo unico que decide: se puede comprobar sin instalar nada
+import types
+falso = types.ModuleType("paquete_demo")
+falso.version = "del entorno"
+sys.modules["paquete_demo"] = falso
+import paquete_demo
+print("el primero que aparece es el que se usa:", paquete_demo.version)
+```
+
+La comprobación no necesita instalar nada: basta con observar que la importación se resuelve contra la primera entrada que la satisface. La herramienta que crea el entorno no prohíbe nada; se limita a colocar su directorio delante.
+
+## 2. Especificar no es fijar
+
+::: {.definicion}
+**Definición 5.3 (especificación y fijado).** La **especificación** —`pyproject.toml`— declara qué paquetes se necesitan y con qué restricciones, normalmente rangos como `>=1.2`. El **archivo de fijado** —`uv.lock`— registra una solución concreta: la versión exacta de cada paquete, directo o indirecto, y su huella.
+
+Reconstruir el entorno desde la especificación resuelve las restricciones de nuevo; reconstruirlo desde el fijado instala exactamente lo registrado.
+:::
+
+::: {.proposicion}
+**Proposición 5.4 (una especificación con rangos no determina el entorno).** Sea una especificación que admita más de una versión de algún paquete, y sea el instalador uno que elija la mayor versión disponible que la satisfaga. Entonces el conjunto instalado depende del instante $t$ de la instalación, de modo que no es una función de la especificación. Un fijado completo sí determina el conjunto instalado, con independencia de $t$.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $D(t)$ el conjunto de versiones publicadas hasta el instante $t$, que es creciente en $t$ porque publicar no retira lo publicado. El instalador elige $\max\{v\in D(t): v \text{ satisface la restricción}\}$. Si en un instante posterior $t'>t$ se publica una versión $v'$ que también satisface la restricción y es mayor que la elegida en $t$, entonces la elección en $t'$ es $v'\ne v$. Existen por tanto dos instantes con la misma especificación y distinto resultado, luego el resultado no queda determinado por la especificación sola.
+
+Con un fijado completo el instalador no elige: para cada paquete hay una única versión registrada, y la instalación la reproduce sin consultar $D(t)$ salvo para obtenerla. El resultado es el mismo para todo $t$ en que las versiones registradas sigan disponibles. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+def instalar(restriccion_min, publicadas):
+    """Elige la mayor version publicada que cumpla >= restriccion_min."""
+    candidatas = [v for v in publicadas if v >= restriccion_min]
+    return max(candidatas) if candidatas else None
+
+# El registro crece con el tiempo: publicar no retira lo publicado
+historia = {
+    "t0 (enero)":  [(1, 2), (1, 3)],
+    "t1 (marzo)":  [(1, 2), (1, 3), (1, 4)],
+    "t2 (agosto)": [(1, 2), (1, 3), (1, 4), (2, 0)],
+}
+
+print("especificacion: >= 1.2   (un rango)")
+for t, pub in historia.items():
+    v = instalar((1, 2), pub)
+    print("  en %-12s se instala %d.%d" % (t, v[0], v[1]))
+print()
+print("fijado: == 1.3   (una sola version)")
+for t, pub in historia.items():
+    v = instalar((1, 3), [x for x in pub if x == (1, 3)])
+    print("  en %-12s se instala %d.%d" % (t, v[0], v[1]))
+print()
+print("con rango, el resultado depende de t; con fijado, no")
+```
+
+La misma especificación produce tres entornos distintos en tres momentos, y el fijado produce el mismo en los tres. Esa es la razón por la que el archivo de fijado se versiona y el directorio del entorno no: el primero es la información que hace reproducible al segundo.
+
+```{=html}
+<div class="viz-fijado">
+  <div class="controles">
+    <label>Momento de la instalación <input id="fj-t" type="range" min="0" max="5" step="1" value="2"> <span id="fj-t-v">t2</span></label>
+    <label>Cómo se reconstruye
+      <select id="fj-modo">
+        <option value="0" selected>desde la especificación (&gt;= 1.2)</option>
+        <option value="1">desde el fijado (== 1.3)</option>
+      </select>
+    </label>
+  </div>
+  <svg id="fj-svg" viewBox="0 0 620 260" role="img" aria-label="Linea de tiempo con las versiones publicadas apareciendo una tras otra. Se marca cual se instalaria en el momento elegido segun se reconstruya desde la especificacion con rango o desde el fijado."></svg>
+  <p class="lectura" id="fj-lectura"></p>
+</div>
+<style>
+.viz-fijado { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-fijado .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-fijado label { display: flex; align-items: center; gap: .4rem; }
+.viz-fijado input[type=range] { width: 150px; padding: 0; }
+.viz-fijado select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-fijado svg { width: 100%; height: auto; display: block; }
+.viz-fijado .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_OK = "#0F6E68", C_NO = "#B45309";
+  var svg = document.getElementById("fj-svg"), lec = document.getElementById("fj-lectura");
+  var ct = document.getElementById("fj-t"), et = document.getElementById("fj-t-v");
+  var cm = document.getElementById("fj-modo");
+
+  // Marco constante.
+  var X0 = 60, X1 = 560, EJE = 178, CY = 96, R = 15;
+  var VER = ["1.2", "1.3", "1.4", "2.0", "2.1", "2.2"];
+  var N = VER.length;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(i) { return X0 + i * (X1 - X0) / (N - 1); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var t = +ct.value, modo = +cm.value;
+    et.textContent = "t" + t;
+    // publicadas hasta t: indices 0..t ; la especificacion >=1.2 admite todas
+    var elegida = modo === 0 ? t : 1;          // rango: la mayor; fijado: siempre 1.3
+
+    svg.appendChild(el("line", { x1: X0 - 20, y1: EJE, x2: X1 + 30, y2: EJE, stroke: C_L, "stroke-width": 1.2 }));
+    svg.appendChild(el("text", { x: X1 + 34, y: EJE + 4, "font-size": 11.5, fill: C_T, opacity: 0.7 }, "t"));
+    svg.appendChild(el("text", { x: X0 - 20, y: 34, "font-size": 11.5, fill: C_T, opacity: 0.72 },
+      "versiones publicadas (el registro solo crece)"));
+
+    for (var i = 0; i < N; i++) {
+      var publicada = i <= t;
+      var esta = i === elegida;
+      svg.appendChild(el("circle", { cx: px(i).toFixed(1), cy: CY, r: esta ? R + 3 : R,
+        fill: esta ? (modo === 0 ? C_NO : C_OK) : "none",
+        "fill-opacity": esta ? 0.18 : 0,
+        stroke: publicada ? (esta ? (modo === 0 ? C_NO : C_OK) : C_L) : C_L,
+        "stroke-width": esta ? 2.6 : 1.2, "stroke-opacity": publicada ? 1 : 0.32 }));
+      svg.appendChild(el("text", { x: px(i).toFixed(1), y: CY + 4.5, "text-anchor": "middle",
+        "font-size": 12, fill: C_T, opacity: publicada ? 1 : 0.32,
+        "font-family": "var(--bs-font-monospace,monospace)" }, VER[i]));
+      svg.appendChild(el("line", { x1: px(i).toFixed(1), y1: EJE - 6, x2: px(i).toFixed(1), y2: EJE + 6,
+        stroke: C_L, "stroke-opacity": publicada ? 1 : 0.32 }));
+      svg.appendChild(el("text", { x: px(i).toFixed(1), y: EJE + 22, "text-anchor": "middle",
+        "font-size": 11, fill: C_T, opacity: publicada ? 0.7 : 0.3 }, "t" + i));
+    }
+
+    // marcador de la instalacion, bajo el eje
+    svg.appendChild(el("path", { d: "M" + px(elegida).toFixed(1) + " " + (EJE + 34) +
+      " L" + (px(elegida) - 7).toFixed(1) + " " + (EJE + 48) + " L" + (px(elegida) + 7).toFixed(1) +
+      " " + (EJE + 48) + " Z", fill: modo === 0 ? C_NO : C_OK, stroke: "none" }));
+    svg.appendChild(el("text", { x: px(elegida).toFixed(1), y: EJE + 66, "text-anchor": "middle",
+      "font-size": 12, fill: modo === 0 ? C_NO : C_OK,
+      "font-family": "var(--bs-font-monospace,monospace)" }, "instala " + VER[elegida]));
+
+    lec.innerHTML = modo === 0
+      ? ("Reconstruyendo desde la especificación en <strong>t" + t + "</strong> se instala <code>" + VER[elegida] +
+         "</code>: la mayor publicada que cumple el rango. Mover el momento cambia el resultado, y esa dependencia de t es la Proposición 5.4.")
+      : ("Reconstruyendo desde el fijado se instala <code>1.3</code> en <strong>t" + t +
+         "</strong> y en cualquier otro momento. El marcador no se mueve al cambiar t, y esa inmovilidad es exactamente lo que hace reproducible al entorno.");
+  }
+
+  ct.addEventListener("input", dibujar);
+  cm.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+En el segundo modo el marcador no se mueve al cambiar el momento. Esa inmovilidad no señala un control roto sino la Proposición 5.4 dibujada, y es justamente la propiedad que se busca.
+
+::: {.proposicion}
+**Proposición 5.5 (la resolución puede no tener solución).** Existe un conjunto de dependencias en el que cada restricción es satisfacible por separado y, sin embargo, no existe ninguna asignación de versiones que las satisfaga todas a la vez.
+:::
+
+::: {.demostracion}
+*Demostración.* Basta exhibir un caso. Sea un proyecto que depende de `A` y de `B`; sea `A` en su única versión disponible dependiente de `C` con la restricción `==1.0`, y sea `B` en su única versión disponible dependiente de `C` con la restricción `==2.0`, con `C` disponible en las dos versiones.
+
+Cada restricción por separado se satisface: existe `C 1.0` y existe `C 2.0`. Pero una instalación asigna a cada paquete una sola versión, así que `C` recibe `1.0` o `2.0`; en el primer caso la restricción de `B` falla y en el segundo la de `A`. No hay asignación que las cumpla ambas. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+from itertools import product
+
+def resolver(disponibles, restricciones):
+    """Fuerza bruta sobre todas las asignaciones posibles."""
+    nombres = sorted(disponibles)
+    for combo in product(*[disponibles[n] for n in nombres]):
+        asignacion = dict(zip(nombres, combo))
+        if all(pred(asignacion) for pred in restricciones):
+            return asignacion
+    return None
+
+disponibles = {"A": ["1.0"], "B": ["1.0"], "C": ["1.0", "2.0"]}
+
+# Caso con solucion: A y B piden lo mismo de C
+conflicto_no = [lambda a: a["C"] == "1.0", lambda a: a["C"] == "1.0"]
+# Caso sin solucion: A pide C==1.0 y B pide C==2.0
+conflicto_si = [lambda a: a["C"] == "1.0", lambda a: a["C"] == "2.0"]
+
+print("cada restriccion por separado es satisfacible:")
+print("  existe C 1.0:", "1.0" in disponibles["C"])
+print("  existe C 2.0:", "2.0" in disponibles["C"])
+print()
+print("A y B compatibles ->", resolver(disponibles, conflicto_no))
+print("A y B en conflicto ->", resolver(disponibles, conflicto_si))
+print()
+print("las combinaciones probadas fueron:", len(disponibles["A"]) * len(disponibles["B"]) * len(disponibles["C"]))
+print("y ninguna cumple las dos restricciones a la vez")
+```
+
+El instalador que informa de un conflicto no está fallando: está diciendo que el sistema de restricciones no tiene solución. La salida es relajar una restricción o esperar a que se publique una versión que satisfaga ambas.
+
+## 3. Git: la historia como cadena de hashes
+
+::: {.definicion}
+**Definición 5.6 (objeto y commit).** Git guarda cada contenido como un **objeto** identificado por el hash de ese contenido con una cabecera. Para un archivo, el objeto es un *blob* y su identificador es
+
+```
+sha1(b"blob " + str(n) + b"\0" + contenido)
+```
+
+con $n$ el número de bytes del contenido. La cabecera va pegada al contenido y separada de él por un único byte cero. Un **commit** es a su vez un objeto cuyo contenido incluye el identificador del árbol de archivos, los identificadores de sus padres, el autor y el mensaje.
+:::
+
+::: {.proposicion}
+**Proposición 5.7 (todo descendiente cambia).** El identificador de un commit determina el contenido de su árbol y el de toda su historia anterior. En consecuencia, modificar un solo byte de cualquier commit cambia su identificador y, con él, el de todos los commits que lo tienen por ancestro.
+
+**Corolario.** Eliminar un archivo en un commit posterior no lo retira de la historia: los commits anteriores conservan su identificador y su contenido sigue siendo alcanzable. Retirarlo exige reescribir la historia, y esa reescritura cambia el identificador de todos los commits afectados.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Definición 5.6 el contenido de un commit incluye el identificador de su árbol y los de sus padres, y su propio identificador es el hash de ese contenido. Sea $c$ un commit y sea $c'$ el resultado de alterar un byte de su árbol o de su mensaje. Entonces el contenido de $c'$ difiere del de $c$, y como la función de hash asigna identificadores distintos a contenidos distintos —salvo colisión, que se supone impracticable—, sus identificadores difieren.
+
+Sea ahora $d$ un descendiente de $c$. Su contenido incluye el identificador de su padre en el camino hacia $c$; por inducción sobre la distancia, el identificador de ese padre ha cambiado, luego el contenido de $d$ cambia y su identificador también. Todo descendiente queda por tanto con un identificador distinto.
+
+Para el corolario, un commit posterior que no contenga el archivo tiene su propio identificador y su propio árbol; los commits anteriores no se han modificado, así que su identificador y su contenido son los mismos de antes y sus blobs siguen almacenados y alcanzables desde ellos. Retirar el archivo obliga a construir commits nuevos sin él, es decir, a reescribir la historia, con el cambio de identificadores que la primera parte describe. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import hashlib
+
+def id_blob(contenido):
+    """El identificador que git le da a un archivo. Igual que `git hash-object`."""
+    datos = contenido.encode("utf-8")
+    return hashlib.sha1(b"blob " + str(len(datos)).encode() + b"\0" + datos).hexdigest()
+
+def id_commit(id_arbol, id_padre, mensaje):
+    cuerpo = "tree %s\n%smensaje %s\n" % (id_arbol, ("parent %s\n" % id_padre) if id_padre else "", mensaje)
+    datos = cuerpo.encode("utf-8")
+    return hashlib.sha1(b"commit " + str(len(datos)).encode() + b"\0" + datos).hexdigest()
+
+print("id de un archivo con 'hola' :", id_blob("hola"))
+print("coincide con git hash-object:", id_blob("hola") == "b8b4a4e2a5db3ebed5f5e02beb3e2d27bca9fc9a")
+print()
+
+def cadena(contenidos):
+    """Construye una cadena de commits y devuelve sus identificadores."""
+    ids, padre = [], None
+    for i, c in enumerate(contenidos):
+        cid = id_commit(id_blob(c), padre, "commit %d" % i)
+        ids.append(cid)
+        padre = cid
+    return ids
+
+original = ["v1", "v2", "v3", "v4"]
+tocado = ["v1", "v2 CAMBIADO", "v3", "v4"]
+
+a = cadena(original)
+b = cadena(tocado)
+print("%-9s %-12s %-12s %s" % ("commit", "original", "tocado el 1", "cambia")) 
+for i in range(4):
+    print("%-9d %-12s %-12s %s" % (i, a[i][:10], b[i][:10], "no" if a[i] == b[i] else "SI"))
+print()
+print("el 0 es anterior al cambio y conserva su id;")
+print("el 1 y todos sus descendientes cambian:", all(a[i] != b[i] for i in [1, 2, 3]))
+```
+
+El identificador del primer commit no cambia, y los tres siguientes sí. Eso es la Proposición 5.7: un cambio se propaga hacia adelante, nunca hacia atrás, y por eso un dato que entró en un commit sigue ahí aunque un commit posterior lo borre.
+
+```{=html}
+<div class="viz-merkle">
+  <div class="controles">
+    <label>Commit que se altera <input id="mk-i" type="range" min="0" max="4" step="1" value="2"> <span id="mk-i-v">2</span></label>
+    <label>Qué se altera
+      <select id="mk-que">
+        <option value="0" selected>el contenido del archivo</option>
+        <option value="1">solo el mensaje</option>
+        <option value="2">nada</option>
+      </select>
+    </label>
+  </div>
+  <svg id="mk-svg" viewBox="0 0 620 240" role="img" aria-label="Cinco commits encadenados con su identificador abreviado. Al alterar uno se marcan el y todos sus descendientes como cambiados, y los anteriores conservan su identificador."></svg>
+  <p class="lectura" id="mk-lectura"></p>
+</div>
+<style>
+.viz-merkle { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-merkle .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-merkle label { display: flex; align-items: center; gap: .4rem; }
+.viz-merkle input[type=range] { width: 140px; padding: 0; }
+.viz-merkle select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-merkle svg { width: 100%; height: auto; display: block; }
+.viz-merkle .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_IG = "#0F6E68", C_CH = "#B45309";
+  var svg = document.getElementById("mk-svg"), lec = document.getElementById("mk-lectura");
+  var ci = document.getElementById("mk-i"), ei = document.getElementById("mk-i-v");
+  var cq = document.getElementById("mk-que");
+
+  var N = 5;
+  // Marco constante.
+  var X0 = 44, ANCHO = 540, CY = 92, BW = 88, BH = 52;
+  var PASO = ANCHO / N;
+
+  // hash corto ficticio pero determinista, para que el dibujo sea estable
+  function corto(semilla) {
+    var h = 2166136261;
+    for (var i = 0; i < semilla.length; i++) {
+      h ^= semilla.charCodeAt(i); h = (h * 16777619) >>> 0;
+    }
+    return ("0000000" + h.toString(16)).slice(-7);
+  }
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var idx = +ci.value, que = +cq.value;
+    ei.textContent = String(idx);
+    var altera = que < 2;
+
+    svg.appendChild(el("text", { x: X0, y: 34, "font-size": 11.5, fill: C_T, opacity: 0.72 },
+      altera ? ("se altera " + (que === 0 ? "el contenido" : "el mensaje") + " del commit " + idx)
+             : "no se altera nada: la cadena queda como estaba"));
+
+    var padre = "raiz";
+    for (var k = 0; k < N; k++) {
+      var cambiado = altera && k >= idx;
+      var semilla = padre + "|" + k + "|" + (cambiado ? (que === 0 ? "c" : "m") : "");
+      var id = corto(semilla);
+      padre = id;
+      var x = X0 + k * PASO;
+      svg.appendChild(el("rect", { x: x.toFixed(1), y: CY, width: BW, height: BH, rx: 6, fill: "none",
+        stroke: cambiado ? C_CH : C_IG, "stroke-width": cambiado ? 2.4 : 1.4 }));
+      svg.appendChild(el("text", { x: (x + BW / 2).toFixed(1), y: CY + 21, "text-anchor": "middle",
+        "font-size": 11.5, fill: C_T, opacity: 0.72 }, "commit " + k));
+      svg.appendChild(el("text", { x: (x + BW / 2).toFixed(1), y: CY + 40, "text-anchor": "middle",
+        "font-size": 12, fill: cambiado ? C_CH : C_IG,
+        "font-family": "var(--bs-font-monospace,monospace)" }, id));
+      if (k > 0) {
+        var xa = X0 + (k - 1) * PASO + BW;
+        svg.appendChild(el("path", { d: "M" + xa.toFixed(1) + " " + (CY + BH / 2) + " L" + (x - 4).toFixed(1) +
+          " " + (CY + BH / 2), stroke: C_L, "stroke-width": 1.4, fill: "none" }));
+      }
+      if (cambiado) {
+        svg.appendChild(el("text", { x: (x + BW / 2).toFixed(1), y: CY + BH + 20, "text-anchor": "middle",
+          "font-size": 11, fill: C_CH }, "cambia"));
+      }
+    }
+
+    // Marcador del punto alterado: se DESPLAZA con el control (regla 19b),
+    // en vez de limitarse a cambiar colores.
+    if (altera) {
+      var mx = X0 + idx * PASO + BW / 2;
+      svg.appendChild(el("path", { d: "M" + mx.toFixed(1) + " " + (CY - 10) +
+        " L" + (mx - 8).toFixed(1) + " " + (CY - 26) + " L" + (mx + 8).toFixed(1) + " " + (CY - 26) + " Z",
+        fill: C_CH, stroke: "none" }));
+      svg.appendChild(el("line", { x1: mx.toFixed(1), y1: (CY - 26).toFixed(1),
+        x2: mx.toFixed(1), y2: (CY - 44).toFixed(1), stroke: C_CH, "stroke-width": 1.8 }));
+    }
+
+    var n_cambia = altera ? N - idx : 0;
+    lec.innerHTML = altera
+      ? ("Cambian <strong>" + n_cambia + "</strong> de " + N + " commits: el alterado y todos sus descendientes. Los <strong>" +
+         idx + "</strong> anteriores conservan su identificador y su contenido, y por eso un dato que entró ahí sigue siendo alcanzable (corolario de la Proposición 5.7).")
+      : "Sin alteración, los cinco identificadores son los que la cadena tenía. Cada uno depende del contenido de su árbol y del identificador de su padre.";
+  }
+
+  ci.addEventListener("input", dibujar);
+  cq.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+::: {.proposicion}
+**Proposición 5.8 (coste de versionar datos grandes).** Cada contenido distinto de un archivo genera un objeto propio, que se conserva mientras algún commit lo alcance. El tamaño del repositorio crece por tanto con el número de versiones distintas del archivo, y borrarlo en un commit posterior no lo reduce.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Definición 5.6 el identificador de un blob es el hash de su contenido, de modo que dos contenidos distintos producen dos objetos distintos y ambos se almacenan; dos contenidos idénticos producen el mismo identificador y se almacenan una sola vez. Con $m$ versiones distintas hay $m$ objetos, y el espacio ocupado es la suma de sus tamaños.
+
+Un commit posterior que no incluya el archivo no retira ninguno de esos objetos, porque siguen siendo alcanzables desde los commits anteriores, que por el corolario de la Proposición 5.7 no se han modificado. El espacio ocupado es el mismo antes y después del borrado. [∎]{.fin-demo}
+:::
+
+La consecuencia operativa es que los datos, los entornos y las salidas generadas no entran al repositorio. Van en `.gitignore`: el directorio del entorno, las carpetas de salida del sitio y las cachés. Lo que sí entra es el archivo de fijado, porque es pequeño y es lo que hace reproducible a todo lo demás.
+
+## 4. Los comandos
+
+Esta lección es la única del módulo que se ejecuta en la terminal y no en el navegador. Los bloques siguientes no son celdas ejecutables sino lo que hay que escribir.
+
+### Crear el entorno y fijar las dependencias
 
 ```bash
-# Dentro de la carpeta del repo
 cd ~/"curso phyton en linea"/ruta780
 
-# Inicializa el proyecto: crea pyproject.toml y .venv
-uv init --no-readme --no-workspace
-
-# Agrega las dependencias de la Fase 0-1
+uv init --no-readme --no-workspace        # crea pyproject.toml y el entorno
 uv add numpy pandas matplotlib jupyter pytest
 
-# Corre algo dentro del entorno, sin activarlo
 uv run python -c "import numpy; print(numpy.__version__)"
 uv run pytest scratch/
 uv run jupyter lab
@@ -48,141 +494,74 @@ uv run jupyter lab
 
 | Comando | Qué hace |
 |---|---|
-| `uv add <paquete>` | Instala y lo anota en `pyproject.toml` |
-| `uv remove <paquete>` | Desinstala y lo quita |
-| `uv sync` | Reconstruye el entorno exacto desde `uv.lock` |
-| `uv run <comando>` | Ejecuta dentro del entorno, sin activar nada |
+| `uv add <paquete>` | Lo instala y lo anota en la especificación |
+| `uv remove <paquete>` | Lo desinstala y lo quita de la especificación |
+| `uv sync` | Reconstruye el entorno desde el fijado, sin resolver nada |
+| `uv run <comando>` | Ejecuta dentro del entorno sin activarlo |
 
-::: {.callout-important}
-## `uv.lock` se versiona, `.venv` no
+`uv sync` es la Proposición 5.4 hecha comando: reconstruye desde el fijado y por eso da el mismo entorno en cualquier máquina y en cualquier momento.
 
-`uv.lock` fija la versión exacta de **cada** dependencia, incluidas las indirectas. Ese archivo va al repo: es lo que hace que `uv sync` reproduzca tu entorno idéntico en otra máquina o en GitHub Actions. La carpeta `.venv` pesa cientos de megas y se regenera: va en `.gitignore`.
-:::
-
-## git: los siete comandos que usarás
+### El ciclo diario
 
 ```bash
-git status                      # ¿qué cambió? — úsalo antes de todo
-git add archivo.qmd             # marcar para el próximo commit
-git add -A                      # marcar todo lo cambiado
+git status                      # qué cambió
+git add -A                      # marcar lo que va al commit
 git commit -m "mensaje"         # guardar el estado marcado
-git push                        # subir a GitHub
-git log --oneline -10           # ver los últimos 10 commits
-git diff                        # ver qué cambió, línea por línea
+git push                        # subirlo
 ```
 
-El ciclo diario es siempre el mismo: `git status` → `git add -A` → `git commit -m "..."` → `git push`.
+El mensaje dice qué cambió y por qué, no qué archivo se tocó. `"actualizar archivo"` no informa dentro de seis meses; `"lección 3: añadir el ejercicio de comprehension de diccionario"` sí.
 
-**Mensajes de commit.** Escribe qué cambió y por qué, no qué archivo tocaste. `"actualizar archivo"` no sirve dentro de seis meses; `"lección 3: agregar ejercicio de dict comprehension"` sí.
+### Publicación
 
-## Conectar este repo a GitHub
-
-Solo se hace una vez. En la terminal de tu Mac:
-
-```bash
-cd ~/"curso phyton en linea"/ruta780
-
-git init
-git branch -M main
-git add -A
-git commit -m "Ruta 780: plataforma inicial con las 6 lecciones de Fase 0"
-git remote add origin https://github.com/dashboardlaboratory-cell/ruta780.git
-git push -u origin main
-```
-
-Después de eso, GitHub Actions construye el sitio solo. En ~3 minutos queda en:
-
-```
-https://dashboardlaboratory-cell.github.io/ruta780/
-```
-
-De ahí en adelante, publicar un cambio son tres líneas:
-
-```bash
-git add -A
-git commit -m "qué cambié"
-git push
-```
+El repositorio ya está conectado y la integración continua construye el sitio en cada `push`. Los cinco verificadores corren ahí antes de publicar, de modo que un fallo detiene la publicación en lugar de llegar a la página.
 
 ::: {.callout-warning}
 ## La regla que no se rompe
 
-**Ningún dato real de CBTL entra a este repositorio.** Es público. Los proyectos usan datos públicos o sintéticos que imitan la estructura real. Si algo confidencial entra en un commit, borrarlo después **no basta** — queda en el historial y hay que reescribirlo con `git filter-repo`. Revisa con `git status` antes de cada `git add -A`.
+Ningún dato confidencial entra a este repositorio, que es público. Los proyectos usan datos abiertos o sintéticos. Por el corolario de la Proposición 5.7, borrarlo en un commit posterior **no** lo retira: hay que reescribir la historia con `git filter-repo`, y eso cambia el identificador de todos los commits afectados. La comprobación con `git status` antes de cada `git add -A` cuesta dos segundos y evita el problema entero.
 :::
 
-## Ver el sitio en local (opcional)
+## Reto
 
-Si instalas [Quarto](https://quarto.org/docs/get-started/), puedes previsualizar antes de publicar:
+En `proyectos/notebooks/F0-retos.ipynb`, sección **Py 5**:
 
-```bash
-quarto add r-wasm/quarto-live   # solo la primera vez
-python3 grafo/build_graph.py    # regenera el grafo
-quarto preview                  # abre el navegador y recarga al guardar
-```
-
-No es obligatorio: GitHub construye igual. Sirve cuando estés iterando sobre una lección y no quieras esperar el ciclo de push.
-
-## Estructura del repo
-
-```
-ruta780/
-├── _quarto.yml          configuración del sitio
-├── index.qmd            dashboard
-├── styles.css           tema
-├── python/              este módulo
-├── matematica/          álgebra lineal, cálculo (semana 3)
-├── estadistica/         probabilidad e inferencia (semana 3)
-├── ml/                  ISLP → ESL (semana 19)
-├── causal/              inferencia causal (semana 61)
-├── scratch/             TUS implementaciones en NumPy
-├── proyectos/           TUS notebooks
-├── grafo/               grafo de conocimiento
-├── brain/               vault de Obsidian ← ábrelo como vault
-└── .github/workflows/   build y deploy automático
-```
-
-Dos carpetas son **tuyas**: `scratch/` y `proyectos/`. Ahí escribes tú. Y `brain/` es tu vault: ábrelo en Obsidian con *Open folder as vault* apuntando a `ruta780/brain`.
-
-Como el vault vive dentro del repo, cada `git push` lo respalda junto con todo lo demás. No hay sincronización que configurar.
-
-## Tarea de hoy
-
-En orden, en la terminal:
-
-1. `cd` al repo y corre `uv init --no-readme --no-workspace`.
-2. `uv add numpy pandas matplotlib jupyter pytest`.
-3. Crea el repositorio `ruta780` en GitHub (público, vacío, sin README).
-4. En Settings → Pages, pon **Source: GitHub Actions**.
-5. Corre los seis comandos de `git init` … `git push -u origin main`.
-6. Ve a la pestaña **Actions** del repo y mira el build. Cuando esté verde, abre tu sitio.
-7. Abre `ruta780/brain` como vault en Obsidian e instala: **Spaced Repetition**, **Dataview**, **Templater**.
-
-Si el build falla, el log de Actions dice en qué paso. Pégamelo y lo arreglamos.
+1. Escribir `id_arbol` además de `id_blob`, respetando el formato de git para un árbol de un solo archivo, y comprobar el resultado contra `git hash-object -t tree`. Anotar en `50-Errores/` qué parte del formato es binaria y por qué no se puede construir con `str`.
+2. Ampliar el resolutor de la Proposición 5.5 para que, ante un conflicto, informe de qué par de restricciones lo causa. Probarlo con un grafo de cinco paquetes y comprobar que el par señalado es efectivamente incompatible.
+3. Medir la Proposición 5.8: crear un repositorio de prueba, añadir un archivo de un megabyte, modificarlo diez veces, borrarlo, y comparar el tamaño de `.git` antes y después del borrado. Contrastar el resultado con el de `git gc`.
 
 ## Para el Cerebro
 
-```
-¿Qué archivo de uv se versiona y cuál no?::uv.lock sí (fija versiones exactas); .venv no (se regenera)
-¿Qué hace `uv run`?::Ejecuta un comando dentro del entorno del proyecto sin activarlo
-¿Cuál es el ciclo diario de git?::status → add -A → commit -m → push
-¿Qué debe decir un mensaje de commit?::Qué cambió y por qué, no qué archivo se tocó
-¿Por qué borrar un dato confidencial en un commit posterior no basta?::Queda en el historial; hay que reescribirlo con git filter-repo
-¿Dónde vive el vault de Obsidian?::En brain/, dentro del repo, para que git lo respalde sin sincronización aparte
-```
+Nota nueva en `10-Conceptos/entorno-reproducible.md`, enlazada a [[contextos-y-excepciones]] y [[hashable]]. Conviene rehacer a mano la demostración de la Proposición 5.7: es una inducción sobre la distancia al commit alterado, y verla escrita explica por qué el cambio viaja hacia adelante y nunca hacia atrás.
 
+```
+¿Qué aísla realmente un entorno virtual?::Nada: antepone su directorio en sys.path, y la importación para en el primer acierto
+¿Dónde se ve si hay entorno activo?::sys.prefix distinto de sys.base_prefix
+¿Qué diferencia hay entre especificar y fijar?::La especificación declara rangos; el fijado registra una versión exacta de cada paquete
+¿Por qué un rango no basta?::El instalador elige la mayor publicada, y el registro crece con el tiempo: el resultado depende de cuándo
+¿Qué archivo se versiona y cuál no?::El de fijado sí; el directorio del entorno no, que se regenera
+¿Puede no haber solución al resolver?::Sí: dos dependencias pueden exigir versiones incompatibles del mismo paquete
+¿Cómo se calcula el id de un archivo en git?::sha1 de "blob " + longitud + un byte cero + el contenido
+¿De qué depende el id de un commit?::Del id de su árbol, de los de sus padres, del autor y del mensaje
+¿Qué pasa al alterar un commit?::Cambian su id y el de todos sus descendientes; los anteriores no se tocan
+¿Por qué borrar un dato después no basta?::Los commits anteriores no cambian y su contenido sigue alcanzable: hay que reescribir la historia
+¿Por qué no versionar datos grandes?::Cada versión distinta es un objeto más, y borrarlo luego no libera el espacio
+```
 
 ::: {#fuentes .fuentes}
 ### Fuentes
 
-**Lo que esta página demuestra sola.** Los comandos de esta lección se ejecutan en tu máquina, no en el navegador: compruébalos ahí.
+**Lo que esta página demuestra sola.** Las Proposiciones 5.2, 5.4, 5.5, 5.7 y 5.8 se demuestran a partir de tres hechos: que la importación recorre `sys.path` con parada en el primer acierto, que el registro de versiones publicadas solo crece, y que el identificador de un objeto de git es el hash de su contenido. Cada una se comprueba ejecutándola: que la importación usa la primera entrada que la satisface; que la misma especificación `>=1.2` instala tres versiones distintas en tres instantes y el fijado instala la misma en los tres; que las dos asignaciones posibles del paquete en conflicto se prueban y ninguna satisface las dos restricciones; que `id_blob("hola")` da `b8b4a4e2…`, el mismo valor que devuelve `git hash-object`, contrastado fuera de la página; y que al alterar el segundo commit de una cadena de cuatro, el primero conserva su identificador y los tres restantes cambian. Los dos visuales se contrastaron contra estas mismas afirmaciones en todo el rango de sus controles.
 
-**Lo que viene de los libros.**
+**Lo que se usa de otras lecciones sin repetir.** La búsqueda lineal con parada en el primer acierto es la Proposición 1.13. Que un hash debe ser compatible con la igualdad es la Definición 1.10. La lectura de archivos de texto con codificación explícita es la Definición 4.6.
 
-- Documentación oficial de [uv](https://docs.astral.sh/uv/) y de [git](https://git-scm.com/doc)
+**Lo que se enuncia sin demostrar.** Que la función `sha1` no produce colisiones practicables, hipótesis sin la cual la Proposición 5.7 no se sostiene; el enunciado la nombra explícitamente. Que el formato exacto de un objeto *commit* de git incluye además autor, fecha y codificación: la página usa una versión reducida del formato para la cadena de ejemplo, y solo el formato del *blob* se reproduce byte a byte y se contrasta contra la herramienta. Que un instalador real elige la mayor versión compatible se toma como el comportamiento habitual, sin analizar la estrategia concreta de cada uno.
 
-**Lo que es mío, no del libro.** La secuencia concreta de comandos y la estructura de carpetas son mi recomendación, no doctrina de ninguna documentación.
+**Lo que viene de los libros.** Ninguno. Esta lección es autocontenida: no hay ningún libro con índice verificado que trate el material, así que el campo `libro:` queda vacío en lugar de citar una fuente sin verificar. La documentación de [uv](https://docs.astral.sh/uv/) y de [git](https://git-scm.com/doc) se menciona como referencia operativa, y no se le atribuye ninguna afirmación de esta página.
 
-[Índices verificados el 11-09-2026 contra el índice publicado de cada libro.]{.sello}
+**Lo que es mío, no del libro.** El planteamiento entero: tratar la reproducibilidad como una propiedad demostrable en vez de como una lista de comandos. La Proposición 5.4 escrita como «el resultado no es una función de la especificación», que es lo que de verdad justifica versionar el archivo de fijado. La Proposición 5.5 con el resolutor por fuerza bruta que enumera las dos asignaciones posibles y muestra que ninguna sirve. Y la Proposición 5.7 demostrada por inducción y verificada reproduciendo con `hashlib` el identificador que da la propia herramienta, que es lo que convierte la advertencia sobre los datos confidenciales en un corolario en lugar de en un consejo.
+
+[Sin índices que verificar: la lección no cita ningún libro.]{.sello}
 :::
 
 → Siguiente: [NumPy: primer contacto](06-numpy-primer-contacto.qmd)
