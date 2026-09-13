@@ -80,9 +80,25 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **48 lecciones** publicadas, **48** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 128 según el plan.
-- **102 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
+- **49 lecciones** publicadas, **49** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 127 según el plan.
+- **Las 16 lecciones de nivel L3 tienen sección «Contraste con la librería»**
+  (13-09-2026). Ese nivel promete «lo implementas en NumPy puro y empatas con la
+  librería a 6 decimales», y hasta esa fecha la promesa era **incomprobable**,
+  porque no había ninguna librería instalada. El CI instala ahora `numpy`,
+  `scipy` y `scikit-learn`, y cada lección declara en su frontmatter solo lo que
+  usa: la descarga pasa de 3,1 MB a unos 25 **únicamente** en las páginas que lo
+  necesitan. Est 16, que es L4, lleva además el supuesto roto y el modo de falla.
+
+  Tres decisiones que conviene no repensar desde cero:
+  `statsmodels` se descartó porque la versión de la máquina de trabajo está rota
+  con numpy 1.24 y no se publica código que no se haya ejecutado; Est 22 y 23 no
+  tienen contraste posible —PyMC no está en Pyodide, verificado contra el
+  `pyodide-lock.json`— y lo dicen, apoyándose en que se verifican contra las
+  marginales exactas, que es más fuerte que cualquier librería; y `np.trapz` se
+  retiró del espacio de nombres en NumPy 2.0, así que las celdas nuevas no lo
+  usan.
+- **104 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
   Quedan tres avisos de no idempotencia, todos anteriores a esta tanda.
 - **818 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
   sobre **225 celdas** que el gate ejecuta en cada build.
