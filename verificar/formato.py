@@ -88,6 +88,7 @@ MIGRADAS = {
     "estadistica/22-metropolis-hastings.qmd",
     "estadistica/23-gibbs-sampling.qmd",
     "estadistica/24-diagnostico-de-cadenas.qmd",
+    "estadistica/25-sintesis-y-casos.qmd",
     "python/01-tipos-y-estructuras.qmd",
     "python/02-funciones-y-scope.qmd",
     "python/03-comprehensions.qmd",

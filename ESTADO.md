@@ -4,9 +4,10 @@
 Python al molde nuevo. **Las 48 lecciones publicadas cumplen el molde: 48 de 48,
 y no queda ninguna en el molde viejo.**
 
-Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
-faltando lecciones por escribir: Python tiene 16 planeadas y 6 publicadas,
-Estadística 25 y 24. El detalle está en la tabla del punto 2.
+Eso es una afirmación sobre el **molde**, no sobre el plan. **Estadística queda cerrada en 25 de 25.** Del
+plan siguen faltando lecciones por escribir en los demás módulos: Python tiene
+16 planeadas y 6 publicadas, y Series, ML y Causal están vacíos. El detalle está
+en la tabla del punto 2.
 
 Antes de esto, el 12-09-2026 se habían publicado Estadística 18 a 24 —las
 bayesianas, desbloqueadas al verificar el índice entero de Think Bayes— y
@@ -68,7 +69,7 @@ hay que empezar a hacer:
 
 | Módulo | Publicadas | Planeadas | Al día con el molde | Falta escribir |
 |---|---|---|---|---|
-| Estadística | 24 | 25 | **24 de 24** | 25, *PyMC en producción* |
+| Estadística | 25 | 25 | **25 de 25** | — |
 | Matemática | 18 | 18 | **18 de 18** | — |
 | Python | 6 | 16 | **6 de 6** | 07 a 16, la Fase 1 |
 | Series de tiempo | 0 | 11 | — | todas |
@@ -445,6 +446,21 @@ falla el build. Codificar el SVG en base64.
 
 ## 6. Decisiones pendientes
 
+- ~~**Qué trata Estadística 25.**~~ **Resuelto el 13-09-2026.** Estaba planeada
+  como *PyMC en producción* y así no se podía escribir: PyMC no corre en la
+  plataforma, que solo tiene numpy en el navegador y en el runner de CI. Se
+  descartó también sustituirla por una lección de A/B testing, porque **el plan
+  de Causal ya la tiene**: su lección 04 es *A/B testing: diseño y potencia
+  derivada* y la 05 es *Pruebas secuenciales y el problema del peeking*. Lo
+  encontró Luis, y conviene recordar el método: **antes de proponer un tema,
+  mirar los índices de los módulos vacíos**, que tienen su plan escrito aunque
+  no tengan lecciones.
+
+  La 25 pasa a ser **síntesis del módulo**: el mapa de las 24 en cuatro bloques,
+  tres *puentes* demostrados —mínimos cuadrados igual a máxima verosimilitud,
+  bootstrap igual a la fórmula del error estándar, e intervalo de confianza
+  igual al de credibilidad con prior plana— y una sección de casos con once
+  fuentes de datos abiertas, comprobadas una a una.
 - ~~**Qué molde usan las lecciones de Python.**~~ **Decidido el 13-09-2026**: se
   mantiene el molde completo, definiciones numeradas incluidas, leyendo la
   especificación del lenguaje como el sistema de partida. El detalle está en el
