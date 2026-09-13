@@ -1,8 +1,12 @@
 # Estado de Ruta 780 y qué sigue
 
 Última actualización: **13-09-2026**, tras reescribir las seis lecciones de
-Python al molde nuevo. **Los tres módulos escritos quedan completos y al día:
-48 lecciones de 48.** No queda ninguna lección en el molde viejo.
+Python al molde nuevo. **Las 48 lecciones publicadas cumplen el molde: 48 de 48,
+y no queda ninguna en el molde viejo.**
+
+Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
+faltando lecciones por escribir: Python tiene 16 planeadas y 6 publicadas,
+Estadística 25 y 24. El detalle está en la tabla del punto 2.
 
 Antes de esto, el 12-09-2026 se habían publicado Estadística 18 a 24 —las
 bayesianas, desbloqueadas al verificar el índice entero de Think Bayes— y
@@ -62,13 +66,21 @@ hay que empezar a hacer:
 
 ## 2. Dónde está el trabajo
 
-| Módulo | Publicadas | Total | Al día con el molde |
-|---|---|---|---|
-| Estadística | 24 | 24 | **24 de 24** |
-| Matemática | 18 | 18 | **18 de 18** |
-| Python | 6 | 6 | **6 de 6** |
+| Módulo | Publicadas | Planeadas | Al día con el molde | Falta escribir |
+|---|---|---|---|---|
+| Estadística | 24 | 25 | **24 de 24** | 25, *PyMC en producción* |
+| Matemática | 18 | 18 | **18 de 18** | — |
+| Python | 6 | 16 | **6 de 6** | 07 a 16, la Fase 1 |
+| Series de tiempo | 0 | 11 | — | todas |
+| Machine Learning | 0 | 90 | — | todas |
+| Inferencia causal | 0 | 14 | — | todas |
 
-- **48 lecciones** publicadas, **48** cumplen el molde nuevo. Cero pendientes.
+Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
+`data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
+**no es un error**.
+
+- **48 lecciones** publicadas, **48** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 128 según el plan.
 - **102 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
   Quedan tres avisos de no idempotencia, todos anteriores a esta tanda.
 - **818 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
