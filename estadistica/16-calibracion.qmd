@@ -11,6 +11,7 @@ engine: markdown
 pyodide:
   packages:
     - numpy
+    - scikit-learn
 ---
 
 ::: {.meta-leccion data-leccion="estadistica/16-calibracion"}
@@ -957,6 +958,95 @@ print("con pocos dias dentro de cada caja.")
 ```
 
 El valor correcto es cero en las siete filas: el pronóstico **es** la probabilidad verdadera. Lo que la tabla mide es el sesgo del estimador, que crece con el número de cajas porque cada caja estima una frecuencia con menos días: de 0,000002 con dos cajas a 0,018799 con cuatrocientas. Un diagrama de fiabilidad con muchas cajas y pocos datos siempre parece descalibrado, y la tentación de leerlo como un hallazgo es exactamente el error que la lección 17 persigue.
+
+## Contraste con la librería
+
+Esta lección es de nivel **L4**, y ese nivel no se conforma con reproducir un número: pide la librería de verdad, **con sus supuestos y sus modos de falla**. La celda siguiente hace las tres cosas.
+
+Primero reproduce la regresión isotónica a mano —el algoritmo de fusión de bloques adyacentes— y la enfrenta a `IsotonicRegression`. Después comprueba qué le pasa a la Proposición 16.10 cuando la transformación la produce la librería. Y termina midiendo el error que más se comete al recalibrar.
+
+```{pyodide}
+import numpy as np
+from sklearn.isotonic import IsotonicRegression
+
+rng = np.random.default_rng(16)
+n = 4000
+
+# Probabilidad verdadera, y un pronostico que conserva el ORDEN y estropea el NIVEL.
+# Elevar al cuadrado es estrictamente creciente: es el caso de la Proposicion 16.10.
+q = rng.uniform(0.05, 0.95, size=n)
+y = (rng.uniform(size=n) < q).astype(float)
+p = q**2
+
+def brier(pred, obs):
+    return float(np.mean((pred - obs)**2))
+
+def pava(x, obs):
+    """Regresion isotonica por fusion de bloques adyacentes, a mano."""
+    orden = np.argsort(x, kind="mergesort")
+    v = obs[orden].astype(float).copy()
+    w = np.ones_like(v)
+    i = 0
+    while i < len(v) - 1:
+        if v[i] <= v[i + 1] + 1e-15:
+            i += 1
+            continue
+        nw = w[i] + w[i + 1]                       # violacion: fundir los dos bloques
+        nv = (v[i] * w[i] + v[i + 1] * w[i + 1]) / nw
+        v = np.delete(v, i + 1); w = np.delete(w, i + 1)
+        v[i] = nv; w[i] = nw
+        while i > 0 and v[i - 1] > v[i] + 1e-15:   # y retroceder si rompio hacia atras
+            nw = w[i - 1] + w[i]
+            nv = (v[i - 1] * w[i - 1] + v[i] * w[i]) / nw
+            v = np.delete(v, i); w = np.delete(w, i)
+            i -= 1
+            v[i] = nv; w[i] = nw
+    salida = np.empty(len(x))
+    salida[orden] = np.repeat(v, w.astype(int))
+    return salida
+
+recal_mano = pava(p, y)
+recal_sk = IsotonicRegression(out_of_bounds="clip").fit(p, y).predict(p)
+
+print("%-36s %12s" % ("", "score de Brier"))
+print("%-36s %12.6f" % ("pronostico sin recalibrar", brier(p, y)))
+print("%-36s %12.6f" % ("recalibrado a mano", brier(recal_mano, y)))
+print("%-36s %12.6f" % ("recalibrado con scikit-learn", brier(recal_sk, y)))
+print("%-36s %12.2e" % ("mayor diferencia mano vs sklearn", np.abs(recal_mano - recal_sk).max()))
+print("empatan:", bool(np.abs(recal_mano - recal_sk).max() < 1e-9))
+print()
+
+# --- El supuesto: la Proposicion 16.10 pide g ESTRICTAMENTE creciente ---
+orden = np.argsort(p, kind="mergesort")
+print("niveles distintos antes de recalibrar :", len(np.unique(p)))
+print("niveles distintos despues             :", len(np.unique(recal_sk)))
+print("no decreciente :", bool(np.all(np.diff(recal_sk[orden]) >= -1e-12)))
+print("estrictamente creciente:", bool(np.all(np.diff(recal_sk[orden]) > 0)))
+
+def auc(pred, obs):
+    o = np.argsort(pred, kind="mergesort")
+    r = np.empty(len(pred)); r[o] = np.arange(1, len(pred) + 1)
+    n1 = obs.sum(); n0 = len(obs) - n1
+    return float((r[obs == 1].sum() - n1 * (n1 + 1) / 2) / (n1 * n0))
+
+print("el orden se mueve en AUC: %.2e" % abs(auc(p, y) - auc(recal_sk, y)))
+print()
+
+# --- El modo de falla: ajustar y juzgar sobre los mismos datos ---
+mitad = n // 2
+iso = IsotonicRegression(out_of_bounds="clip").fit(p[:mitad], y[:mitad])
+print("%-36s %12.6f" % ("ajustado y medido en los mismos", brier(recal_sk, y)))
+print("%-36s %12.6f" % ("ajustado en una mitad, medido en otra", brier(iso.predict(p[mitad:]), y[mitad:])))
+print("la cifra honesta es la segunda:", bool(brier(iso.predict(p[mitad:]), y[mitad:]) > brier(recal_sk, y)))
+```
+
+Tres lecturas, en orden.
+
+**La implementación empata.** La isotónica escrita a mano y la de la librería coinciden hasta el último bit, con una diferencia máxima del orden de $10^{-16}$. Recalibrar baja el Brier desde $0{,}2200$ hasta $0{,}1796$ sin tocar el modelo, que es la Proposición 16.5 en una línea.
+
+**El supuesto de la Proposición 16.10 no se cumple aquí, y conviene verlo.** Esa proposición exige que la transformación sea **estrictamente** creciente, y la salida de la isotónica solo es **no decreciente**: funde casos en bloques de valor constante. En esta corrida, $4000$ pronósticos distintos salen convertidos en $38$ niveles. Por eso el orden no se conserva exactamente y el AUC se mueve unas milésimas: no porque la proposición falle, sino porque su hipótesis no aplica a esta $g$. Recalibrar es gratis en resolución **salvo por los empates que introduce**.
+
+**Y el modo de falla.** Ajustar la recalibración sobre los mismos datos con que se la juzga produce un Brier mejor que el real: la curva se dobla para seguir el ruido de esa muestra concreta. La cifra honesta es la de la segunda línea, ajustada en una mitad y medida en la otra. Es el mismo mecanismo de la lección 17 con otro disfraz, y es la razón por la que una recalibración se ajusta siempre fuera de la muestra de evaluación.
 
 ## Reto
 
