@@ -108,7 +108,7 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 - Índices verificados: Think Stats 3e (75 secciones), MML (80), **Think Bayes 2e
   (20 capítulos y 193 secciones, traídas enteras el 12-09-2026; el capítulo 19
   publica las suyas sin numerar)**, McKinney 3E (capítulos + las 6 secciones del
-  cap. 7) e ISLP (solo capítulos).
+  cap. 7) e **ISLP (13 capítulos y las 81 secciones, traídas el 13-09-2026 de los marcadores del PDF oficial)**.
 
 Para el estado exacto en cualquier momento:
 
@@ -279,10 +279,11 @@ Lo que sigue, en orden de coste creciente:
    lo citan mucho más adelante. Ahora son **catorce** secciones de retos
    pendientes: las diez de antes más las de Py 1 a Py 6, que las lecciones
    nuevas ya citan.
-2. **Series de tiempo, ML e Inferencia causal** están vacías en el sidebar. ML
-   necesita ISLP, cuyo índice está verificado solo a nivel de capítulo; causal
-   necesita *Causal Inference for the Brave and True*, que no está verificado y
-   por tanto no es citable.
+2. **Series de tiempo, ML e Inferencia causal** están vacías en el sidebar.
+   **ML ya no tiene bloqueo de citación**: el índice de ISLP se completó el
+   13-09-2026 con sus 81 secciones, así que se puede citar `§4.3 Logistic
+   Regression` y no solo el capítulo. Causal sigue necesitando *Causal Inference
+   for the Brave and True*, que no está verificado y por tanto no es citable.
 3. **Fase 2**: traer los índices de ESL y fast.ai antes de citarlos.
 
 ### 3.5 Estadística 01 y 02: hechas
