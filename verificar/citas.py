@@ -36,7 +36,7 @@ ORDEN = sorted(ALIAS, key=len, reverse=True)
 
 REF = re.compile(
     r"(?P<libro>" + "|".join(re.escape(a) for a in ORDEN) + r")\s*"
-    r"(?:(?P<tipo>§|cap\.\s*)\s*(?P<num>\d+(?:\.\d+)?)"
+    r"(?:(?P<tipo>§|cap\.\s*)\s*(?P<num>\d+(?:\.\d+){0,2})"
     r"(?:\s*[–-]\s*(?P<hasta>\d+(?:\.\d+)?))?"
     r"(?P<titulo>[^·§]*))?"
 )
@@ -49,17 +49,24 @@ def normalizar(t):
 
 
 def rango(a, b):
-    """Expande 3.1–3.4 o 2–4 a la lista de números intermedios."""
+    """Expande 2–4, 3.1–3.4 o 10.7.1–10.7.4 a la lista de números intermedios.
+
+    Generalizada a cualquier profundidad: dos referencias se expanden solo si
+    tienen el mismo número de niveles y comparten todo el prefijo salvo el
+    último. La versión anterior desempaquetaba dos valores del split y por eso
+    reventaba en cuanto aparecía un tercer nivel.
+    """
     if b is None:
         return [a]
-    if "." in a and "." in b:
-        ca, ia = a.split("."); cb, ib = b.split(".")
-        if ca == cb:
-            return [f"{ca}.{i}" for i in range(int(ia), int(ib) + 1)]
+    pa, pb = a.split("."), b.split(".")
+    if len(pa) != len(pb) or pa[:-1] != pb[:-1]:
         return [a, b]
-    if "." not in a and "." not in b:
-        return [str(i) for i in range(int(a), int(b) + 1)]
-    return [a, b]
+    try:
+        ini, fin = int(pa[-1]), int(pb[-1])
+    except ValueError:
+        return [a, b]
+    pre = ".".join(pa[:-1])
+    return [("%s.%d" % (pre, i)) if pre else str(i) for i in range(ini, fin + 1)]
 
 
 def revisar(campo, donde, fallos):

@@ -108,7 +108,11 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 - Índices verificados: Think Stats 3e (75 secciones), MML (80), **Think Bayes 2e
   (20 capítulos y 193 secciones, traídas enteras el 12-09-2026; el capítulo 19
   publica las suyas sin numerar)**, McKinney 3E (capítulos + las 6 secciones del
-  cap. 7) e **ISLP (13 capítulos y las 81 secciones, traídas el 13-09-2026 de los marcadores del PDF oficial)**.
+  cap. 7) e **ISLP (13 capítulos, 81 secciones N.M y 176 sub-subsecciones N.M.K —257 entradas— traídas el 13-09-2026 de los
+  marcadores del PDF oficial)**. Desde esa fecha `citas.py` admite **tres niveles**: se puede citar
+  `ISLP §10.7.1 Backpropagation`. La función `rango()` se generalizó a cualquier profundidad, porque la anterior
+  desempaquetaba dos valores del `split` y reventaba con el tercer nivel; se comprobó que los casos de dos niveles
+  siguen expandiéndose igual.
 
 Para el estado exacto en cualquier momento:
 
@@ -279,12 +283,41 @@ Lo que sigue, en orden de coste creciente:
    lo citan mucho más adelante. Ahora son **catorce** secciones de retos
    pendientes: las diez de antes más las de Py 1 a Py 6, que las lecciones
    nuevas ya citan.
-2. **Series de tiempo, ML e Inferencia causal** están vacías en el sidebar.
+2. **ML: el plan listado está incompleto, y el propio plan ya lo sabía.**
+   Anotado el 13-09-2026 al traer el tercer nivel del índice de ISLP.
+
+   `ml/index.qmd` enumera **33 filas**, de las que 14 se reparten los 13
+   capítulos de ISLP. Pero `data-total` del plan dice **90**. Faltan 57 filas
+   por escribir en el índice, y ese número no es casual: ISLP tiene exactamente
+   **57 secciones sustantivas de nivel N.M**. A razón de una lección por
+   sección —que es el ritmo real de las lecciones ya escritas, que citan una o
+   dos secciones cada una— ISLP pide unas 57, y con las 33 listadas salen las
+   90. Quien escribió el plan ya había hecho la cuenta: **las 14 filas son el
+   esqueleto, un título por capítulo, pendiente de desglosar.**
+
+   La medida del problema, con el tercer nivel a la vista: **199 unidades
+   enseñables contra 14 lecciones, o sea 14,2 por lección.** Los peores son el
+   capítulo 4 (*Classification*) y el 10 (*Deep Learning*), con 23 unidades
+   cada uno para una sola lección. El 5 (*Resampling*) es el más holgado, con
+   9. El capítulo 1 no necesita lección: es *Introduction*, material de
+   presentación sin resultados.
+
+   **La decisión acordada es no desglosar los trece de golpe**, que sería
+   planificar en el vacío, sino **capítulo a capítulo justo antes de
+   escribirlo**: al llegar al 4, mirar sus 23 unidades y decidir si son tres
+   lecciones o cinco. Lo que sí conviene es actualizar `ml/index.qmd` con las
+   filas nuevas según se decidan, para que el índice no siga mintiendo.
+
+   Aviso para el capítulo 11, *Survival Analysis*: tiene 17 unidades, una sola
+   lección, y **no reaparece en ninguna fase posterior**. Deep Learning al
+   menos se retoma en las lecciones 28 a 33; supervivencia no tiene red.
+
+3. **Series de tiempo e Inferencia causal** están vacías en el sidebar.
    **ML ya no tiene bloqueo de citación**: el índice de ISLP se completó el
    13-09-2026 con sus 81 secciones, así que se puede citar `§4.3 Logistic
    Regression` y no solo el capítulo. Causal sigue necesitando *Causal Inference
    for the Brave and True*, que no está verificado y por tanto no es citable.
-3. **Fase 2**: traer los índices de ESL y fast.ai antes de citarlos.
+4. **Fase 2**: traer los índices de ESL y fast.ai antes de citarlos.
 
 ### 3.5 Estadística 01 y 02: hechas
 
