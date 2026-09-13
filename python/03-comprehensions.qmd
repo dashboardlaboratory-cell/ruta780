@@ -1,12 +1,12 @@
 ---
-title: "Comprehensions e iteradores"
+title: "Iteradores, comprehensions y generadores"
 subtitle: "Python · Lección 3"
 nivel: L2
 modulo: python
 fase: F0
 prereqs: [python/02-funciones-y-scope]
 siguientes: [python/04-archivos-y-errores]
-libro: "McKinney 3E, cap. 3"
+libro: "McKinney 3E, cap. 3 Built-In Data Structures, Functions, and Files"
 engine: markdown
 ---
 
@@ -14,240 +14,598 @@ engine: markdown
 [[L2]{.nivel .nivel-L2} **Derivación**]{.item}
 [**Fase** F0]{.item}
 [**Libro** McKinney cap. 3]{.item}
-[**Prereqs** [Funciones y scope](02-funciones-y-scope.qmd)]{.item}
+[**Prereqs** [Funciones y ámbito](02-funciones-y-scope.qmd)]{.item}
 :::
 
-## La idea
+## Objetivo
 
-Una *comprehension* dice **qué quieres**, no **cómo recorrerlo**. Es el mismo salto mental que después harás en pandas cuando dejes de escribir bucles sobre filas y empieces a escribir operaciones sobre columnas — y en NumPy cuando vectorices.
+Al terminar esta lección se puede:
+
+1. Enunciar el [protocolo de iteración]{.g} y demostrar que un [iterador]{.g} se agota mientras que un [iterable]{.g} entrega uno nuevo en cada recorrido.
+2. Demostrar que una [comprehension]{.g} tiene ámbito propio, y que ese ámbito es el que explica el corolario de la Proposición 2.9.
+3. Demostrar que construir una [expresión generadora]{.g} no evalúa nada, y que el cuerpo de un [generador]{.g} queda suspendido entre dos elementos.
+4. Contar exactamente cuántas evaluaciones hace `any` con [cortocircuito]{.g} frente a las que hace sobre una lista ya construida, y demostrar la diferencia.
+5. Decidir entre lista y generador sabiendo qué se gana y qué se pierde con cada uno.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 2, Definición 2.2**: la regla LEGB. Una comprehension abre un ámbito propio, y por eso su variable de control no se filtra.
+- **Python 2, Proposición 2.9**: el cierre captura la celda. El clásico de las lambdas en un bucle sobrevive dentro de una comprehension, y esta lección explica por qué.
+- **Python 2, Definición 2.1**: la función como objeto. Un generador es una función cuyo cuerpo se puede suspender y reanudar.
+- **Python 1, Proposición 1.13**: el coste de `in`. Aquí reaparece como la diferencia entre recorrer y materializar.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 4**: leer un archivo línea a línea es consumir un iterador perezoso, y por eso un archivo de diez gigabytes se procesa sin cargarlo.
+- **Python 6**: el `axis` de NumPy y las operaciones vectorizadas sustituyen a la comprehension cuando los datos son numéricos y homogéneos.
+- **Estadística 11**: el bootstrap genera miles de remuestras; hacerlo con un generador mantiene la memoria constante.
+- **Estadística 22 y 23**: una cadena de Markov es un generador conceptualmente puro, que produce estados de uno en uno sin final previsto.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| `iter(xs)` | — | Pide a `xs` un iterador nuevo |
+| `next(it)` | — | Pide el siguiente elemento, o lanza `StopIteration` |
+| `[f(x) for x in xs]` | — | Comprehension de lista: construye los $n$ elementos |
+| `(f(x) for x in xs)` | — | Expresión generadora: no construye ninguno |
+| `yield v` | — | Entrega `v` y suspende el cuerpo en ese punto |
+| $n$ | ene | El número de elementos del iterable de partida |
+| $k$ | ka | El índice del primer elemento que cumple un predicado |
+:::
+
+## 1. El protocolo de iteración
+
+::: {.definicion}
+**Definición 3.1 (iterable e iterador).** Un objeto es un **iterador** si responde a `next()` entregando un elemento cada vez y lanzando `StopIteration` cuando se agota, y si `iter()` sobre él se devuelve a sí mismo.
+
+Un objeto es **iterable** si `iter()` sobre él devuelve un iterador. Todo iterador es iterable, por la segunda condición; el recíproco no vale.
+
+El bucle `for x in xs` consiste exactamente en pedir `iter(xs)` una vez y llamar a `next()` sobre el resultado hasta que lance `StopIteration`.
+:::
+
+::: {.proposicion}
+**Proposición 3.2 (el iterador se agota; el iterable no).** Sea `it` un iterador ya consumido por completo. Entonces todo recorrido posterior de `it` entrega cero elementos. En cambio, si `xs` es un iterable que no es iterador, cada recorrido de `xs` obtiene un iterador nuevo y entrega los mismos $n$ elementos.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea `it` un iterador agotado. Un segundo recorrido empieza pidiendo `iter(it)`, que por la Definición 3.1 devuelve el propio `it`, sin reiniciar nada: no hay ningún estado que rebobinar, porque el objeto sobre el que se itera y el que guarda la posición son el mismo. La primera llamada a `next()` encuentra la condición de agotamiento y lanza `StopIteration`, de modo que el bucle termina sin entregar nada.
+
+Sea ahora `xs` un iterable que no es iterador. Entonces `iter(xs)` devuelve un objeto distinto de `xs`, construido en el momento y con su posición en el inicio. Cada recorrido pide su propio `iter(xs)` y obtiene por tanto un objeto nuevo, cuya posición no depende de los recorridos anteriores, y entrega los $n$ elementos. [∎]{.fin-demo}
+:::
+
+La distinción se comprueba con `is`, sin recorrer nada: basta con mirar si pedir dos veces un iterador devuelve el mismo objeto.
 
 ```{pyodide}
-ventas = [120, 89, 240, 45, 310]
+xs = [10, 20, 30]
+it = iter(xs)
 
-# Cómo: el bucle
-altas_bucle = []
-for v in ventas:
-    if v > 100:
-        altas_bucle.append(v * 1.07)
+print("una lista NO es su propio iterador:", iter(xs) is xs)
+print("dos iter(xs) son objetos distintos:", iter(xs) is not iter(xs))
+print("un iterador SI es su propio iterador:", iter(it) is it)
+print()
 
-# Qué: la comprehension
-altas_comp = [v * 1.07 for v in ventas if v > 100]
+print("primer recorrido del iterador :", list(it))
+print("segundo recorrido del iterador:", list(it), "<- agotado")
+print()
+print("primer recorrido de la lista :", list(xs))
+print("segundo recorrido de la lista:", list(xs), "<- intacta")
+print()
 
-print(altas_bucle)
-print(altas_comp)
-print("iguales:", altas_bucle == altas_comp)
+g = (x * 2 for x in xs)
+print("una expresion generadora es un iterador:", iter(g) is g)
+print("consumida una vez:", list(g))
+print("y otra vez       :", list(g))
 ```
 
-La estructura siempre es la misma:
+El generador de la última parte se comporta como el iterador y no como la lista, que es la causa habitual de que un resultado salga vacío la segunda vez que se usa.
 
-```
-[  expresión   for  elemento  in  iterable   if  condición  ]
-   qué devuelvo      qué recorro              qué filtro
-```
+## 2. Comprehensions
 
-El `if` es opcional. Se lee de izquierda a derecha, salvo la expresión del principio, que se aplica al final.
+::: {.definicion}
+**Definición 3.3 (las cuatro formas).** Una **comprehension** construye una colección describiendo sus elementos. Con `f` una expresión, `xs` un iterable y `c` una condición opcional:
 
-## Las cuatro formas
+| Forma | Escritura | Construye |
+|---|---|---|
+| lista | `[f(x) for x in xs if c(x)]` | una `list` con los $n$ elementos |
+| conjunto | `{f(x) for x in xs if c(x)}` | un `set`, descartando repetidos |
+| diccionario | `{k(x): v(x) for x in xs}` | un `dict` |
+| generadora | `(f(x) for x in xs if c(x))` | un generador; **ningún** elemento |
+
+Las tres primeras son equivalentes a inicializar la colección vacía y añadirle un elemento por iteración. La cuarta no construye colección alguna.
+:::
 
 ```{pyodide}
-palabras = ["multiplaza", "costa", "brisas", "costa"]
+lluvias = [
+    {"ciudad": "Alta",   "mm": 4200.0, "dias": 140},
+    {"ciudad": "Media",  "mm": 1800.0, "dias":  45},
+    {"ciudad": "Baja",   "mm": 3100.0, "dias": 100},
+]
 
-lista      = [p.upper() for p in palabras]                  # list
-conjunto   = {len(p) for p in palabras}                     # set: sin repetidos
-diccionario= {p: len(p) for p in palabras}                  # dict
-generador  = (len(p) for p in palabras)                     # generator: perezoso
-
-print("list:", lista)
-print("set:", conjunto)
-print("dict:", diccionario)
-print("generator:", generador)
-print("consumido:", list(generador))
+print("lista      :", [round(d["mm"] / d["dias"], 2) for d in lluvias])
+print("con filtro :", [round(d["mm"] / d["dias"], 2) for d in lluvias if d["dias"] > 50])
+print("conjunto   :", sorted({d["dias"] // 50 for d in lluvias}))
+print("diccionario:", {d["ciudad"]: d["mm"] for d in lluvias if d["mm"] > 2000})
+print("generadora :", (round(d["mm"] / d["dias"], 2) for d in lluvias))
 ```
 
-Fíjate que el diccionario tiene tres claves, no cuatro: `"costa"` aparecía dos veces y la segunda sobrescribió a la primera.
+La última línea imprime el objeto generador y no sus elementos, porque no hay ninguno construido: eso es la Definición 3.3 y se demuestra en la Proposición 3.6.
 
-## Listas contra generadores: la diferencia es memoria
+::: {.proposicion}
+**Proposición 3.4 (la comprehension tiene ámbito propio).** La variable de control de una comprehension no vincula ni revincula ningún nombre del ámbito que la contiene. Tras evaluar `[x for x in xs]`, el nombre `x` del ámbito exterior conserva el vínculo que tuviera antes, o sigue sin vínculo si no tenía ninguno. Un bucle `for` ordinario, en cambio, deja su variable vinculada al último valor recorrido.
+:::
 
-::: {.derivacion}
-**Por qué un generador no ocupa memoria**
+::: {.demostracion}
+*Demostración.* La especificación del lenguaje asigna a la comprehension un ámbito propio, distinto del que la contiene, en el que se vincula la variable de control. Por la Definición 2.2, resolver un nombre consulta las tablas de vínculos en orden LEGB, y la tabla del ámbito de la comprehension desaparece al terminar esta; el nombre exterior nunca fue destino de una asignación en el ámbito exterior, de modo que su vínculo no se toca.
 
-::: {.paso}
-`[x**2 for x in range(n)]` construye la lista completa **antes** de devolverla: reserva memoria para los `n` resultados, todos a la vez.
+El bucle `for` no abre ningún ámbito: su variable de control es un nombre del ámbito que lo contiene, y cada iteración la revincula. Al terminar, conserva el vínculo de la última iteración. [∎]{.fin-demo}
 :::
-::: {.paso}
-`(x**2 for x in range(n))` no calcula nada al crearse. Devuelve un objeto que recuerda **dónde va** en el recorrido.
+
+::: {.demostracion}
+*Corolario.* Las lambdas creadas dentro de una comprehension siguen compartiendo una sola celda, pese a ese ámbito propio. En efecto, el ámbito propio es **uno** para toda la comprehension y no uno por iteración, así que la variable de control es una sola celda que cada iteración revincula, y se aplica la Proposición 2.9 sin cambio alguno. [∎]{.fin-demo}
 :::
-::: {.paso}
-Cada vez que pides el siguiente elemento — con `next()`, o implícitamente en un `for` — el generador calcula **ese** valor, lo entrega, y se congela hasta la próxima petición. Solo existe un valor a la vez.
+
+```{pyodide}
+x = "intacto"
+resultado = [x for x in range(3)]
+print("tras la comprehension, x sigue siendo:", x)
+
+for x in range(3):
+    pass
+print("tras el bucle for, x quedo en      :", x)
+print()
+
+try:
+    del y
+except NameError:
+    pass
+_ = [y for y in range(3)]
+try:
+    y
+except NameError:
+    print("una variable que solo existio en la comprehension no queda vinculada")
+
+print()
+# El corolario: el ambito propio es uno, no uno por iteracion
+funcs = [lambda: i for i in range(3)]
+print("lambdas en una comprehension:", [f() for f in funcs])
+print("siguen compartiendo celda   :", funcs[0].__closure__[0] is funcs[2].__closure__[0])
+```
+
+El ámbito propio evita que la comprehension pise un nombre de fuera, y no convierte cada iteración en un ámbito nuevo. Las dos cosas se confunden con facilidad, y la segunda línea del bloque anterior las separa.
+
+## 3. Generadores
+
+::: {.definicion}
+**Definición 3.5 (generador).** Una **función generadora** es una función cuyo cuerpo contiene al menos un `yield`. Llamarla no ejecuta el cuerpo: construye y devuelve un objeto **generador**, que es un iterador en el sentido de la Definición 3.1.
+
+Cada `next()` sobre el generador reanuda el cuerpo donde quedó, lo ejecuta hasta el siguiente `yield` y entrega el valor cedido, dejando el cuerpo suspendido en ese punto con todos sus nombres locales vivos. Cuando el cuerpo termina, el generador lanza `StopIteration`.
 :::
-::: {.paso}
-Consecuencia: la memoria de un generador es O(1) sin importar `n`, y la de la lista es O(n). Pero el generador es **de un solo uso**: al terminar de recorrerlo queda agotado.
+
+::: {.proposicion}
+**Proposición 3.6 (evaluación perezosa).** Construir un generador —llamando a una función generadora o escribiendo una expresión generadora— ejecuta **cero** veces la expresión que produce los elementos. Consumir $m$ elementos la ejecuta exactamente $m$ veces, sin importar cuántos elementos tenga el iterable de partida.
 :::
+
+::: {.demostracion}
+*Demostración.* Por la Definición 3.5, la llamada construye el objeto generador y no ejecuta el cuerpo, de modo que ninguna expresión del cuerpo se evalúa; en particular la que produce los elementos se evalúa cero veces. Una expresión generadora se define como una función generadora implícita cuyo cuerpo cede un elemento por iteración, así que le aplica lo mismo.
+
+Cada `next()` reanuda el cuerpo y lo ejecuta hasta el siguiente `yield`, lo que evalúa la expresión productora exactamente una vez, y vuelve a suspenderlo. Tras $m$ llamadas, el número de evaluaciones es $m$. El cuerpo suspendido no avanza por su cuenta, luego los elementos no pedidos no se evalúan nunca. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+evaluaciones = []
+
+def caro(x):
+    evaluaciones.append(x)
+    return x * 10
+
+datos = list(range(6))
+
+g = (caro(x) for x in datos)
+print("tras construir el generador, evaluaciones:", len(evaluaciones))
+
+primeros = [next(g), next(g)]
+print("tras pedir 2 elementos          :", primeros, "| evaluaciones:", len(evaluaciones))
+
+evaluaciones.clear()
+L = [caro(x) for x in datos]
+print("una comprehension de lista evalua:", len(evaluaciones), "de", len(datos))
+print()
+
+def cuenta_atras(n):
+    print("  el cuerpo arranca")
+    while n > 0:
+        yield n
+        n -= 1
+    print("  el cuerpo termina")
+
+gen = cuenta_atras(3)
+print("llamada hecha, cuerpo aun sin arrancar")
+print("primer next:", next(gen))
+print("resto      :", list(gen))
+```
+
+El visual siguiente contrasta las dos formas a lo largo del consumo. El marco es fijo: la fila ocupa siempre el mismo ancho, y lo que cambia es cuántas casillas se han llegado a evaluar y cuántas siguen vivas.
+
+```{=html}
+<div class="viz-pereza">
+  <div class="controles">
+    <label>Forma
+      <select id="pz-modo">
+        <option value="0" selected>[f(x) for x in xs]</option>
+        <option value="1">(f(x) for x in xs)</option>
+      </select>
+    </label>
+    <label>Elementos pedidos <input id="pz-ped" type="range" min="0" max="12" step="1" value="5"> <span id="pz-ped-v">5</span></label>
+  </div>
+  <svg id="pz-svg" viewBox="0 0 620 280" role="img" aria-label="Los trece elementos en fila. Se marcan los que ya se han evaluado y, aparte, los que siguen vivos en memoria a la vez, segun la forma elegida y cuantos elementos ha pedido el consumidor."></svg>
+  <p class="lectura" id="pz-lectura"></p>
+</div>
+<style>
+.viz-pereza { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-pereza .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-pereza label { display: flex; align-items: center; gap: .4rem; }
+.viz-pereza input[type=range] { width: 150px; padding: 0; }
+.viz-pereza select { font-size: .85rem; padding: .1rem .25rem; font-family: var(--bs-font-monospace, monospace); }
+.viz-pereza svg { width: 100%; height: auto; display: block; }
+.viz-pereza .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_EV = "#B45309", C_VI = "#0F6E68";
+  var svg = document.getElementById("pz-svg"), lec = document.getElementById("pz-lectura");
+  var cm = document.getElementById("pz-modo");
+  var cp = document.getElementById("pz-ped"), ep = document.getElementById("pz-ped-v");
+
+  var N = 13;
+  // Marco constante, anclado al ancho total y no a los datos.
+  var X0 = 40, ANCHO = 540, CY = 86, CH = 38, CW = ANCHO / N;
+  var B1 = 172, B2 = 216, BH = 20;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function barra(y, frac, color, etiqueta) {
+    svg.appendChild(el("rect", { x: X0, y: y, width: ANCHO, height: BH, rx: 4, fill: "none", stroke: C_L }));
+    svg.appendChild(el("rect", { x: X0, y: y, width: (ANCHO * frac).toFixed(1), height: BH, rx: 4,
+      fill: color, "fill-opacity": 0.22, stroke: color, "stroke-width": 1.4 }));
+    svg.appendChild(el("text", { x: X0, y: y - 7, "font-size": 11.5, fill: C_T, opacity: 0.72 }, etiqueta));
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var modo = +cm.value, ped = +cp.value;
+    ep.textContent = String(ped);
+    var evaluados = modo === 0 ? N : ped;
+    var vivos = modo === 0 ? N : (ped > 0 ? 1 : 0);
+
+    svg.appendChild(el("text", { x: X0, y: 38, "font-size": 11.5, fill: C_T, opacity: 0.72 },
+      "el consumidor ha pedido " + ped + " de " + N + " elementos"));
+
+    for (var i = 0; i < N; i++) {
+      var ev = i < evaluados;
+      var vivo = modo === 0 ? ev : (i === ped - 1);
+      svg.appendChild(el("rect", { x: (X0 + i * CW).toFixed(1), y: CY, width: (CW - 4).toFixed(1),
+        height: CH, rx: 4, fill: vivo ? C_VI : "none", "fill-opacity": vivo ? 0.18 : 0,
+        stroke: ev ? (vivo ? C_VI : C_EV) : C_L,
+        "stroke-width": vivo ? 2.2 : (ev ? 1.5 : 1),
+        "stroke-opacity": ev ? 1 : 0.4 }));
+      svg.appendChild(el("text", { x: (X0 + i * CW + (CW - 4) / 2).toFixed(1), y: CY + CH / 2 + 4.5,
+        "text-anchor": "middle", "font-size": 11, fill: C_T, opacity: ev ? 1 : 0.4,
+        "font-family": "var(--bs-font-monospace,monospace)" }, String(i)));
+    }
+    // marcador del punto de consumo, siempre presente
+    var mx = X0 + Math.max(0, ped - 1) * CW + (CW - 4) / 2;
+    svg.appendChild(el("circle", { cx: mx.toFixed(1), cy: (CY + CH + 14).toFixed(1), r: 5,
+      fill: C_VI, stroke: "#fff", "stroke-width": 1.4 }));
+
+    barra(B1, evaluados / N, C_EV, "elementos ya evaluados: " + evaluados + " de " + N);
+    barra(B2, vivos / N, C_VI, "vivos en memoria a la vez: " + vivos);
+
+    lec.innerHTML = modo === 0
+      ? ("La lista se construye entera antes de que nadie pida nada: los <strong>" + N +
+         "</strong> elementos están evaluados y vivos desde el principio, se pidan " + ped + " o ninguno (Proposición 3.8).")
+      : ("El generador ha evaluado <strong>" + evaluados + "</strong> elementos, uno por cada petición (Proposición 3.6), y mantiene <strong>" +
+         vivos + "</strong> vivo a la vez. Los " + (N - evaluados) + " restantes no se han evaluado y puede que nunca lo hagan.");
+  }
+
+  cm.addEventListener("change", dibujar);
+  cp.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+La construcción del generador deja el contador de evaluaciones en 0 y pedir dos elementos lo deja en 2, mientras que la comprehension de lista lo lleva a 6 de golpe. El mensaje «el cuerpo arranca» aparece después de la línea que dice que la llamada ya se hizo, que es la Definición 3.5 en una línea de salida.
+
+## 4. Cortocircuito: cuánto trabajo se ahorra
+
+::: {.proposicion}
+**Proposición 3.7 (cortocircuito).** Sea `p` un predicado sobre los $n$ elementos de `xs`, y sea $k$ el índice del primero que lo cumple, con $0\le k<n$. Entonces:
+
+- `any(p(x) for x in xs)` evalúa `p` exactamente $k+1$ veces;
+- `any([p(x) for x in xs])` lo evalúa exactamente $n$ veces.
+
+Si ningún elemento lo cumple, ambas formas lo evalúan $n$ veces.
+:::
+
+::: {.demostracion}
+*Demostración.* En la segunda forma, el argumento de `any` es una comprehension de lista, y los argumentos de una llamada se evalúan antes de entrar en ella. Construir la lista recorre los $n$ elementos evaluando `p` una vez por cada uno, por la Definición 3.3; `any` recibe entonces una lista ya construida, y lo que haga después no cambia el número de evaluaciones, que es $n$.
+
+En la primera forma el argumento es una expresión generadora, que por la Proposición 3.6 se construye sin evaluar nada. `any` recorre el iterador pidiendo elementos hasta encontrar uno verdadero, y cada petición evalúa `p` exactamente una vez. Los elementos de índice $0$ a $k-1$ dan falso y el de índice $k$ da verdadero, momento en el que `any` se detiene y devuelve; el total de peticiones es $k+1$. Si ninguno da verdadero, `any` agota el iterador y hace las $n$ peticiones. [∎]{.fin-demo}
+:::
+
+El conteo es exacto y no depende de la máquina, así que se comprueba contando y no cronometrando, como pide la regla 7.
+
+```{pyodide}
+n = 1000
+
+def prueba(k):
+    """Cuenta las evaluaciones de un predicado cuyo primer verdadero esta en k."""
+    llamadas = [0]
+    def p(x):
+        llamadas[0] += 1
+        return x >= k
+    xs = list(range(n))
+
+    llamadas[0] = 0
+    r1 = any(p(x) for x in xs)          # generadora: se detiene en k
+    con_gen = llamadas[0]
+
+    llamadas[0] = 0
+    r2 = any([p(x) for x in xs])        # lista: se construye entera antes
+    con_lista = llamadas[0]
+    return r1, r2, con_gen, con_lista
+
+print("%8s  %12s  %12s  %10s" % ("k", "generadora", "lista", "ahorro"))
+for k in [0, 10, 500, 999, 1000]:
+    r1, r2, cg, cl = prueba(k)
+    etiqueta = str(k) if k < n else "ninguno"
+    print("%8s  %12d  %12d  %9.1f%%" % (etiqueta, cg, cl, 100.0 * (1 - cg / float(cl))))
+print()
+print("la generadora hace k+1 evaluaciones; la lista hace n = %d siempre" % n)
+```
+
+Con el primer verdadero en la posición 0 la forma generadora hace una sola evaluación frente a mil, un ahorro del 99,9 %. Cuando ningún elemento cumple el predicado las dos hacen mil y el ahorro es cero: el cortocircuito ahorra trabajo exactamente cuando hay dónde cortar.
+
+```{=html}
+<div class="viz-corto">
+  <div class="controles">
+    <label>Primer verdadero en k <input id="ct-k" type="range" min="0" max="12" step="1" value="4"> <span id="ct-k-v">4</span></label>
+    <label>Forma del argumento
+      <select id="ct-modo">
+        <option value="0" selected>any(p(x) for x in xs)</option>
+        <option value="1">any([p(x) for x in xs])</option>
+      </select>
+    </label>
+  </div>
+  <svg id="ct-svg" viewBox="0 0 620 260" role="img" aria-label="Los doce elementos del iterable en fila. Se marcan los que el predicado llega a evaluar segun la forma del argumento y la posicion del primer verdadero, y debajo se cuenta el total de evaluaciones."></svg>
+  <p class="lectura" id="ct-lectura"></p>
+</div>
+<style>
+.viz-corto { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-corto .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-corto label { display: flex; align-items: center; gap: .4rem; }
+.viz-corto input[type=range] { width: 150px; padding: 0; }
+.viz-corto select { font-size: .85rem; padding: .1rem .25rem; font-family: var(--bs-font-monospace, monospace); }
+.viz-corto svg { width: 100%; height: auto; display: block; }
+.viz-corto .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_EV = "#B45309", C_OK = "#0F6E68";
+  var svg = document.getElementById("ct-svg"), lec = document.getElementById("ct-lectura");
+  var ck = document.getElementById("ct-k"), ek = document.getElementById("ct-k-v");
+  var cm = document.getElementById("ct-modo");
+
+  var N = 13;                     // indices 0..12
+  // Marco constante: la fila ocupa siempre el mismo ancho.
+  var X0 = 40, ANCHO = 540, CY = 96, CH = 40, BARY = 190, BARH = 22;
+  var CW = ANCHO / N;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var k = +ck.value, modo = +cm.value;
+    ek.textContent = String(k);
+    var evaluados = modo === 0 ? k + 1 : N;
+
+    svg.appendChild(el("text", { x: X0, y: 40, "font-size": 11.5, fill: C_T, opacity: 0.72 },
+      "los " + N + " elementos de xs; se resaltan los que el predicado llega a evaluar"));
+
+    for (var i = 0; i < N; i++) {
+      var visto = i < evaluados;
+      var esK = i === k;
+      svg.appendChild(el("rect", { x: (X0 + i * CW).toFixed(1), y: CY, width: (CW - 4).toFixed(1),
+        height: CH, rx: 4, fill: "none",
+        stroke: esK ? C_OK : (visto ? C_EV : C_L),
+        "stroke-width": esK ? 2.4 : (visto ? 1.6 : 1),
+        "stroke-opacity": visto || esK ? 1 : 0.45 }));
+      svg.appendChild(el("text", { x: (X0 + i * CW + (CW - 4) / 2).toFixed(1), y: CY + CH / 2 + 4.5,
+        "text-anchor": "middle", "font-size": 11.5, fill: C_T,
+        opacity: visto || esK ? 1 : 0.4,
+        "font-family": "var(--bs-font-monospace,monospace)" }, String(i)));
+    }
+
+    // barra del trabajo hecho, anclada al ancho total (nunca a los datos)
+    svg.appendChild(el("rect", { x: X0, y: BARY, width: ANCHO, height: BARH, rx: 4,
+      fill: "none", stroke: C_L }));
+    svg.appendChild(el("rect", { x: X0, y: BARY, width: (ANCHO * evaluados / N).toFixed(1),
+      height: BARH, rx: 4, fill: modo === 0 ? C_OK : C_EV, "fill-opacity": 0.22,
+      stroke: modo === 0 ? C_OK : C_EV, "stroke-width": 1.4 }));
+    svg.appendChild(el("text", { x: X0, y: BARY - 10, "font-size": 11.5, fill: C_T, opacity: 0.72 },
+      "evaluaciones del predicado: " + evaluados + " de " + N));
+    svg.appendChild(el("text", { x: X0, y: BARY + BARH + 22, "font-size": 12.5, fill: C_T,
+      "font-family": "var(--bs-font-monospace,monospace)" },
+      modo === 0 ? "k + 1 = " + (k + 1) : "n = " + N));
+
+    lec.innerHTML = modo === 0
+      ? ("La expresión generadora no evalúa nada al construirse (Proposición 3.6). <code>any</code> pide elementos hasta el primero verdadero, que está en <strong>k = " +
+         k + "</strong>, y se detiene: <strong>" + (k + 1) + "</strong> evaluaciones.")
+      : ("La comprehension de lista se construye entera <em>antes</em> de entrar en <code>any</code>, porque los argumentos se evalúan primero. Son <strong>" +
+         N + "</strong> evaluaciones sea cual sea k, y el cortocircuito posterior ya no ahorra nada.");
+  }
+
+  ck.addEventListener("input", dibujar);
+  cm.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+Mover la posición del primer verdadero cambia el trabajo de la forma generadora y deja intacto el de la forma con lista: la barra de la derecha no se mueve al cambiar $k$ en el segundo modo, y eso es la Proposición 3.7 dibujada.
+
+## 5. Memoria: qué se queda vivo
+
+::: {.proposicion}
+**Proposición 3.8 (memoria de la comprehension frente a la del generador).** Una comprehension de lista sobre $n$ elementos mantiene vivos los $n$ objetos resultantes a la vez. Una expresión generadora mantiene vivo un número de objetos acotado por una constante, con independencia de $n$.
+:::
+
+::: {.demostracion}
+*Demostración.* La comprehension de lista construye una `list` y le añade un elemento por iteración, de modo que al terminar la lista contiene referencias a los $n$ objetos y todos ellos siguen alcanzables desde ella.
+
+La expresión generadora construye un único objeto generador, cuyo estado consta del cuerpo suspendido, del iterador de partida y de los nombres locales vivos en el punto de suspensión: una cantidad que no depende de $n$. El elemento entregado por cada `next()` deja de ser alcanzable desde el generador en cuanto se pide el siguiente, así que en ningún instante hay más de un elemento vivo por causa del generador. [∎]{.fin-demo}
 :::
 
 ```{pyodide}
 import sys
 
-n = 100_000
-lista_mem = sys.getsizeof([x**2 for x in range(n)])
-gen_mem   = sys.getsizeof((x**2 for x in range(n)))
+n = 200000
+lista = [x * 2 for x in range(n)]
+gen = (x * 2 for x in range(n))
 
-print(f"lista de {n:,} elementos: {lista_mem:>9,} bytes")
-print(f"generador equivalente:    {gen_mem:>9,} bytes")
-print(f"razón: {lista_mem / gen_mem:,.0f}x")
+tam_lista = sys.getsizeof(lista)
+tam_gen = sys.getsizeof(gen)
+print("n = %d" % n)
+print("la lista ocupa      : %8d bytes" % tam_lista)
+print("el generador ocupa  : %8d bytes" % tam_gen)
+print("razon lista/generador: %d veces" % (tam_lista // tam_gen))
+print()
+print("el generador ocupa menos de 1 KB:", bool(tam_gen < 1024))
+print("y no crece con n:", bool(sys.getsizeof((x for x in range(10))) == sys.getsizeof((x for x in range(10 ** 9)))))
+print()
+print("la suma da lo mismo por los dos caminos:", sum(lista) == sum(x * 2 for x in range(n)))
 ```
 
-```{pyodide}
-gen = (x**2 for x in range(5))
+El tamaño del generador no depende de $n$, y esa es la propiedad que la proposición afirma; el número exacto de bytes depende de la implementación y por eso la prosa afirma la propiedad y no la cifra, como exige la regla 7.
 
-print("primera pasada:", list(gen))
-print("segunda pasada:", list(gen), " <- vacío: ya se agotó")
-```
+::: {.definicion}
+**Definición 3.9 (cuándo conviene cada uno).** La lista se puede recorrer más de una vez, indexar y medir con `len`. El generador no admite ninguna de las tres, y a cambio no paga la memoria ni el trabajo de los elementos que nadie pide.
 
-**Cuándo usar cada uno**: lista si vas a recorrerla más de una vez, indexarla o conocer su largo. Generador si solo vas a recorrerla una vez, sobre todo si es grande o infinita — leer un CSV de 10 GB línea por línea, por ejemplo.
-
-## Anidadas y el orden que confunde
-
-```{pyodide}
-sucursales = ["multiplaza", "costa"]
-productos  = ["latte", "mocha"]
-
-combos = [(s, p) for s in sucursales for p in productos]
-print(combos)
-```
-
-El orden de los `for` es **el mismo** que en los bucles anidados equivalentes: el primero es el externo. Pero cuidado con esta otra forma, que es distinta:
-
-```{pyodide}
-matriz = [[1, 2, 3], [4, 5, 6]]
-
-aplanada  = [x for fila in matriz for x in fila]      # aplana
-por_filas = [[x * 2 for x in fila] for fila in matriz] # mantiene estructura
-
-print("aplanada:", aplanada)
-print("por filas:", por_filas)
-```
-
-::: {.callout-tip}
-## Cuándo NO usar una comprehension
-
-Si necesitas dos niveles de anidamiento con condiciones, o la expresión no cabe cómoda en una línea, el bucle explícito se lee mejor. Una comprehension ilegible no es más "pythónica" — es peor código.
+La regla que se sigue de las Proposiciones 3.2, 3.7 y 3.8: generador cuando el resultado se consume una sola vez y de principio a fin, o cuando el consumidor puede detenerse antes; lista cuando hace falta volver sobre los datos.
 :::
 
-## Herramientas que acompañan
+## Ejercicios
+
+### Ejercicio 1 — Filtrar y transformar
+
+De los registros de lluvia, obtener una lista con la media diaria en milímetros, redondeada a dos decimales, solo de las ciudades con más de 50 días de registro.
 
 ```{pyodide}
-ventas = [120, 89, 240, 45, 310]
-sucursales = ["multiplaza", "costa", "brisas", "vía porras", "costa del este"]
-
-for i, v in enumerate(ventas, start=1):              # índice + valor
-    if i <= 2:
-        print(f"  #{i}: {v}")
-
-print()
-for s, v in zip(sucursales, ventas):                 # recorre en paralelo
-    print(f"  {s:<16} {v:>5}")
-
-print()
-print("total:", sum(ventas))
-print("máximo:", max(ventas))
-print("alguna sobre 300:", any(v > 300 for v in ventas))
-print("todas sobre 40:", all(v > 40 for v in ventas))
-```
-
-`any` y `all` con un generador adentro se cortan apenas saben la respuesta: `any` para en el primer `True`. Con una lista tendrías que calcular todo primero.
-
-## Ejercicio 1 — Filtrar y transformar
-
-De la lista de ventas, obtén una lista con el **ticket promedio** (venta ÷ transacciones) solo de las sucursales con más de 50 transacciones, redondeado a 2 decimales.
-
-```{pyodide}
-#| exercise: ex_ticket
-datos = [
-    {"sucursal": "multiplaza", "venta": 4200.0, "trx": 140},
-    {"sucursal": "costa",      "venta": 1800.0, "trx": 45},
-    {"sucursal": "brisas",     "venta": 3100.0, "trx": 100},
+#| exercise: ex_media
+lluvias = [
+    {"ciudad": "Alta",  "mm": 4200.0, "dias": 140},
+    {"ciudad": "Media", "mm": 1800.0, "dias":  45},
+    {"ciudad": "Baja",  "mm": 3100.0, "dias": 100},
 ]
 
-tickets = ______
+medias = ______
 
-print(tickets)
-tickets
+print(medias)
+medias
 ```
 
-::: {.hint exercise="ex_ticket"}
-La expresión es `round(d["venta"] / d["trx"], 2)`, el iterable es `datos`, y la condición filtra por `d["trx"] > 50`.
+::: {.hint exercise="ex_media"}
+La forma es `[f(d) for d in lluvias if c(d)]` de la Definición 3.3. La expresión es `round(d["mm"] / d["dias"], 2)` y la condición filtra por `d["dias"] > 50`.
 :::
 
-::: {.solution exercise="ex_ticket"}
+::: {.solution exercise="ex_media"}
 ```{pyodide}
-datos = [
-    {"sucursal": "multiplaza", "venta": 4200.0, "trx": 140},
-    {"sucursal": "costa",      "venta": 1800.0, "trx": 45},
-    {"sucursal": "brisas",     "venta": 3100.0, "trx": 100},
+lluvias = [
+    {"ciudad": "Alta",  "mm": 4200.0, "dias": 140},
+    {"ciudad": "Media", "mm": 1800.0, "dias":  45},
+    {"ciudad": "Baja",  "mm": 3100.0, "dias": 100},
 ]
 
-tickets = [round(d["venta"] / d["trx"], 2) for d in datos if d["trx"] > 50]
+medias = [round(d["mm"] / d["dias"], 2) for d in lluvias if d["dias"] > 50]
 
-print(tickets)
-tickets
+print(medias)
+medias
 ```
 :::
 
 ```{pyodide}
-#| exercise: ex_ticket
+#| exercise: ex_media
 #| check: true
 esperado = [30.0, 31.0]
 if result == esperado:
     feedback = {"correct": True, "message": "Correcto.", "type": "success"}
 elif len(result) == 3:
-    feedback = {"correct": False, "message": "No filtraste: costa tiene 45 trx y no debería estar.", "type": "warning"}
+    feedback = {"correct": False, "message": "Falta el filtro: la ciudad Media tiene 45 días y queda fuera.", "type": "warning"}
 else:
     feedback = {"correct": False, "message": f"Esperaba {esperado} y obtuve {result}.", "type": "error"}
 feedback
 ```
 
-## Ejercicio 2 — Dict comprehension
+### Ejercicio 2 — Comprehension de diccionario
 
-Construye un diccionario de sucursal a venta, solo para las que superan 2000.
+Construir un diccionario de ciudad a milímetros totales, solo para las que superan 2000.
 
 ```{pyodide}
 #| exercise: ex_dict
-datos = [
-    {"sucursal": "multiplaza", "venta": 4200.0},
-    {"sucursal": "costa",      "venta": 1800.0},
-    {"sucursal": "brisas",     "venta": 3100.0},
+lluvias = [
+    {"ciudad": "Alta",  "mm": 4200.0},
+    {"ciudad": "Media", "mm": 1800.0},
+    {"ciudad": "Baja",  "mm": 3100.0},
 ]
 
-por_sucursal = ______
+por_ciudad = ______
 
-print(por_sucursal)
-por_sucursal
+print(por_ciudad)
+por_ciudad
 ```
 
 ::: {.hint exercise="ex_dict"}
-Una dict comprehension va entre llaves y usa `clave: valor` como expresión: `{d["sucursal"]: d["venta"] for d in datos if ...}`.
+La forma de diccionario de la Definición 3.3 va entre llaves y su expresión es un par `clave: valor`. Las claves han de ser hashables, y una cadena lo es por la Definición 1.10.
 :::
 
 ::: {.solution exercise="ex_dict"}
 ```{pyodide}
-datos = [
-    {"sucursal": "multiplaza", "venta": 4200.0},
-    {"sucursal": "costa",      "venta": 1800.0},
-    {"sucursal": "brisas",     "venta": 3100.0},
+lluvias = [
+    {"ciudad": "Alta",  "mm": 4200.0},
+    {"ciudad": "Media", "mm": 1800.0},
+    {"ciudad": "Baja",  "mm": 3100.0},
 ]
 
-por_sucursal = {d["sucursal"]: d["venta"] for d in datos if d["venta"] > 2000}
+por_ciudad = {d["ciudad"]: d["mm"] for d in lluvias if d["mm"] > 2000}
 
-print(por_sucursal)
-por_sucursal
+print(por_ciudad)
+por_ciudad
 ```
 :::
 
 ```{pyodide}
 #| exercise: ex_dict
 #| check: true
-esperado = {"multiplaza": 4200.0, "brisas": 3100.0}
+esperado = {"Alta": 4200.0, "Baja": 3100.0}
 if result == esperado:
     feedback = {"correct": True, "message": "Correcto.", "type": "success"}
 else:
@@ -255,40 +613,40 @@ else:
 feedback
 ```
 
-## Ejercicio 3 — Generador y cortocircuito
+### Ejercicio 3 — Cortocircuito
 
-Usa `any` con un generador para saber si **alguna** sucursal tiene ticket promedio mayor a 35.
+Averiguar si alguna ciudad supera los 35 mm de media diaria, evaluando el predicado el menor número de veces posible.
 
 ```{pyodide}
 #| exercise: ex_any
-datos = [
-    {"sucursal": "multiplaza", "venta": 4200.0, "trx": 140},
-    {"sucursal": "costa",      "venta": 1800.0, "trx": 45},
-    {"sucursal": "brisas",     "venta": 3100.0, "trx": 100},
+lluvias = [
+    {"ciudad": "Alta",  "mm": 4200.0, "dias": 140},
+    {"ciudad": "Media", "mm": 1800.0, "dias":  45},
+    {"ciudad": "Baja",  "mm": 3100.0, "dias": 100},
 ]
 
-hay_ticket_alto = ______
+hay_media_alta = ______
 
-print(hay_ticket_alto)
-hay_ticket_alto
+print(hay_media_alta)
+hay_media_alta
 ```
 
 ::: {.hint exercise="ex_any"}
-`any(...)` recibe un iterable de booleanos. Dentro de los paréntesis de `any` no hacen falta paréntesis extra para el generador: `any(d["venta"] / d["trx"] > 35 for d in datos)`.
+Por la Proposición 3.7 el argumento debe ser una expresión generadora, sin corchetes. Dentro de los paréntesis de `any` no hacen falta paréntesis adicionales para la generadora.
 :::
 
 ::: {.solution exercise="ex_any"}
 ```{pyodide}
-datos = [
-    {"sucursal": "multiplaza", "venta": 4200.0, "trx": 140},
-    {"sucursal": "costa",      "venta": 1800.0, "trx": 45},
-    {"sucursal": "brisas",     "venta": 3100.0, "trx": 100},
+lluvias = [
+    {"ciudad": "Alta",  "mm": 4200.0, "dias": 140},
+    {"ciudad": "Media", "mm": 1800.0, "dias":  45},
+    {"ciudad": "Baja",  "mm": 3100.0, "dias": 100},
 ]
 
-hay_ticket_alto = any(d["venta"] / d["trx"] > 35 for d in datos)
+hay_media_alta = any(d["mm"] / d["dias"] > 35 for d in lluvias)
 
-print(hay_ticket_alto)
-hay_ticket_alto
+print(hay_media_alta)
+hay_media_alta
 ```
 :::
 
@@ -296,9 +654,9 @@ hay_ticket_alto
 #| exercise: ex_any
 #| check: true
 if result is True:
-    feedback = {"correct": True, "message": "Correcto: costa tiene ticket 40.0. Nota que any() se detuvo ahí sin evaluar el resto.", "type": "success"}
+    feedback = {"correct": True, "message": "Correcto: la ciudad Media tiene media 40.0 y any se detuvo ahí, con 2 evaluaciones de 3.", "type": "success"}
 elif result is False:
-    feedback = {"correct": False, "message": "Revisa el umbral: costa tiene ticket 40.0, que sí supera 35.", "type": "error"}
+    feedback = {"correct": False, "message": "La ciudad Media tiene media 40.0, que sí supera 35.", "type": "error"}
 else:
     feedback = {"correct": False, "message": f"Esperaba un booleano y obtuve {type(result).__name__}.", "type": "error"}
 feedback
@@ -306,40 +664,58 @@ feedback
 
 ## Reto
 
-En `proyectos/notebooks/F0-retos.ipynb`:
+En `proyectos/notebooks/F0-retos.ipynb`, sección **Py 3**:
 
-1. Escribe un generador `lineas_largas(ruta, n)` que lea un archivo y entregue solo las líneas de más de `n` caracteres, **sin** cargar el archivo entero en memoria. Pruébalo con un archivo de ejemplo.
-2. Toma una comprehension anidada de tres niveles y reescríbela como bucles explícitos. Decide cuál se lee mejor y anota por qué en `50-Errores` o en tu nota del tema.
-3. Mide con `timeit` una comprehension contra el bucle equivalente con `.append()` para 1 000 000 de elementos. Explica la diferencia: ¿de dónde sale?
+1. Escribir un generador `ventana(xs, k)` que entregue las sublistas de $k$ elementos consecutivos de `xs`, sin materializar todas. Comprobar con la Proposición 3.8 que su tamaño no depende de la longitud de `xs`, y con un contador que el número de evaluaciones es exactamente el de ventanas pedidas.
+2. Medir la Proposición 3.7 con `all` en lugar de `any`, deducir el enunciado equivalente —el cortocircuito ocurre en el primer **falso**— y comprobar que la cota es la misma con el predicado negado. Anotar en `50-Errores/` qué ocurre con un iterable vacío en cada uno.
+3. Encadenar tres expresiones generadoras y comprobar, con un contador por etapa, que no se materializa ningún resultado intermedio. Contrastarlo contra la misma cadena escrita con tres comprehensions de lista, y relacionar la diferencia con la Proposición 3.8.
+
+## Del libro
+
+*Python for Data Analysis* 3E trata comprehensions, generadores y el protocolo de iteración dentro de su capítulo 3, *Built-In Data Structures, Functions, and Files*. El sitio del libro declara que su contenido no se puede copiar ni reproducir, así que se cita número y título y no se le atribuye ninguna frase.
+
+**Preguntas para leer el capítulo 3 con lápiz:**
+
+1. El capítulo presenta las comprehensions anidadas y advierte sobre el orden de los `for`. Con la Definición 3.3, ¿por qué el orden de los `for` en la comprehension coincide con el de los bucles anidados equivalentes, mientras que la expresión va escrita al principio?
+2. El capítulo introduce `itertools` y varias de sus funciones. Con la Proposición 3.6, ¿cuáles de ellas pueden operar sobre un iterable infinito y cuáles no, y qué propiedad decide la respuesta en cada caso?
+3. La sección sobre generadores usa `yield`. Con la Definición 3.5 y la Proposición 3.2, ¿por qué un generador no se puede recorrer dos veces, y qué habría que devolver en su lugar para que sí se pudiera?
 
 ## Para el Cerebro
 
-Lee **McKinney cap. 3** (comprehensions y generadores) con estas preguntas escritas antes:
-
-1. ¿Qué hace `yield` y en qué se diferencia de `return`?
-2. ¿Qué es `itertools.chain` y cuándo lo usarías?
-3. ¿Por qué `range(1_000_000)` no ocupa memoria proporcional a un millón?
+Nota nueva en `10-Conceptos/iteracion-perezosa.md`, enlazada a [[ambito-y-cierres]], [[iterador]] y [[cortocircuito]]. Conviene rehacer a mano la demostración de la Proposición 3.7: la mitad del argumento no habla de `any` sino del orden de evaluación de los argumentos de una llamada, y separar esas dos piezas explica por qué poner corchetes anula el ahorro.
 
 ```
-¿Cuál es la estructura de una comprehension?::[expresión for elemento in iterable if condición]
-¿Cuánta memoria usa un generador frente a una lista de n elementos?::O(1) contra O(n)
-¿Qué pasa al recorrer un generador dos veces?::La segunda pasada viene vacía: es de un solo uso
-¿Por qué any() con generador es más rápido que con lista?::Cortocircuita en el primer True sin evaluar el resto
-¿Cuándo NO usar una comprehension?::Cuando tiene anidamiento profundo o no cabe legible en una línea
-¿Qué hace zip()?::Recorre dos o más iterables en paralelo, deteniéndose en el más corto
+¿Qué es un iterador?::Un objeto con next() que lanza StopIteration al agotarse, y cuyo iter() se devuelve a sí mismo
+¿Qué distingue a un iterable de un iterador?::iter(iterable) devuelve un objeto NUEVO; iter(iterador) se devuelve a sí mismo
+¿Por qué un generador solo se recorre una vez?::Es un iterador: el segundo recorrido reanuda donde acabó y encuentra StopIteration
+¿Cómo se comprueba sin recorrer?::`iter(xs) is xs`: cierto para un iterador, falso para una lista
+¿Qué construye `(f(x) for x in xs)`?::Un generador, y ningún elemento: cero evaluaciones
+¿Qué pasa al llamar a una función con yield?::No ejecuta el cuerpo; construye el objeto generador
+¿Cuándo arranca el cuerpo de un generador?::Al pedir el primer elemento, y se suspende en cada yield con sus locales vivos
+¿La variable de una comprehension se filtra fuera?::No: la comprehension tiene ámbito propio. La de un `for` sí queda vinculada
+¿Y entonces `[lambda: i for i in range(3)]`?::Sigue dando [2, 2, 2]: el ámbito propio es uno, no uno por iteración
+¿Cuántas veces evalúa `any(p(x) for x in xs)`?::k+1, con k el índice del primer verdadero; n si ninguno lo cumple
+¿Y `any([p(x) for x in xs])`?::n siempre: los argumentos se evalúan antes de entrar en la llamada
+¿Cuánta memoria ocupa un generador?::Una cantidad acotada que no depende de n; la lista mantiene vivos los n objetos
+¿Cuándo conviene una lista?::Cuando hay que recorrer más de una vez, indexar o medir con len
 ```
-
 
 ::: {#fuentes .fuentes}
 ### Fuentes
 
-**Lo que esta página demuestra sola.** Los ejercicios corren en tu navegador.
+**Lo que esta página demuestra sola.** Las Proposiciones 3.2, 3.4, 3.6, 3.7 y 3.8 se demuestran a partir del protocolo de la Definición 3.1, del ámbito propio de la comprehension y del orden de evaluación de los argumentos de una llamada; cada una se comprueba ejecutándola: que `iter(xs) is xs` es falso para una lista y cierto para un generador, y que el segundo recorrido de un iterador entrega la lista vacía mientras el de la lista entrega los mismos tres elementos; que tras una comprehension el nombre exterior sigue en `intacto` y tras un `for` queda en 2, y que pese al ámbito propio las lambdas de una comprehension siguen compartiendo celda; que construir una expresión generadora deja el contador de evaluaciones en 0 y pedir dos elementos lo deja en 2, frente a 6 de golpe de la comprehension de lista; que `any` con generadora hace $k+1$ evaluaciones para $k=0$, $10$, $500$ y $999$ y $n=1000$ cuando ningún elemento cumple, mientras que con lista hace $1000$ en los cinco casos; y que el tamaño de un generador no cambia entre $n=10$ y $n=10^9$. Los dos visuales se contrastaron contra estas mismas afirmaciones en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** El nombre como vínculo es la Definición 1.2 y la regla LEGB la 2.2. Que un cierre captura la celda es la Proposición 2.9, aquí reutilizada en el corolario de la 3.4. Que una cadena es hashable y sirve de clave es la Definición 1.10. Que la mutación se observa por todos los alias es la Proposición 1.5.
+
+**Lo que se enuncia sin demostrar.** Que la especificación asigna a la comprehension un ámbito propio, y que un generador conserva su marco suspendido con los nombres locales vivos: las dos son parte de la definición del lenguaje y aquí se toman como tales, aunque la página las comprueba. En la Proposición 3.8 se afirma que el elemento entregado deja de ser alcanzable desde el generador al pedir el siguiente, sin analizar el recolector de basura. El número exacto de bytes que devuelve `sys.getsizeof` depende de la implementación y no se cita como cifra, por la regla 7.
 
 **Lo que viene de los libros.**
 
-- [*Python for Data Analysis* 3E](https://wesmckinney.com/book/) (McKinney — libro abierto), §3 *Built-In Data Structures, Functions, and Files*
+- [*Python for Data Analysis*, 3ª edición](https://wesmckinney.com/book/) (Wes McKinney, O'Reilly, 2022), capítulo 3 *Built-In Data Structures, Functions, and Files* — citado por número y título, sin transcribir texto.
 
-[Índices verificados el 11-09-2026 contra el índice publicado de cada libro.]{.sello}
+**Lo que es mío, no del libro.** La Proposición 3.7 con la cuenta exacta $k+1$ frente a $n$, demostrada en dos mitades —el orden de evaluación de los argumentos por un lado, el cortocircuito por otro— y medida con un contador en vez de un cronómetro, lo que la hace reproducible en cualquier máquina. El corolario de la Proposición 3.4, que separa dos cosas que suelen confundirse: la comprehension abre un ámbito, y ese ámbito es uno solo y no uno por iteración. Y la Definición 3.9, que convierte las tres proposiciones anteriores en un criterio de decisión en lugar de dejarlas como hechos sueltos.
+
+[Índices verificados el 12-09-2026 contra el índice publicado del sitio oficial del libro.]{.sello}
 :::
 
-→ Siguiente: [Archivos, errores y módulos](04-archivos-y-errores.qmd)
+→ Siguiente: [Archivos, errores y contextos](04-archivos-y-errores.qmd)
