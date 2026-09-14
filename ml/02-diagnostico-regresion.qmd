@@ -1,0 +1,608 @@
+---
+title: "Diagnóstico de la regresión: qué falla y cómo se ve"
+subtitle: "Machine Learning · Lección 2"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/01-aprendizaje-estadistico, estadistica/14-inferencia-coeficientes]
+siguientes: []
+libro: "ISLP §3.3 Other Considerations in the Regression Model · §3.3.1 Qualitative Predictors · §3.3.3 Potential Problems"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="ml/02-diagnostico-regresion"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §3.3]{.item}
+[**Prereqs** [Sesgo y varianza](01-aprendizaje-estadistico.qmd) · [Inferencia sobre coeficientes](../estadistica/14-inferencia-coeficientes.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Codificar un predictor cualitativo y demostrar por qué incluir una [variable indicadora]{.g} por nivel **más** el intercepto deja la matriz sin rango completo.
+2. Demostrar que la **casi colinealidad** no sesga el estimador sino que multiplica su varianza por el [factor de inflación]{.g data-t="factor de inflación de la varianza"}, y calcular ese factor.
+3. Demostrar que la [heterocedasticidad]{.g} deja el estimador insesgado y rompe el error estándar, y medir cuánta cobertura se pierde.
+4. Definir la [palanca]{.g} de una observación, demostrar que las palancas suman el número de parámetros, y reconocer un punto que arrastra el ajuste él solo.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Estadística 13 y 14**: de dónde salen los coeficientes y cómo se hace inferencia sobre ellos. Esta lección **no** repite esa derivación: la da por hecha y pregunta qué pasa cuando sus supuestos fallan.
+- **ML 1**: la varianza de un estimador como una de las tres piezas del error. La colinealidad es una forma concreta de inflarla.
+- **Álgebra 6**: la matriz sombrero $H=X(X^\top X)^{-1}X^\top$ como proyección, y el número de condición. La palanca es su diagonal, y la colinealidad es su mal condicionamiento.
+- **Álgebra 3**: el rango y la independencia de columnas, que es lo que la Proposición 2.2 viola.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **ML 5**: la regularización nace de la Proposición 2.4. Si la colinealidad multiplica la varianza, admitir algo de sesgo para reducirla es un intercambio favorable.
+- **ML 3**: los predictores cualitativos vuelven en clasificación, con la misma codificación y la misma trampa.
+- **Estadística 16**: un modelo mal diagnosticado produce probabilidades mal calibradas, y ahí ya no se ve de dónde viene el problema.
+- **Inferencia causal**: la colinealidad entre tratamiento y confusor es la razón de que un efecto salga con intervalo enorme.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Símbolo | Se lee | Significado |
+|---|---|---|
+| $X$ | equis | La matriz de diseño, con $n$ filas y $p$ columnas |
+| $H$ | hache | La matriz sombrero $X(X^\top X)^{-1}X^\top$, que proyecta sobre el espacio columna |
+| $h_{ii}$ | hache sub i i | La palanca de la observación $i$: el elemento $i$ de la diagonal de $H$ |
+| $R_j^2$ | erre cuadrado sub jota | El $R^2$ de regresar el predictor $j$ contra todos los demás |
+| VIF | vif | El factor de inflación de la varianza, $1/(1-R_j^2)$ |
+| $\rho$ | rho | La correlación entre dos predictores |
+| colinealidad | — | Aquí, **casi** colinealidad: un predictor es *casi* combinación lineal de los demás, el rango sigue siendo completo y los coeficientes siguen identificados. La colinealidad **perfecta** de Álgebra 3, que sí baja el rango, es el caso de la Proposición 2.2 |
+:::
+
+## 1. Predictores cualitativos, y una matriz que se rompe
+
+::: {.definicion}
+**Definición 2.1 (variable indicadora).** Dado un predictor cualitativo con $k$ niveles, su **indicadora** del nivel $j$ es la columna que vale $1$ en las observaciones de ese nivel y $0$ en las demás. Codificar el predictor consiste en sustituirlo por un conjunto de indicadoras.
+:::
+
+::: {.proposicion}
+**Proposición 2.2 (por qué sobra una).** Sea un predictor cualitativo con $k$ niveles y sea $X$ la matriz que contiene la columna de unos del intercepto **y las $k$ indicadoras**. Entonces $X$ no tiene rango completo: sus columnas son linealmente dependientes, el sistema de ecuaciones normales es singular y los coeficientes no quedan determinados.
+
+Usar $k-1$ indicadoras y dejar un nivel como referencia restaura el rango completo sin perder información.
+:::
+
+::: {.demostracion}
+*Demostración.* Cada observación pertenece a exactamente un nivel, de modo que en cada fila una sola indicadora vale $1$ y el resto $0$. La suma de las $k$ columnas indicadoras es entonces el vector de unos, que es precisamente la columna del intercepto:
+$$\sum_{j=1}^{k} d_j = \mathbf{1}.$$
+Esa igualdad es una combinación lineal no trivial de las columnas que da el vector nulo al restar el intercepto, luego las columnas son dependientes y el rango es a lo sumo $k$ en lugar de $k+1$. Por la lección 3 de Álgebra, $X^\top X$ es entonces singular y el sistema normal no tiene solución única.
+
+Al quitar una indicadora, la identidad anterior deja de poder formarse: ninguna combinación de las $k-1$ restantes da el vector de unos, porque las observaciones del nivel omitido tendrían cero en todas ellas. El rango vuelve a ser completo. No se pierde información: el nivel omitido queda representado por el intercepto, y los demás coeficientes se leen como diferencias respecto de él. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(2)
+n = 60
+grupo = rng.integers(0, 3, size=n)
+D = np.zeros((n, 3))
+D[np.arange(n), grupo] = 1.0                       # una indicadora por nivel
+
+X_mal = np.column_stack([np.ones(n), D])           # intercepto + LAS TRES
+X_bien = np.column_stack([np.ones(n), D[:, 1:]])   # intercepto + dos
+
+print("con las tres indicadoras : %d columnas, rango %d  <- deficiente"
+      % (X_mal.shape[1], np.linalg.matrix_rank(X_mal)))
+print("con dos                  : %d columnas, rango %d"
+      % (X_bien.shape[1], np.linalg.matrix_rank(X_bien)))
+print()
+print("la causa: las tres indicadoras suman exactamente la columna del intercepto")
+print("  suma de las tres == columna de unos:", bool(np.allclose(D.sum(axis=1), np.ones(n))))
+print()
+
+y = 1.0 + 2.0 * (grupo == 1) - 1.5 * (grupo == 2) + rng.normal(0, 0.4, size=n)
+try:
+    np.linalg.solve(X_mal.T @ X_mal, X_mal.T @ y)
+    print("solve con la matriz deficiente: no protesto")
+except np.linalg.LinAlgError:
+    print("solve con la matriz deficiente -> LinAlgError: matriz singular")
+b = np.linalg.lstsq(X_mal, y, rcond=None)[0]
+print("lstsq SI devuelve algo:", np.round(b, 4))
+print("  y no protesta, aunque la solucion no sea unica: elige la de norma minima")
+print("  el ajuste es el mismo por los dos caminos:",
+      bool(np.allclose(X_mal @ b, X_bien @ np.linalg.lstsq(X_bien, y, rcond=None)[0])))
+```
+
+El punto que conviene retener es el del final. `solve` lanza `LinAlgError` y avisa; **`lstsq` devuelve cuatro números sin protestar**, y son los de la solución de norma mínima entre las infinitas que hay. El ajuste es correcto —las predicciones coinciden con las del modelo bien planteado—, pero **los coeficientes no significan lo que parecen**, porque otra solución igual de válida daría otros valores. Un informe que los interprete uno a uno está informando de una elección arbitraria del algoritmo.
+
+## 2. Colinealidad
+
+::: {.definicion}
+**Definición 2.3 (factor de inflación de la varianza).** Para el predictor $j$, sea $R_j^2$ el coeficiente de determinación de la regresión de ese predictor contra **todos los demás**. Su **factor de inflación de la varianza** es
+$$\mathrm{VIF}_j = \frac{1}{1-R_j^2}.$$
+Vale $1$ cuando el predictor es ortogonal al resto y crece sin límite cuando se acerca a ser una combinación lineal de ellos.
+:::
+
+::: {.proposicion}
+**Proposición 2.4 (la colinealidad multiplica la varianza).** En el modelo lineal con ruido de varianza $\sigma^2$,
+$$\operatorname{Var}(\hat\beta_j) = \frac{\sigma^2}{(n-1)s_j^2}\cdot \mathrm{VIF}_j,$$
+con $s_j^2$ la varianza muestral del predictor $j$. El estimador **sigue siendo insesgado**: la colinealidad no lo desplaza, solo lo hace más variable.
+
+Con dos predictores de correlación $\rho$, el factor vale $1/(1-\rho^2)$.
+:::
+
+::: {.demostracion}
+*Demostración (del caso de dos predictores, que es el que la celda mide).* La varianza de $\hat\beta$ es $\sigma^2(X^\top X)^{-1}$, y su elemento $(j,j)$ es lo que se busca. Para dos predictores centrados con varianzas muestrales $s_1^2, s_2^2$ y correlación $\rho$, la submatriz de $X^\top X$ correspondiente es $(n-1)$ veces la matriz de covarianzas, cuyo determinante es $s_1^2s_2^2(1-\rho^2)$. Invirtiendo una matriz $2\times2$, el elemento $(1,1)$ de la inversa es el $(2,2)$ del original dividido por el determinante:
+$$\big[(X^\top X)^{-1}\big]_{11} = \frac{(n-1)s_2^2}{(n-1)^2 s_1^2 s_2^2 (1-\rho^2)} = \frac{1}{(n-1)s_1^2}\cdot\frac{1}{1-\rho^2}.$$
+Multiplicando por $\sigma^2$ se obtiene el enunciado, con $\mathrm{VIF}_1=1/(1-\rho^2)$, que es la Definición 2.3 porque en el caso de dos predictores $R_1^2=\rho^2$.
+
+La insesgadez no depende de nada de esto: $E[\hat\beta]=\beta$ siempre que $X$ tenga rango completo, por muy mal condicionada que esté. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(2)
+n, REP = 200, 1500
+
+print("%8s %14s %12s %16s" % ("rho", "Var(b1) medida", "VIF teorico", "medida / VIF"))
+for rho in [0.0, 0.9, 0.99]:
+    b1 = np.empty(REP)
+    for r in range(REP):
+        x1 = rng.normal(size=n)
+        x2 = rho * x1 + np.sqrt(1 - rho**2) * rng.normal(size=n)
+        X = np.column_stack([np.ones(n), x1, x2])
+        y = X @ np.array([0.0, 1.0, 1.0]) + rng.normal(size=n)
+        b1[r] = np.linalg.lstsq(X, y, rcond=None)[0][1]
+    vif = 1.0 / (1.0 - rho**2)
+    print("%8.2f %14.5f %12.2f %16.5f" % (rho, b1.var(), vif, b1.var() / vif))
+print()
+print("la ultima columna es la misma en las tres filas: eso es el teorema.")
+print("la colinealidad no cambia el estimador, multiplica su varianza por el VIF")
+```
+
+La varianza medida pasa de $0{,}0051$ a $0{,}24$ al subir la correlación de $0$ a $0{,}99$: casi cincuenta veces más. Y la última columna, que es esa varianza dividida por el VIF teórico, da **la misma cifra en las tres filas**. Eso es la Proposición 2.4 medida: la colinealidad no introduce ningún efecto nuevo, multiplica por un número que se puede calcular de antemano.
+
+La consecuencia práctica no es «quitar variables correlacionadas» sin más. Es que **un coeficiente con VIF alto viene con un intervalo ancho**, y un intervalo ancho no permite afirmar gran cosa sobre ese coeficiente aunque el modelo entero prediga bien. Predecir y atribuir son dos usos distintos, y la colinealidad solo estropea el segundo.
+
+```{=html}
+<div class="viz-coli">
+  <div class="controles">
+    <label>Correlación ρ <input id="co-r" type="range" min="0" max="99" step="1" value="90"> <span id="co-r-v">0,90</span></label>
+    <label>Qué se dibuja
+      <select id="co-q">
+        <option value="0" selected>la elipse de confianza</option>
+        <option value="1">el factor de inflación</option>
+      </select>
+    </label>
+  </div>
+  <svg id="co-svg" viewBox="0 0 620 280" role="img" aria-label="Elipse de confianza conjunta de los dos coeficientes: al crecer la correlacion se alarga en la diagonal y se estrecha en la perpendicular, manteniendo su centro. A la derecha, el factor de inflacion de la varianza frente a la correlacion."></svg>
+  <p class="lectura" id="co-lectura"></p>
+</div>
+<style>
+.viz-coli { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-coli .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-coli label { display: flex; align-items: center; gap: .4rem; }
+.viz-coli input[type=range] { width: 150px; padding: 0; }
+.viz-coli select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-coli svg { width: 100%; height: auto; display: block; }
+.viz-coli .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B45309";
+  var svg = document.getElementById("co-svg"), lec = document.getElementById("co-lectura");
+  var cr = document.getElementById("co-r"), er = document.getElementById("co-r-v");
+  var cq = document.getElementById("co-q");
+
+  // Marco constante: mismo centro y misma escala para toda rho.
+  var CX = 170, CY = 150, ESC = 100;
+  var GX0 = 340, GX1 = 580, GY0 = 240, GY1 = 50, VIFMAX = 55;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function gx(r) { return GX0 + r * (GX1 - GX0); }
+  function gy(v) { return GY0 - Math.min(v, VIFMAX) / VIFMAX * (GY0 - GY1); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var rho = (+cr.value) / 100, modo = +cq.value;
+    er.textContent = rho.toFixed(2).replace(".", ",");
+    var vif = 1 / (1 - rho * rho);
+
+    // ejes del panel izquierdo, fijos
+    svg.appendChild(el("line", { x1: CX - 130, y1: CY, x2: CX + 130, y2: CY, stroke: C_L }));
+    svg.appendChild(el("line", { x1: CX, y1: CY - 120, x2: CX, y2: CY + 120, stroke: C_L }));
+    svg.appendChild(el("text", { x: CX + 134, y: CY + 4, "font-size": 11, fill: C_T, opacity: 0.6 }, "β₁"));
+    svg.appendChild(el("text", { x: CX - 4, y: CY - 126, "font-size": 11, fill: C_T, opacity: 0.6 }, "β₂"));
+    svg.appendChild(el("text", { x: CX - 130, y: 36, "font-size": 11.5, fill: C_T, opacity: 0.72 },
+      "región de confianza conjunta"));
+
+    // elipse: ejes 1/sqrt(1-rho) y 1/sqrt(1+rho) girados 45 grados
+    var a = 0.35 / Math.sqrt(1 - rho), b = 0.35 / Math.sqrt(1 + rho);
+    var pts = "";
+    for (var k = 0; k <= 90; k++) {
+      var th = k / 90 * 2 * Math.PI;
+      var u = a * Math.cos(th), v = b * Math.sin(th);
+      var c = Math.SQRT1_2;
+      pts += (k ? " L" : "M") + (CX + (u * c - v * c) * ESC).toFixed(1) + " " +
+             (CY - (u * c + v * c) * ESC).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: pts + " Z", fill: C_A, "fill-opacity": 0.14,
+      stroke: modo === 0 ? C_A : C_L, "stroke-width": modo === 0 ? 2.2 : 1.1 }));
+    svg.appendChild(el("circle", { cx: CX, cy: CY, r: 3.5, fill: C_T }));
+
+    // panel derecho: el VIF frente a rho, curva completa y marcador
+    svg.appendChild(el("line", { x1: GX0, y1: GY0, x2: GX1, y2: GY0, stroke: C_L }));
+    svg.appendChild(el("line", { x1: GX0, y1: GY0, x2: GX0, y2: GY1, stroke: C_L }));
+    var dp = "";
+    for (var i = 0; i <= 99; i++) {
+      var rr = i / 100;
+      dp += (i ? " L" : "M") + gx(rr).toFixed(1) + " " + gy(1 / (1 - rr * rr)).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: dp, stroke: C_B, "stroke-width": modo === 1 ? 2.4 : 1.4,
+      fill: "none", "stroke-opacity": modo === 1 ? 1 : 0.5 }));
+    svg.appendChild(el("circle", { cx: gx(rho).toFixed(1), cy: gy(vif).toFixed(1), r: 5.5,
+      fill: C_B, stroke: "#fff", "stroke-width": 1.5 }));
+    svg.appendChild(el("text", { x: GX0, y: 36, "font-size": 11.5, fill: C_T, opacity: 0.72 },
+      "VIF = 1/(1−ρ²)"));
+    svg.appendChild(el("text", { x: GX0, y: GY0 + 18, "font-size": 10.5, fill: C_T, opacity: 0.6 }, "0"));
+    svg.appendChild(el("text", { x: GX1 - 10, y: GY0 + 18, "font-size": 10.5, fill: C_T, opacity: 0.6 }, "1"));
+
+    lec.innerHTML = "Con <strong>ρ = " + rho.toFixed(2).replace(".", ",") +
+      "</strong> el factor de inflación vale <strong>" + vif.toFixed(2) +
+      "</strong>: la varianza de cada coeficiente se multiplica por esa cantidad. " +
+      "La elipse <strong>conserva su centro</strong> —el estimador sigue insesgado— y se alarga en la diagonal: " +
+      "lo que el dato no puede distinguir es cuál de los dos predictores lleva el efecto, no cuánto suman entre los dos.";
+  }
+
+  cr.addEventListener("input", dibujar);
+  cq.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+La elipse no se desplaza al aumentar $\rho$: **se alarga en la diagonal**. Esa dirección es la de «cuánto de este efecto es de $x_1$ y cuánto de $x_2$», que es justo lo que unos datos colineales no pueden responder. La dirección perpendicular —la suma de los dos efectos— se sigue estimando bien, y por eso el modelo predice sin problema.
+
+## 3. Heterocedasticidad
+
+::: {.proposicion}
+**Proposición 2.5 (varianza no constante: el estimador aguanta, el intervalo no).** Si la varianza del ruido depende de $x$, el estimador de mínimos cuadrados **sigue siendo insesgado**, pero la fórmula habitual del error estándar deja de ser válida y los intervalos de confianza pierden cobertura.
+:::
+
+::: {.demostracion}
+*Demostración.* Para la insesgadez, $\hat\beta = (X^\top X)^{-1}X^\top y$ y $E[y]=X\beta$, de donde $E[\hat\beta]=\beta$. En ese cálculo solo se usa que el ruido tiene media cero; **nada obliga a que su varianza sea constante**, así que la insesgadez sobrevive intacta.
+
+Para la segunda parte, la varianza correcta es $(X^\top X)^{-1}X^\top \Omega X (X^\top X)^{-1}$, con $\Omega$ la matriz diagonal de varianzas. La fórmula habitual supone $\Omega=\sigma^2 I$ y la reduce a $\sigma^2(X^\top X)^{-1}$, que en general no coincide con la anterior. El intervalo se construye con la fórmula equivocada, y su cobertura deja de ser la nominal. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(2)
+n, REP = 80, 2500
+# Cuantil t de Student con n-2 = 78 grados de libertad, no el normal 1.96:
+# usar el normal estrecha el intervalo y ya baja la cobertura por su cuenta.
+t975 = 1.990847
+
+print("%-12s %12s %22s" % ("ruido", "E[b1]", "cobertura del IC 95%"))
+for modo in ["constante", "creciente"]:
+    dentro = 0
+    b1 = np.empty(REP)
+    for r in range(REP):
+        x = rng.uniform(-2, 2, size=n)
+        s = np.ones(n) if modo == "constante" else 0.25 + np.abs(x) * 1.2
+        y = 1.0 + 2.0 * x + rng.normal(0, s)
+        X = np.column_stack([np.ones(n), x])
+        b = np.linalg.lstsq(X, y, rcond=None)[0]
+        b1[r] = b[1]
+        res = y - X @ b
+        ee = np.sqrt(((res @ res / (n - 2)) * np.linalg.inv(X.T @ X))[1, 1])
+        if abs(b[1] - 2.0) < t975 * ee:
+            dentro += 1
+    print("%-12s %12.4f %21.1f%%" % (modo, b1.mean(), 100.0 * dentro / REP))
+print()
+print("el estimador sigue centrado en 2 en los dos casos: NO hay sesgo")
+print("lo que falla es el error estandar, y con el la cobertura")
+```
+
+Las dos medias caen sobre el valor verdadero, $2$. Lo que cambia es la última columna: la cobertura baja del $94$ % al $86$ %. Un intervalo anunciado como del 95 % que acierta el 86 % de las veces **no es un intervalo del 95 %**, y quien lo lea sacará conclusiones con más confianza de la que le corresponde.
+
+Esto es exactamente lo contrario del sesgo, y por eso es tan fácil pasarlo por alto: el modelo no se equivoca al estimar, se equivoca al decir cuánto se equivoca.
+
+## 4. Palanca
+
+::: {.definicion}
+**Definición 2.6 (palanca).** La **palanca** de la observación $i$ es $h_{ii}$, el elemento $i$ de la diagonal de la matriz sombrero $H=X(X^\top X)^{-1}X^\top$ de Álgebra 6. Cumple $0\le h_{ii}\le 1$ y mide cuánto influye $y_i$ sobre su propio valor ajustado: $\partial\hat{y}_i/\partial y_i = h_{ii}$.
+:::
+
+::: {.proposicion}
+**Proposición 2.7 (las palancas suman los parámetros).** $\sum_{i=1}^n h_{ii} = p$, de modo que la palanca media vale $p/n$. Una observación con $h_{ii}$ cercano a $1$ determina su propio ajuste casi por completo, y el residuo en ella es casi cero por construcción, **aunque el punto sea absurdo**.
+:::
+
+::: {.demostracion}
+*Demostración.* $H$ es la matriz de una proyección ortogonal sobre el espacio columna de $X$, que tiene dimensión $p$ cuando $X$ tiene rango completo. La traza de la matriz de una proyección es igual a la dimensión del subespacio sobre el que proyecta, porque sus autovalores son $1$ con multiplicidad $p$ y $0$ con multiplicidad $n-p$ y la traza es su suma. La traza es también la suma de la diagonal, de donde $\sum h_{ii}=p$ y la media es $p/n$.
+
+Para la segunda parte, el residuo cumple $y_i-\hat{y}_i = (1-h_{ii})y_i - \sum_{k\ne i}h_{ik}y_k$; cuando $h_{ii}\to1$ el primer factor tiende a cero y, por ser $H$ idempotente y simétrica, los $h_{ik}$ restantes también, de modo que el residuo tiende a cero con independencia del valor de $y_i$. Un punto de palanca alta **no puede tener residuo grande**, y por eso no aparece al inspeccionar residuos. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(2)
+n = 50
+print("%4s %12s %14s %12s %10s" % ("p", "traza(H)", "media h_ii", "p/n", "max h_ii"))
+for p in [2, 5, 10]:
+    X = np.column_stack([np.ones(n)] + [rng.normal(size=n) for _ in range(p - 1)])
+    H = X @ np.linalg.solve(X.T @ X, X.T)        # la matriz sombrero, leccion Algebra 6
+    h = np.diag(H)
+    print("%4d %12.6f %14.6f %12.6f %10.4f" % (p, H.trace(), h.mean(), p / n, h.max()))
+print()
+print("la traza vale exactamente p, asi que la palanca media es p/n")
+print("un punto con h_ii cercano a 1 arrastra el ajuste el solo")
+```
+
+La traza da $2{,}000000$, $5{,}000000$ y $10{,}000000$: exactamente el número de parámetros, sin error numérico apreciable. Y la palanca media es $p/n$, lo que da el criterio habitual para señalar un punto como influyente — que su $h_{ii}$ supere varias veces esa media.
+
+El corolario de la demostración es el que más cuesta interiorizar: **un punto de palanca alta tiene residuo pequeño por construcción**. Buscar observaciones influyentes mirando los residuos grandes encuentra justamente las que no lo son.
+
+```{=html}
+<div class="viz-palanca">
+  <div class="controles">
+    <label>Dónde cae el punto extra <input id="pa-x" type="range" min="-30" max="95" step="1" value="80"> <span id="pa-x-v">8,0</span></label>
+    <label>Modelo
+      <select id="pa-m">
+        <option value="0" selected>con el punto extra</option>
+        <option value="1">sin él</option>
+      </select>
+    </label>
+  </div>
+  <svg id="pa-svg" viewBox="0 0 620 280" role="img" aria-label="Nube de puntos con una recta ajustada. Un punto adicional se desplaza en el eje horizontal; cuanto mas lejos cae del resto, mas gira la recta y mayor es su palanca, que se indica aparte."></svg>
+  <p class="lectura" id="pa-lectura"></p>
+</div>
+<style>
+.viz-palanca { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-palanca .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-palanca label { display: flex; align-items: center; gap: .4rem; }
+.viz-palanca input[type=range] { width: 160px; padding: 0; }
+.viz-palanca select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-palanca svg { width: 100%; height: auto; display: block; }
+.viz-palanca .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_P = "#0F6E68", C_X = "#B45309";
+  var svg = document.getElementById("pa-svg"), lec = document.getElementById("pa-lectura");
+  var cx = document.getElementById("pa-x"), ex = document.getElementById("pa-x-v");
+  var cm = document.getElementById("pa-m");
+
+  // Nube fija, generada una vez: el marco no sigue a los datos.
+  var XS = [0.4,0.9,1.2,1.5,1.8,2.1,2.4,2.7,3.0,3.3,3.6,3.9];
+  var YS = [1.5,1.9,2.4,2.3,3.0,3.2,3.3,3.9,4.1,4.0,4.6,4.9];
+  var X0 = 60, X1 = 560, Y0 = 235, Y1 = 45, XMAX = 10, YMAX = 6;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(x) { return X0 + x / XMAX * (X1 - X0); }
+  function py(y) { return Y0 - y / YMAX * (Y0 - Y1); }
+
+  function ajusta(xs, ys) {
+    var n = xs.length, sx = 0, sy = 0;
+    for (var i = 0; i < n; i++) { sx += xs[i]; sy += ys[i]; }
+    var mx = sx / n, my = sy / n, num = 0, den = 0;
+    for (i = 0; i < n; i++) { num += (xs[i] - mx) * (ys[i] - my); den += (xs[i] - mx) * (xs[i] - mx); }
+    var b1 = num / den;
+    return { b0: my - b1 * mx, b1: b1, mx: mx, sxx: den, n: n };
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var xe = (+cx.value) / 10, modo = +cm.value;
+    ex.textContent = xe.toFixed(1).replace(".", ",");
+    var ye = 2.6;                                   // el punto extra, siempre a la misma altura
+
+    svg.appendChild(el("line", { x1: X0, y1: Y0, x2: X1, y2: Y0, stroke: C_L }));
+    svg.appendChild(el("line", { x1: X0, y1: Y0, x2: X0, y2: Y1, stroke: C_L }));
+
+    var xs = XS.slice(), ys = YS.slice();
+    if (modo === 0) { xs.push(xe); ys.push(ye); }
+    var f = ajusta(xs, ys);
+    // palanca del punto extra en regresion simple: 1/n + (x-mx)^2 / Sxx
+    var h = modo === 0 ? (1 / f.n + Math.pow(xe - f.mx, 2) / f.sxx) : 0;
+
+    svg.appendChild(el("path", { d: "M" + px(0) + " " + py(f.b0).toFixed(1) +
+      " L" + px(XMAX) + " " + py(f.b0 + f.b1 * XMAX).toFixed(1),
+      stroke: C_P, "stroke-width": 2.2, fill: "none" }));
+
+    for (var i = 0; i < XS.length; i++) {
+      svg.appendChild(el("circle", { cx: px(XS[i]).toFixed(1), cy: py(YS[i]).toFixed(1), r: 4,
+        fill: "none", stroke: C_T, "stroke-width": 1.3, "stroke-opacity": 0.65 }));
+    }
+    if (modo === 0) {
+      svg.appendChild(el("circle", { cx: px(xe).toFixed(1), cy: py(ye).toFixed(1), r: 7,
+        fill: C_X, "fill-opacity": 0.3, stroke: C_X, "stroke-width": 2.2 }));
+    }
+
+    svg.appendChild(el("text", { x: X0, y: 32, "font-size": 11.5, fill: C_T, opacity: 0.72 },
+      "pendiente ajustada: " + f.b1.toFixed(4) +
+      (modo === 0 ? "   ·   palanca del punto extra: " + h.toFixed(4) : "   ·   sin el punto extra")));
+
+    lec.innerHTML = modo === 0
+      ? ("El punto extra está en x = <strong>" + xe.toFixed(1).replace(".", ",") +
+         "</strong> y su palanca vale <strong>" + h.toFixed(3) + "</strong> (la media sería 2/13 ≈ 0,154). " +
+         (h > 0.6 ? "Con una palanca así el ajuste pasa casi por él, su residuo es pequeño, y sin embargo es quien decide la pendiente."
+                  : "Mientras cae dentro de la nube, su palanca es ordinaria y no manda más que los demás."))
+      : "Sin el punto extra la pendiente vale <strong>" + f.b1.toFixed(4) +
+        "</strong>. Compararla con la del otro modo mide cuánto arrastra una sola observación.";
+  }
+
+  cx.addEventListener("input", dibujar);
+  cm.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+Arrastrar el punto hacia la derecha no cambia su altura, y sin embargo la recta gira. Cuanto más lejos cae del resto en el eje horizontal, mayor es su palanca y más manda sobre el ajuste — y menor es su residuo, que es lo que lo hace invisible en una inspección de residuos.
+
+## Ejercicios
+
+### Ejercicio 1 — Cuántas indicadoras
+
+Codificar un predictor cualitativo de 4 niveles sin romper el rango de la matriz.
+
+```{pyodide}
+#| exercise: ex_dummy
+import numpy as np
+n = 40
+rng = np.random.default_rng(7)
+nivel = rng.integers(0, 4, size=n)
+D = np.zeros((n, 4)); D[np.arange(n), nivel] = 1.0
+
+X = ______
+
+print("columnas:", X.shape[1], "| rango:", np.linalg.matrix_rank(X))
+int(np.linalg.matrix_rank(X))
+```
+
+::: {.hint exercise="ex_dummy"}
+Por la Proposición 2.2, con el intercepto hay que dejar fuera una indicadora. Con 4 niveles quedan 3, más la columna de unos.
+:::
+
+::: {.solution exercise="ex_dummy"}
+```{pyodide}
+import numpy as np
+n = 40
+rng = np.random.default_rng(7)
+nivel = rng.integers(0, 4, size=n)
+D = np.zeros((n, 4)); D[np.arange(n), nivel] = 1.0
+
+X = np.column_stack([np.ones(n), D[:, 1:]])
+
+print("columnas:", X.shape[1], "| rango:", np.linalg.matrix_rank(X))
+int(np.linalg.matrix_rank(X))
+```
+:::
+
+```{pyodide}
+#| exercise: ex_dummy
+#| check: true
+if result == 4:
+    feedback = {"correct": True, "message": "Correcto: intercepto más tres indicadoras, y la matriz tiene rango completo.", "type": "success"}
+elif result == 4 - 1:
+    feedback = {"correct": False, "message": "El rango es 3: se quedaron fuera demasiadas indicadoras o falta el intercepto.", "type": "error"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba rango 4 y obtuve {result}. Con las cuatro indicadoras más el intercepto la matriz es deficiente (Proposición 2.2).", "type": "error"}
+feedback
+```
+
+### Ejercicio 2 — Qué correlación es demasiada
+
+Calcular a partir de qué correlación el factor de inflación supera 10, que es el umbral de aviso más usado.
+
+```{pyodide}
+#| exercise: ex_vif
+import numpy as np
+
+vif_limite = 10.0
+rho_limite = ______
+
+print("a partir de rho =", round(rho_limite, 4), "el VIF supera", vif_limite)
+round(float(rho_limite), 4)
+```
+
+::: {.hint exercise="ex_vif"}
+Por la Definición 2.3, con dos predictores el factor vale $1/(1-\rho^2)$. Igualar a 10 y despejar $\rho$, quedándose con la raíz positiva.
+:::
+
+::: {.solution exercise="ex_vif"}
+```{pyodide}
+import numpy as np
+
+vif_limite = 10.0
+rho_limite = np.sqrt(1 - 1 / vif_limite)
+
+print("a partir de rho =", round(rho_limite, 4), "el VIF supera", vif_limite)
+round(float(rho_limite), 4)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_vif
+#| check: true
+if abs(result - 0.9487) < 1e-3:
+    feedback = {"correct": True, "message": "Correcto: hace falta ρ ≈ 0,95 para que el VIF llegue a 10. El umbral es más permisivo de lo que parece.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.9487 y obtuve {result}. Despeja ρ de 1/(1−ρ²) = 10.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 2**:
+
+1. Implementar el cálculo del VIF para un número cualquiera de predictores regresando cada uno contra los demás, y comprobar contra la Proposición 2.4 que $\operatorname{Var}(\hat\beta_j)$ medida por simulación coincide con la fórmula. Probarlo con tres predictores donde el tercero sea casi la suma de los dos primeros.
+2. Construir un punto de palanca alta y comprobar las dos partes del corolario: que arrastra la pendiente y que **su residuo es de los más pequeños**. Escribir un criterio que lo detecte usando $h_{ii}$ y comprobar que la inspección de residuos no lo encuentra.
+3. Medir la cobertura de la Proposición 2.5 con errores estándar robustos —la fórmula sándwich $(X^\top X)^{-1}X^\top\hat\Omega X(X^\top X)^{-1}$ con $\hat\Omega$ la diagonal de residuos al cuadrado— y comprobar cuánta cobertura se recupera. Anotar en `50-Errores/` qué supuesto se sigue necesitando.
+
+## Del libro
+
+*An Introduction to Statistical Learning with Applications in Python* trata este material en §3.3 *Other Considerations in the Regression Model*, con los predictores cualitativos en §3.3.1 *Qualitative Predictors* y el catálogo de fallos en §3.3.3 *Potential Problems*.
+
+Las secciones §3.1 y §3.2 —regresión simple y múltiple— **no se repiten aquí**: están demostradas desde primeros principios en Estadística 13 y 14, con más detalle del que da el libro, y esta lección las usa como punto de partida.
+
+**Preguntas para leer §3.3 con lápiz:**
+
+1. §3.3.3 enumera seis problemas potenciales. Con las Proposiciones 2.4, 2.5 y 2.7, ¿cuáles de los seis afectan al **estimador** y cuáles solo a la **incertidumbre declarada**? La respuesta cambia lo que hay que hacer con cada uno.
+2. La sección propone gráficos de residuos para detectar no linealidad y varianza no constante. Con el corolario de la Proposición 2.7, ¿por qué esa herramienta es ciega precisamente a los puntos de palanca alta?
+3. §3.3.2 introduce los términos de interacción y el principio de jerarquía. Con la Definición 2.1 y la Proposición 2.2, ¿qué le pasa al rango de la matriz si se incluye la interacción de dos indicadoras del mismo predictor cualitativo?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/diagnostico-regresion.md`, enlazada a [[sesgo-varianza]] y a las notas de Estadística 13 y 14. Conviene rehacer a mano la demostración de la Proposición 2.7: la traza de una proyección es la dimensión del subespacio, y de ese hecho de una línea salen a la vez el valor medio de la palanca y el criterio para detectar puntos influyentes.
+
+```
+¿Cuántas indicadoras se usan con k niveles?::k−1, más el intercepto. Las k juntas suman la columna de unos y rompen el rango
+¿Qué hace lstsq con una matriz deficiente?::Devuelve la solución de norma mínima sin protestar; el ajuste es correcto pero los coeficientes no son únicos
+¿Qué es el VIF?::1/(1−R²_j), con R²_j el de regresar el predictor j contra los demás. Con dos predictores, 1/(1−ρ²)
+¿Qué le hace la colinealidad al estimador?::Nada a su centro: sigue insesgado. Multiplica su varianza por el VIF
+¿Qué ρ hace falta para VIF = 10?::ρ ≈ 0,95. El umbral habitual es más permisivo de lo que parece
+¿Por qué la elipse se alarga en la diagonal?::Los datos no distinguen cuál de los dos predictores lleva el efecto, pero sí estiman bien su suma
+¿La heterocedasticidad sesga el estimador?::No. Solo invalida el error estándar, y con él la cobertura: del 94 % al 86 %
+¿Por qué sobrevive la insesgadez?::Su demostración solo usa que el ruido tiene media cero, nunca que la varianza sea constante
+¿Qué es la palanca h_ii?::La diagonal de la matriz sombrero: cuánto influye y_i sobre su propio ajuste
+¿Cuánto suman las palancas?::p, el número de parámetros, porque la traza de una proyección es la dimensión del subespacio
+¿Cuánto vale la palanca media?::p/n, y el criterio habitual señala los puntos que la superan varias veces
+¿Por qué los residuos no detectan la palanca alta?::Porque un punto de palanca alta tiene residuo pequeño por construcción: el ajuste pasa casi por él
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** Las Proposiciones 2.2, 2.4, 2.5 y 2.7 se demuestran a partir del rango de la matriz de diseño, de la inversa de una matriz $2\times2$, de la definición del estimador de mínimos cuadrados y de la traza de una proyección. Las cuatro se comprueban ejecutándolas: que con tres indicadoras y el intercepto la matriz tiene cuatro columnas y rango tres, que `solve` lanza `LinAlgError` y `lstsq` devuelve la solución de norma mínima sin protestar, y que el ajuste coincide por los dos caminos; que la varianza medida del coeficiente pasa de $0{,}0051$ a $0{,}24$ al subir $\rho$ de $0$ a $0{,}99$ y que al dividirla por el VIF teórico se recupera la misma cifra en las tres filas; que la media del estimador cae sobre $2$ con ruido constante y con ruido creciente mientras la cobertura del intervalo baja del $94$ % al $86$ %; y que la traza de la matriz sombrero vale exactamente $2$, $5$ y $10$ para esos números de parámetros. Los dos visuales se contrastaron contra estas mismas cantidades en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** La derivación de los coeficientes es Estadística 13 y la inferencia sobre ellos Estadística 14; esta lección las da por hechas y no las reproduce. La matriz sombrero como proyección y el número de condición son de Álgebra 6. El rango y la independencia de columnas, de Álgebra 3. La varianza como pieza del error esperado, de ML 1.
+
+**Lo que se enuncia sin demostrar.** La fórmula general $\operatorname{Var}(\hat\beta_j)=\sigma^2/((n-1)s_j^2)\cdot\mathrm{VIF}_j$ se demuestra aquí solo en el caso de dos predictores, que es el que la celda mide; el caso general requiere la inversa por bloques. En la Proposición 2.5 se escribe la varianza correcta bajo heterocedasticidad sin derivar el estimador sándwich, que queda para el reto. Las coberturas medidas llevan el error de Monte Carlo de 2500 réplicas y no se acompañan de un intervalo.
+
+**Lo que viene de los libros.**
+
+- [*An Introduction to Statistical Learning with Applications in Python*](https://www.statlearning.com/) (James, Witten, Hastie, Tibshirani & Taylor, Springer, 2023), §3.3 *Other Considerations in the Regression Model*, §3.3.1 *Qualitative Predictors* y §3.3.3 *Potential Problems* — citadas por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La decisión de que esta lección **no cubra §3.1 ni §3.2**, porque su material ya está demostrado con más profundidad en Estadística 13 y 14, y dedicarse en su lugar a lo que el libro añade y el resto del repositorio no tiene. La Proposición 2.4 con el VIF despejado y medido —dividir la varianza observada por el factor teórico y obtener la misma constante— en lugar de presentarlo como un indicador que hay que vigilar. Y el corolario de la Proposición 2.7 sobre el residuo pequeño, que convierte el consejo de «mirar los residuos» en una advertencia sobre su punto ciego.
+
+[Índice de ISLP verificado el 13-09-2026 contra los marcadores del PDF oficial, con sus tres niveles.]{.sello}
+:::
