@@ -73,15 +73,24 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 6 | 16 | **6 de 6** | 07 a 16, la Fase 1 |
 | Series de tiempo | 0 | 11 | — | todas |
-| Machine Learning | 0 | 90 | — | todas |
+| Machine Learning | 3 | 90 | **3 de 3** | 04 a 16 de la Fase 2, y el resto |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **49 lecciones** publicadas, **49** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 127 según el plan.
+- **52 lecciones** publicadas, **52** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 126 según el plan.
+- **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
+  el método acordado de decidirlo justo antes de escribir: **03** regresión
+  logística (§4.1–4.3, publicada), **04** modelos generativos (§4.4) y **05**
+  modelos lineales generalizados (§4.6). El índice del módulo se renumeró hasta
+  la 16.
+- **`C=np.inf`, no `penalty=None`.** Es la única forma de apagar la penalización
+  de `LogisticRegression` que aceptan a la vez el scikit-learn 0.24 de la máquina
+  de trabajo y el 1.9 del CI; `penalty=None` no existe en el primero y está
+  deprecado en el segundo. Anotado porque volverá a hacer falta en ML 04 y 05.
 - **Las 16 lecciones de nivel L3 tienen sección «Contraste con la librería»**
   (13-09-2026). Ese nivel promete «lo implementas en NumPy puro y empatas con la
   librería a 6 decimales», y hasta esa fecha la promesa era **incomprobable**,
