@@ -1,8 +1,8 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **13-09-2026**, tras reescribir las seis lecciones de
-Python al molde nuevo. **Las 48 lecciones publicadas cumplen el molde: 48 de 48,
-y no queda ninguna en el molde viejo.**
+Última actualización: **15-09-2026**, tras pasar el registro de la skill
+`humanizer` por **las 51 lecciones**, leídas párrafo a párrafo. **Las 51
+publicadas cumplen el molde: 51 de 51, y no queda ninguna en el molde viejo.**
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. **Estadística queda cerrada en 25 de 25.** Del
 plan siguen faltando lecciones por escribir en los demás módulos: Python tiene
@@ -515,6 +515,56 @@ falla el build. Codificar el SVG en base64.
   mantiene el molde completo, definiciones numeradas incluidas, leyendo la
   especificación del lenguaje como el sistema de partida. El detalle está en el
   punto 3.3, y las seis lecciones ya están escritas así.
+- ~~**Pasar el registro de `humanizer` por todo el texto generado por IA.**~~
+  **Terminado el 15-09-2026.** Las 51 lecciones leídas párrafo a párrafo:
+  6 de Python, 2 de ML, 25 de Estadística y 18 de Álgebra. Unos 120 párrafos
+  reescritos en total. Los patrones que más aparecían, en orden de frecuencia:
+
+  1. **Cierres de una línea que resumen sin añadir**: «Ese es el método
+     completo», «Ahí está el problema», «Esa es la trampa», «Eso es todo lo que
+     hay detrás». Se cortan o se funden con el párrafo.
+  2. **Defensas contra una objeción que nadie plantea**: «no es un tecnicismo»,
+     «no es casualidad», «no es decorativo», «no es un acto de fe», «no es una
+     curiosidad de laboratorio». Se sustituyen por la razón directa.
+  3. **Superlativos sin respaldo**: «el error más común», «la operación más
+     común de toda la estadística descriptiva» (era centrar un vector), «la que
+     más importa». Se cambian por la afirmación que sí se puede sostener.
+  4. **Dichos que suenan profundos**: «lo que realmente importa», «quita todo el
+     misterio», «la clave es», «convierte la estadística en geometría».
+
+  Tres cosas que el barrido dejó decididas y conviene no rehacer:
+
+  - **El vocabulario ya estaba limpio.** Un barrido de 27 palabras infladas
+    (*crucial*, *fundamental*, *robusto*, *panorama*, *piedra angular*…) sobre
+    las 51 lecciones da 10 aciertos y los 10 son usos técnicos legítimos
+    (teorema fundamental del cálculo, sección *Robustness* de Think Stats,
+    errores estándar robustos). No hay nada que corregir ahí.
+  - **Las rayas largas de la bibliografía se quedan.** En las listas de
+    `::: {.fuentes}`, el ` — ` separa la cita de su nota y es convención
+    bibliográfica, no conector de prosa. Son unas 25, iguales en las 51
+    lecciones.
+  - **Quedan ~30 rayas largas dentro de las cadenas JS de los visuales.** Ese
+    texto se muestra al lector aunque viva en un bloque de código, así que le
+    aplica la misma regla. No se tocó en esta pasada porque cada cambio obliga
+    a repasar `visuales.py`; es trabajo pendiente y acotado.
+
+  El barrido encontró además cuatro defectos heredados que no eran de registro:
+  **cuatro rayas largas huérfanas** (Est 14 dos veces, Est 16, Álgebra 04:
+  quedaba el cierre del inciso sin la apertura, sobras de la conversión de
+  guiones), **dos puntos dobles** (Est 13, Álgebra 05) y **una frase duplicada**
+  en Est 08 («El máximo de $\ell$ está donde está», dos veces seguidas). Ya no
+  queda ninguna raya impar en prosa en todo el sitio; se comprueba con un
+  conteo de paridad por línea.
+- **Regla 14 contra el §1 del catálogo, sin resolver.** `CLAUDE.md` permite
+  «no X **sino** Y» a propósito, por precisión matemática; el catálogo de la
+  skill lo prohíbe entero. En esta pasada **mandó la regla del repo**: se
+  reescribió «no es X: es Y» y se dejó «no es X sino Y». Si Luis prefiere lo
+  contrario, hay unas 40 construcciones con *sino* que revisar.
+- **`GOLPE` de `formato.py` solo mira el verbo *ser*.** Su regex acepta
+  `es|son|era|fue|fueron`, así que «no **está** fallando: **está** diciendo»
+  pasa el gate. Encontrado al escribir Python 01; sin decidir si se amplía.
+- **Los 357 rótulos en negrita (§19 del catálogo) se quedan.** Marcan estructura
+  que `formato.py` verifica, no decoración. Recomendado mantenerlos.
 - **Barrer el glosario buscando colisiones de término**, no solo de símbolo. Al
   escribir Python 2 apareció una: `parámetro` estaba registrado con el sentido
   estadístico y habría puesto un tooltip falso en la lección de funciones. Se
