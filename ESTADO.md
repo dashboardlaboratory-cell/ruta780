@@ -1,13 +1,14 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **15-09-2026**, tras pasar el registro de la skill
-`humanizer` por **las 51 lecciones**, leídas párrafo a párrafo. **Las 51
-publicadas cumplen el molde: 51 de 51, y no queda ninguna en el molde viejo.**
+Última actualización: **16-09-2026**, tras publicar cuatro lecciones: **Python 7**
+(ejes y reducciones), **Python 8** (reshape, orden y ventanas), **ML 4** (modelos
+generativos) y **ML 5** (modelos lineales generalizados). **Las 56 publicadas
+cumplen el molde: 56 de 56, y no queda ninguna en el molde viejo.**
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. **Estadística queda cerrada en 25 de 25.** Del
 plan siguen faltando lecciones por escribir en los demás módulos: Python tiene
-16 planeadas y 6 publicadas, y Series, ML y Causal están vacíos. El detalle está
-en la tabla del punto 2.
+16 planeadas y 8 publicadas, ML 5 de 90, y Series y Causal están vacíos. El
+detalle está en la tabla del punto 2.
 
 Antes de esto, el 12-09-2026 se habían publicado Estadística 18 a 24 —las
 bayesianas, desbloqueadas al verificar el índice entero de Think Bayes— y
@@ -71,17 +72,17 @@ hay que empezar a hacer:
 |---|---|---|---|---|
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
-| Python | 6 | 16 | **6 de 6** | 07 a 16, la Fase 1 |
+| Python | 8 | 16 | **8 de 8** | 09 a 16, la Fase 1 |
 | Series de tiempo | 0 | 11 | — | todas |
-| Machine Learning | 3 | 90 | **3 de 3** | 04 a 16 de la Fase 2, y el resto |
+| Machine Learning | 5 | 90 | **5 de 5** | 06 a 16 de la Fase 2, y el resto |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **52 lecciones** publicadas, **52** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 126 según el plan.
+- **56 lecciones** publicadas, **56** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 122 según el plan.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
   logística (§4.1–4.3, publicada), **04** modelos generativos (§4.4) y **05**
@@ -107,11 +108,14 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   marginales exactas, que es más fuerte que cualquier librería; y `np.trapz` se
   retiró del espacio de nombres en NumPy 2.0, así que las celdas nuevas no lo
   usan.
-- **104 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
-  Quedan tres avisos de no idempotencia, todos anteriores a esta tanda.
-- **818 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **225 celdas** que el gate ejecuta en cada build.
-- Glosario: **236 términos + 43 símbolos**. Las **41 entradas** que añadió la
+- **118 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
+  Quedan cuatro avisos, todos anteriores a esta tanda: tres de no idempotencia
+  —Est 03, Est 22 y Mat 10— y uno nuevo que conviene mirar, `ml/03` visual 1,
+  control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
+  la regla 19b persigue. No se tocó en esta tanda; queda anotado.
+- **1040 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **284 celdas** que el gate ejecuta en cada build.
+- Glosario: **260 términos + 43 símbolos**. Las **41 entradas** que añadió la
   tanda de Python son todas de tipo `termino`: no se añadió ningún símbolo
   global, que es donde están las colisiones ya auditadas del punto 6.
 - Índices verificados: Think Stats 3e (75 secciones), MML (80), **Think Bayes 2e
@@ -291,7 +295,8 @@ Lo que sigue, en orden de coste creciente:
    el cuaderno de retos, que solo llega a Est 5 y Mat 7 mientras las lecciones
    lo citan mucho más adelante. Ahora son **catorce** secciones de retos
    pendientes: las diez de antes más las de Py 1 a Py 6, que las lecciones
-   nuevas ya citan.
+   nuevas ya citan. **Py 7, ML 3 y ML 4 sí tienen su sección** desde el
+   16-09-2026, y para ML hubo que crear `F2-retos.ipynb`, que no existía.
 2. **ML: el plan listado está incompleto, y el propio plan ya lo sabía.**
    Anotado el 13-09-2026 al traer el tercer nivel del índice de ISLP.
 
@@ -332,6 +337,123 @@ Lo que sigue, en orden de coste creciente:
 
 Se juntaron las vallas `{=html}` de cada visual el 12-09-2026 y las dos entraron
 en `MIGRADAS`. Con eso el módulo de Estadística está completo y al día: 17 de 17.
+
+---
+
+### 3.6 Python 7 y ML 4: hechas (16-09-2026)
+
+Dos lecciones nuevas, las dos de nivel L3 y por tanto con sección **Contraste
+con la librería**.
+
+**Python 7, «NumPy: ejes y reducciones».** Continúa la 6 sin repetirla: la 6
+define el array y la difusión, y esta saca las consecuencias. Dos definiciones,
+seis proposiciones y dos visuales. El eje del que cuelga todo es que **la regla
+de alineación por la derecha decide qué resta compila**, y de ahí salen los tres
+resultados que valen la pena:
+
+- la **Proposición 7.2**, el corrimiento de los ejes: `a.sum(axis=0).sum(axis=1)`
+  reduce los ejes 0 y **2** del original. El caso que despista es
+  `.sum(axis=0).sum(axis=0)`, que sí equivale a `axis=(0,1)` y hace creer que la
+  lectura de izquierda a derecha funciona siempre;
+- la **Proposición 7.4**, que es el hallazgo de la lección: `a - a.mean(axis=1)`
+  falla ruidosamente **salvo cuando la matriz es cuadrada**, y entonces resta las
+  medias por fila a las columnas sin avisar. Demostrado, y medido: con una $4×4$
+  las medias por fila quedan $-6$, $-2$, $2$ y $6$ en vez de ceros;
+- la **Proposición 7.8**, que deduce el valor de una reducción sobre un eje
+  vacío exigiendo compatibilidad con la concatenación: está forzado a ser un
+  elemento neutro, y por eso `sum` responde sobre un eje de tamaño cero y `max`
+  lanza `ValueError`.
+
+**ML 4, «Modelos generativos», ISLP §4.4.** Una definición, seis proposiciones,
+dos visuales. LDA, QDA y naive Bayes salidos del mismo desarrollo: se escribe la
+normal multivariante, se descartan los términos comunes a las clases, y lo que
+sobrevive decide la forma de la frontera. La **Proposición 4.7** es propia y es
+la que sostiene el segundo visual: con covarianzas isotrópicas la frontera de
+QDA es una esfera con centro y radio en forma cerrada, y la recta de LDA es su
+caso degenerado, no un método aparte —al acercar las varianzas el radio diverge—.
+
+**Un hallazgo sobre `scikit-learn` que conviene no volver a descubrir:** el
+atributo `covariance_` que guarda `LinearDiscriminantAnalysis` divide entre $n$,
+y la matriz que su solver usa para predecir divide entre $n-K$. Difieren en el
+factor exacto $n/(n-K)$ —comprobado a $10^{-12}$— así que las predicciones de una
+implementación propia con denominador $n-K$ coinciden con las suyas aunque el
+atributo no coincida. Leer `covariance_` creyendo que es la matriz del modelo
+mete un sesgo, del 0,33 % con $n=600$ y $K=2$, y mayor cuantas más clases haya.
+
+**Dos decisiones tomadas al escribir, en la línea de las ya acordadas:**
+
+1. **`eje` no entra en el glosario global.** Tiene otro sentido en Estadística 12
+   (el semieje de una elipse) y en cualquier gráfico, así que se declara en la
+   tabla `::: {.notacion}` de la lección. Es la misma regla que se aplicó a
+   `parámetro` en la tanda de Python. Sí entraron, por ser inequívocos:
+   `reducción`, `elemento neutro`, `modelo generativo`, `análisis discriminante
+   lineal` y `naive Bayes`.
+2. **ML 4 cita también §4.5.1 *An Analytical Comparison***, que el plan no había
+   asignado a ninguna lección. Es donde ISLP compara LDA con la logística, y esa
+   comparación pertenece a la lección que acaba de presentar LDA. §4.5.2 queda
+   libre para quien desglose el capítulo 5.
+
+**Los cuadernos de retos, al día con lo que las lecciones citan.** Se añadieron
+las secciones **Python 7** y **Python 8** a `F1-retos.ipynb` y se creó
+`F2-retos.ipynb` con **ML 3**, **ML 4** y **ML 5**. La de ML 3 hacía falta desde
+el 15-09: la lección citaba un cuaderno que no existía. Las catorce secciones
+pendientes del punto 1 de abajo siguen pendientes; esto solo evita que la deuda
+crezca.
+
+### 3.7 Python 8 y ML 5, y la decisión de alcance de la 8 (16-09-2026)
+
+**Python 8 se redefinió antes de escribirla, y conviene saber por qué.** El plan
+la listaba como «NumPy: indexado avanzado, vistas y strides», y eso **ya estaba
+publicado**: la Definición 6.1 son los pasos, la Proposición 6.2 es la rebanada
+como vista y la 6.3 es la indexación avanzada como copia. Escribirla como estaba
+habría repetido la 6 con otro título. Se aplicó el mismo método acordado para los
+capítulos de ISLP —decidir justo antes de escribir— y quedó como **«Reshape,
+orden y ventanas»**, que es lo que de verdad falta entre la 6 y pandas:
+
+- **orden C y orden F** por sus pasos, y que transponer intercambia el uno por el
+  otro (Proposición 8.2);
+- **el criterio de la vista** para `reshape` (Proposición 8.3), con la
+  imposibilidad demostrada sobre un caso concreto: los desplazamientos del
+  recorrido por filas de la transpuesta son $0, 32, 64, 8, 40, 72, \dots$ y sus
+  diferencias valen $32, 32, -56$, que no son constantes, así que ningún paso
+  único las genera y NumPy tiene que copiar. De ahí sale la diferencia entre
+  `ravel` y `flatten`, y que `ravel(order='F')` sí devuelva vista;
+- **las ventanas deslizantes** (Proposición 8.6), que es el resultado más
+  rentable del módulo y se demuestra en dos líneas: $V_{ij}=x_{i+j}$ tiene
+  desplazamiento $(i+j)s = is+js$, luego los pasos son $(s,s)$ y la ventana es
+  una vista. Forma $(7,4)$ y $28$ elementos sobre un búfer de $80$ bytes, sin
+  copiar ninguno;
+- **la cota del último byte** (Proposición 8.7), $\sum(n_k-1)s_k + t$, que es lo
+  que `as_strided` no comprueba: una fila de más pide el byte $88$ de un búfer de
+  $80$ y la construiría igual. Comprobarla cuesta una línea, y es lo que separa
+  un truco de algo publicable.
+
+**El índice del módulo se actualizó** con el título nuevo, siguiendo la misma
+regla que se fijó para `ml/index.qmd`: que el índice no siga mintiendo.
+
+**ML 5, «Modelos lineales generalizados», ISLP §4.6.** Dos definiciones, seis
+proposiciones, dos visuales. El arco es el del libro: primero qué rompe la recta
+sobre conteos, después Poisson, después el marco común.
+
+- La **Proposición 5.1** convierte «predice valores negativos» en un resultado
+  geométrico: el conjunto donde la recta ajustada es negativa es un semiespacio,
+  y existe siempre que algún coeficiente no sea nulo. Lo que depende de los datos
+  es cuántas observaciones caen dentro: aquí $55$ de $800$, la menor en $-2{,}185$.
+- La **Proposición 5.5** es la 3.8 de la lección 3 con otra media: $X^\top(y-\hat\mu)=0$,
+  y con intercepto los conteos ajustados suman exactamente lo observado. Medido:
+  $8700$ y $8700$.
+- La **Proposición 5.8** sostiene §4.6.3 con una sola función: el paso
+  $\beta \leftarrow \beta + (X^\top WX)^{-1}X^\top(y-\mu)$ resuelve los tres modelos
+  cambiando solo el par $(g,V)$, y en el caso lineal converge en **una** iteración
+  porque el término en $\beta$ se cancela. La sección de contraste llama a esa
+  función tres veces y empata con OLS, con `LogisticRegression` y con
+  `PoissonRegressor`.
+
+Dos detalles de implementación que volverán a hacer falta: el IRLS de Poisson
+necesita arrancar con el intercepto en $\log\bar{y}$ —partir de cero pone todas
+las medias ajustadas en $1$ y la primera hessiana queda mal escalada—, y
+`PoissonRegressor` apaga su penalización con `alpha=0.0`, que es el análogo del
+`C=np.inf` ya anotado para la logística.
 
 ---
 
