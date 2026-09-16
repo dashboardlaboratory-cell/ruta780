@@ -1,0 +1,653 @@
+---
+title: "Modelos generativos"
+subtitle: "Machine Learning · Lección 4"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/03-regresion-logistica, estadistica/12-normal-multivariante, estadistica/18-teorema-de-bayes]
+siguientes: []
+libro: "ISLP §4.4 Generative Models for Classification · §4.4.1 Linear Discriminant Analysis for p = 1 · §4.4.2 Linear Discriminant Analysis for p >1 · §4.4.3 Quadratic Discriminant Analysis · §4.4.4 Naive Bayes · §4.5.1 An Analytical Comparison"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - scikit-learn
+---
+
+::: {.meta-leccion data-leccion="ml/04-modelos-generativos"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §4.4]{.item}
+[**Prereqs** [Regresión logística](03-regresion-logistica.qmd) · [Normal multivariante](../estadistica/12-normal-multivariante.qmd) · [Teorema de Bayes](../estadistica/18-teorema-de-bayes.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Enunciar qué modela un [modelo generativo]{.g} y escribir la probabilidad a posteriori que se obtiene al invertirlo con el teorema de Bayes.
+2. Demostrar que la regla que asigna la clase de mayor probabilidad a posteriori minimiza la probabilidad de error, y reconocer que esa cota no depende del modelo elegido.
+3. Demostrar dónde cae el umbral de decisión con un predictor y dos clases normales, y leer en la fórmula cuánto lo desplaza la probabilidad a priori de cada clase.
+4. Demostrar que una covarianza común hace lineal la frontera de decisión —el [análisis discriminante lineal]{.g}— porque el término cuadrático es el mismo en las dos clases y se cancela.
+5. Demostrar que con covarianzas distintas la frontera es cuadrática, y contar los parámetros de cada modelo para explicar cuándo conviene cada uno.
+6. Demostrar que el clasificador [naive Bayes]{.g} gaussiano es el caso de covarianzas diagonales, y situarlo en el conteo de parámetros.
+7. Implementar los tres discriminantes en NumPy puro y empatar con `scikit-learn`.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Estadística 18**: el teorema de Bayes. Un modelo generativo lo usa al derecho y al revés: se modela la ley de $X$ dentro de cada clase y se invierte para obtener la de la clase dado $X$.
+- **Estadística 12, normal multivariante**: la densidad con su matriz de covarianza y su forma cuadrática. De ahí sale todo lo que sigue.
+- **Álgebra 12, formas cuadráticas**: que $x^\top A x$ sea la misma función en las dos clases es exactamente lo que permite cancelarla.
+- **Machine Learning 3**: la regresión logística modela la probabilidad a posteriori directamente. Esta lección llega al mismo tipo de frontera por otro camino, y la Proposición 4.7 dice en qué se diferencian.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 5**: los modelos lineales generalizados, que completan el capítulo 4 con la regresión de Poisson.
+- **Machine Learning 14 y 15**: PCA y clustering, donde vuelve la covarianza común y su descomposición.
+- **ESL, lección 20**: los métodos lineales de clasificación comparados de frente, con LDA y la logística como los dos casos del mismo discriminante.
+- **Estadística 16**: la calibración de las probabilidades que este modelo produce, que es una pregunta distinta de la de acertar la clase.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $K$ | ka | El número de clases |
+| $\pi_k$ | pi sub ka | La probabilidad a priori de la clase $k$ |
+| $f_k(x)$ | efe sub ka de equis | La densidad de $X$ dentro de la clase $k$ |
+| $p_k(x)$ | pe sub ka de equis | La probabilidad a posteriori $P(Y=k\mid X=x)$ |
+| $\mu_k$ | mu sub ka | El vector de medias de la clase $k$ |
+| $\Sigma$ | sigma | La matriz de covarianza común a todas las clases |
+| $\Sigma_k$ | sigma sub ka | La matriz de covarianza propia de la clase $k$ |
+| $\delta_k(x)$ | delta sub ka de equis | El discriminante: cualquier función que ordene las clases igual que $p_k(x)$ |
+| $p$ | pe | El número de predictores |
+:::
+
+## 1. Invertir el problema
+
+::: {.definicion}
+**Definición 4.1 (modelo generativo).** Un **modelo generativo** para clasificación especifica dos cosas: las probabilidades a priori $\pi_1,\dots,\pi_K$ con $\sum_k \pi_k = 1$, y para cada clase la densidad $f_k$ de $X$ dentro de esa clase. La probabilidad a posteriori se obtiene entonces con el teorema de Bayes:
+$$p_k(x) \;=\; P(Y=k\mid X=x) \;=\; \frac{\pi_k f_k(x)}{\sum_{l=1}^{K}\pi_l f_l(x)}.$$
+:::
+
+El denominador es el mismo para todas las clases, de modo que comparar $p_k(x)$ entre clases equivale a comparar $\pi_k f_k(x)$, y también a comparar cualquier función creciente de ese producto. Esa libertad es la que permite trabajar con logaritmos y quedarse con un **discriminante** $\delta_k$ mucho más simple que la probabilidad misma.
+
+::: {.proposicion}
+**Proposición 4.2 (optimalidad de la regla de Bayes).** Entre todas las reglas que asignan una clase a cada punto $x$, la que asigna $\arg\max_k p_k(x)$ minimiza la probabilidad de error. Ninguna regla, use el modelo que use, puede bajar de ese error.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $g$ una regla cualquiera. Condicionando en $X=x$, la probabilidad de acertar en ese punto vale $P(Y=g(x)\mid X=x)=p_{g(x)}(x)$, y la probabilidad global de acertar es su esperanza sobre la ley de $X$:
+$$P(\text{acierto}) = E\big[\,p_{g(X)}(X)\,\big].$$
+Para cada $x$ por separado, el integrando $p_{g(x)}(x)$ se maximiza eligiendo $g(x)=\arg\max_k p_k(x)$, porque se está escogiendo un elemento de una lista finita de números. Maximizar el integrando punto a punto maximiza la integral, así que esa elección maximiza $P(\text{acierto})$ y minimiza su complemento. [∎]{.fin-demo}
+:::
+
+La proposición fija el techo y no dice cómo alcanzarlo: $p_k(x)$ es desconocida. Lo que distingue a los métodos de esta lección es el modelo que se le pone a $f_k$ para poder estimarla.
+
+## 2. Un predictor, dos clases
+
+::: {.proposicion}
+**Proposición 4.3 (el umbral y la prior).** Sean $K=2$, $p=1$, y $f_k$ normal de media $\mu_k$ y varianza común $\sigma^2$, con $\mu_0<\mu_1$. La regla de Bayes asigna la clase $1$ cuando $x$ supera el umbral
+$$x^\star \;=\; \frac{\mu_0+\mu_1}{2} \;+\; \frac{\sigma^2}{\mu_1-\mu_0}\,\log\frac{\pi_0}{\pi_1}.$$
+Con priors iguales el umbral cae en el punto medio de las dos medias.
+:::
+
+::: {.demostracion}
+*Demostración.* Comparar $\pi_1 f_1(x)$ con $\pi_0 f_0(x)$ equivale a comparar sus logaritmos. Escribiendo la densidad normal y descartando el término $-x^2/(2\sigma^2)$, que es idéntico en las dos clases,
+$$\log \pi_k f_k(x) \;=\; \frac{x\mu_k}{\sigma^2} - \frac{\mu_k^2}{2\sigma^2} + \log \pi_k + c(x),$$
+con $c(x)$ común. La diferencia entre la clase $1$ y la clase $0$ vale
+$$\frac{x(\mu_1-\mu_0)}{\sigma^2} - \frac{\mu_1^2-\mu_0^2}{2\sigma^2} + \log\frac{\pi_1}{\pi_0},$$
+que es una función afín de $x$ con pendiente $(\mu_1-\mu_0)/\sigma^2>0$. Igualarla a cero y despejar $x$, usando $\mu_1^2-\mu_0^2=(\mu_1-\mu_0)(\mu_1+\mu_0)$, da $x^\star$. Al ser la pendiente positiva, la diferencia es positiva justo a la derecha del umbral. [∎]{.fin-demo}
+:::
+
+El segundo sumando es todo el efecto de la prior. Crece con $\sigma^2$, porque clases más dispersas se distinguen peor y el desempate pesa más, y decrece con la separación $\mu_1-\mu_0$, porque medias muy separadas dejan poco que desempatar.
+
+```{pyodide}
+import numpy as np
+
+mu0, mu1, s2 = -1.0, 1.0, 1.0
+for pi1 in (0.5, 0.2, 0.8):
+    pi0 = 1.0 - pi1
+    x = (s2 * np.log(pi0 / pi1)) / (mu1 - mu0) + (mu0 + mu1) / 2
+    print("pi1 = %.1f -> umbral en x = %+.4f" % (pi1, x))
+print("con priors iguales el umbral cae en el punto medio:", (mu0 + mu1) / 2)
+```
+
+Bajar la prior de la clase $1$ de $0{,}5$ a $0{,}2$ corre el umbral $0{,}6931$ hacia la derecha, que es $\log 4$ dividido por la separación $\mu_1-\mu_0=2$. Subirla a $0{,}8$ lo corre lo mismo hacia el otro lado, porque el logaritmo cambia de signo.
+
+```{=html}
+<div class="viz-umbral">
+  <div class="controles">
+    <label>Prior de la clase 1 <input id="um-pi" type="range" min="5" max="95" step="5" value="50"> <span id="um-pi-v">0.50</span></label>
+    <label>Separación μ₁ − μ₀ <input id="um-sep" type="range" min="10" max="40" step="2" value="20"> <span id="um-sep-v">2.0</span></label>
+  </div>
+  <svg id="um-svg" viewBox="0 0 640 300" role="img" aria-label="Las dos densidades normales ponderadas por sus priors sobre un eje fijo, y la vertical del umbral de decisión, que se desplaza con los dos controles."></svg>
+  <p class="lectura" id="um-lectura"></p>
+</div>
+<style>
+.viz-umbral { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-umbral .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-umbral label { display: flex; align-items: center; gap: .4rem; }
+.viz-umbral input[type=range] { width: 140px; padding: 0; }
+.viz-umbral svg { width: 100%; height: auto; display: block; }
+.viz-umbral .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_0 = "#0F6E68", C_1 = "#B45309", C_U = "#B4342E";
+  var svg = document.getElementById("um-svg"), lec = document.getElementById("um-lectura");
+  var cp = document.getElementById("um-pi"), ep = document.getElementById("um-pi-v");
+  var cs = document.getElementById("um-sep"), es = document.getElementById("um-sep-v");
+
+  // Marco anclado a constantes: el eje x va siempre de -5 a 5 y la altura
+  // se escala con la densidad máxima posible, no con la dibujada.
+  var XMIN = -5, XMAX = 5, X0 = 46, XW = 560, YB = 232, ALTO = 165;
+  var S2 = 1.0, DMAX = 1 / Math.sqrt(2 * Math.PI * S2);
+
+  function px(x) { return X0 + (x - XMIN) / (XMAX - XMIN) * XW; }
+  function py(d) { return YB - d / DMAX * ALTO; }
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function curva(mu, peso, color) {
+    var d = "", n = 240;
+    for (var i = 0; i <= n; i++) {
+      var x = XMIN + (XMAX - XMIN) * i / n;
+      var v = peso * Math.exp(-0.5 * (x - mu) * (x - mu) / S2) / Math.sqrt(2 * Math.PI * S2);
+      d += (i ? " L" : "M") + px(x).toFixed(1) + " " + py(v).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: d, stroke: color, "stroke-width": 2, fill: "none" }));
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var pi1 = +cp.value / 100, sep = +cs.value / 10;
+    var pi0 = 1 - pi1, mu1 = sep / 2, mu0 = -sep / 2;
+    ep.textContent = pi1.toFixed(2); es.textContent = sep.toFixed(1);
+
+    // eje fijo
+    svg.appendChild(el("path", { d: "M" + X0 + " " + YB + " L" + (X0 + XW) + " " + YB,
+      stroke: C_L, "stroke-width": 1.2, fill: "none" }));
+    for (var t = -4; t <= 4; t += 2) {
+      svg.appendChild(el("path", { d: "M" + px(t).toFixed(1) + " " + YB + " L" + px(t).toFixed(1) +
+        " " + (YB + 5), stroke: C_L, "stroke-width": 1, fill: "none" }));
+      svg.appendChild(el("text", { x: px(t).toFixed(1), y: YB + 19, "text-anchor": "middle",
+        "font-size": 11, fill: C_T, opacity: 0.7 }, String(t)));
+    }
+
+    curva(mu0, pi0, C_0);
+    curva(mu1, pi1, C_1);
+    svg.appendChild(el("text", { x: px(mu0).toFixed(1), y: 30, "text-anchor": "middle",
+      "font-size": 12, fill: C_0 }, "π₀f₀"));
+    svg.appendChild(el("text", { x: px(mu1).toFixed(1), y: 30, "text-anchor": "middle",
+      "font-size": 12, fill: C_1 }, "π₁f₁"));
+
+    var xs = (S2 * Math.log(pi0 / pi1)) / (mu1 - mu0) + (mu0 + mu1) / 2;
+    var dentro = xs > XMIN && xs < XMAX;
+    if (dentro) {
+      svg.appendChild(el("path", { d: "M" + px(xs).toFixed(1) + " " + (YB - ALTO - 12) +
+        " L" + px(xs).toFixed(1) + " " + YB, stroke: C_U, "stroke-width": 2.2, fill: "none" }));
+      svg.appendChild(el("circle", { cx: px(xs).toFixed(1), cy: YB - ALTO - 12, r: 4, fill: C_U }));
+      svg.appendChild(el("text", { x: px(xs).toFixed(1), y: YB - ALTO - 20, "text-anchor": "middle",
+        "font-size": 11.5, fill: C_U }, "x* = " + xs.toFixed(3)));
+    }
+    // punto medio, que no depende de la prior
+    svg.appendChild(el("path", { d: "M" + px(0).toFixed(1) + " " + (YB - 14) + " L" + px(0).toFixed(1) +
+      " " + YB, stroke: C_T, "stroke-width": 1, fill: "none", "stroke-dasharray": "3 3", opacity: 0.6 }));
+
+    lec.innerHTML = "Con π₁ = <strong>" + pi1.toFixed(2) + "</strong> y una separación de <strong>" +
+      sep.toFixed(1) + "</strong>, el umbral cae en <strong>" + xs.toFixed(3) + "</strong>: el punto " +
+      "medio más σ²·log(π₀/π₁)/(μ₁−μ₀) = " + ((S2 * Math.log(pi0 / pi1)) / (mu1 - mu0)).toFixed(3) +
+      ". Al separar las medias el mismo desempate pesa menos, y el umbral vuelve hacia el centro " +
+      "(Proposición 4.3).";
+  }
+
+  cp.addEventListener("input", dibujar);
+  cs.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Varias variables: qué se cancela y qué no
+
+::: {.proposicion}
+**Proposición 4.4 (LDA: la frontera es lineal).** Si $f_k$ es normal multivariante de media $\mu_k$ y **covarianza común** $\Sigma$ para todas las clases, entonces
+$$\delta_k(x) \;=\; x^\top \Sigma^{-1}\mu_k \;-\; \tfrac{1}{2}\,\mu_k^\top \Sigma^{-1}\mu_k \;+\; \log \pi_k$$
+ordena las clases igual que $p_k(x)$. En consecuencia, la frontera entre dos clases cualesquiera es un hiperplano.
+:::
+
+::: {.demostracion}
+*Demostración.* Tomando logaritmo en la Definición 4.1 y descartando el denominador, común a todas las clases,
+$$\log \pi_k f_k(x) = \log\pi_k - \tfrac{1}{2}\log|2\pi\Sigma| - \tfrac{1}{2}(x-\mu_k)^\top\Sigma^{-1}(x-\mu_k).$$
+El segundo término no depende de $k$ porque $\Sigma$ es común. Desarrollando la forma cuadrática,
+$$(x-\mu_k)^\top\Sigma^{-1}(x-\mu_k) = x^\top\Sigma^{-1}x - 2\,x^\top\Sigma^{-1}\mu_k + \mu_k^\top\Sigma^{-1}\mu_k,$$
+y el término $x^\top\Sigma^{-1}x$ tampoco depende de $k$, de nuevo porque la matriz es la misma. Descartando los dos términos comunes y multiplicando por $-\tfrac{1}{2}$ hacia dentro queda $\delta_k$.
+
+La diferencia $\delta_1(x)-\delta_0(x)$ vale $x^\top\Sigma^{-1}(\mu_1-\mu_0)$ más una constante: es una función afín de $x$, y el conjunto donde se anula es un hiperplano. [∎]{.fin-demo}
+:::
+
+La cancelación del término cuadrático es el único sitio donde se usa que la covarianza sea común, y es también la única razón por la que la frontera sale recta. Quitar esa hipótesis no rompe nada del resto del argumento.
+
+::: {.proposicion}
+**Proposición 4.5 (QDA: la frontera es cuadrática, y cuánto cuesta).** Si cada clase tiene su propia covarianza $\Sigma_k$, el discriminante es
+$$\delta_k(x) \;=\; -\tfrac{1}{2}(x-\mu_k)^\top\Sigma_k^{-1}(x-\mu_k) \;-\; \tfrac{1}{2}\log|\Sigma_k| \;+\; \log\pi_k,$$
+y la frontera entre dos clases es una cuádrica. El número de parámetros pasa de $Kp + \tfrac{p(p+1)}{2}$ en LDA a $Kp + K\tfrac{p(p+1)}{2}$ en QDA.
+:::
+
+::: {.demostracion}
+*Demostración.* Repitiendo la demostración anterior sin la hipótesis de covarianza común, el término $-\tfrac{1}{2}\log|2\pi\Sigma_k|$ ya depende de $k$ y sobrevive, salvo la parte $-\tfrac{p}{2}\log 2\pi$, que sigue siendo común. El término $x^\top\Sigma_k^{-1}x$ también depende de $k$ y sobrevive. Queda $\delta_k$ tal como se enuncia, y la diferencia entre dos clases es un polinomio de grado dos en $x$.
+
+Para el conteo: las medias aportan $p$ números por clase en los dos modelos. Una matriz de covarianza simétrica de orden $p$ tiene $p(p+1)/2$ entradas libres; LDA estima una sola y QDA estima $K$. [∎]{.fin-demo}
+:::
+
+El conteo es el argumento entero a favor de LDA cuando hay pocos datos, y está en el mismo eje que la lección 1: más parámetros bajan el sesgo y suben la varianza. Con $p=10$ y $K=3$, LDA estima $85$ números y QDA estima $195$.
+
+::: {.proposicion}
+**Proposición 4.6 (naive Bayes es el caso diagonal).** Suponer que dentro de cada clase los $p$ predictores son independientes equivale a suponer que $\Sigma_k$ es diagonal. El discriminante gaussiano resultante es el de la Proposición 4.5 con matrices diagonales, y el modelo estima $2Kp$ parámetros.
+:::
+
+::: {.demostracion}
+*Demostración.* La independencia dentro de la clase $k$ significa $f_k(x)=\prod_{j=1}^{p} f_{kj}(x_j)$. Si cada factor es normal de media $\mu_{kj}$ y varianza $\sigma_{kj}^2$, el producto es la densidad normal multivariante de media $\mu_k$ y covarianza $\operatorname{diag}(\sigma_{k1}^2,\dots,\sigma_{kp}^2)$, porque la densidad conjunta de una normal multivariante con covarianza diagonal factoriza exactamente así. Sustituyendo esa matriz en la Proposición 4.5 se obtiene el discriminante, que se reduce a una suma de $p$ términos univariados.
+
+El conteo sale de que cada clase aporta $p$ medias y $p$ varianzas. [∎]{.fin-demo}
+:::
+
+Con $p=10$ y $K=3$ son $60$ parámetros: menos que los $85$ de LDA, pese a que las fronteras de naive Bayes son cuadráticas y las de LDA son planas. Más flexibilidad con menos parámetros es posible porque la hipótesis de independencia recorta el espacio por otro lado.
+
+::: {.proposicion}
+**Proposición 4.7 (la frontera isotrópica es una esfera).** Si $\Sigma_0=\sigma_0^2 I$ y $\Sigma_1=\sigma_1^2 I$ con $\sigma_0^2\neq\sigma_1^2$, la frontera de QDA entre las dos clases es una esfera. Cuando $\sigma_0^2=\sigma_1^2$ la esfera degenera en el hiperplano de LDA.
+:::
+
+::: {.demostracion}
+*Demostración.* Con $\Sigma_k=\sigma_k^2 I$ la Proposición 4.5 da $\delta_k(x)=-\lVert x-\mu_k\rVert^2/(2\sigma_k^2)-\tfrac{p}{2}\log\sigma_k^2+\log\pi_k$. Igualando $\delta_1=\delta_0$ y agrupando,
+$$a\lVert x\rVert^2 - 2\,x^\top b + c = C, \qquad a=\frac{1}{2\sigma_0^2}-\frac{1}{2\sigma_1^2},$$
+con $b=\mu_0/(2\sigma_0^2)-\mu_1/(2\sigma_1^2)$, $c=\lVert\mu_0\rVert^2/(2\sigma_0^2)-\lVert\mu_1\rVert^2/(2\sigma_1^2)$ y $C$ una constante que recoge los logaritmos.
+
+Si $a\neq 0$, dividir entre $a$ y completar cuadrados deja $\lVert x-b/a\rVert^2=r^2$ con $r^2=(C-c)/a+\lVert b/a\rVert^2$: una esfera de centro $b/a$, siempre que $r^2>0$.
+
+Si $\sigma_0^2=\sigma_1^2$ entonces $a=0$, el término cuadrático desaparece de la ecuación y queda $-2x^\top b + c = C$, que es un hiperplano. Es el mismo que da la Proposición 4.4, porque la hipótesis de covarianza común se cumple. [∎]{.fin-demo}
+:::
+
+Al acercar $\sigma_1^2$ a $\sigma_0^2$ el coeficiente $a$ tiende a cero y el radio crece sin cota: la recta es el límite de circunferencias cada vez más grandes, y no un caso aparte.
+
+```{=html}
+<div class="viz-frontera">
+  <div class="controles">
+    <label>σ₁² / σ₀² <input id="fr-r" type="range" min="40" max="300" step="10" value="200"> <span id="fr-r-v">2.00</span></label>
+    <label>Modelo
+      <select id="fr-modelo">
+        <option value="1" selected>QDA (cada clase con su covarianza)</option>
+        <option value="0">LDA (covarianza común, promediada)</option>
+      </select>
+    </label>
+  </div>
+  <svg id="fr-svg" viewBox="0 0 640 330" role="img" aria-label="El plano con las dos clases, sus dispersiones como circunferencias, y la frontera de decisión: una recta cuando las varianzas coinciden y una circunferencia cuando no."></svg>
+  <p class="lectura" id="fr-lectura"></p>
+</div>
+<style>
+.viz-frontera { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-frontera .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-frontera label { display: flex; align-items: center; gap: .4rem; }
+.viz-frontera input[type=range] { width: 140px; padding: 0; }
+.viz-frontera select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-frontera svg { width: 100%; height: auto; display: block; }
+.viz-frontera .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_0 = "#0F6E68", C_1 = "#B45309", C_F = "#B4342E";
+  var svg = document.getElementById("fr-svg"), lec = document.getElementById("fr-lectura");
+  var cr = document.getElementById("fr-r"), er = document.getElementById("fr-r-v");
+  var cm = document.getElementById("fr-modelo");
+
+  // Marco anclado: la ventana del plano es siempre [-6,6] x [-3.1,3.1].
+  var XMIN = -6, XMAX = 6, X0 = 30, XW = 580, YC = 160, ESC = 580 / 12;
+  var MU0 = [-1.2, 0], MU1 = [1.2, 0], S0 = 1.0, P = 2;
+
+  function px(x) { return X0 + (x - XMIN) * ESC; }
+  function py(y) { return YC - y * ESC; }
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var s1 = +cr.value / 100, qda = +cm.value === 1;
+    er.textContent = s1.toFixed(2);
+    // LDA promedia las dos covarianzas con pesos iguales
+    var v0 = qda ? S0 : (S0 + s1) / 2, v1 = qda ? s1 : (S0 + s1) / 2;
+
+    var clip = el("clipPath", { id: "fr-clip" });
+    clip.appendChild(el("rect", { x: X0, y: 24, width: XW, height: 272 }));
+    svg.appendChild(clip);
+    svg.appendChild(el("rect", { x: X0, y: 24, width: XW, height: 272, rx: 6,
+      fill: "none", stroke: C_L, "stroke-width": 1 }));
+
+    // dispersión de cada clase: una desviación típica
+    svg.appendChild(el("circle", { cx: px(MU0[0]), cy: py(MU0[1]), r: Math.sqrt(v0) * ESC,
+      fill: C_0, "fill-opacity": 0.10, stroke: C_0, "stroke-width": 1.4, "clip-path": "url(#fr-clip)" }));
+    svg.appendChild(el("circle", { cx: px(MU1[0]), cy: py(MU1[1]), r: Math.sqrt(v1) * ESC,
+      fill: C_1, "fill-opacity": 0.10, stroke: C_1, "stroke-width": 1.4, "clip-path": "url(#fr-clip)" }));
+    svg.appendChild(el("circle", { cx: px(MU0[0]), cy: py(MU0[1]), r: 3.4, fill: C_0 }));
+    svg.appendChild(el("circle", { cx: px(MU1[0]), cy: py(MU1[1]), r: 3.4, fill: C_1 }));
+
+    var a = 1 / (2 * v0) - 1 / (2 * v1);
+    var bx = MU0[0] / (2 * v0) - MU1[0] / (2 * v1);
+    var by = MU0[1] / (2 * v0) - MU1[1] / (2 * v1);
+    var c = (MU0[0] * MU0[0] + MU0[1] * MU0[1]) / (2 * v0) -
+            (MU1[0] * MU1[0] + MU1[1] * MU1[1]) / (2 * v1);
+    var C = (P / 2) * Math.log(v1 / v0);
+    var texto;
+    if (Math.abs(a) < 1e-9) {
+      // hiperplano: -2 b·x + c = C
+      var d = "";
+      if (Math.abs(by) < 1e-9) {
+        var xr = (c - C) / (2 * bx);
+        d = "M" + px(xr).toFixed(1) + " 24 L" + px(xr).toFixed(1) + " 296";
+      }
+      svg.appendChild(el("path", { d: d, stroke: C_F, "stroke-width": 2.4, fill: "none",
+        "clip-path": "url(#fr-clip)" }));
+      texto = "Las dos varianzas coinciden, así que el coeficiente <em>a</em> se anula y la " +
+        "frontera es la recta de LDA (Proposición 4.4). No hay ninguna circunferencia que " +
+        "dibujar: es el caso degenerado de la Proposición 4.7.";
+    } else {
+      var cx = bx / a, cy = by / a;
+      var r2 = (C - c) / a + cx * cx + cy * cy;
+      if (r2 > 0) {
+        svg.appendChild(el("circle", { cx: px(cx).toFixed(1), cy: py(cy).toFixed(1),
+          r: (Math.sqrt(r2) * ESC).toFixed(1), fill: "none", stroke: C_F, "stroke-width": 2.4,
+          "clip-path": "url(#fr-clip)" }));
+        svg.appendChild(el("circle", { cx: px(cx).toFixed(1), cy: py(cy).toFixed(1), r: 3,
+          fill: C_F, "clip-path": "url(#fr-clip)" }));
+        texto = "La frontera es la circunferencia de centro (" + cx.toFixed(2) + ", " +
+          cy.toFixed(2) + ") y radio <strong>" + Math.sqrt(r2).toFixed(2) + "</strong>. " +
+          "Al acercar la razón de varianzas a 1 el centro se aleja y el radio crece: la recta " +
+          "de LDA es el límite, no un caso aparte (Proposición 4.7).";
+      } else {
+        texto = "Con esta razón de varianzas el término independiente deja la ecuación sin " +
+          "soluciones reales: una de las dos clases se lleva el plano entero.";
+      }
+    }
+    if (!qda) {
+      texto += " En modo LDA las dos covarianzas se promedian antes de decidir, y la frontera " +
+        "es siempre la mediatriz entre las dos medias: con priors iguales la Proposición 4.4 " +
+        "la deja en x = 0 sea cual sea la varianza común, porque escalar Σ no cambia el " +
+        "hiperplano. Lo que sí cambia con el control es la dispersión de cada clase.";
+    }
+    lec.innerHTML = texto;
+  }
+
+  cr.addEventListener("input", dibujar);
+  cm.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Contraste con la librería
+
+Esta lección es de nivel **L3**, y ese nivel promete implementar el resultado en NumPy puro y empatar con la librería. Los tres discriminantes se escriben tal como quedaron enunciados, sobre una muestra simulada de $600$ observaciones y dos predictores correlacionados.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(4)
+n, p, K = 600, 2, 2
+y = (rng.random(n) < 0.4).astype(int)
+mu = np.array([[0.0, 0.0], [1.6, -1.1]])
+A = np.array([[1.0, 0.6], [0.0, 0.9]])
+X = mu[y] + rng.normal(size=(n, p)) @ A.T
+pi = np.array([(y == k).mean() for k in range(K)])
+m = np.array([X[y == k].mean(axis=0) for k in range(K)])
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+
+W = sum((X[y == k] - m[k]).T @ (X[y == k] - m[k]) for k in range(K))
+S = W / (n - K)
+Si = np.linalg.inv(S)
+
+def delta_lda(Xn):
+    return Xn @ Si @ m.T - 0.5 * np.einsum("kj,jl,kl->k", m, Si, m) + np.log(pi)
+
+lda = LinearDiscriminantAnalysis(store_covariance=True).fit(X, y)
+mio = delta_lda(X).argmax(axis=1)
+print("medias iguales a 1e-12  :", np.allclose(m, lda.means_, atol=1e-12))
+print("predicciones identicas  :", np.array_equal(mio, lda.predict(X)))
+print("aciertos LDA            : %.4f" % (mio == y).mean())
+print("la covarianza guardada coincide con la mia:", np.allclose(S, lda.covariance_, atol=1e-12))
+print("pero S / covariance_ vale exactamente n/(n-K):",
+      np.allclose(S / lda.covariance_, n / (n - K), atol=1e-12), "=", n / (n - K))
+
+w = Si @ (m[1] - m[0])
+b = -0.5 * (m[1] @ Si @ m[1] - m[0] @ Si @ m[0]) + np.log(pi[1] / pi[0])
+print("la frontera se escribe como una sola recta:",
+      np.allclose(delta_lda(X)[:, 1] - delta_lda(X)[:, 0], X @ w + b, atol=1e-10))
+```
+
+El último par de líneas del bloque anterior es un hallazgo sobre la librería que conviene no olvidar: el atributo `covariance_` que `scikit-learn` **guarda** divide entre $n$, y el que su solver **usa** para predecir divide entre $n-K$. Las dos matrices se diferencian en el factor exacto $n/(n-K)$, aquí $600/598$, y por eso las predicciones coinciden con las de la implementación de arriba aunque el atributo no coincida. Leer `covariance_` creyendo que es la matriz del modelo introduce un sesgo del $0{,}33$ % en este caso, y mayor cuanto más clases haya. La última línea comprueba de paso lo que dice la demostración de la Proposición 4.4: la diferencia de los dos discriminantes es una función afín, de modo que la frontera se escribe como una sola recta $x^\top w + b = 0$.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(4)
+n, p, K = 600, 2, 2
+y = (rng.random(n) < 0.4).astype(int)
+mu = np.array([[0.0, 0.0], [1.6, -1.1]])
+A = np.array([[1.0, 0.6], [0.0, 0.9]])
+X = mu[y] + rng.normal(size=(n, p)) @ A.T
+pi = np.array([(y == k).mean() for k in range(K)])
+m = np.array([X[y == k].mean(axis=0) for k in range(K)])
+from sklearn.discriminant_analysis import QuadraticDiscriminantAnalysis
+
+Sk = [np.cov(X[y == k].T, ddof=1) for k in range(K)]
+
+def delta_qda(Xn):
+    out = np.empty((Xn.shape[0], K))
+    for k in range(K):
+        Ski = np.linalg.inv(Sk[k])
+        d = Xn - m[k]
+        out[:, k] = (-0.5 * np.einsum("ij,jl,il->i", d, Ski, d)
+                     - 0.5 * np.linalg.slogdet(Sk[k])[1] + np.log(pi[k]))
+    return out
+
+qda = QuadraticDiscriminantAnalysis(store_covariance=True).fit(X, y)
+print("predicciones identicas a las de sklearn:",
+      np.array_equal(delta_qda(X).argmax(axis=1), qda.predict(X)))
+for pp, KK in ((2, 2), (10, 3)):
+    print("p=%2d, K=%d -> LDA %3d parametros, QDA %3d, Naive Bayes %3d"
+          % (pp, KK, KK * pp + pp * (pp + 1) // 2,
+             KK * pp + KK * pp * (pp + 1) // 2, 2 * KK * pp))
+```
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(4)
+n, p, K = 600, 2, 2
+y = (rng.random(n) < 0.4).astype(int)
+mu = np.array([[0.0, 0.0], [1.6, -1.1]])
+A = np.array([[1.0, 0.6], [0.0, 0.9]])
+X = mu[y] + rng.normal(size=(n, p)) @ A.T
+pi = np.array([(y == k).mean() for k in range(K)])
+m = np.array([X[y == k].mean(axis=0) for k in range(K)])
+from sklearn.naive_bayes import GaussianNB
+
+var = np.array([X[y == k].var(axis=0, ddof=0) for k in range(K)])
+
+def log_post_nb(Xn):
+    out = np.empty((Xn.shape[0], K))
+    for k in range(K):
+        out[:, k] = (-0.5 * (((Xn - m[k]) ** 2) / var[k]
+                             + np.log(2 * np.pi * var[k])).sum(axis=1) + np.log(pi[k]))
+    mx = out.max(axis=1, keepdims=True)
+    return out - mx - np.log(np.exp(out - mx).sum(axis=1, keepdims=True))
+
+nb = GaussianNB(var_smoothing=0.0).fit(X, y)
+print("log-posteriores iguales a 1e-10:", np.allclose(log_post_nb(X), nb.predict_log_proba(X), atol=1e-10))
+print("predicciones identicas         :", np.array_equal(log_post_nb(X).argmax(axis=1), nb.predict(X)))
+
+W = sum((X[y == k] - m[k]).T @ (X[y == k] - m[k]) for k in range(K))
+Si = np.linalg.inv(W / (n - K))
+lda_pred = (X @ Si @ m.T - 0.5 * np.einsum("kj,jl,kl->k", m, Si, m) + np.log(pi)).argmax(axis=1)
+Sk = [np.cov(X[y == k].T, ddof=1) for k in range(K)]
+qda_sc = np.empty((n, K))
+for k in range(K):
+    d = X - m[k]
+    qda_sc[:, k] = (-0.5 * np.einsum("ij,jl,il->i", d, np.linalg.inv(Sk[k]), d)
+                    - 0.5 * np.linalg.slogdet(Sk[k])[1] + np.log(pi[k]))
+print("aciertos: LDA %.4f | QDA %.4f | NB %.4f"
+      % ((lda_pred == y).mean(), (qda_sc.argmax(axis=1) == y).mean(),
+         (log_post_nb(X).argmax(axis=1) == y).mean()))
+```
+
+Los datos se simularon con covarianza común, que es justo la hipótesis de LDA, y aun así QDA acierta una fracción algo mayor en el propio conjunto de entrenamiento: estimar dos matrices en vez de una siempre ajusta al menos tan bien lo ya visto. La comparación que importa se hace fuera de la muestra, y es el asunto de la lección 6.
+
+## Ejercicios
+
+### Ejercicio 1, El umbral con priors desiguales
+
+Calcular el umbral de la Proposición 4.3 para $\mu_0=-1$, $\mu_1=1$, $\sigma^2=1$ y $\pi_1=0{,}1$.
+
+```{pyodide}
+#| exercise: ex_umbral
+import numpy as np
+mu0, mu1, s2, pi1 = -1.0, 1.0, 1.0, 0.1
+
+umbral = ______
+
+print(round(umbral, 4))
+float(umbral)
+```
+
+::: {.hint exercise="ex_umbral"}
+El punto medio vale cero, así que todo el umbral es el segundo sumando: $\sigma^2\log(\pi_0/\pi_1)/(\mu_1-\mu_0)$.
+:::
+
+::: {.solution exercise="ex_umbral"}
+```{pyodide}
+import numpy as np
+mu0, mu1, s2, pi1 = -1.0, 1.0, 1.0, 0.1
+
+umbral = (mu0 + mu1) / 2 + s2 * np.log((1 - pi1) / pi1) / (mu1 - mu0)
+
+print(round(umbral, 4))
+float(umbral)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_umbral
+#| check: true
+if abs(result - 1.0986) < 0.001:
+    feedback = {"correct": True, "message": "Correcto: log(9)/2 = 1.0986, y con una clase nueve veces menos frecuente el umbral se corre mas de una desviacion.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 1.0986 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Contar parámetros
+
+Escribir cuántos parámetros estima QDA con $p=20$ predictores y $K=4$ clases, contando medias y covarianzas.
+
+```{pyodide}
+#| exercise: ex_params
+p, K = 20, 4
+
+parametros = ______
+
+print(parametros)
+int(parametros)
+```
+
+::: {.hint exercise="ex_params"}
+Por clase: $p$ medias y una matriz simétrica de orden $p$, que tiene $p(p+1)/2$ entradas libres.
+:::
+
+::: {.solution exercise="ex_params"}
+```{pyodide}
+p, K = 20, 4
+
+parametros = K * p + K * p * (p + 1) // 2
+
+print(parametros)
+int(parametros)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_params
+#| check: true
+if result == 920:
+    feedback = {"correct": True, "message": "Correcto: 80 medias mas 840 entradas de covarianza. LDA estimaria 290.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 920 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 4**:
+
+1. Implementar LDA con el truco de la esfericación: blanquear los datos con $\Sigma^{-1/2}$ y comprobar que el discriminante se reduce a asignar la media más cercana en distancia euclídea, más el término de la prior. Contrastar contra la implementación de esta lección.
+2. Medir la Proposición 4.5 donde duele: simular con covarianzas distintas y $n$ decreciente, y encontrar el tamaño de muestra por debajo del cual LDA supera a QDA en datos nuevos pese a estar mal especificada.
+3. Verificar la Proposición 4.7 numéricamente: barrer la razón de varianzas y comprobar contra la fórmula el centro y el radio de la frontera que devuelve `QuadraticDiscriminantAnalysis`, evaluándola en una rejilla fina.
+
+## Del libro
+
+*An Introduction to Statistical Learning with Applications in Python* trata este material en §4.4 *Generative Models for Classification*, con el caso de un predictor en §4.4.1 *Linear Discriminant Analysis for p = 1*, el caso general en §4.4.2 *Linear Discriminant Analysis for p >1*, las covarianzas propias en §4.4.3 *Quadratic Discriminant Analysis* y la hipótesis de independencia en §4.4.4 *Naive Bayes*. La comparación con la regresión logística está en §4.5.1 *An Analytical Comparison*.
+
+**Preguntas para leer §4.4 con lápiz:**
+
+1. §4.4.1 llega al mismo umbral de la Proposición 4.3 por el camino de la razón de verosimilitudes. ¿En qué paso de la demostración de esta página se usa que las dos varianzas sean iguales, y qué forma tendría el umbral sin esa hipótesis?
+2. §4.4.3 razona el cambio entre LDA y QDA en términos de sesgo y varianza. Con el conteo de la Proposición 4.5, ¿a qué velocidad crece la diferencia de parámetros con $p$, y por qué eso hace que el argumento dependa del número de predictores y no del de clases?
+3. §4.5.1 muestra que LDA y la regresión logística producen fronteras de la misma forma funcional. Con la Proposición 4.4 y la lección 3, ¿qué es exactamente lo que difiere entre los dos métodos, y en qué situación la diferencia favorece a cada uno?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/modelos-generativos.md`, enlazada a [[teorema-de-bayes]], [[normal-multivariante]] y [[regresion-logistica]]. Conviene rehacer a mano la demostración de la Proposición 4.4 y parar en el renglón donde se descarta $x^\top\Sigma^{-1}x$: ese renglón, y solo ese, es la diferencia entre una frontera recta y una curva.
+
+```
+¿Qué modela un modelo generativo?::Las priors π_k y la densidad f_k de X dentro de cada clase; la posterior sale del teorema de Bayes
+¿Por qué basta comparar π_k f_k(x)?::El denominador de Bayes es común a todas las clases y no cambia el orden
+¿Qué regla minimiza el error?::La que asigna la clase de mayor probabilidad a posteriori, y ninguna baja de ahí
+¿Dónde cae el umbral con dos normales de igual varianza?::En el punto medio más σ²·log(π₀/π₁)/(μ₁−μ₀)
+¿Qué hace lineal la frontera de LDA?::Que Σ sea común: el término xᵀΣ⁻¹x es el mismo en las dos clases y se cancela
+¿Qué discriminante usa LDA?::δ_k(x) = xᵀΣ⁻¹μ_k − ½μ_kᵀΣ⁻¹μ_k + log π_k
+¿Qué sobrevive en QDA?::El término cuadrático y el log-determinante, porque ya dependen de la clase
+¿Cuántos parámetros estiman?::LDA Kp + p(p+1)/2; QDA Kp + K·p(p+1)/2; naive Bayes 2Kp
+¿Qué supone naive Bayes?::Independencia dentro de la clase, o sea covarianzas diagonales
+¿Cómo es la frontera con covarianzas isotrópicas?::Una esfera, que degenera en el hiperplano de LDA cuando las varianzas coinciden
+¿Qué guarda sklearn en covariance_?::Una covarianza que divide entre n, no entre n−K; el solver usa la otra
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 4.2 se demuestra maximizando punto a punto el integrando de la probabilidad de acierto. La Proposición 4.3 se demuestra escribiendo la razón de logaritmos y despejando, y se comprueba ejecutándola: con $\pi_1$ igual a $0{,}5$, $0{,}2$ y $0{,}8$ el umbral cae en $0$, $+0{,}6931$ y $-0{,}6931$. Las Proposiciones 4.4 y 4.5 se demuestran desarrollando la forma cuadrática de la normal multivariante y descartando los términos comunes, con el conteo de parámetros contado directamente. La Proposición 4.6 se demuestra factorizando la densidad, y la 4.7 completando cuadrados. La sección 4 implementa los tres discriminantes y comprueba que las predicciones coinciden exactamente con las de `scikit-learn` en las tres familias, y que la razón entre la covarianza agrupada y el atributo `covariance_` vale exactamente $n/(n-K)$. Los dos visuales se contrastaron contra estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** El teorema de Bayes es el de Estadística 18. La densidad normal multivariante, su matriz de covarianza y su forma cuadrática son de Estadística 12. Que una forma cuadrática con la misma matriz es la misma función en las dos clases, y por tanto cancelable, es Álgebra 12. La regresión logística con la que se compara la Proposición 4.4 es la lección 3 de este módulo.
+
+**Lo que se enuncia sin demostrar.** Que estimar por máxima verosimilitud los parámetros del modelo gaussiano da las medias muestrales y la covarianza agrupada: se toma como conocido de Estadística 8 y no se rederiva. Que el atributo `covariance_` de `scikit-learn` divide entre $n$ mientras su solver divide entre $n-K$ se comprueba numéricamente sobre esta muestra, y no se deduce de la documentación.
+
+**Lo que viene de los libros.**
+
+- [*An Introduction to Statistical Learning with Applications in Python*](https://www.statlearning.com/) (James, Witten, Hastie, Tibshirani, Taylor; Springer, 2023), §4.4 *Generative Models for Classification* con sus cuatro subsecciones, y §4.5.1 *An Analytical Comparison* — citado por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La Proposición 4.7 y su visual: escribir la frontera isotrópica como una esfera explícita, con centro y radio en forma cerrada, y presentar la recta de LDA como el caso degenerado en vez de como un método distinto. La lectura del conteo de parámetros que pone a naive Bayes por debajo de LDA con fronteras más flexibles. Y el contraste del atributo `covariance_` con la matriz que el solver usa, con el factor $n/(n-K)$ medido.
+
+[Índice de ISLP verificado el 13-09-2026 contra los marcadores del PDF oficial.]{.sello}
+:::

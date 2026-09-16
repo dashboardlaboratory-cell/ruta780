@@ -92,6 +92,7 @@ MIGRADAS = {
     "ml/01-aprendizaje-estadistico.qmd",
     "ml/02-diagnostico-regresion.qmd",
     "ml/03-regresion-logistica.qmd",
+    "ml/04-modelos-generativos.qmd",
     "python/01-tipos-y-estructuras.qmd",
     "python/02-funciones-y-scope.qmd",
     "python/03-comprehensions.qmd",
