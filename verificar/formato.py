@@ -99,6 +99,7 @@ MIGRADAS = {
     "python/05-entorno-uv-git.qmd",
     "python/06-numpy-primer-contacto.qmd",
     "python/07-ejes-y-reducciones.qmd",
+    "python/08-reshape-orden-y-ventanas.qmd",
     "matematica/01-vectores-y-espacios.qmd",
     "matematica/02-matriz-como-transformacion.qmd",
     "matematica/03-espacio-columna.qmd",
