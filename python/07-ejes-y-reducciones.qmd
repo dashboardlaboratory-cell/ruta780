@@ -1,0 +1,700 @@
+---
+title: "NumPy: ejes y reducciones"
+subtitle: "Python · Lección 7"
+nivel: L3
+modulo: python
+fase: F1
+prereqs: [python/06-numpy-primer-contacto]
+siguientes: []
+libro: "McKinney 3E, cap. 4 NumPy Basics: Arrays and Vectorized Computation"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="python/07-ejes-y-reducciones"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F1]{.item}
+[**Libro** McKinney cap. 4]{.item}
+[**Prereqs** [NumPy: vistas y difusión](06-numpy-primer-contacto.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir la [reducción]{.g} por un eje y enunciar qué condición debe cumplir la operación para que el resultado no dependa del orden en que se pliegan los elementos.
+2. Demostrar que reducir dos ejes uno tras otro no usa los mismos números de eje que reducirlos de una vez, y predecir el corrimiento.
+3. Demostrar que restar la media por columnas alinea y restar la media por filas no, y que la asimetría se sigue de la regla de alineación y no de una convención de NumPy.
+4. Demostrar que esa misma resta deja de fallar cuando la matriz es cuadrada, y que en ese caso centra por el eje equivocado sin avisar.
+5. Demostrar que la suma de un array difundido pondera cada valor por su multiplicidad, y leer el factor en la fórmula.
+6. Enunciar cuándo una reducción por un eje de tamaño cero tiene valor que devolver, y reconocer el papel del [elemento neutro]{.g}.
+7. Implementar la reducción por un eje cualquiera con la fórmula del desplazamiento y empatar exactamente con `a.sum(axis=k)`.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 6, Definición 6.1**: un array es un búfer, un dtype, una forma y unos [pasos]{.g data-t="paso"}. Todo lo que sigue se deduce de esa fórmula del desplazamiento.
+- **Python 6, Definición 6.5**: la regla de la [difusión]{.g}, alineación por la derecha. Aquí se usa para decidir qué resta compila y cuál lanza `ValueError`.
+- **Python 6, Proposición 6.6**: la dimensión difundida lleva paso cero. De ahí sale la multiplicidad de la Proposición 7.6.
+- **Python 3, Proposición 3.8**: la memoria de lo que no se materializa, que es lo que hace barata una reducción sobre una [vista]{.g}.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 9 a 12**: `groupby` de pandas es una reducción por un eje que no es una dimensión del array sino una clave, y hereda de aquí el `keepdims` y el eje vacío.
+- **Álgebra 4 y 5**: el producto interno y la proyección se escriben como reducciones por el último eje, y la norma por filas exige exactamente la Proposición 7.5.
+- **Estadística 6 y 11**: el teorema central del límite y el bootstrap sortean matrices de muestras y reducen por el eje de las réplicas, nunca por el de las observaciones.
+- **Machine Learning 1 y 2**: centrar y estandarizar la matriz de diseño es el caso de la Proposición 7.3, y el error silencioso de la Proposición 7.4 aparece cuando el número de observaciones coincide con el de variables.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $d$ | de | El número de dimensiones de un array |
+| **eje** | — | Cada una de las $d$ dimensiones, numerada de $0$ a $d-1$. En esta lección el término tiene siempre ese sentido, y no el de semieje de una elipse |
+| $n_k$ | ene sub ka | El tamaño del eje $k$ |
+| `a.sum(axis=k)` | — | La reducción por el eje $k$: ese eje desaparece del resultado |
+| `keepdims=True` | — | Conserva el eje reducido con tamaño $1$ en vez de quitarlo |
+| `np.add.identity` | — | El elemento neutro que la operación declara, o `None` si no declara ninguno |
+| `initial=` | — | Un neutro suministrado a mano a la reducción |
+:::
+
+## 1. El eje que desaparece
+
+::: {.definicion}
+**Definición 7.1 (reducción por un eje).** Sea $a$ un array de forma $(n_0,\dots,n_{d-1})$ y sea $\oplus$ una operación binaria sobre su dtype. La **reducción de $a$ por el eje $k$** es el array de forma
+$$(n_0,\dots,n_{k-1},n_{k+1},\dots,n_{d-1}),$$
+de $d-1$ dimensiones, cuya entrada de índices $(i_0,\dots,\widehat{i_k},\dots,i_{d-1})$ vale
+$$a_{i_0\ldots 0 \ldots i_{d-1}} \oplus a_{i_0\ldots 1 \ldots i_{d-1}} \oplus \cdots \oplus a_{i_0\ldots (n_k-1) \ldots i_{d-1}},$$
+donde el índice que recorre las posiciones ocupa el lugar $k$ y los demás quedan fijos.
+
+Para que esa expresión esté bien definida sin escribir paréntesis, $\oplus$ debe ser **asociativa**. Si además es **conmutativa**, el resultado tampoco depende del orden en que se recorre el eje, y la implementación queda libre de plegarlo como le convenga.
+:::
+
+La suma, el producto, el máximo y el `and` lógico cumplen las dos condiciones, y por eso NumPy las ofrece como reducciones. La resta no es asociativa, y en consecuencia no existe `np.subtract.reduce` con el sentido que uno esperaría: lo que existe pliega de izquierda a derecha y devuelve $a_0-a_1-\cdots-a_{n-1}$, que es otra cosa.
+
+::: {.proposicion}
+**Proposición 7.2 (el corrimiento de los ejes).** Sean $i<j$ dos ejes de un array de $d$ dimensiones. Reducir primero el eje $i$ y después el eje $j$ del resultado **no** reduce los ejes $i$ y $j$ del original, sino los ejes $i$ y $j+1$. Para reducir $i$ y $j$ encadenando hay que pedir en la segunda llamada el eje $j-1$.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Definición 7.1, la primera reducción devuelve un array de $d-1$ dimensiones cuyos ejes son los del original salvo el $i$. Los ejes anteriores a $i$ conservan su número, y cada eje $m>i$ del original pasa a ocupar la posición $m-1$, porque delante de él ha desaparecido exactamente una dimensión.
+
+Pedir entonces el eje $j$ del resultado es pedir el eje $m$ del original que cumple $m-1=j$, es decir $m=j+1$. Y recíprocamente, para alcanzar el eje $j$ del original hay que pedir $j-1$. [∎]{.fin-demo}
+:::
+
+El corrimiento es la razón por la que `a.sum(axis=0).sum(axis=1)` sobre un array de tres dimensiones reduce los ejes $0$ y $2$, y no los ejes $0$ y $1$ como sugiere la lectura de izquierda a derecha. La forma sin ambigüedad es pasar la tupla entera, `a.sum(axis=(0, 1))`, que la Definición 7.1 cubre aplicándose a los dos ejes a la vez.
+
+```{pyodide}
+import numpy as np
+
+a = np.arange(24).reshape(2, 3, 4)
+print("forma original  :", a.shape)
+print("sum(axis=0)     :", a.sum(axis=0).shape)
+print("sum(axis=(0,1)) :", a.sum(axis=(0, 1)).shape)
+print()
+print("reducir 0 y luego 0 :", a.sum(axis=0).sum(axis=0))
+print("reducir (0,1) de una vez:", a.sum(axis=(0, 1)))
+print("coinciden:", np.array_equal(a.sum(axis=0).sum(axis=0), a.sum(axis=(0, 1))))
+print()
+print("reducir 0 y luego 1 :", a.sum(axis=0).sum(axis=1))
+print("reducir (0,2) de una vez:", a.sum(axis=(0, 2)))
+print("coinciden:", np.array_equal(a.sum(axis=0).sum(axis=1), a.sum(axis=(0, 2))))
+```
+
+Reducir el eje $0$ y luego el $0$ otra vez sí equivale a reducir $(0,1)$ de una vez, porque el segundo $0$ ya apunta al que era el eje $1$. Ese es el caso en el que el corrimiento pasa desapercibido, y el que hace creer que la lectura de izquierda a derecha funciona siempre.
+
+## 2. La alineación decide qué se puede restar
+
+La Definición 6.5 fija la regla de la difusión: las dos formas se alinean por la derecha y cada par de dimensiones debe ser igual o contener un $1$. Las dos operaciones más comunes sobre una matriz de datos —centrar por columnas y centrar por filas— caen a lados distintos de esa regla, y no por una decisión de NumPy.
+
+::: {.proposicion}
+**Proposición 7.3 (la asimetría de la resta).** Sea $a$ de forma $(n,p)$ con $n\neq p$. Entonces `a - a.mean(axis=0)` está definida y `a - a.mean(axis=1)` lanza `ValueError`.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Definición 7.1, `a.mean(axis=0)` tiene forma $(p,)$ y `a.mean(axis=1)` tiene forma $(n,)$.
+
+Alineando $(n,p)$ con $(p,)$ por la derecha, el único par es $(p,p)$: coinciden, y la dimensión que falta a la izquierda se completa con un $1$, que se difunde. La operación está definida.
+
+Alineando $(n,p)$ con $(n,)$ por la derecha, el único par es $(p,n)$. Como $n\neq p$ por hipótesis, y ninguno de los dos vale $1$ salvo en el caso degenerado, el par viola la regla y la operación no está definida. [∎]{.fin-demo}
+:::
+
+La media por columnas queda alineada porque su eje sobreviviente es el último, que es por donde empieza la comparación. La media por filas deja sobreviviendo el eje $0$, que al alinear por la derecha acaba enfrentado al eje $1$ del array.
+
+```{pyodide}
+import numpy as np
+
+a = np.arange(12, dtype=float).reshape(3, 4)
+print("a.shape              :", a.shape)
+print("a.mean(axis=0).shape :", a.mean(axis=0).shape)
+print("a.mean(axis=1).shape :", a.mean(axis=1).shape)
+col = a - a.mean(axis=0)
+print("centrado por columnas, media de cada columna:", col.mean(axis=0))
+try:
+    a - a.mean(axis=1)
+except ValueError as e:
+    print("a - a.mean(axis=1) lanza:", type(e).__name__)
+fil = a - a.mean(axis=1, keepdims=True)
+print("con keepdims, media de cada fila:", fil.mean(axis=1))
+```
+
+::: {.proposicion}
+**Proposición 7.4 (el error silencioso de la matriz cuadrada).** Sea $a$ de forma $(n,n)$. Entonces `a - a.mean(axis=1)` está definida, no lanza ningún error, y resta a cada **columna** el vector de medias por fila. En consecuencia, sus filas no quedan centradas.
+:::
+
+::: {.demostracion}
+*Demostración.* Con $n=p$ el par que la demostración anterior declaraba imposible pasa a ser $(n,n)$, que la regla admite, así que la operación está definida.
+
+Sea $m_i$ la media de la fila $i$. El vector $m$ tiene forma $(n,)$ y al alinearse por la derecha su índice recorre el eje $1$ del array, de modo que el resultado tiene entradas $a_{ij}-m_j$. La media de la fila $i$ del resultado vale entonces
+$$\frac{1}{n}\sum_j (a_{ij}-m_j) = m_i - \bar{m},$$
+con $\bar{m}$ la media de todas las medias. Esa cantidad se anula para toda $i$ solo si todas las filas tienen la misma media, que no es el caso general. [∎]{.fin-demo}
+:::
+
+La consecuencia práctica se enuncia mejor al revés: el código que centra por filas sin `keepdims` falla ruidosamente en cuanto la matriz no es cuadrada, y **por eso** suele corregirse pronto; cuando la matriz es cuadrada el mismo código calla y devuelve números plausibles.
+
+::: {.proposicion}
+**Proposición 7.5 (`keepdims` como forma normal).** Reducir con `keepdims=True` devuelve un resultado que se difunde contra el array de partida sea cual sea el eje reducido, y que ocupa el eje correcto.
+:::
+
+::: {.demostracion}
+*Demostración.* Con `keepdims=True` el resultado conserva las $d$ dimensiones y lleva un $1$ en el lugar del eje reducido. Al alinear dos formas de $d$ dimensiones por la derecha, cada eje se enfrenta consigo mismo, así que los pares son $(n_m,n_m)$ salvo el del eje reducido, que es $(n_k,1)$. Todos cumplen la regla, y el único que se estira es el del eje reducido, que es el que debe repetirse. La operación queda por tanto definida para todo $k$, y ninguna elección de $k$ puede enfrentarse a un eje que no sea el suyo. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+c = np.arange(16, dtype=float).reshape(4, 4)
+mal = c - c.mean(axis=1)
+bien = c - c.mean(axis=1, keepdims=True)
+print("n == p == 4, asi que la resta no lanza nada")
+print("medias por fila de la version sin keepdims:", mal.mean(axis=1))
+print("medias por fila de la version con keepdims:", bien.mean(axis=1))
+print("son el mismo array:", np.array_equal(mal, bien))
+```
+
+Las medias por fila que deja la versión sin `keepdims` son $-6$, $-2$, $2$ y $6$: exactamente $m_i-\bar{m}$ con $m=(1{,}5,\,5{,}5,\,9{,}5,\,13{,}5)$ y $\bar{m}=7{,}5$, que es lo que anuncia la demostración.
+
+El visual siguiente pone las dos formas una encima de otra, alineadas por la derecha. El control del tamaño $n$ recorre el punto en el que la operación deja de fallar.
+
+```{=html}
+<div class="viz-alinea">
+  <div class="controles">
+    <label>Reducción
+      <select id="al-eje">
+        <option value="0" selected>a.mean(axis=0)  (por columnas)</option>
+        <option value="1">a.mean(axis=1)  (por filas)</option>
+      </select>
+    </label>
+    <label>Forma del resultado
+      <select id="al-keep">
+        <option value="0" selected>sin keepdims</option>
+        <option value="1">con keepdims</option>
+      </select>
+    </label>
+    <label>Filas n <input id="al-n" type="range" min="2" max="6" step="1" value="3"> <span id="al-n-v">3</span></label>
+  </div>
+  <svg id="al-svg" viewBox="0 0 640 330" role="img" aria-label="Arriba las dos formas alineadas por la derecha, con cada par de dimensiones marcado como compatible o incompatible. Abajo la matriz con el eje que se reduce resaltado."></svg>
+  <p class="lectura" id="al-lectura"></p>
+</div>
+<style>
+.viz-alinea { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-alinea .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-alinea label { display: flex; align-items: center; gap: .4rem; }
+.viz-alinea input[type=range] { width: 130px; padding: 0; }
+.viz-alinea select { font-size: .85rem; padding: .1rem .25rem; font-family: var(--bs-font-monospace, monospace); }
+.viz-alinea svg { width: 100%; height: auto; display: block; }
+.viz-alinea .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_OK = "#0F6E68", C_NO = "#B4342E", C_AV = "#B45309";
+  var svg = document.getElementById("al-svg"), lec = document.getElementById("al-lectura");
+  var ce = document.getElementById("al-eje"), ck = document.getElementById("al-keep");
+  var cn = document.getElementById("al-n"), en = document.getElementById("al-n-v");
+
+  var P = 4;                       // columnas, constante
+  var XR = 430, BW = 78, BH = 40;  // marco de las formas: borde derecho fijo
+  var YA = 54, YB = 126;
+  var GX = 60, GY = 200, CW = 34, CH = 20;   // marco de la matriz: origen fijo
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function caja(x, y, txt, color, grueso) {
+    svg.appendChild(el("rect", { x: x.toFixed(1), y: y, width: BW - 6, height: BH, rx: 4,
+      fill: color, "fill-opacity": grueso ? 0.16 : 0.05,
+      stroke: color, "stroke-width": grueso ? 2.4 : 1.1 }));
+    svg.appendChild(el("text", { x: (x + (BW - 6) / 2).toFixed(1), y: y + BH / 2 + 5,
+      "text-anchor": "middle", "font-size": 14, fill: C_T,
+      "font-family": "var(--bs-font-monospace,monospace)" }, txt));
+  }
+  function rotulo(x, y, txt, op) {
+    svg.appendChild(el("text", { x: x, y: y, "font-size": 11.5, fill: C_T,
+      opacity: op === undefined ? 0.72 : op }, txt));
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var eje = +ce.value, keep = +ck.value === 1, n = +cn.value;
+    en.textContent = String(n);
+
+    // forma del resultado de la reducción
+    var forma = keep ? (eje === 0 ? ["1", String(P)] : [String(n), "1"])
+                     : (eje === 0 ? [String(P)] : [String(n)]);
+    var arriba = [String(n), String(P)];
+
+    rotulo(GX, YA - 14, "forma de a");
+    for (var i = 0; i < 2; i++) caja(XR - (2 - i) * BW, YA, arriba[i], C_L, false);
+
+    rotulo(GX, YB - 14, "forma de " + (eje === 0 ? "a.mean(axis=0)" : "a.mean(axis=1)") +
+      (keep ? ", keepdims=True" : ""));
+    for (var j = 0; j < forma.length; j++)
+      caja(XR - (forma.length - j) * BW, YB, forma[j], C_L, false);
+
+    // el par que decide: el de más a la derecha
+    var der = forma[forma.length - 1];
+    var compatible = der === String(P) || der === "1";
+    var accidente = !keep && eje === 1 && n === P;
+    var col = compatible ? (accidente ? C_AV : C_OK) : C_NO;
+    var xd = XR - BW;
+    caja(xd, YA, arriba[1], col, true);
+    caja(xd, YB, der, col, true);
+    svg.appendChild(el("path", { d: "M" + (xd + BW / 2 - 3) + " " + (YA + BH) +
+      " L" + (xd + BW / 2 - 3) + " " + YB, stroke: col, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("text", { x: xd + BW / 2 + 6, y: (YA + BH + YB) / 2 + 4,
+      "font-size": 15, fill: col }, compatible ? "=" : "≠"));
+
+    // la matriz: origen fijo, crece hacia abajo con n
+    rotulo(GX, GY - 12, "a, de forma (" + n + ", " + P + ")");
+    for (var f = 0; f < n; f++) {
+      for (var c = 0; c < P; c++) {
+        var dentro = eje === 0 ? (c === 1) : (f === 1);
+        svg.appendChild(el("rect", { x: GX + c * CW, y: GY + f * CH,
+          width: CW - 3, height: CH - 3, rx: 2,
+          fill: dentro ? col : "none", "fill-opacity": dentro ? 0.18 : 0,
+          stroke: dentro ? col : C_L, "stroke-width": dentro ? 1.8 : 1 }));
+      }
+    }
+    // marcador que se desplaza con n: la última fila de la matriz
+    var ym = GY + (n - 1) * CH + CH / 2 - 1.5;
+    svg.appendChild(el("path", { d: "M" + (GX - 26) + " " + ym.toFixed(1) +
+      " L" + (GX - 8) + " " + ym.toFixed(1), stroke: C_T, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("text", { x: GX - 30, y: ym + 4, "text-anchor": "end",
+      "font-size": 11, fill: C_T }, "fila " + (n - 1)));
+
+    var texto;
+    if (!compatible) {
+      texto = "El par de más a la derecha enfrenta <strong>" + P + "</strong> con <strong>" + der +
+        "</strong>, que no son iguales y ninguno vale 1: la resta lanza <code>ValueError</code> " +
+        "(Proposición 7.3).";
+    } else if (accidente) {
+      texto = "Con n = p = " + P + " el par pasa a ser (" + P + ", " + P + ") y la regla lo admite. " +
+        "La resta <strong>no falla</strong>, pero el vector de medias por fila recorre el eje 1: " +
+        "cada columna queda centrada con la media de otra fila (Proposición 7.4).";
+    } else if (keep) {
+      texto = "El eje reducido se conserva con tamaño <strong>1</strong>, y un 1 alinea contra " +
+        "cualquier tamaño. La operación está definida para los dos ejes, y ninguno puede " +
+        "equivocarse en silencio (Proposición 7.5).";
+    } else {
+      texto = "El eje sobreviviente es el último, que es por donde empieza la comparación: " +
+        "el par es (" + P + ", " + P + ") y la resta centra las columnas como se pretendía.";
+    }
+    lec.innerHTML = texto;
+  }
+
+  ce.addEventListener("change", dibujar);
+  ck.addEventListener("change", dibujar);
+  cn.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. La difusión pondera por multiplicidad
+
+Una dimensión difundida lleva paso cero (Proposición 6.6), de modo que no cuesta memoria. Lo que sí cambia es la cuenta: cada valor del array pequeño participa en la operación tantas veces como filas tenga el grande.
+
+::: {.proposicion}
+**Proposición 7.6 (la suma de un array difundido).** Sea $a$ de forma $(n,p)$ y $b$ de forma $(p,)$. Entonces
+$$\sum_{i=0}^{n-1}\sum_{j=0}^{p-1}(a_{ij}+b_j) \;=\; \sum_{i,j} a_{ij} \;+\; n\sum_{j=0}^{p-1} b_j.$$
+:::
+
+::: {.demostracion}
+*Demostración.* La difusión define $(a+b)_{ij}=a_{ij}+b_j$ para todo par de índices, porque el índice de la dimensión difundida no interviene en el desplazamiento. Separando la suma doble,
+$$\sum_{i,j}(a_{ij}+b_j)=\sum_{i,j}a_{ij}+\sum_{i,j}b_j,$$
+y en el segundo término el sumando no depende de $i$, de modo que la suma interior se repite $n$ veces:
+$$\sum_{i=0}^{n-1}\sum_{j=0}^{p-1}b_j=\sum_{i=0}^{n-1}\Big(\sum_j b_j\Big)=n\sum_j b_j.$$
+
+[∎]{.fin-demo}
+:::
+
+El factor $n$ es la **multiplicidad** de la difusión: el número de veces que el búfer de $b$ se recorre. Aparece en cualquier promedio calculado sobre un array difundido, y explica por qué la media de `a + b` no es la media de $a$ más la media de $b$ salvo que las formas coincidan.
+
+```{pyodide}
+import numpy as np
+
+a = np.arange(12).reshape(3, 4)
+b = np.array([10, 20, 30, 40])
+n = a.shape[0]
+print("(a + b).sum()        :", (a + b).sum())
+print("a.sum() + n*b.sum()  :", a.sum(), "+", n, "*", b.sum(), "=", a.sum() + n * b.sum())
+print("coinciden:", (a + b).sum() == a.sum() + n * b.sum())
+bd = np.broadcast_to(b, (3, 4))
+print("pasos de b difundido :", bd.strides)
+print("comparte memoria con b:", np.shares_memory(bd, b))
+```
+
+Los pasos `(0, 8)` confirman las dos mitades a la vez: el paso cero dice que la memoria no se duplicó, y el recorrido de tres filas sobre ese mismo búfer dice que la contribución sí se contó tres veces.
+
+```{=html}
+<div class="viz-multiplicidad">
+  <div class="controles">
+    <label>Filas n <input id="mu-n" type="range" min="1" max="6" step="1" value="3"> <span id="mu-n-v">3</span></label>
+    <label>Entrada de b <input id="mu-j" type="range" min="0" max="3" step="1" value="1"> <span id="mu-j-v">1</span></label>
+  </div>
+  <svg id="mu-svg" viewBox="0 0 620 320" role="img" aria-label="Una matriz de n filas por cuatro columnas y, debajo, el vector b de cuatro entradas. La entrada elegida de b se enlaza con las n celdas de su columna, todas leídas del mismo byte."></svg>
+  <p class="lectura" id="mu-lectura"></p>
+</div>
+<style>
+.viz-multiplicidad { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-multiplicidad .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-multiplicidad label { display: flex; align-items: center; gap: .4rem; }
+.viz-multiplicidad input[type=range] { width: 130px; padding: 0; }
+.viz-multiplicidad svg { width: 100%; height: auto; display: block; }
+.viz-multiplicidad .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_B = "#0F6E68";
+  var svg = document.getElementById("mu-svg"), lec = document.getElementById("mu-lectura");
+  var cn = document.getElementById("mu-n"), en = document.getElementById("mu-n-v");
+  var cj = document.getElementById("mu-j"), ej = document.getElementById("mu-j-v");
+
+  var P = 4, B = [10, 20, 30, 40];
+  // Marco constante: el vector b se dibuja siempre en la misma banda inferior.
+  var X0 = 120, CW = 74, CH = 34, Y0 = 42, YB = 250;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function celda(x, y, txt, color, grueso) {
+    svg.appendChild(el("rect", { x: x.toFixed(1), y: y.toFixed(1), width: CW - 8, height: CH, rx: 3,
+      fill: grueso ? color : "none", "fill-opacity": grueso ? 0.16 : 0,
+      stroke: color, "stroke-width": grueso ? 2.2 : 1, "stroke-opacity": grueso ? 1 : 0.5 }));
+    svg.appendChild(el("text", { x: (x + (CW - 8) / 2).toFixed(1), y: y + CH / 2 + 4.5,
+      "text-anchor": "middle", "font-size": 12, fill: C_T,
+      "font-family": "var(--bs-font-monospace,monospace)" }, txt));
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var n = +cn.value, j = +cj.value;
+    en.textContent = String(n); ej.textContent = String(j);
+
+    svg.appendChild(el("text", { x: X0, y: Y0 - 12, "font-size": 11.5, fill: C_T, opacity: 0.72 },
+      "a + b, de forma (" + n + ", " + P + ")"));
+    for (var f = 0; f < n; f++) {
+      for (var c = 0; c < P; c++) {
+        var val = (f * P + c) + B[c];
+        celda(X0 + c * CW, Y0 + f * CH, String(val), c === j ? C_B : C_L, c === j);
+      }
+    }
+
+    svg.appendChild(el("text", { x: X0, y: YB - 12, "font-size": 11.5, fill: C_T, opacity: 0.72 },
+      "búfer de b  (4 elementos, paso 0 en la dimensión difundida)"));
+    for (var k = 0; k < P; k++)
+      celda(X0 + k * CW, YB, String(B[k]), k === j ? C_B : C_L, k === j);
+
+    // enlaces: la misma celda de b alimenta las n celdas de su columna
+    var xj = X0 + j * CW + (CW - 8) / 2;
+    for (var f2 = 0; f2 < n; f2++) {
+      var y = Y0 + f2 * CH + CH / 2;
+      svg.appendChild(el("path", { d: "M" + xj.toFixed(1) + " " + YB + " L" + xj.toFixed(1) +
+        " " + y.toFixed(1), stroke: C_B, "stroke-width": 1.4, fill: "none",
+        "stroke-dasharray": "3 3", opacity: 0.75 }));
+      svg.appendChild(el("circle", { cx: xj.toFixed(1), cy: y.toFixed(1), r: 3.4, fill: C_B }));
+    }
+    // marcador que se desplaza con n: la lectura más alta de la columna
+    var ytop = Y0 + CH / 2;
+    svg.appendChild(el("text", { x: xj + 14, y: ytop - 16, "font-size": 11.5, fill: C_B },
+      "×" + n + " lecturas del mismo byte"));
+
+    lec.innerHTML = "La entrada <code>b[" + j + "] = " + B[j] + "</code> se lee <strong>" + n +
+      "</strong> vez" + (n === 1 ? "" : "es") + ", una por fila, siempre del mismo byte. " +
+      "Su aporte a la suma total es " + n + " × " + B[j] + " = <strong>" + (n * B[j]) +
+      "</strong>, y sumando las cuatro entradas el aporte de b es n·Σb = " + n + " × 100 = <strong>" +
+      (n * 100) + "</strong>, que es el término de la Proposición 7.6.";
+  }
+
+  cn.addEventListener("input", dibujar);
+  cj.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. El eje de tamaño cero
+
+Un eje puede tener tamaño cero, y entonces la Definición 7.1 pide plegar una familia vacía de elementos. El valor que corresponde a esa operación depende de la operación misma.
+
+::: {.definicion}
+**Definición 7.7 (elemento neutro de una operación).** Un **elemento neutro** de $\oplus$ es un valor $e$ del dtype tal que $e\oplus v=v\oplus e=v$ para todo $v$. Cada operación de NumPy declara el suyo, o declara que no tiene ninguno, en el atributo `identity`.
+:::
+
+::: {.proposicion}
+**Proposición 7.8 (la reducción del eje vacío).** Si se exige que la reducción sea compatible con partir el eje en dos tramos, es decir que reducir la concatenación de dos tramos sea igual a combinar sus reducciones con $\oplus$, entonces el valor de la reducción sobre un eje de tamaño cero está forzado a ser un elemento neutro de $\oplus$, y queda sin definir cuando la operación no declara ninguno.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $r$ el valor que la reducción asigna al eje vacío y sea $x$ un tramo cualquiera con reducción $R(x)$. Concatenar el tramo vacío con $x$ devuelve $x$, así que la compatibilidad exigida obliga a
+$$r \oplus R(x) = R(x)$$
+para todo $x$, y simétricamente por el otro lado. Como $R$ toma todos los valores del dtype —basta el tramo de un solo elemento—, esa igualdad es la definición de elemento neutro. Por lo tanto $r$ solo puede ser un neutro de $\oplus$, y si $\oplus$ no tiene ninguno declarado no hay valor que la reducción pueda devolver sin romper la compatibilidad. [∎]{.fin-demo}
+:::
+
+Para la suma el neutro es $0$ y para el producto es $1$, de modo que las dos reducciones responden sobre el eje vacío. Para `maximum` haría falta un valor menor o igual que cualquier otro del dtype; NumPy no declara ninguno, y por eso la reducción del eje vacío lanza `ValueError`. El argumento `initial=` es exactamente la forma de suministrarlo a mano.
+
+```{pyodide}
+import numpy as np
+
+print("np.add.identity      :", np.add.identity)
+print("np.multiply.identity :", np.multiply.identity)
+print("np.maximum.identity  :", np.maximum.identity)
+vacio = np.zeros((3, 0))
+print("suma por el eje 1 de un (3,0):", vacio.sum(axis=1))
+try:
+    vacio.max(axis=1)
+except ValueError as e:
+    print("max por el eje 1 lanza:", type(e).__name__)
+print("con initial=-inf:", np.max(vacio, axis=1, initial=-np.inf))
+```
+
+El caso aparece en cuanto se agrupa: un grupo sin observaciones tiene suma $0$ y no tiene máximo. Un promedio por grupo hereda las dos cosas a la vez, porque divide una suma que sí existe entre un conteo que vale cero.
+
+## 5. Contraste con la librería
+
+Esta lección es de nivel **L3**, y ese nivel promete implementar el resultado en NumPy puro y empatar con la librería. Lo que se implementa es la Definición 7.1 tal como está escrita: llevar el eje a reducir al final, recorrer sus posiciones y plegar. El contraste se hace con enteros, donde la igualdad es exacta y no hay tolerancia que elegir.
+
+```{pyodide}
+import numpy as np
+
+def reducir_por_eje(a, eje):
+    """Suma por un eje plegando a mano, sin usar sum(axis=...)."""
+    b = np.moveaxis(a, eje, -1)          # el eje a reducir queda el ultimo
+    forma, m = b.shape[:-1], b.shape[-1]
+    plano = np.ascontiguousarray(b).reshape(-1, m)
+    fuera = np.zeros(plano.shape[0], dtype=a.dtype)
+    for j in range(m):                   # un pliegue por posicion del eje
+        fuera = fuera + plano[:, j]
+    return fuera.reshape(forma)
+
+a = np.arange(60).reshape(3, 4, 5)
+for eje in (0, 1, 2):
+    print("eje %d: forma %s, identico a a.sum(axis=%d): %s"
+          % (eje, reducir_por_eje(a, eje).shape, eje,
+             np.array_equal(reducir_por_eje(a, eje), a.sum(axis=eje))))
+t = a.transpose(2, 0, 1)
+print("sobre una vista no contigua:", np.array_equal(reducir_por_eje(t, 1), t.sum(axis=1)))
+```
+
+Las tres reducciones coinciden con las de la librería, y la última línea añade lo que la Definición 6.1 predice: el resultado no depende de que el array sea contiguo, porque `moveaxis` solo permuta los pasos y la contigüidad se recupera al materializar. Con flotantes el empate exacto dejaría de ser exigible, porque NumPy pliega la suma por pares en vez de de izquierda a derecha y los redondeos no caen en el mismo sitio; la regla 7 del proyecto cubre ese caso afirmando la propiedad y no los dígitos.
+
+## Ejercicios
+
+### Ejercicio 1, Centrar por filas
+
+Centrar `a` por filas, de modo que la media de cada fila del resultado sea cero. La forma de `a` es $(3,4)$, así que la versión sin `keepdims` lanza `ValueError`.
+
+```{pyodide}
+#| exercise: ex_keep
+import numpy as np
+a = np.arange(12, dtype=float).reshape(3, 4)
+
+centrado = ______
+
+print(centrado.mean(axis=1))
+centrado.mean(axis=1)
+```
+
+::: {.hint exercise="ex_keep"}
+El eje sobreviviente tiene que alinear contra el eje 1 del array. La Proposición 7.5 dice cuál es el argumento que lo consigue.
+:::
+
+::: {.solution exercise="ex_keep"}
+```{pyodide}
+import numpy as np
+a = np.arange(12, dtype=float).reshape(3, 4)
+
+centrado = a - a.mean(axis=1, keepdims=True)
+
+print(centrado.mean(axis=1))
+centrado.mean(axis=1)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_keep
+#| check: true
+import numpy as np
+if isinstance(result, np.ndarray) and result.shape == (3,) and np.allclose(result, 0.0, atol=1e-12):
+    feedback = {"correct": True, "message": "Correcto: con keepdims el eje reducido queda con tamaño 1 y alinea contra cualquier tamaño.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Las medias por fila deberian ser tres ceros y salieron {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, El corrimiento de los ejes
+
+Reducir los ejes $0$ y $1$ de un array de tres dimensiones encadenando dos llamadas, una por eje. El resultado debe tener forma $(4,)$ y coincidir con `a.sum(axis=(0, 1))`.
+
+```{pyodide}
+#| exercise: ex_corr
+import numpy as np
+a = np.arange(24).reshape(2, 3, 4)
+
+r = a.sum(axis=0).sum(axis=______)
+
+print(r)
+r
+```
+
+::: {.hint exercise="ex_corr"}
+Tras reducir el eje 0, el array tiene dos dimensiones y el que era el eje 1 ha corrido un lugar. La Proposición 7.2 dice a cuál.
+:::
+
+::: {.solution exercise="ex_corr"}
+```{pyodide}
+import numpy as np
+a = np.arange(24).reshape(2, 3, 4)
+
+r = a.sum(axis=0).sum(axis=0)
+
+print(r)
+r
+```
+:::
+
+```{pyodide}
+#| exercise: ex_corr
+#| check: true
+import numpy as np
+esperado = np.array([60, 66, 72, 78])
+if isinstance(result, np.ndarray) and result.shape == (4,) and np.array_equal(result, esperado):
+    feedback = {"correct": True, "message": "Correcto: el eje 1 del original pasa a ser el eje 0 del resultado.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba {esperado} y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 3, La multiplicidad sin construir el array
+
+Calcular la suma total de `a + b` usando la Proposición 7.6, sin construir en ningún momento el array `a + b`.
+
+```{pyodide}
+#| exercise: ex_mult
+import numpy as np
+a = np.arange(12).reshape(3, 4)
+b = np.array([10, 20, 30, 40])
+
+total = ______
+
+print(total)
+int(total)
+```
+
+::: {.hint exercise="ex_mult"}
+El aporte de `b` se cuenta una vez por fila de `a`. El factor es `a.shape[0]`.
+:::
+
+::: {.solution exercise="ex_mult"}
+```{pyodide}
+import numpy as np
+a = np.arange(12).reshape(3, 4)
+b = np.array([10, 20, 30, 40])
+
+total = a.sum() + a.shape[0] * b.sum()
+
+print(total)
+int(total)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_mult
+#| check: true
+if result == 366:
+    feedback = {"correct": True, "message": "Correcto: 66 del array mas 3 x 100 del vector difundido.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 366 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Python 7**:
+
+1. Escribir `reducir_por_eje` para una operación cualquiera, no solo la suma, recibiendo la ufunc como argumento, y comprobarla contra `np.maximum.reduce` y `np.multiply.reduce` sobre un array de cuatro dimensiones. Anotar en `50-Errores/` qué pasa cuando el eje tiene tamaño cero y la ufunc no declara neutro.
+2. Construir una matriz cuadrada de datos y medir el daño de la Proposición 7.4: centrarla por filas con y sin `keepdims`, y comparar las dos matrices de covarianza que salen de cada versión. Cuantificar cuánto se desvía la equivocada.
+3. Verificar la Proposición 7.6 con multiplicidad en las dos direcciones: difundir un vector columna de forma $(n,1)$ en vez de uno fila, y deducir y comprobar cuál es el factor en ese caso.
+
+## Del libro
+
+*Python for Data Analysis* 3E trata este material en su capítulo 4, *NumPy Basics: Arrays and Vectorized Computation*. El sitio del libro declara que su contenido no se puede copiar ni reproducir, así que se cita número y título y no se le atribuye ninguna frase.
+
+**Preguntas para leer el capítulo 4 con lápiz:**
+
+1. El capítulo presenta los métodos estadísticos de array con su argumento `axis`. Con la Definición 7.1 y la Proposición 7.2, ¿qué pasa al encadenar dos de esos métodos sobre un array de tres dimensiones, y en qué caso particular el encadenamiento coincide con pasar la tupla de ejes?
+2. El capítulo muestra `cumsum` junto a `sum`. Con la Definición 7.1, ¿por qué `cumsum` no es una reducción, y qué le ocurre a la forma del resultado que a la de `sum` no?
+3. El capítulo trata los métodos booleanos `any` y `all`. Con la Definición 7.7 y la Proposición 7.8, ¿qué debe devolver cada uno sobre un eje de tamaño cero, y por qué las dos respuestas son distintas entre sí?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/ejes-y-reducciones.md`, enlazada a [[arrays-y-vistas]], [[difusion]] y [[elemento-neutro]]. Conviene rehacer a mano la demostración de la Proposición 7.8: es la única de la lección que deduce un valor concreto a partir de una ley algebraica, y deja claro por qué `sum` de un grupo vacío responde y `max` no.
+
+```
+¿Qué es reducir por el eje k?::Plegar con una operación las n_k posiciones de ese eje; el eje desaparece del resultado
+¿Qué condición pide la Definición 7.1?::Que la operación sea asociativa; si además es conmutativa, el orden del recorrido tampoco importa
+¿Qué reduce a.sum(axis=0).sum(axis=1) en un array 3D?::Los ejes 0 y 2 del original: tras la primera reducción los ejes de arriba corren un lugar
+¿Cómo se reducen dos ejes sin ambigüedad?::Pasando la tupla, a.sum(axis=(0,1))
+¿Por qué a - a.mean(axis=0) alinea?::Su forma es (p,) y el par de más a la derecha es (p,p)
+¿Por qué a - a.mean(axis=1) falla?::Su forma es (n,) y el par de más a la derecha es (p,n), distintos y ninguno vale 1
+¿Cuándo deja de fallar, y por qué es peor?::Cuando n = p: no lanza nada y resta las medias por fila a las columnas
+¿Qué arregla keepdims=True?::Deja el eje reducido con tamaño 1, y un 1 alinea contra cualquier tamaño
+¿Cuánto vale la suma de a difundido con b?::Σa + n·Σb, con n la multiplicidad de la difusión
+¿Qué pasos tiene b difundido a (n,p)?::(0, itemsize): paso cero, así que no se copió memoria
+¿Qué devuelve una suma sobre un eje de tamaño 0?::0, el elemento neutro de la suma
+¿Por qué max sobre un eje vacío lanza ValueError?::maximum no declara neutro (identity es None); initial= lo suministra
+¿Qué fuerza el valor de la reducción vacía?::Que reducir la concatenación de dos tramos sea combinar sus reducciones
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 7.2 se demuestra contando cuántas dimensiones desaparecen delante de un eje, y se comprueba ejecutándola: `a.sum(axis=0).sum(axis=0)` coincide con `a.sum(axis=(0,1))` y `a.sum(axis=0).sum(axis=1)` coincide con `a.sum(axis=(0,2))`, las dos sobre el mismo array de forma $(2,3,4)$. Las Proposiciones 7.3 y 7.4 se demuestran a partir de la regla de alineación de la Definición 6.5, y se comprueban con una matriz $(3,4)$ que lanza `ValueError` y una $(4,4)$ que no lanza nada y deja medias por fila $-6$, $-2$, $2$ y $6$ en vez de ceros. La Proposición 7.6 se demuestra separando la suma doble, y se comprueba con $\sum(a+b)=366$ frente a $66+3\cdot 100$. La Proposición 7.8 se deduce de la compatibilidad con la concatenación, y se comprueba leyendo `identity` de tres operaciones y viendo que la suma responde sobre un $(3,0)$ y el máximo lanza `ValueError`. La sección 5 implementa la Definición 7.1 y empata exactamente con `a.sum(axis=k)` en los tres ejes de un array $(3,4,5)$ y sobre una vista no contigua. Los dos visuales se contrastaron contra estas mismas afirmaciones en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** La fórmula del desplazamiento es la Definición 6.1, y de ella sale que `moveaxis` solo permuta pasos. La regla de alineación por la derecha es la Definición 6.5. Que la dimensión difundida lleva paso cero y no duplica memoria es la Proposición 6.6, aquí comprobada de nuevo al leer `strides` del array difundido.
+
+**Lo que se enuncia sin demostrar.** Que `maximum` podría declarar como neutro el menor valor representable de cada dtype —$-\infty$ en los flotantes, el mínimo del rango en los enteros de ancho fijo— y que no hacerlo es una decisión de NumPy y no un impedimento matemático. La página se limita a leer `identity` y a mostrar el efecto. Que NumPy pliega la suma de flotantes por pares, mencionado al cerrar la sección 5, se toma de su documentación y no se deriva aquí; la lección no afirma ningún dígito que dependa de ello, por la regla 7.
+
+**Lo que viene de los libros.**
+
+- [*Python for Data Analysis*, 3ª edición](https://wesmckinney.com/book/) (Wes McKinney, O'Reilly, 2022), capítulo 4 *NumPy Basics: Arrays and Vectorized Computation* — citado por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La Proposición 7.4 escrita como un resultado sobre el caso cuadrado, que convierte «acuérdate de poner `keepdims`» en un enunciado con hipótesis y conclusión, y que localiza el único caso en que la regla de alineación deja pasar el error. La Proposición 7.8 derivada de la compatibilidad con la concatenación en vez de presentada como una tabla de valores especiales. Y la lectura de la difusión como multiplicidad de la Proposición 7.6, que enlaza el paso cero de la lección anterior con la aritmética de la suma.
+
+[Índice de McKinney verificado el 12-09-2026 contra el índice publicado del sitio oficial del libro.]{.sello}
+:::
