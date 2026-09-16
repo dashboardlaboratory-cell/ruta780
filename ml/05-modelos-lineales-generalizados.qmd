@@ -1,0 +1,655 @@
+---
+title: "Modelos lineales generalizados"
+subtitle: "Machine Learning · Lección 5"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/04-modelos-generativos, ml/03-regresion-logistica, estadistica/13-regresion-primeros-principios]
+siguientes: []
+libro: "ISLP §4.6 Generalized Linear Models · §4.6.1 Linear Regression on the Bikeshare Data · §4.6.2 Poisson Regression on the Bikeshare Data · §4.6.3 Generalized Linear Models in Greater Generality"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - scikit-learn
+---
+
+::: {.meta-leccion data-leccion="ml/05-modelos-lineales-generalizados"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §4.6]{.item}
+[**Prereqs** [Modelos generativos](04-modelos-generativos.qmd) · [Regresión logística](03-regresion-logistica.qmd) · [Regresión desde primeros principios](../estadistica/13-regresion-primeros-principios.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Demostrar que una recta ajustada a una respuesta de conteo predice medias negativas en todo un semiespacio, y medir cuántas observaciones caen ahí.
+2. Demostrar que con conteos la homocedasticidad falla por construcción, porque la varianza de la respuesta es su propia media.
+3. Definir la [regresión de Poisson]{.g} por su [función de enlace]{.g} y demostrar que su log-verosimilitud es cóncava.
+4. Demostrar que la ecuación de [score]{.g data-t="score"} deja los conteos ajustados sumando exactamente lo observado, y reconocer en ello el mismo resultado de la lección 3.
+5. Leer un coeficiente como un factor multiplicativo sobre la media, y comprobarlo con dos predicciones.
+6. Definir un [modelo lineal generalizado]{.g} y demostrar que la regresión lineal, la logística y la de Poisson son la misma iteración con distinto par enlace-varianza.
+7. Implementar esa iteración en NumPy puro y empatar con `scikit-learn` en los tres casos.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Estadística 13**: la regresión por mínimos cuadrados y sus supuestos. Esta lección ataca dos de ellos, el rango de la respuesta y la homocedasticidad.
+- **Estadística 3**: la distribución de Poisson, cuya media y varianza coinciden. De ahí sale la Proposición 5.2.
+- **Estadística 8**: máxima verosimilitud, que es cómo se estiman todos los modelos de esta lección.
+- **Machine Learning 3**: la regresión logística, su concavidad y su ecuación de score. La Proposición 5.5 es la misma frase con otra media.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 6**: la validación cruzada, que compara estos modelos fuera de la muestra sin suponer ninguna forma funcional.
+- **Machine Learning 7**: la regularización, que se añade a la log-verosimilitud de cualquiera de estos modelos sin tocar la iteración.
+- **Machine Learning 8**: los modelos aditivos generalizados, que sustituyen el predictor lineal por una suma de funciones suaves y conservan todo lo demás.
+- **Series de tiempo**: los conteos por unidad de tiempo son el caso de uso natural de la regresión de Poisson.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $Y$ | i griega | La respuesta; en esta lección, un conteo $0,1,2,\dots$ |
+| $\mu(x)$ | mu de equis | La media de $Y$ dado $X=x$ |
+| $\eta$ | eta | El predictor lineal $x^\top\beta$ |
+| $g$ | ge | La función de enlace, que cumple $g(\mu)=\eta$ |
+| $V(\mu)$ | ve de mu | La función de varianza: cómo depende la varianza de la media |
+| $W$ | doble ve | La matriz diagonal de pesos de la iteración, con $V(\mu_i)$ en la diagonal |
+| $\lambda$ | lambda | El parámetro de una distribución de Poisson, que es a la vez su media y su varianza |
+:::
+
+## 1. Lo que la recta no puede hacer con un conteo
+
+::: {.proposicion}
+**Proposición 5.1 (la recta predice medias negativas).** Sea $\hat\mu(x)=\hat\beta_0+x^\top\hat\beta$ el ajuste por mínimos cuadrados, y supóngase $\hat\beta\neq 0$. Entonces el conjunto $\{x: \hat\mu(x)<0\}$ es un semiespacio abierto no vacío de $\mathbb{R}^p$. Como la media de un conteo no puede ser negativa, el modelo está mal especificado en todo ese semiespacio.
+:::
+
+::: {.demostracion}
+*Demostración.* La función $\hat\mu$ es afín y no constante, porque $\hat\beta\neq0$. Su conjunto de nivel $\{x:\hat\mu(x)=0\}$ es entonces un hiperplano, y $\hat\mu$ toma signo constante a cada lado: tomando $x_t = x_a - t\hat\beta$ con $x_a$ cualquiera,
+$$\hat\mu(x_t) = \hat\mu(x_a) - t\lVert\hat\beta\rVert^2 \xrightarrow[t\to\infty]{} -\infty,$$
+de modo que el lado negativo no es vacío. Que sea abierto se sigue de ser la preimagen de un abierto por una función continua. [∎]{.fin-demo}
+:::
+
+La proposición garantiza que el problema existe; cuántas observaciones caen del lado malo es una cuestión de los datos. La celda siguiente lo mide sobre una muestra de conteos simulada.
+
+::: {.proposicion}
+**Proposición 5.2 (la homocedasticidad falla por construcción).** Si $Y\mid X=x$ sigue una distribución de Poisson de media $\mu(x)$, entonces $\operatorname{Var}(Y\mid X=x)=\mu(x)$. La varianza es constante en $x$ únicamente cuando la media lo es, es decir cuando no hay nada que modelar.
+:::
+
+::: {.demostracion}
+*Demostración.* La media y la varianza de una Poisson de parámetro $\lambda$ coinciden y valen $\lambda$, resultado de Estadística 3. Aplicándolo condicionalmente con $\lambda=\mu(x)$ queda $\operatorname{Var}(Y\mid X=x)=\mu(x)$.
+
+Si esa expresión no depende de $x$, entonces $\mu$ es constante, y el predictor lineal tiene todos sus coeficientes nulos salvo el intercepto. El recíproco es inmediato. [∎]{.fin-demo}
+:::
+
+Mínimos cuadrados no deja de tener sentido por eso —sigue estimando la media condicional sin sesgo si esta es lineal—, pero sus errores estándar, sus intervalos y sus pruebas se apoyan en una varianza constante que aquí no existe.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(5)
+n = 800
+hora = rng.uniform(0, 24, n)
+laborable = (rng.random(n) < 0.7).astype(float)
+X = np.column_stack([np.sin(2 * np.pi * hora / 24), np.cos(2 * np.pi * hora / 24), laborable])
+y = rng.poisson(np.exp(1.8 + X @ np.array([0.9, -0.6, 0.4])))
+Z = np.column_stack([np.ones(n), X])
+
+pred = Z @ np.linalg.lstsq(Z, y, rcond=None)[0]
+print("conteos observados: min %d, max %d" % (y.min(), y.max()))
+print("OLS: predicciones negativas: %d de %d | la menor vale %.3f"
+      % ((pred < 0).sum(), n, pred.min()))
+print()
+mu = np.exp(1.8 + X @ np.array([0.9, -0.6, 0.4]))
+q = np.quantile(mu, [0, 0.25, 0.5, 0.75, 1])
+for i in range(4):
+    sel = (mu >= q[i]) & (mu <= q[i + 1])
+    print("cuarto %d: media %6.2f, varianza observada %7.2f" % (i + 1, mu[sel].mean(), y[sel].var()))
+```
+
+Las $55$ predicciones negativas de $800$ no son un accidente del muestreo: la Proposición 5.1 dice que el semiespacio existe siempre, y con estos datos contiene el $7$ % de las observaciones. La tabla de cuartos muestra lo segundo: la varianza observada sigue a la media en vez de mantenerse plana, como pide la Proposición 5.2.
+
+```{=html}
+<div class="viz-enlace">
+  <div class="controles">
+    <label>Pendiente β₁ <input id="en-b" type="range" min="-12" max="12" step="1" value="8"> <span id="en-b-v">0.8</span></label>
+    <label>Enlace
+      <select id="en-g">
+        <option value="0" selected>identidad: μ = β₀ + β₁x</option>
+        <option value="1">log: log μ = β₀ + β₁x</option>
+      </select>
+    </label>
+  </div>
+  <svg id="en-svg" viewBox="0 0 640 320" role="img" aria-label="La media ajustada como función del predictor, sobre un eje fijo. Con enlace identidad la recta cruza el cero y entra en la banda de medias imposibles; con enlace log la curva se mantiene positiva."></svg>
+  <p class="lectura" id="en-lectura"></p>
+</div>
+<style>
+.viz-enlace { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-enlace .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-enlace label { display: flex; align-items: center; gap: .4rem; }
+.viz-enlace input[type=range] { width: 140px; padding: 0; }
+.viz-enlace select { font-size: .85rem; padding: .1rem .25rem; font-family: var(--bs-font-monospace, monospace); }
+.viz-enlace svg { width: 100%; height: auto; display: block; }
+.viz-enlace .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_C = "#0F6E68", C_M = "#B4342E";
+  var svg = document.getElementById("en-svg"), lec = document.getElementById("en-lectura");
+  var cb = document.getElementById("en-b"), eb = document.getElementById("en-b-v");
+  var cg = document.getElementById("en-g");
+
+  // Marco anclado a constantes: x de -3 a 3, mu de -8 a 32, siempre.
+  var XMIN = -3, XMAX = 3, MMIN = -8, MMAX = 32;
+  var X0 = 52, XW = 556, Y0 = 26, YH = 244, B0 = 1.8;
+
+  function px(x) { return X0 + (x - XMIN) / (XMAX - XMIN) * XW; }
+  function py(m) { return Y0 + (MMAX - m) / (MMAX - MMIN) * YH; }
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var b1 = +cb.value / 10, log = +cg.value === 1;
+    eb.textContent = b1.toFixed(1);
+    var m0 = Math.exp(B0);                 // las dos curvas pasan por el mismo punto en x=0
+    var pend = b1 * m0;                    // la recta es la tangente de la curva en x=0
+
+    // banda de medias imposibles, anclada al eje y no a los datos
+    svg.appendChild(el("rect", { x: X0, y: py(0), width: XW, height: (py(MMIN) - py(0)).toFixed(1),
+      fill: C_M, "fill-opacity": 0.07 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + (X0 + XW) + " " + py(0).toFixed(1),
+      stroke: C_M, "stroke-width": 1.2, fill: "none" }));
+    svg.appendChild(el("text", { x: X0 + 8, y: py(0) + 17, "font-size": 11, fill: C_M },
+      "μ < 0: imposible para un conteo"));
+    for (var t = 0; t <= 30; t += 10) {
+      svg.appendChild(el("text", { x: X0 - 8, y: py(t) + 4, "text-anchor": "end", "font-size": 11,
+        fill: C_T, opacity: 0.65 }, String(t)));
+    }
+
+    var d = "", n = 200, cruce = null, prev = null;
+    for (var i = 0; i <= n; i++) {
+      var x = XMIN + (XMAX - XMIN) * i / n;
+      var m = log ? Math.exp(B0 + b1 * x) : m0 + pend * x;
+      if (prev !== null && prev >= 0 && m < 0) cruce = x;
+      prev = m;
+      var mc = Math.max(MMIN, Math.min(MMAX, m));
+      d += (i ? " L" : "M") + px(x).toFixed(1) + " " + py(mc).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: d, stroke: C_C, "stroke-width": 2.4, fill: "none" }));
+
+    if (cruce !== null) {
+      svg.appendChild(el("circle", { cx: px(cruce).toFixed(1), cy: py(0).toFixed(1), r: 5, fill: C_M }));
+      svg.appendChild(el("text", { x: px(cruce).toFixed(1), y: py(0) - 10, "text-anchor": "middle",
+        "font-size": 11.5, fill: C_M }, "cruza en x = " + cruce.toFixed(2)));
+    }
+    svg.appendChild(el("circle", { cx: px(0).toFixed(1), cy: py(m0).toFixed(1), r: 3.4, fill: C_C }));
+
+    lec.innerHTML = log
+      ? ("Con enlace log la media es <code>exp(β₀ + β₁x)</code>, positiva sea cual sea el " +
+         "predictor: la exponencial no toma el valor cero. La banda de medias imposibles queda " +
+         "vacía para cualquier pendiente.")
+      : ("Con enlace identidad la recta cruza el cero en <strong>x = " +
+         (cruce !== null ? cruce.toFixed(2) : "fuera del rango dibujado") + "</strong> y a partir " +
+         "de ahí predice medias negativas (Proposición 5.1). Mover la pendiente desplaza el cruce, " +
+         "pero no lo elimina: el semiespacio existe para toda pendiente no nula.");
+  }
+
+  cb.addEventListener("input", dibujar);
+  cg.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. La regresión de Poisson
+
+::: {.definicion}
+**Definición 5.3 (regresión de Poisson).** El modelo supone que $Y\mid X=x$ sigue una distribución de Poisson de media $\mu(x)$, y que
+$$\log \mu(x) \;=\; x^\top\beta.$$
+La función $g(\mu)=\log\mu$ es la **función de enlace**. Equivalentemente, $\mu(x)=e^{x^\top\beta}$, que es positiva para todo $x$ y todo $\beta$.
+:::
+
+El enlace resuelve por construcción lo que la Proposición 5.1 rompía: la imagen de la exponencial es $(0,\infty)$, así que ningún valor del predictor lineal produce una media imposible.
+
+::: {.proposicion}
+**Proposición 5.4 (concavidad).** La log-verosimilitud de la regresión de Poisson,
+$$\ell(\beta) \;=\; \sum_{i=1}^{n}\Big( y_i\, x_i^\top\beta - e^{x_i^\top\beta} - \log y_i! \Big),$$
+es cóncava en $\beta$. Si además la matriz de diseño tiene rango completo, es estrictamente cóncava y el máximo, cuando existe, es único.
+:::
+
+::: {.demostracion}
+*Demostración.* Derivando dos veces, con $\mu_i=e^{x_i^\top\beta}$,
+$$\nabla\ell(\beta)=\sum_i (y_i-\mu_i)\,x_i, \qquad \nabla^2\ell(\beta)=-\sum_i \mu_i\, x_i x_i^\top.$$
+Para cualquier vector $v$,
+$$v^\top\nabla^2\ell(\beta)\,v = -\sum_i \mu_i (x_i^\top v)^2 \le 0,$$
+porque cada $\mu_i$ es positiva y cada cuadrado es no negativo. La hessiana es por tanto semidefinida negativa y $\ell$ es cóncava.
+
+La suma se anula solo si $x_i^\top v=0$ para toda $i$, es decir si $v$ pertenece al núcleo de la matriz de diseño. Con rango completo ese núcleo es trivial, la hessiana es definida negativa y la concavidad es estricta. [∎]{.fin-demo}
+:::
+
+::: {.proposicion}
+**Proposición 5.5 (la ecuación de score y la calibración).** En el máximo se cumple $X^\top(y-\hat\mu)=0$. Si el modelo incluye intercepto, la primera componente de esa ecuación da
+$$\sum_{i=1}^{n}\hat\mu_i \;=\; \sum_{i=1}^{n} y_i:$$
+los conteos ajustados suman exactamente lo observado.
+:::
+
+::: {.demostracion}
+*Demostración.* Anular el gradiente de la Proposición 5.4 es $\sum_i (y_i-\mu_i)x_i=0$, que escrito en forma matricial es $X^\top(y-\hat\mu)=0$.
+
+Con intercepto, la primera columna de $X$ es un vector de unos, y la primera componente de la ecuación es $\sum_i (y_i-\hat\mu_i)=0$. [∎]{.fin-demo}
+:::
+
+Es la Proposición 3.8 de la lección 3 con otra media: lo que allí dejaba las probabilidades ajustadas sumando el número de éxitos, aquí deja los conteos ajustados sumando el total observado. En los dos casos el responsable es el intercepto, y en los dos la propiedad se pierde si se quita.
+
+```{pyodide}
+import numpy as np
+from sklearn.linear_model import PoissonRegressor
+
+rng = np.random.default_rng(5)
+n = 800
+hora = rng.uniform(0, 24, n)
+laborable = (rng.random(n) < 0.7).astype(float)
+X = np.column_stack([np.sin(2 * np.pi * hora / 24), np.cos(2 * np.pi * hora / 24), laborable])
+y = rng.poisson(np.exp(1.8 + X @ np.array([0.9, -0.6, 0.4])))
+Z = np.column_stack([np.ones(n), X])
+
+def irls_poisson(Z, y, iters=50):
+    b = np.zeros(Z.shape[1])
+    b[0] = np.log(y.mean())
+    for _ in range(iters):
+        mu = np.exp(Z @ b)
+        b = b + np.linalg.solve((Z * mu[:, None]).T @ Z, Z.T @ (y - mu))
+    return b
+
+b = irls_poisson(Z, y)
+pr = PoissonRegressor(alpha=0.0, fit_intercept=True, max_iter=2000, tol=1e-12).fit(X, y)
+print("coeficientes propios :", b.round(4))
+print("empatan con PoissonRegressor a 1e-5:",
+      np.allclose(b, np.r_[pr.intercept_, pr.coef_], atol=1e-5))
+mu = np.exp(Z @ b)
+print("la ecuacion de score se cumple:", np.abs(Z.T @ (y - mu)).max() < 1e-8)
+print("suma de conteos ajustados : %.4f" % mu.sum())
+print("suma de conteos observados: %.4f" % y.sum())
+```
+
+::: {.proposicion}
+**Proposición 5.6 (lectura multiplicativa de un coeficiente).** Sean $x$ y $x'$ dos puntos que difieren en una unidad en la coordenada $j$ y coinciden en las demás. Entonces
+$$\frac{\mu(x')}{\mu(x)} \;=\; e^{\beta_j}.$$
+El coeficiente actúa sobre la media como un factor, no como un sumando.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Definición 5.3, $\mu(x')/\mu(x)=e^{x'^\top\beta-x^\top\beta}$. La diferencia $x'-x$ es el vector canónico $e_j$, así que el exponente vale $\beta_j$. La razón no depende del punto de partida, que es lo que permite enunciarla sin fijar $x$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(5)
+n = 800
+hora = rng.uniform(0, 24, n)
+laborable = (rng.random(n) < 0.7).astype(float)
+X = np.column_stack([np.sin(2 * np.pi * hora / 24), np.cos(2 * np.pi * hora / 24), laborable])
+y = rng.poisson(np.exp(1.8 + X @ np.array([0.9, -0.6, 0.4])))
+Z = np.column_stack([np.ones(n), X])
+
+b = np.zeros(4); b[0] = np.log(y.mean())
+for _ in range(50):
+    mu = np.exp(Z @ b)
+    b = b + np.linalg.solve((Z * mu[:, None]).T @ Z, Z.T @ (y - mu))
+
+x0 = np.array([1.0, 0.3, -0.5, 0.0])
+x1 = x0.copy()
+x1[3] = 1.0
+print("exp(beta de laborable) = %.4f" % np.exp(b[3]))
+print("media con laborable=0  : %.4f" % np.exp(x0 @ b))
+print("media con laborable=1  : %.4f" % np.exp(x1 @ b))
+print("razon entre las dos    : %.4f" % (np.exp(x1 @ b) / np.exp(x0 @ b)))
+```
+
+```{=html}
+<div class="viz-abanico">
+  <div class="controles">
+    <label>Pendiente β₁ <input id="ab-b" type="range" min="0" max="12" step="1" value="8"> <span id="ab-b-v">0.8</span></label>
+    <label>Banda
+      <select id="ab-banda">
+        <option value="0" selected>Poisson: ±2√μ</option>
+        <option value="1">homocedástica: ±2σ constante</option>
+      </select>
+    </label>
+  </div>
+  <svg id="ab-svg" viewBox="0 0 640 320" role="img" aria-label="La media ajustada y su banda de dispersión sobre un eje fijo. La banda de Poisson se abre con la media; la banda constante mantiene el mismo ancho."></svg>
+  <p class="lectura" id="ab-lectura"></p>
+</div>
+<style>
+.viz-abanico { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-abanico .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-abanico label { display: flex; align-items: center; gap: .4rem; }
+.viz-abanico input[type=range] { width: 140px; padding: 0; }
+.viz-abanico select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-abanico svg { width: 100%; height: auto; display: block; }
+.viz-abanico .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_C = "#0F6E68";
+  var svg = document.getElementById("ab-svg"), lec = document.getElementById("ab-lectura");
+  var cb = document.getElementById("ab-b"), eb = document.getElementById("ab-b-v");
+  var cs = document.getElementById("ab-banda");
+
+  // Mismo marco anclado que el visual anterior.
+  var XMIN = -3, XMAX = 3, MMIN = -8, MMAX = 32;
+  var X0 = 52, XW = 556, Y0 = 26, YH = 244, B0 = 1.8;
+
+  function px(x) { return X0 + (x - XMIN) / (XMAX - XMIN) * XW; }
+  function py(m) { return Y0 + (MMAX - m) / (MMAX - MMIN) * YH; }
+  function rec(m) { return Math.max(MMIN, Math.min(MMAX, m)); }
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var b1 = +cb.value / 10, cte = +cs.value === 1;
+    eb.textContent = b1.toFixed(1);
+    var sig0 = Math.sqrt(Math.exp(B0));    // la banda constante usa la sd en x = 0
+
+    for (var t = 0; t <= 30; t += 10) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(t).toFixed(1) + " L" + (X0 + XW) + " " + py(t).toFixed(1),
+        stroke: C_L, "stroke-width": 1, fill: "none", opacity: 0.55 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(t) + 4, "text-anchor": "end", "font-size": 11,
+        fill: C_T, opacity: 0.65 }, String(t)));
+    }
+
+    var arriba = "", abajo = [], n = 160;
+    for (var i = 0; i <= n; i++) {
+      var x = XMIN + (XMAX - XMIN) * i / n;
+      var m = Math.exp(B0 + b1 * x);
+      var s = cte ? sig0 : Math.sqrt(m);
+      arriba += (i ? " L" : "M") + px(x).toFixed(1) + " " + py(rec(m + 2 * s)).toFixed(1);
+      abajo.push([px(x), py(rec(m - 2 * s))]);
+    }
+    var d = arriba;
+    for (var k = abajo.length - 1; k >= 0; k--) d += " L" + abajo[k][0].toFixed(1) + " " + abajo[k][1].toFixed(1);
+    svg.appendChild(el("path", { d: d + " Z", fill: C_C, "fill-opacity": 0.13, stroke: "none" }));
+
+    var dm = "";
+    for (var j = 0; j <= n; j++) {
+      var xx = XMIN + (XMAX - XMIN) * j / n;
+      dm += (j ? " L" : "M") + px(xx).toFixed(1) + " " + py(rec(Math.exp(B0 + b1 * xx))).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: dm, stroke: C_C, "stroke-width": 2.4, fill: "none" }));
+
+    // marcador: el ancho de la banda en el extremo derecho
+    var mR = Math.exp(B0 + b1 * XMAX), sR = cte ? sig0 : Math.sqrt(mR);
+    var yA = py(rec(mR + 2 * sR)), yB = py(rec(mR - 2 * sR));
+    svg.appendChild(el("path", { d: "M" + (X0 + XW - 12) + " " + yA.toFixed(1) + " L" + (X0 + XW - 12) +
+      " " + yB.toFixed(1), stroke: C_T, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("text", { x: X0 + XW - 18, y: (yA + yB) / 2 + 4, "text-anchor": "end",
+      "font-size": 11, fill: C_T }, "ancho " + (4 * sR).toFixed(1)));
+
+    lec.innerHTML = cte
+      ? ("La banda mantiene el ancho <strong>" + (4 * sig0).toFixed(1) + "</strong> en todo el " +
+         "rango, que es lo que supone mínimos cuadrados. Donde la media es alta la banda se queda " +
+         "corta, y donde es baja sobra: los intervalos salen mal en las dos direcciones.")
+      : ("La desviación típica de una Poisson es la raíz de su media, así que la banda se abre " +
+         "con la curva (Proposición 5.2). En el extremo derecho mide <strong>" + (4 * sR).toFixed(1) +
+         "</strong> y en el izquierdo <strong>" + (4 * Math.sqrt(Math.exp(B0 + b1 * XMIN))).toFixed(1) +
+         "</strong>: ninguna constante puede servir para las dos.");
+  }
+
+  cb.addEventListener("input", dibujar);
+  cs.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Los tres modelos son el mismo
+
+::: {.definicion}
+**Definición 5.7 (modelo lineal generalizado).** Un **modelo lineal generalizado** consta de tres piezas:
+
+- una distribución para $Y\mid X$ de la familia exponencial, que fija la función de varianza $V(\mu)$;
+- un **predictor lineal** $\eta=x^\top\beta$;
+- una **función de enlace** $g$ creciente y derivable con $g(\mu)=\eta$.
+
+La regresión lineal es el caso $g(\mu)=\mu$ con $V(\mu)=1$; la logística, $g(\mu)=\log\frac{\mu}{1-\mu}$ con $V(\mu)=\mu(1-\mu)$; la de Poisson, $g(\mu)=\log\mu$ con $V(\mu)=\mu$.
+:::
+
+::: {.proposicion}
+**Proposición 5.8 (una sola iteración para los tres).** Con enlace canónico, el paso de Newton sobre la log-verosimilitud de un modelo lineal generalizado es
+$$\beta \;\leftarrow\; \beta + (X^\top W X)^{-1}X^\top(y-\mu), \qquad W=\operatorname{diag}\big(V(\mu_1),\dots,V(\mu_n)\big).$$
+Los tres modelos de la Definición 5.7 difieren solo en el par $(g,V)$ que entra en esa fórmula, y en el caso lineal la iteración converge en un solo paso desde cualquier punto.
+:::
+
+::: {.demostracion}
+*Demostración.* Con enlace canónico el gradiente de la log-verosimilitud es $X^\top(y-\mu)$ y la hessiana es $-X^\top W X$ con $W=\operatorname{diag}(V(\mu_i))$; las dos cosas se comprobaron para Poisson en la Proposición 5.4 y para la logística en la lección 3. El paso de Newton es $\beta-(\nabla^2\ell)^{-1}\nabla\ell$, que sustituyendo da la fórmula.
+
+En el caso lineal, $V\equiv1$ da $W=I$ y $\mu=X\beta$, de modo que el paso vale
+$$\beta + (X^\top X)^{-1}X^\top(y-X\beta) = (X^\top X)^{-1}X^\top y,$$
+donde el término en $\beta$ se cancela. El resultado no depende del punto de partida y coincide con las ecuaciones normales de Estadística 13, así que una iteración basta. [∎]{.fin-demo}
+:::
+
+## 4. Contraste con la librería
+
+Esta lección es de nivel **L3**, y ese nivel promete implementar el resultado en NumPy puro y empatar con la librería. Lo que se implementa es la iteración de la Proposición 5.8, escrita una sola vez y llamada tres veces con distinto par enlace-varianza.
+
+```{pyodide}
+import numpy as np
+from sklearn.linear_model import LogisticRegression
+
+rng = np.random.default_rng(5)
+n = 800
+hora = rng.uniform(0, 24, n)
+laborable = (rng.random(n) < 0.7).astype(float)
+X = np.column_stack([np.sin(2 * np.pi * hora / 24), np.cos(2 * np.pi * hora / 24), laborable])
+y = rng.poisson(np.exp(1.8 + X @ np.array([0.9, -0.6, 0.4])))
+Z = np.column_stack([np.ones(n), X])
+
+def irls(Z, y, V, enlace_inv, iters=50, arranque=None):
+    """El paso de la Proposicion 5.8, sin saber de que modelo se trata."""
+    b = np.zeros(Z.shape[1]) if arranque is None else arranque.copy()
+    for _ in range(iters):
+        mu = enlace_inv(Z @ b)
+        W = V(mu)
+        b = b + np.linalg.solve((Z * W[:, None]).T @ Z, Z.T @ (y - mu))
+    return b
+
+# tres respuestas distintas sobre el mismo diseño
+y_cont = 2.0 + X @ np.array([1.5, -1.0, 0.7]) + rng.normal(scale=0.5, size=n)
+y_bin = (rng.random(n) < 1 / (1 + np.exp(-(0.5 + X @ np.array([1.0, -0.8, 0.5]))))).astype(float)
+
+lineal = irls(Z, y_cont, lambda m: np.ones_like(m), lambda e: e, iters=1)
+ols = np.linalg.lstsq(Z, y_cont, rcond=None)[0]
+print("lineal   : una sola iteracion reproduce OLS:", np.allclose(lineal, ols, atol=1e-10))
+
+logist = irls(Z, y_bin, lambda m: m * (1 - m), lambda e: 1 / (1 + np.exp(-e)), iters=40)
+lg = LogisticRegression(C=np.inf, fit_intercept=False, tol=1e-12, max_iter=5000).fit(Z, y_bin)
+print("logistica: empata con LogisticRegression a 1e-5:",
+      np.allclose(logist, lg.coef_.ravel(), atol=1e-5))
+
+poisson = irls(Z, y, lambda m: m, np.exp, arranque=np.array([np.log(y.mean()), 0.0, 0.0, 0.0]))
+print("poisson  : coeficientes", poisson.round(4))
+print("los tres salen de la misma funcion, cambiando solo (enlace, V)")
+```
+
+La misma función resuelve los tres modelos. El caso lineal se pide con una sola iteración porque la Proposición 5.8 demuestra que más no cambian nada, y el de Poisson necesita un arranque con el intercepto en $\log\bar{y}$: partir de cero pone todas las medias ajustadas en $1$ y la primera hessiana queda mal escalada. Es el mismo cuidado que pedía el IRLS de la lección 3, y la razón por la que `C=np.inf` sigue siendo la forma de apagar la penalización en las dos versiones de `scikit-learn` que este proyecto usa.
+
+## Ejercicios
+
+### Ejercicio 1, El factor de un coeficiente
+
+Un modelo de Poisson tiene el coeficiente $\beta_j=0{,}4$ para cierto predictor. Calcular en qué factor se multiplica la media al aumentar ese predictor en una unidad.
+
+```{pyodide}
+#| exercise: ex_factor
+import numpy as np
+beta_j = 0.4
+
+factor = ______
+
+print(round(factor, 4))
+float(factor)
+```
+
+::: {.hint exercise="ex_factor"}
+La Proposición 5.6 dice que la razón entre las dos medias es la exponencial del coeficiente.
+:::
+
+::: {.solution exercise="ex_factor"}
+```{pyodide}
+import numpy as np
+beta_j = 0.4
+
+factor = np.exp(beta_j)
+
+print(round(factor, 4))
+float(factor)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_factor
+#| check: true
+if abs(result - 1.4918) < 0.001:
+    feedback = {"correct": True, "message": "Correcto: exp(0.4) = 1.4918, casi un 50 % mas de conteos por cada unidad.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 1.4918 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, La calibración del intercepto
+
+Ajustar el modelo de Poisson y comprobar la Proposición 5.5: devolver la diferencia entre la suma de los conteos ajustados y la de los observados.
+
+```{pyodide}
+#| exercise: ex_calib
+import numpy as np
+rng = np.random.default_rng(5)
+n = 800
+hora = rng.uniform(0, 24, n)
+laborable = (rng.random(n) < 0.7).astype(float)
+X = np.column_stack([np.sin(2 * np.pi * hora / 24), np.cos(2 * np.pi * hora / 24), laborable])
+y = rng.poisson(np.exp(1.8 + X @ np.array([0.9, -0.6, 0.4])))
+Z = np.column_stack([np.ones(n), X])
+
+b = np.zeros(4); b[0] = np.log(y.mean())
+for _ in range(50):
+    mu = np.exp(Z @ b)
+    b = b + np.linalg.solve((Z * mu[:, None]).T @ Z, Z.T @ (y - mu))
+
+diferencia = ______
+
+print(round(diferencia, 8))
+float(diferencia)
+```
+
+::: {.hint exercise="ex_calib"}
+Los conteos ajustados son `np.exp(Z @ b)`. La proposición dice que su suma iguala a `y.sum()`.
+:::
+
+::: {.solution exercise="ex_calib"}
+```{pyodide}
+import numpy as np
+rng = np.random.default_rng(5)
+n = 800
+hora = rng.uniform(0, 24, n)
+laborable = (rng.random(n) < 0.7).astype(float)
+X = np.column_stack([np.sin(2 * np.pi * hora / 24), np.cos(2 * np.pi * hora / 24), laborable])
+y = rng.poisson(np.exp(1.8 + X @ np.array([0.9, -0.6, 0.4])))
+Z = np.column_stack([np.ones(n), X])
+
+b = np.zeros(4); b[0] = np.log(y.mean())
+for _ in range(50):
+    mu = np.exp(Z @ b)
+    b = b + np.linalg.solve((Z * mu[:, None]).T @ Z, Z.T @ (y - mu))
+
+diferencia = np.exp(Z @ b).sum() - y.sum()
+
+print(round(diferencia, 8))
+float(diferencia)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_calib
+#| check: true
+if abs(result) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: la diferencia es cero hasta el error de maquina, y quien lo garantiza es el intercepto.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba una diferencia nula y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 5**:
+
+1. Extender `irls` al enlace no canónico: implementar Poisson con enlace raíz cuadrada, donde la hessiana ya no es $-X^\top W X$, y comprobar contra el paso de Fisher. Anotar en `50-Errores/` en qué se separan las dos matrices.
+2. Medir la sobredispersión: simular conteos con varianza mayor que la media —una binomial negativa sirve— y comprobar que la regresión de Poisson acierta los coeficientes pero subestima los errores estándar. Cuantificar el factor.
+3. Comprobar la Proposición 5.8 en el caso lineal partiendo de diez puntos iniciales aleatorios y verificar que el primer paso cae siempre en el mismo sitio, con diferencia menor que $10^{-10}$.
+
+## Del libro
+
+*An Introduction to Statistical Learning with Applications in Python* trata este material en §4.6 *Generalized Linear Models*, con el ajuste lineal sobre los datos de bicicletas compartidas en §4.6.1 *Linear Regression on the Bikeshare Data*, la regresión de Poisson sobre los mismos datos en §4.6.2 *Poisson Regression on the Bikeshare Data*, y el marco común en §4.6.3 *Generalized Linear Models in Greater Generality*.
+
+**Preguntas para leer §4.6 con lápiz:**
+
+1. §4.6.1 ajusta una regresión lineal a un conteo de bicicletas y señala predicciones negativas. Con la Proposición 5.1, ¿qué garantiza que esas predicciones existan para cualquier conjunto de datos, y qué es lo que depende de los datos concretos?
+2. §4.6.2 interpreta los coeficientes del modelo de Poisson en términos de porcentajes. Con la Proposición 5.6, ¿por qué esa lectura es exacta y no una aproximación, y qué habría que decir si el enlace fuera la raíz cuadrada?
+3. §4.6.3 presenta los tres modelos como casos de un mismo marco. Con la Definición 5.7 y la Proposición 5.8, ¿qué pieza cambia entre ellos y cuál permanece idéntica, y por qué el caso lineal converge en una iteración?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/modelos-lineales-generalizados.md`, enlazada a [[regresion-logistica]], [[maxima-verosimilitud]] y [[metodo-de-newton]]. Conviene escribir la Proposición 5.5 al lado de la 3.8 de la lección 3 y de las ecuaciones normales de Estadística 13: las tres dicen que el residuo es ortogonal a las columnas del diseño, y de las tres sale la misma calibración en promedio cuando hay intercepto.
+
+```
+¿Qué rompe una recta ajustada a conteos?::Predice medias negativas en todo un semiespacio, y ahí el modelo no tiene sentido
+¿Por qué falla la homocedasticidad con conteos?::La varianza de una Poisson es su media, así que cambia con x salvo que no haya nada que modelar
+¿Qué enlace usa la regresión de Poisson?::El logaritmo: log μ = xᵀβ, o sea μ = exp(xᵀβ), siempre positiva
+¿Es cóncava su log-verosimilitud?::Sí; la hessiana es −Σ μ_i x_i x_iᵀ, definida negativa si el diseño tiene rango completo
+¿Qué dice la ecuación de score?::Xᵀ(y − μ̂) = 0: el residuo es ortogonal a las columnas del diseño
+¿Qué garantiza el intercepto?::Que Σ μ̂_i = Σ y_i, los conteos ajustados suman lo observado
+¿Cómo se lee un coeficiente?::Como factor: una unidad más multiplica la media por exp(β_j)
+¿Qué tres piezas definen un GLM?::Una distribución de la familia exponencial, un predictor lineal y una función de enlace
+¿Qué par (g, V) tiene cada modelo?::Lineal (identidad, 1); logística (logit, μ(1−μ)); Poisson (log, μ)
+¿Cuál es el paso común?::β ← β + (XᵀWX)⁻¹Xᵀ(y − μ), con W = diag(V(μ_i))
+¿Por qué el lineal converge en un paso?::W = I y μ = Xβ hacen que el término en β se cancele y quede (XᵀX)⁻¹Xᵀy
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 5.1 se demuestra con el comportamiento de una función afín no constante a lo largo de la dirección $-\hat\beta$, y se mide: sobre la muestra simulada de $800$ conteos, mínimos cuadrados produce $55$ predicciones negativas, la menor de $-2{,}185$. La Proposición 5.2 se sigue de que media y varianza coinciden en una Poisson, y se comprueba con la tabla de cuartos, donde la varianza observada sube de $3{,}79$ a $30{,}91$ mientras la media sube de $2{,}96$ a $22{,}22$. Las Proposiciones 5.4, 5.5, 5.6 y 5.8 se demuestran derivando la log-verosimilitud, y se comprueban ejecutándolas: la ecuación de score se anula hasta $10^{-8}$, las dos sumas valen $8700$ exactamente, el factor del coeficiente vale $1{,}4883$ tanto calculado como medido entre dos predicciones, y la misma función reproduce OLS en una iteración y empata con `LogisticRegression` y con `PoissonRegressor`. Los dos visuales se contrastaron contra estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** Que media y varianza de una Poisson coinciden es de Estadística 3. Las ecuaciones normales y los supuestos de mínimos cuadrados son de Estadística 13. La concavidad de la log-verosimilitud logística y su ecuación de score son las Proposiciones 3.8 y 3.9 de la lección 3, aquí reutilizadas para identificar el par $(g,V)$ de ese modelo. El paso de Newton es el de Álgebra 17.
+
+**Lo que se enuncia sin demostrar.** Que la familia exponencial produce siempre gradiente $X^\top(y-\mu)$ y hessiana $-X^\top W X$ con enlace canónico: la página lo comprueba en los tres casos concretos y no lo deriva en general. Que `PoissonRegressor` de `scikit-learn` maximiza la misma log-verosimilitud cuando `alpha` vale cero se toma de su documentación, y se contrasta numéricamente. Que la sobredispersión invalida los errores estándar se menciona en el Reto y no se demuestra aquí.
+
+**Lo que viene de los libros.**
+
+- [*An Introduction to Statistical Learning with Applications in Python*](https://www.statlearning.com/) (James, Witten, Hastie, Tibshirani, Taylor; Springer, 2023), §4.6 *Generalized Linear Models* con sus tres subsecciones — citado por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La Proposición 5.1 escrita como un resultado geométrico sobre un semiespacio, que separa lo que está garantizado —el conjunto existe— de lo que depende de los datos, que es cuántas observaciones caen dentro. La Proposición 5.8 con el caso lineal demostrado como convergencia en un paso, que convierte «la regresión lineal es un caso particular» en algo comprobable. Y el contraste de la sección 4, con una sola función llamada tres veces, que es la forma más corta de sostener la afirmación de §4.6.3.
+
+[Índice de ISLP verificado el 13-09-2026 contra los marcadores del PDF oficial.]{.sello}
+:::
