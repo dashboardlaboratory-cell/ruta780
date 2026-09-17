@@ -1,0 +1,895 @@
+---
+title: "Encogimiento: ridge y lasso"
+subtitle: "Machine Learning · Lección 8"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/07-seleccion-de-subconjuntos, matematica/11-svd, estadistica/07-estimacion]
+siguientes: []
+libro: "ISLP §6.2 Shrinkage Methods · §6.2.1 Ridge Regression · §6.2.2 The Lasso · §6.2.3 Selecting the Tuning Parameter"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - scikit-learn
+---
+
+::: {.meta-leccion data-leccion="ml/08-ridge-y-lasso"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §6.2]{.item}
+[**Prereqs** [Selección de subconjuntos](07-seleccion-de-subconjuntos.qmd) · [SVD](../matematica/11-svd.qmd) · [Estimación](../estadistica/07-estimacion.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir la [regresión ridge]{.g} y demostrar que su forma cerrada existe y es única para **todo** $\lambda>0$, incluso cuando hay más predictores que observaciones.
+2. Definir el [lasso]{.g} y demostrar que en diseño ortonormal su solución es el [umbral suave]{.g}, de donde salen los ceros exactos que ridge nunca produce.
+3. Leer ridge en la base de la [descomposición en valores singulares]{.g data-t="descomposición en valores singulares"} y decir qué direcciones encoge más.
+4. Definir los [grados de libertad efectivos]{.g} y comprobar que ocupan el lugar del $p+1$ de la lección anterior.
+5. Demostrar que siempre existe un [encogimiento]{.g} que mejora el error cuadrático medio de mínimos cuadrados, y calcular cuál es el mejor.
+6. Elegir el [parámetro de regularización]{.g} por validación cruzada, y distinguir cuánto mejora los coeficientes de cuánto mejora la predicción.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 7**: los criterios que corrigen el optimismo y los grados de libertad como número de parámetros estimados. Esta lección sustituye ese conteo entero por uno continuo y hace lo mismo con él.
+- **Álgebra 11**: la descomposición en valores singulares. La sección 3 es esa descomposición aplicada a la matriz sombrero, y el factor de encogimiento sale de ahí sin cuentas nuevas.
+- **Estadística 7**: el compromiso entre sesgo y varianza, y el resultado escalar $c^{*}=\mu^2/(\mu^2+\sigma^2/n)$. La Proposición 8.8 es ese resultado con un vector en lugar de un número.
+- **Machine Learning 2**: la colinealidad y lo que le hace a los coeficientes. Aquí se mide el daño y se repara.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 9**: la regresión en alta dimensión, donde $p>n$ y la Proposición 8.2 es lo único que deja ajustar algo.
+- **Machine Learning 17**: la regresión sobre componentes principales, que encoge poniendo a cero las direcciones pequeñas en vez de bajarles el peso de forma continua.
+- **Machine Learning 22**: *Least Angle Regression*, que construye el camino entero del lasso en lugar de resolverlo para un $\lambda$ a la vez.
+- **Machine Learning 34 a 37**: la regularización de las redes, donde el término en $\lVert\beta\rVert^2$ reaparece con el nombre de *weight decay*.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | El número de observaciones |
+| $p$ | pe | El número de predictores, sin contar el intercepto |
+| $\lambda$ | lambda | El parámetro de regularización, siempre $\ge 0$ |
+| $\hat{\beta}^{\,\text{MC}}$ | beta gorro eme ce | La solución por mínimos cuadrados |
+| $\hat{\beta}^{\,\lambda}$ | beta gorro lambda | La solución de ridge o del lasso con ese $\lambda$ |
+| $d_j$ | de sub jota | El $j$-ésimo valor singular de la matriz de diseño centrada |
+| $S_\lambda$ | ese sub lambda | La matriz que lleva $y$ a su ajuste por ridge |
+| $\text{gl}(\lambda)$ | ge ele de lambda | Los grados de libertad efectivos, $\operatorname{tr}(S_\lambda)$ |
+| $\lVert\beta\rVert^2$ | norma de beta al cuadrado | La suma de los cuadrados de los coeficientes |
+| $\lVert\beta\rVert_1$ | norma uno de beta | La suma de sus valores absolutos |
+:::
+
+## 1. Una solución donde no había ninguna
+
+::: {.definicion}
+**Definición 8.1 (regresión ridge).** Con los predictores [estandarizados]{.g data-t="estandarización"} y la respuesta centrada, la estimación ridge con parámetro $\lambda\ge 0$ es
+$$\hat{\beta}^{\,\lambda}\;=\;\arg\min_{\beta}\ \Big\{\lVert y-X\beta\rVert^2+\lambda\lVert\beta\rVert^2\Big\}.$$
+El intercepto no se penaliza, y por eso se trabaja con las columnas centradas. La estandarización es obligatoria: el término $\lambda\lVert\beta\rVert^2$ suma coeficientes de columnas distintas, y esa suma cambia si se cambia la unidad de una de ellas.
+:::
+
+::: {.proposicion}
+**Proposición 8.2 (existencia y unicidad, siempre).** Para todo $\lambda>0$ el problema de la Definición 8.1 tiene solución única, dada por
+$$\hat{\beta}^{\,\lambda}=(X^\top X+\lambda I)^{-1}X^\top y,$$
+y esto vale **aunque $X^\top X$ sea singular**, en particular cuando $p>n$. Además, los eigenvalores de $X^\top X+\lambda I$ son los de $X^\top X$ desplazados en $\lambda$, de modo que el menor vale al menos $\lambda$.
+:::
+
+::: {.demostracion}
+*Demostración.* La función objetivo es $f(\beta)=\lVert y-X\beta\rVert^2+\lambda\lVert\beta\rVert^2$. Su gradiente es $-2X^\top(y-X\beta)+2\lambda\beta$, y su hessiana es $2(X^\top X+\lambda I)$, constante.
+
+La matriz $X^\top X$ es simétrica y semidefinida positiva, porque $v^\top X^\top Xv=\lVert Xv\rVert^2\ge 0$. Si $\{\mu_j\}$ son sus eigenvalores, con $\mu_j\ge 0$, y $v_j$ los eigenvectores correspondientes, entonces
+$$(X^\top X+\lambda I)v_j=(\mu_j+\lambda)v_j,$$
+así que los eigenvalores de la suma son $\mu_j+\lambda\ge\lambda>0$, con los mismos eigenvectores. Una matriz simétrica con todos los eigenvalores positivos es definida positiva, luego invertible, y la hessiana es definida positiva en todo punto: $f$ es estrictamente convexa (Álgebra 15) y tiene un único mínimo, el del gradiente nulo. Despejando $X^\top X\beta+\lambda\beta=X^\top y$ se obtiene la fórmula.
+
+Nada de lo anterior usó el rango de $X$. Cuando $p>n$ se tiene $\operatorname{rango}(X^\top X)\le n<p$, así que $X^\top X$ es singular y mínimos cuadrados no tiene solución única; sumar $\lambda I$ desplaza los $p-\operatorname{rango}$ eigenvalores nulos hasta $\lambda$ y el problema vuelve a estar bien planteado. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+# Un diseno con mas predictores que observaciones: X^T X no puede ser invertible.
+rng = np.random.default_rng(8)
+n, p = 20, 50
+X = rng.normal(size=(n, p)); X -= X.mean(0)
+beta = np.zeros(p); beta[[0, 3, 7]] = [2.0, -1.5, 1.0]
+y = X @ beta + rng.normal(scale=0.5, size=n); y -= y.mean()
+
+XtX = X.T @ X
+print("n = %d, p = %d" % (n, p))
+print("rango de X^T X:", int(np.linalg.matrix_rank(XtX)), "de", p)
+print("minimos cuadrados no tiene solucion unica:", int(np.linalg.matrix_rank(XtX)) < p)
+print()
+for lam in [0.01, 1.0, 10.0]:
+    A = XtX + lam * np.eye(p)
+    minimo = float(np.linalg.eigvalsh(A).min())
+    bh = np.linalg.solve(A, X.T @ y)
+    print("lambda = %5.2f -> eigenvalor minimo %.6f | rango %d | norma de la solucion %.4f"
+          % (lam, minimo, int(np.linalg.matrix_rank(A)), float(np.linalg.norm(bh))))
+print()
+ev = np.linalg.eigvalsh(XtX)
+print("eigenvalores de X^T X no negativos:", bool((ev > -1e-8).all()))
+print("cuantos son practicamente cero:", int((ev < 1e-8).sum()), "de", p)
+print("los eigenvalores se desplazan exactamente lambda:",
+      bool(np.allclose(np.linalg.eigvalsh(XtX + 3.0*np.eye(p)), ev + 3.0, atol=1e-8)))
+```
+
+Con $n=20$ y $p=50$, la matriz $X^\top X$ tiene rango $19$ y treinta y un eigenvalores nulos. Sumar $\lambda I$ los lleva todos a $\lambda$ y la matriz pasa a tener rango $50$ para cualquier $\lambda>0$, por pequeño que sea. Ese es el sentido preciso en que ridge **siempre** devuelve una respuesta: no porque sea más robusto, sino porque el problema que resuelve es otro y está bien planteado.
+
+## 2. Dos penalizaciones, dos geometrías
+
+::: {.definicion}
+**Definición 8.3 (lasso).** Con la misma preparación de la Definición 8.1, la estimación lasso es
+$$\hat{\beta}^{\,\lambda}\;=\;\arg\min_{\beta}\ \Big\{\lVert y-X\beta\rVert^2+\lambda\lVert\beta\rVert_1\Big\},$$
+donde $\lVert\beta\rVert_1=\sum_j|\beta_j|$. El cambio respecto de ridge es el exponente de la penalización, y basta para cambiar la naturaleza de la solución.
+:::
+
+::: {.proposicion}
+**Proposición 8.4 (las dos soluciones en diseño ortonormal).** Supóngase $X^\top X=I$, y sea $\hat{\beta}^{\,\text{MC}}=X^\top y$ la solución por mínimos cuadrados. Entonces, componente a componente,
+$$\hat{\beta}^{\,\lambda}_{j,\text{ridge}}=\frac{\hat{\beta}^{\,\text{MC}}_j}{1+\lambda},
+\qquad
+\hat{\beta}^{\,\lambda}_{j,\text{lasso}}=\operatorname{sign}\!\big(\hat{\beta}^{\,\text{MC}}_j\big)\Big(\big|\hat{\beta}^{\,\text{MC}}_j\big|-\tfrac{\lambda}{2}\Big)_{\!+}.$$
+Ridge multiplica los $p$ coeficientes por el **mismo** factor $1/(1+\lambda)$ y no anula ninguno salvo que ya fuera cero; el lasso resta $\lambda/2$ a cada valor absoluto y corta en cero, de modo que anula exactamente los coeficientes con $|\hat{\beta}^{\,\text{MC}}_j|\le\lambda/2$.
+
+En general, sin suponer ortonormalidad, $\hat{\beta}^{\,\lambda}_{\text{ridge}}=0$ si y solo si $X^\top y=0$, y entonces ocurre para todo $\lambda$ a la vez: ridge no puede anular un coeficiente sin anularlos todos.
+:::
+
+::: {.demostracion}
+*Demostración.* Con $X^\top X=I$ se tiene $\lVert y-X\beta\rVert^2=\lVert y\rVert^2-2\beta^\top X^\top y+\lVert\beta\rVert^2$, así que salvo constantes el objetivo se separa en una suma sobre $j$:
+$$\sum_j\Big(\beta_j^2-2\beta_j\hat{\beta}^{\,\text{MC}}_j\Big)+\lambda\cdot\text{penalización}.$$
+
+Para ridge la penalización aporta $\lambda\beta_j^2$ y cada término es $(1+\lambda)\beta_j^2-2\beta_j\hat{\beta}^{\,\text{MC}}_j$, un polinomio de segundo grado en $\beta_j$ con mínimo en $\hat{\beta}^{\,\text{MC}}_j/(1+\lambda)$.
+
+Para el lasso el término $j$ es $g(\beta_j)=\beta_j^2-2\beta_j\hat{\beta}^{\,\text{MC}}_j+\lambda|\beta_j|$, convexo y no derivable solo en cero. Para $\beta_j>0$ la derivada es $2\beta_j-2\hat{\beta}^{\,\text{MC}}_j+\lambda$, que se anula en $\hat{\beta}^{\,\text{MC}}_j-\lambda/2$; ese punto es admisible cuando $\hat{\beta}^{\,\text{MC}}_j>\lambda/2$. Para $\beta_j<0$, simétricamente, el candidato es $\hat{\beta}^{\,\text{MC}}_j+\lambda/2$, admisible cuando $\hat{\beta}^{\,\text{MC}}_j<-\lambda/2$. Si $|\hat{\beta}^{\,\text{MC}}_j|\le\lambda/2$ ninguno de los dos es admisible y el mínimo está en el punto no derivable: $\beta_j=0$, que es justamente donde el subdiferencial $[-\lambda,\lambda]$ contiene a $2\hat{\beta}^{\,\text{MC}}_j$. Las tres ramas juntas son el umbral suave.
+
+Para la última afirmación, $\hat{\beta}^{\,\lambda}_{\text{ridge}}=(X^\top X+\lambda I)^{-1}X^\top y$ es la imagen de $X^\top y$ por una matriz invertible, y una aplicación invertible manda a cero solo el cero. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+# Diseno ortonormal: X^T X = I. Ahi las dos soluciones son explicitas.
+rng = np.random.default_rng(81)
+n, p = 60, 5
+A = rng.normal(size=(n, p)); A -= A.mean(0)
+X, _ = np.linalg.qr(A)
+y = X @ np.array([2.0, -1.2, 0.35, 0.0, 0.8]) + rng.normal(scale=0.3, size=n)
+y -= y.mean()
+print("X^T X = I:", bool(np.allclose(X.T @ X, np.eye(p), atol=1e-12)))
+
+ols = X.T @ y
+lam = 0.7
+print("minimos cuadrados:", np.round(ols, 6))
+print()
+
+ridge = ols / (1 + lam)
+ridge_num = np.linalg.solve(X.T @ X + lam * np.eye(p), X.T @ y)
+print("ridge por la formula cerrada:", np.round(ridge, 6))
+print("ridge resolviendo el sistema:", np.round(ridge_num, 6))
+print("iguales a 1e-10:", bool(np.allclose(ridge, ridge_num, atol=1e-10)))
+print("el factor de encogimiento 1/(1+lambda) = %.6f, el mismo para los cinco" % (1 / (1 + lam)))
+print("razones b_ridge/b_ols:", np.round(ridge / ols, 6))
+print()
+
+lasso = np.sign(ols) * np.maximum(np.abs(ols) - lam / 2, 0.0)
+print("lasso por umbral suave:", np.round(lasso, 6))
+print("el umbral vale lambda/2 = %.3f" % (lam / 2))
+print("coeficientes exactamente cero en lasso:", int((lasso == 0).sum()), "de", p)
+print("coeficientes exactamente cero en ridge:", int((ridge == 0).sum()), "de", p)
+print("los que sobreviven se desplazan lambda/2 hacia cero:",
+      np.round(np.abs(ols[lasso != 0]) - np.abs(lasso[lasso != 0]), 6))
+```
+
+Las razones $\hat{\beta}_j^{\,\text{ridge}}/\hat{\beta}_j^{\,\text{MC}}$ salen las cinco iguales a $0{,}588235=1/1{,}7$, que es el encogimiento uniforme de la proposición. El lasso, en cambio, deja dos ceros exactos y mueve los otros tres exactamente $0{,}35=\lambda/2$ hacia el origen. Esa es toda la diferencia entre las dos penalizaciones, y explica por qué el lasso selecciona variables y ridge no.
+
+```{=html}
+<div class="viz-umbral">
+  <div class="controles">
+    <label>Penalización λ <input id="um-l" type="range" min="0" max="3" step="0.05" value="0.7"> <span id="um-l-v">0.70</span></label>
+    <label>Método
+      <select id="um-m">
+        <option value="ambos" selected>ridge y lasso</option>
+        <option value="ridge">solo ridge</option>
+        <option value="lasso">solo lasso</option>
+      </select>
+    </label>
+  </div>
+  <svg id="um-svg" viewBox="0 0 660 330" role="img" aria-label="El coeficiente que devuelve cada método como función del coeficiente de mínimos cuadrados, sobre ejes fijos: ridge es una recta de pendiente menor que uno y el lasso es la recta identidad desplazada con un tramo plano en cero."></svg>
+  <p class="lectura" id="um-lectura"></p>
+</div>
+<style>
+.viz-umbral { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-umbral .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-umbral label { display: flex; align-items: center; gap: .4rem; }
+.viz-umbral input[type=range] { width: 150px; padding: 0; }
+.viz-umbral select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-umbral svg { width: 100%; height: auto; display: block; }
+.viz-umbral .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_R = "#0F6E68", C_S = "#B4342E", C_I = "#7a7f8a";
+  var svg = document.getElementById("um-svg"), lec = document.getElementById("um-lectura");
+  var cl = document.getElementById("um-l"), el_ = document.getElementById("um-l-v");
+  var cm = document.getElementById("um-m");
+
+  // Marco anclado a constantes: los dos ejes van de -3 a 3, siempre.
+  var M = 3, X0 = 56, XW = 548, Y0 = 22, YH = 256;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(v) { return X0 + (v + M) / (2 * M) * XW; }
+  function py(v) { return Y0 + (M - v) / (2 * M) * YH; }
+  function ridge(b, l) { return b / (1 + l); }
+  function lasso(b, l) { return Math.sign(b) * Math.max(Math.abs(b) - l / 2, 0); }
+
+  function curva(f, color, l) {
+    var s = "";
+    for (var i = 0; i <= 240; i++) {
+      var b = -M + i * (2 * M) / 240;
+      s += (i ? " L" : "M") + px(b).toFixed(1) + " " + py(f(b, l)).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: s, stroke: color, "stroke-width": 2.6, fill: "none" }));
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var l = +cl.value, modo = cm.value;
+    el_.textContent = l.toFixed(2);
+
+    for (var t = -M; t <= M; t += 1) {
+      svg.appendChild(el("path", { d: "M" + px(t).toFixed(1) + " " + Y0 + " L" + px(t).toFixed(1) + " " + (Y0 + YH),
+        stroke: C_L, "stroke-width": 1, fill: "none", opacity: .45 }));
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(t).toFixed(1) + " L" + (X0 + XW) + " " + py(t).toFixed(1),
+        stroke: C_L, "stroke-width": 1, fill: "none", opacity: .45 }));
+      if (t) svg.appendChild(el("text", { x: X0 - 9, y: py(t) + 4, "text-anchor": "end", "font-size": 10.5,
+        fill: C_T, opacity: .65 }, String(t)));
+    }
+    // la identidad, de referencia
+    svg.appendChild(el("path", { d: "M" + px(-M).toFixed(1) + " " + py(-M).toFixed(1) + " L" + px(M).toFixed(1) + " " + py(M).toFixed(1),
+      stroke: C_I, "stroke-width": 1.4, fill: "none", "stroke-dasharray": "4 4", opacity: .8 }));
+    svg.appendChild(el("text", { x: px(M) - 4, y: py(M) + 16, "text-anchor": "end", "font-size": 11, fill: C_I }, "sin penalizar"));
+    svg.appendChild(el("text", { x: X0, y: 14, "font-size": 11.5, fill: C_T, opacity: .75 }, "coeficiente que devuelve el método"));
+    svg.appendChild(el("text", { x: X0 + XW / 2, y: 320, "text-anchor": "middle", "font-size": 11, fill: C_T, opacity: .75 },
+      "coeficiente de mínimos cuadrados"));
+
+    if (modo !== "lasso") curva(ridge, C_R, l);
+    if (modo !== "ridge") curva(lasso, C_S, l);
+
+    // el tramo muerto del lasso
+    if (modo !== "ridge" && l > 0) {
+      svg.appendChild(el("rect", { x: px(-l / 2).toFixed(1), y: Y0, width: (px(l / 2) - px(-l / 2)).toFixed(1),
+        height: YH, fill: C_S, "fill-opacity": .09 }));
+      svg.appendChild(el("text", { x: px(0).toFixed(1), y: Y0 + YH - 8, "text-anchor": "middle", "font-size": 11, fill: C_S },
+        "|β| ≤ λ/2 → 0"));
+    }
+
+    // un coeficiente de ejemplo, que se mueve con lambda
+    var ej = 1.6;
+    svg.appendChild(el("circle", { cx: px(ej).toFixed(1), cy: py(ridge(ej, l)).toFixed(1), r: 4.6, fill: C_R }));
+    svg.appendChild(el("circle", { cx: px(ej).toFixed(1), cy: py(lasso(ej, l)).toFixed(1), r: 4.6, fill: C_S }));
+
+    lec.innerHTML = "Con λ = <strong>" + l.toFixed(2) + "</strong>, ridge multiplica todo coeficiente por " +
+      "1/(1+λ) = <strong>" + (1 / (1 + l)).toFixed(4) + "</strong>: una recta por el origen, de pendiente menor " +
+      "que uno, que nunca toca el cero salvo en el cero. El lasso resta λ/2 = <strong>" + (l / 2).toFixed(3) +
+      "</strong> al valor absoluto y corta: todo coeficiente con |β| ≤ " + (l / 2).toFixed(3) +
+      " sale exactamente cero (Proposición 8.4). Un coeficiente de 1,60 sale <strong>" + ridge(ej, l).toFixed(4) +
+      "</strong> con ridge y <strong>" + lasso(ej, l).toFixed(4) + "</strong> con lasso.";
+  }
+
+  cl.addEventListener("input", dibujar);
+  cm.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Qué encoge ridge, exactamente
+
+La forma cerrada dice cuánto encoge cada **coeficiente**; la descomposición en valores singulares dice cuánto encoge cada **dirección**, que es lo que explica por qué funciona.
+
+::: {.proposicion}
+**Proposición 8.5 (ridge en la base de la SVD).** Sea $X=UDV^\top$ la descomposición en valores singulares de la matriz de diseño centrada, con $D=\operatorname{diag}(d_1,\dots,d_p)$. Entonces el ajuste por ridge es
+$$\hat{y}^{\,\lambda}=S_\lambda\,y=\sum_{j=1}^{p}u_j\,\frac{d_j^2}{d_j^2+\lambda}\,u_j^\top y,$$
+y los **grados de libertad efectivos** valen
+$$\text{gl}(\lambda)=\operatorname{tr}(S_\lambda)=\sum_{j=1}^{p}\frac{d_j^2}{d_j^2+\lambda}.$$
+La función $\text{gl}$ es estrictamente decreciente, vale $\operatorname{rango}(X)$ en $\lambda=0$ y tiende a cero cuando $\lambda\to\infty$. El factor de la dirección $j$ es tanto menor cuanto menor es $d_j$: ridge encoge más las direcciones en las que los datos varían menos.
+:::
+
+::: {.demostracion}
+*Demostración.* Sustituyendo $X=UDV^\top$ y usando $V^\top V=I$,
+$$X(X^\top X+\lambda I)^{-1}X^\top=UDV^\top\big(VD^2V^\top+\lambda VV^\top\big)^{-1}VDU^\top
+=UD\big(D^2+\lambda I\big)^{-1}DU^\top,$$
+y la matriz central es diagonal con entradas $d_j^2/(d_j^2+\lambda)$. Escribiendo el producto columna a columna se obtiene la suma del enunciado.
+
+Para la traza, $\operatorname{tr}(S_\lambda)=\operatorname{tr}\big(D^2(D^2+\lambda I)^{-1}U^\top U\big)=\sum_j d_j^2/(d_j^2+\lambda)$, por la invariancia cíclica y $U^\top U=I$. Cada sumando es estrictamente decreciente en $\lambda$ cuando $d_j>0$, y vale $1$ en $\lambda=0$; el número de $d_j$ no nulos es el rango de $X$. El límite en infinito es cero término a término.
+
+Para la última afirmación basta ver el factor como función de $d$: con $\lambda$ fijo, $d^2/(d^2+\lambda)$ es creciente en $d$, así que un valor singular pequeño recibe un factor pequeño. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+# Un diseno con una direccion casi colineal: la sexta columna repite la primera.
+rng = np.random.default_rng(85)
+n, p = 80, 6
+X = rng.normal(size=(n, p))
+X[:, 5] = X[:, 0] + 0.02 * rng.normal(size=n)
+X -= X.mean(0)
+y = X @ np.array([1.5, -0.8, 0.4, 0.0, 0.9, 0.0]) + rng.normal(scale=0.6, size=n)
+y -= y.mean()
+
+U, d, Vt = np.linalg.svd(X, full_matrices=False)
+print("valores singulares:", np.round(d, 4))
+print("el menor es %.4f, unas %d veces menor que el mayor" % (d[-1], round(d[0] / d[-1])))
+print()
+
+for lam in [0.0, 1.0, 25.0]:
+    S = X @ np.linalg.solve(X.T @ X + lam * np.eye(p), X.T)   # la sombrero de ridge
+    factores = d ** 2 / (d ** 2 + lam)
+    ajuste_svd = U @ (factores * (U.T @ y))
+    print("lambda = %4.1f" % lam)
+    print("   factores d_j^2/(d_j^2+lambda):", np.round(factores, 6))
+    print("   el ajuste por SVD coincide con S y:", bool(np.allclose(ajuste_svd, S @ y, atol=1e-10)))
+    print("   grados de libertad efectivos: traza(S) = %.6f, suma de factores = %.6f"
+          % (float(np.trace(S)), float(factores.sum())))
+
+print()
+print("en lambda = 0 los gl valen %.4f, que es el rango de X" % float((d ** 2 / d ** 2).sum()))
+print("al crecer lambda decrecen siempre:",
+      all(float((d**2/(d**2+a)).sum()) > float((d**2/(d**2+b)).sum())
+          for a, b in zip([0., .5, 2, 10, 50], [.5, 2, 10, 50, 200])))
+print("con lambda = 1 se pierde %.4f de un grado de libertad, y lo pierde casi entero la direccion colineal"
+      % (6 - float((d**2/(d**2+1.0)).sum())))
+```
+
+La tabla dice lo que la proposición prometía, con números. El menor valor singular vale $0{,}1072$ frente a $13{,}13$ del mayor, unas $122$ veces menos: es la dirección que separa las dos columnas casi iguales. Con $\lambda=1$, las cinco direcciones informativas conservan factores entre $0{,}9856$ y $0{,}9942$ —prácticamente intactas— mientras que la colineal cae a $0{,}0114$. Los grados de libertad bajan de $6$ a $4{,}957$: se pierde un parámetro entero, y lo pierde la dirección que no llevaba información.
+
+Ese número continuo es el que sustituye al $d+1$ de la lección 7. Con él, el $C_p$ de la Definición 7.3 sigue teniendo sentido para ridge, cambiando $d+1$ por $\text{gl}(\lambda)$.
+
+```{=html}
+<div class="viz-svd">
+  <div class="controles">
+    <label>Penalización λ <input id="sv-l" type="range" min="0" max="60" step="0.5" value="1"> <span id="sv-l-v">1.0</span></label>
+    <label>Colinealidad
+      <select id="sv-c">
+        <option value="0.107">fuerte (d₆ = 0.11)</option>
+        <option value="1.5" selected>moderada (d₆ = 1.5)</option>
+        <option value="6">ninguna (d₆ = 6)</option>
+      </select>
+    </label>
+  </div>
+  <svg id="sv-svg" viewBox="0 0 660 300" role="img" aria-label="Una barra por dirección con la altura del factor de encogimiento, sobre un eje fijo de cero a uno, y encima el total de grados de libertad efectivos como suma de esas alturas."></svg>
+  <p class="lectura" id="sv-lectura"></p>
+</div>
+<style>
+.viz-svd { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-svd .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-svd label { display: flex; align-items: center; gap: .4rem; }
+.viz-svd input[type=range] { width: 150px; padding: 0; }
+.viz-svd select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-svd svg { width: 100%; height: auto; display: block; }
+.viz-svd .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_B = "#0F6E68", C_M = "#B4342E";
+  var svg = document.getElementById("sv-svg"), lec = document.getElementById("sv-lectura");
+  var cl = document.getElementById("sv-l"), el_ = document.getElementById("sv-l-v");
+  var cc = document.getElementById("sv-c");
+
+  var BASE = [13.13, 9.97, 9.14, 8.90, 8.29];
+  // Marco anclado: seis ranuras fijas, eje vertical de 0 a 1 siempre.
+  var X0 = 62, XW = 540, Y0 = 46, YH = 196, NB = 6;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function py(v) { return Y0 + (1 - v) * YH; }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var l = +cl.value, dmin = +cc.value;
+    el_.textContent = l.toFixed(1);
+    var d = BASE.concat([dmin]);
+
+    for (var t = 0; t <= 1.0001; t += 0.25) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(t).toFixed(1) + " L" + (X0 + XW) + " " + py(t).toFixed(1),
+        stroke: C_L, "stroke-width": 1, fill: "none", opacity: .5 }));
+      svg.appendChild(el("text", { x: X0 - 9, y: py(t) + 4, "text-anchor": "end", "font-size": 10.5,
+        fill: C_T, opacity: .65 }, t.toFixed(2)));
+    }
+    svg.appendChild(el("text", { x: X0, y: 18, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "factor de encogimiento de cada dirección"));
+    svg.appendChild(el("text", { x: X0 + XW / 2, y: 290, "text-anchor": "middle", "font-size": 11, fill: C_T, opacity: .75 },
+      "direcciones, de mayor a menor valor singular"));
+
+    var an = XW / NB, gl = 0;
+    for (var j = 0; j < NB; j++) {
+      var f = d[j] * d[j] / (d[j] * d[j] + l);
+      gl += f;
+      var col = (j === NB - 1) ? C_M : C_B;
+      svg.appendChild(el("rect", { x: (X0 + j * an + an * 0.18).toFixed(1), y: py(f).toFixed(1),
+        width: (an * 0.64).toFixed(1), height: (YH - (py(f) - Y0)).toFixed(1),
+        fill: col, "fill-opacity": .22, stroke: col, "stroke-width": 1.6 }));
+      svg.appendChild(el("text", { x: (X0 + j * an + an / 2).toFixed(1), y: (py(f) - 7).toFixed(1),
+        "text-anchor": "middle", "font-size": 10.5, fill: col }, f.toFixed(3)));
+      svg.appendChild(el("text", { x: (X0 + j * an + an / 2).toFixed(1), y: (Y0 + YH + 15).toFixed(1),
+        "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "d=" + d[j].toFixed(2)));
+    }
+
+    lec.innerHTML = "Con λ = <strong>" + l.toFixed(1) + "</strong>, los grados de libertad efectivos valen " +
+      "<strong>" + gl.toFixed(4) + "</strong> de 6: son la suma de las seis alturas (Proposición 8.5). " +
+      "La sexta dirección, en rojo, tiene el valor singular más pequeño y recibe el factor más bajo, <strong>" +
+      (d[5] * d[5] / (d[5] * d[5] + l)).toFixed(4) + "</strong>, frente al <strong>" +
+      (d[0] * d[0] / (d[0] * d[0] + l)).toFixed(4) + "</strong> de la primera. Cuanto más colineal es el diseño, " +
+      "más separado queda ese valor singular del resto y más selectivo es el encogimiento.";
+  }
+
+  cl.addEventListener("input", dibujar);
+  cc.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Por qué encoger mejora, y cuánto
+
+Encoger introduce sesgo a propósito. La proposición siguiente dice que ese cambio siempre sale a cuenta si se hace con medida, y da la medida exacta.
+
+::: {.proposicion}
+**Proposición 8.6 (siempre hay un encogimiento que gana).** En diseño ortonormal, con $y=X\beta+\varepsilon$ y $\varepsilon$ de media cero, varianza $\sigma^2$ e incorrelado, el error cuadrático medio de la estimación ridge vale
+$$\text{ECM}(\lambda)=E\big\lVert\hat{\beta}^{\,\lambda}-\beta\big\rVert^2=\frac{\lambda^2\lVert\beta\rVert^2+p\,\sigma^2}{(1+\lambda)^2}.$$
+Esta función cumple $\text{ECM}'(0)=-2p\sigma^2<0$, alcanza su mínimo en
+$$\lambda^{*}=\frac{p\,\sigma^2}{\lVert\beta\rVert^2},$$
+y en ese punto
+$$\frac{\text{ECM}(\lambda^{*})}{\text{ECM}(0)}=\frac{\lVert\beta\rVert^2}{\lVert\beta\rVert^2+p\,\sigma^2}\;<\;1 .$$
+En particular, **para todo** $\beta$ y todo $\sigma^2>0$ existe un $\lambda>0$ cuyo error cuadrático medio es estrictamente menor que el de mínimos cuadrados.
+:::
+
+::: {.demostracion}
+*Demostración.* Con $X^\top X=I$ se tiene $\hat{\beta}^{\,\text{MC}}=\beta+z$ con $E[z]=0$ y $\operatorname{Cov}(z)=\sigma^2 I$, y por la Proposición 8.4, $\hat{\beta}^{\,\lambda}=(\beta+z)/(1+\lambda)$. Entonces
+$$\hat{\beta}^{\,\lambda}-\beta=\frac{\beta+z-(1+\lambda)\beta}{1+\lambda}=\frac{z-\lambda\beta}{1+\lambda},$$
+y tomando norma al cuadrado y esperanza, el término cruzado se anula porque $E[z]=0$:
+$$\text{ECM}(\lambda)=\frac{\lambda^2\lVert\beta\rVert^2+E\lVert z\rVert^2}{(1+\lambda)^2}=\frac{\lambda^2\lVert\beta\rVert^2+p\sigma^2}{(1+\lambda)^2}.$$
+El primer sumando del numerador es el sesgo al cuadrado y el segundo la varianza.
+
+Escribiendo $B=\lVert\beta\rVert^2$ y derivando,
+$$\text{ECM}'(\lambda)=\frac{2\lambda B(1+\lambda)^2-(\lambda^2B+p\sigma^2)\,2(1+\lambda)}{(1+\lambda)^4}
+=\frac{2\big(\lambda B-p\sigma^2\big)}{(1+\lambda)^3}.$$
+La derivada es negativa para $\lambda<p\sigma^2/B$ y positiva después, así que el mínimo está en $\lambda^{*}=p\sigma^2/B$; en $\lambda=0$ vale $-2p\sigma^2<0$, que es la afirmación de que mínimos cuadrados nunca es óptimo.
+
+Evaluando, con $L=p\sigma^2/B$,
+$$\text{ECM}(L)=\frac{L^2B+p\sigma^2}{(1+L)^2}=\frac{L\,p\sigma^2+p\sigma^2}{(1+L)^2}=\frac{p\sigma^2}{1+L}=\frac{p\sigma^2 B}{B+p\sigma^2},$$
+y como $\text{ECM}(0)=p\sigma^2$, el cociente es $B/(B+p\sigma^2)<1$. [∎]{.fin-demo}
+:::
+
+El factor óptimo de encogimiento es $1/(1+\lambda^{*})=B/(B+p\sigma^2)$, que es la Proposición 7.4 de Estadística 7 con un vector en lugar de un escalar: allí el factor era $\mu^2/(\mu^2+\sigma^2/n)$ y aquí es la misma expresión con $\lVert\beta\rVert^2$ en el numerador. El $\lambda^{*}$ depende de $\beta$ y de $\sigma^2$, que no se conocen, y por eso en la práctica se busca por validación cruzada; lo que la proposición garantiza es que la búsqueda no es en vano.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(86)
+n, p, s = 90, 5, 0.9
+A = rng.normal(size=(n, p)); A -= A.mean(0)
+X, _ = np.linalg.qr(A)                       # ortonormal, para usar la forma cerrada
+beta = np.array([1.1, -0.7, 0.5, 0.3, -0.2])
+B = float(beta @ beta)
+
+def ecm(l):
+    return (l ** 2 * B + p * s ** 2) / (1 + l) ** 2
+
+lam_opt = p * s ** 2 / B
+print("||beta||^2 = %.4f | p*sigma^2 = %.4f" % (B, p * s ** 2))
+print("lambda* = p*sigma^2/||beta||^2 = %.6f" % lam_opt)
+print()
+print("ECM(0)       = %.6f   (vale p*sigma^2, el de minimos cuadrados)" % ecm(0.0))
+print("ECM(lambda*) = %.6f" % ecm(lam_opt))
+print("razon = %.6f" % (ecm(lam_opt) / ecm(0.0)))
+print("y ||beta||^2/(||beta||^2 + p*sigma^2) = %.6f" % (B / (B + p * s ** 2)))
+print()
+
+M = 20000
+for l in [0.0, lam_opt, 2 * lam_opt]:
+    acc = 0.0
+    for _ in range(M):
+        y = X @ beta + rng.normal(scale=s, size=n)
+        bh = (X.T @ y) / (1 + l)
+        acc += float((bh - beta) @ (bh - beta))
+    print("lambda = %.4f -> ECM simulado %.6f | teorico %.6f" % (l, acc / M, ecm(l)))
+
+rejilla = np.linspace(0, 6, 60001)
+print()
+print("argmin sobre la rejilla: %.4f | lambda* = %.4f" % (rejilla[int(np.argmin(ecm(rejilla)))], lam_opt))
+print("la derivada en cero vale -2*p*sigma^2 = %.4f, negativa siempre" % (-2 * p * s ** 2))
+```
+
+```{=html}
+<div class="viz-ecm">
+  <div class="controles">
+    <label>Señal ‖β‖² <input id="ec-b" type="range" min="0.2" max="12" step="0.2" value="2.08"> <span id="ec-b-v">2.1</span></label>
+    <label>Ruido σ <input id="ec-s" type="range" min="0.2" max="2" step="0.05" value="0.9"> <span id="ec-s-v">0.90</span></label>
+    <label><input id="ec-d" type="checkbox" checked> separar sesgo y varianza</label>
+  </div>
+  <svg id="ec-svg" viewBox="0 0 660 320" role="img" aria-label="El error cuadrático medio de ridge contra la penalización, sobre ejes fijos, descompuesto en sesgo al cuadrado creciente y varianza decreciente, con el mínimo marcado y comparado con el valor en cero."></svg>
+  <p class="lectura" id="ec-lectura"></p>
+</div>
+<style>
+.viz-ecm { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-ecm .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-ecm label { display: flex; align-items: center; gap: .4rem; }
+.viz-ecm input[type=range] { width: 130px; padding: 0; }
+.viz-ecm svg { width: 100%; height: auto; display: block; }
+.viz-ecm .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_E = "#1f2430", C_S = "#B4342E", C_V = "#0F6E68";
+  var svg = document.getElementById("ec-svg"), lec = document.getElementById("ec-lectura");
+  var cb = document.getElementById("ec-b"), eb = document.getElementById("ec-b-v");
+  var cs = document.getElementById("ec-s"), es = document.getElementById("ec-s-v");
+  var cd = document.getElementById("ec-d");
+
+  // Marco anclado a constantes: lambda de 0 a 10, error de 0 a 10, siempre.
+  var P = 5, LMAX = 10, EMAX = 10, X0 = 48, XW = 576, Y0 = 24, YH = 244;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(l) { return X0 + l / LMAX * XW; }
+  function py(v) { return Y0 + (EMAX - Math.min(v, EMAX)) / EMAX * YH; }
+
+  function curva(f, color, ancho, guion) {
+    var s = "";
+    for (var i = 0; i <= 200; i++) {
+      var l = i * LMAX / 200;
+      s += (i ? " L" : "M") + px(l).toFixed(1) + " " + py(f(l)).toFixed(1);
+    }
+    var at = { d: s, stroke: color, "stroke-width": ancho, fill: "none" };
+    if (guion) at["stroke-dasharray"] = guion;
+    svg.appendChild(el("path", at));
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var B = +cb.value, s = +cs.value, sep = cd.checked;
+    eb.textContent = B.toFixed(1); es.textContent = s.toFixed(2);
+    var V = P * s * s;
+
+    var sesgo = function (l) { return l * l * B / ((1 + l) * (1 + l)); };
+    var vari  = function (l) { return V / ((1 + l) * (1 + l)); };
+    var ecm   = function (l) { return sesgo(l) + vari(l); };
+    var lopt = V / B;
+
+    for (var t = 0; t <= EMAX; t += 2) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(t).toFixed(1) + " L" + (X0 + XW) + " " + py(t).toFixed(1),
+        stroke: C_L, "stroke-width": 1, fill: "none", opacity: .5 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(t) + 4, "text-anchor": "end", "font-size": 10.5,
+        fill: C_T, opacity: .65 }, String(t)));
+    }
+    svg.appendChild(el("text", { x: X0, y: 14, "font-size": 11.5, fill: C_T, opacity: .75 }, "error cuadrático medio"));
+    svg.appendChild(el("text", { x: X0 + XW / 2, y: 312, "text-anchor": "middle", "font-size": 11, fill: C_T, opacity: .75 },
+      "penalización λ"));
+
+    if (sep) { curva(sesgo, C_S, 1.9, "5 4"); curva(vari, C_V, 1.9, "5 4"); }
+    curva(ecm, C_E, 2.7);
+
+    // el valor en cero, que es el de minimos cuadrados
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(V).toFixed(1) + " L" + (X0 + XW) + " " + py(V).toFixed(1),
+      stroke: C_T, "stroke-width": 1.2, fill: "none", "stroke-dasharray": "2 5", opacity: .55 }));
+    svg.appendChild(el("text", { x: X0 + XW - 4, y: py(V) - 7, "text-anchor": "end", "font-size": 11, fill: C_T, opacity: .75 },
+      "mínimos cuadrados, pσ² = " + V.toFixed(2)));
+
+    // el minimo
+    if (lopt <= LMAX) {
+      svg.appendChild(el("path", { d: "M" + px(lopt).toFixed(1) + " " + py(ecm(lopt)).toFixed(1) + " L" + px(lopt).toFixed(1) + " " + (Y0 + YH),
+        stroke: C_E, "stroke-width": 1.4, fill: "none", "stroke-dasharray": "4 4", opacity: .7 }));
+      svg.appendChild(el("circle", { cx: px(lopt).toFixed(1), cy: py(ecm(lopt)).toFixed(1), r: 5, fill: C_E }));
+      svg.appendChild(el("text", { x: px(lopt) + 8, y: py(ecm(lopt)) - 8, "font-size": 11, fill: C_E }, "λ* = " + lopt.toFixed(2)));
+    }
+    svg.appendChild(el("circle", { cx: px(0).toFixed(1), cy: py(V).toFixed(1), r: 4.2, fill: C_T, "fill-opacity": .6 }));
+
+    lec.innerHTML = "Con ‖β‖² = <strong>" + B.toFixed(1) + "</strong> y σ = <strong>" + s.toFixed(2) +
+      "</strong>, mínimos cuadrados paga pσ² = <strong>" + V.toFixed(3) + "</strong>. El sesgo al cuadrado " +
+      "(rojo) sube de cero hacia ‖β‖² y la varianza (verde) baja de pσ² hacia cero; su suma tiene el mínimo en " +
+      "λ* = pσ²/‖β‖² = <strong>" + lopt.toFixed(3) + "</strong>, donde vale <strong>" + ecm(lopt).toFixed(3) +
+      "</strong>. La razón es ‖β‖²/(‖β‖²+pσ²) = <strong>" + (B / (B + V)).toFixed(4) +
+      "</strong>, siempre menor que uno: la curva sale de λ = 0 con pendiente −2pσ², así que encoger un poco " +
+      "gana siempre (Proposición 8.6). Cuanta menos señal frente a ruido, más a la derecha está el óptimo.";
+  }
+
+  cb.addEventListener("input", dibujar);
+  cs.addEventListener("input", dibujar);
+  cd.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Elegir el $\lambda$, y qué mejora de verdad
+
+::: {.proposicion}
+**Proposición 8.7 (lo que el encogimiento arregla no es lo mismo que lo que parece).** En un diseño con dos columnas casi iguales, mínimos cuadrados puede devolver coeficientes muy lejos de los verdaderos y, a la vez, predicciones casi tan buenas como las mejores posibles: los errores de los dos coeficientes se cancelan en la combinación $x_1\beta_1+x_6\beta_6$. Encoger corrige lo primero mucho más que lo segundo.
+:::
+
+::: {.demostracion}
+*Demostración.* Sean $x_1$ y $x_6=x_1+\delta$ con $\lVert\delta\rVert$ pequeño. Para cualquier $c$, sustituir $(\beta_1,\beta_6)$ por $(\beta_1+c,\beta_6-c)$ cambia el predictor lineal en $c\,x_1-c\,x_6=-c\,\delta$, de norma $|c|\lVert\delta\rVert$. El error de predicción cambia en una cantidad de ese orden mientras que el error de los coeficientes cambia en $\sqrt{2}\,|c|$, que no depende de $\lVert\delta\rVert$. Tomando $\lVert\delta\rVert\to 0$ con $c$ fijo, la primera diferencia tiende a cero y la segunda no. Es decir, la dirección $(1,-1)$ en el espacio de coeficientes es casi invisible para la predicción y plenamente visible para el error de estimación, que es exactamente la dirección de valor singular pequeño de la Proposición 8.5. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+from sklearn.model_selection import KFold
+
+# El mismo diseno casi colineal, ahora con datos de prueba aparte.
+rng = np.random.default_rng(87)
+n, p = 80, 6
+def genera(m):
+    Z = rng.normal(size=(m, p))
+    Z[:, 5] = Z[:, 0] + 0.02 * rng.normal(size=m)
+    return Z
+beta = np.array([1.5, -0.8, 0.4, 0.0, 0.9, 0.0])
+X = genera(n); y = X @ beta + rng.normal(scale=0.6, size=n)
+Xp = genera(4000); yp = Xp @ beta + rng.normal(scale=0.6, size=4000)
+mx, my = X.mean(0), y.mean()
+
+def ajusta(Z, t, lam):
+    zc, tc = Z - Z.mean(0), t - t.mean()
+    return np.linalg.solve(zc.T @ zc + lam * np.eye(p), zc.T @ tc), Z.mean(0), t.mean()
+
+def predice(Z, b, cx, cy):
+    return (Z - cx) @ b + cy
+
+rejilla = np.concatenate([[0.0], np.logspace(-3, 3, 61)])
+kf = KFold(n_splits=10, shuffle=True, random_state=0)
+cv = []
+for lam in rejilla:
+    err = []
+    for tr, te in kf.split(X):
+        b, cx, cy = ajusta(X[tr], y[tr], lam)
+        err.append(float(np.mean((y[te] - predice(X[te], b, cx, cy)) ** 2)))
+    cv.append(np.mean(err))
+cv = np.array(cv)
+mejor = float(rejilla[int(np.argmin(cv))])
+print("lambda elegido por validacion cruzada de 10 pliegues: %.4f" % mejor)
+print("error de validacion en ese lambda: %.6f" % cv.min())
+print("error de validacion en lambda = 0: %.6f" % cv[0])
+
+b0, cx, cy = ajusta(X, y, 0.0)
+bl, _, _ = ajusta(X, y, mejor)
+e0 = float(np.mean((yp - predice(Xp, b0, cx, cy)) ** 2))
+el = float(np.mean((yp - predice(Xp, bl, cx, cy)) ** 2))
+print()
+print("error de PRUEBA con lambda = 0     : %.6f" % e0)
+print("error de PRUEBA con el lambda de CV: %.6f" % el)
+print("ridge gana:", el < e0)
+print()
+Xc = X - mx
+d = np.linalg.svd(Xc, compute_uv=False)
+gl = float((d ** 2 / (d ** 2 + mejor)).sum())
+print("grados de libertad efectivos en ese lambda: %.4f de %d" % (gl, p))
+print("coeficientes verdaderos         :", np.round(beta, 4))
+print("coeficientes con lambda = 0     :", np.round(b0, 4))
+print("coeficientes con el lambda de CV:", np.round(bl, 4))
+print()
+print("error en los coeficientes, ||b - beta||: %.4f con lambda = 0, %.4f con el de CV"
+      % (float(np.linalg.norm(b0 - beta)), float(np.linalg.norm(bl - beta))))
+print("la mejora en los coeficientes es de un factor %.2f" %
+      (float(np.linalg.norm(b0 - beta)) / float(np.linalg.norm(bl - beta))))
+print("la mejora en el error de prueba es de %.6f, casi nada" % (e0 - el))
+```
+
+Los números merecen leerse con cuidado, porque no dicen lo que se suele contar. Mínimos cuadrados devuelve $\hat{\beta}_1=-0{,}62$ y $\hat{\beta}_6=2{,}15$ cuando la verdad es $1{,}5$ y $0$: el par colineal se reparte la señal con signos opuestos. Ridge, con el $\lambda=0{,}2512$ que elige la validación cruzada, devuelve $0{,}70$ y $0{,}82$, y el error de los coeficientes baja de $3{,}03$ a $1{,}15$, un factor de $2{,}63$.
+
+En cambio el error de prueba mejora en $0{,}000079$, que es nada. Las dos cosas son ciertas a la vez y la Proposición 8.7 explica por qué: los dos errores de coeficiente se cancelan al predecir. **Si lo que se quiere es interpretar los coeficientes, encoger cambia el resultado; si lo que se quiere es predecir en este diseño, casi no lo cambia.** Confundir las dos preguntas es lo que hace que la regularización parezca a veces mágica y a veces inútil.
+
+## 6. Contraste con la librería
+
+Esta lección es de nivel **L3**. Se contrastan las dos formas cerradas y los grados de libertad. El cuidado está en las convenciones, que no coinciden: `Ridge` minimiza $\lVert y-X\beta\rVert^2+\alpha\lVert\beta\rVert^2$, así que $\alpha=\lambda$; pero `Lasso` minimiza $\frac{1}{2n}\lVert y-X\beta\rVert^2+\alpha\lVert\beta\rVert_1$, y multiplicando por $2n$ se ve que $\lambda=2n\alpha$.
+
+```{pyodide}
+import numpy as np
+from sklearn.linear_model import Ridge, Lasso
+
+rng = np.random.default_rng(88)
+n, p = 70, 6
+X = rng.normal(size=(n, p)); X -= X.mean(0)
+y = X @ np.array([1.3, -0.9, 0.0, 0.5, 0.0, -0.4]) + rng.normal(scale=0.5, size=n)
+y -= y.mean()
+
+# 1. ridge: sklearn minimiza ||y - Xb||^2 + alpha*||b||^2, o sea alpha = lambda.
+lam = 2.5
+mio = np.linalg.solve(X.T @ X + lam * np.eye(p), X.T @ y)
+suyo = Ridge(alpha=lam, fit_intercept=False).fit(X, y).coef_
+print("ridge propio :", np.round(mio, 10))
+print("sklearn Ridge:", np.round(suyo, 10))
+print("iguales a 1e-10:", bool(np.allclose(mio, suyo, atol=1e-10)))
+
+# 2. lasso en diseno ortonormal, donde hay forma cerrada.
+A = rng.normal(size=(n, p)); A -= A.mean(0)
+Q, _ = np.linalg.qr(A)
+t = Q @ np.array([1.8, -1.1, 0.25, 0.0, 0.7, -0.15]) + rng.normal(scale=0.3, size=n)
+t -= t.mean()
+ols = Q.T @ t
+lam2 = 0.6
+umbral = np.sign(ols) * np.maximum(np.abs(ols) - lam2 / 2, 0.0)
+# sklearn minimiza (1/(2n))||y - Xb||^2 + alpha*||b||_1  =>  lambda = 2*n*alpha
+sk = Lasso(alpha=lam2 / (2 * n), fit_intercept=False, tol=1e-14, max_iter=500000).fit(Q, t)
+print()
+print("lasso por umbral suave:", np.round(umbral, 8))
+print("sklearn Lasso         :", np.round(sk.coef_, 8))
+print("iguales a 1e-8:", bool(np.allclose(umbral, sk.coef_, atol=1e-8)))
+print("mismos ceros exactos:", bool(((umbral == 0) == (sk.coef_ == 0)).all()))
+print("la equivalencia de parametros es lambda = 2*n*alpha: %.6f = 2*%d*%.8f" % (lam2, n, lam2 / (2 * n)))
+
+# 3. los grados de libertad efectivos, contra la traza de la sombrero
+d = np.linalg.svd(X, compute_uv=False)
+S = X @ np.linalg.solve(X.T @ X + lam * np.eye(p), X.T)
+print()
+print("gl por la formula de la SVD: %.10f" % float((d ** 2 / (d ** 2 + lam)).sum()))
+print("gl por la traza de S       : %.10f" % float(np.trace(S)))
+print("iguales a 1e-10:", bool(abs(float((d**2/(d**2+lam)).sum()) - float(np.trace(S))) < 1e-10))
+```
+
+La equivalencia $\lambda=2n\alpha$ conviene anotarla: comparar un $\lambda$ propio con un $\alpha$ de la librería sin traducirlo produce discrepancias que parecen errores de implementación y son de unidades.
+
+## Ejercicios
+
+### Ejercicio 1, El factor de encogimiento óptimo
+
+Con la Proposición 8.6, calcular el factor $1/(1+\lambda^{*})$ para $p=10$, $\sigma^2=1$ y $\lVert\beta\rVert^2=5$.
+
+```{pyodide}
+#| exercise: ex_factor
+p, s2, B = 10, 1.0, 5.0
+
+factor = ______
+
+print(round(factor, 6))
+float(factor)
+```
+
+::: {.hint exercise="ex_factor"}
+$\lambda^{*}=p\sigma^2/\lVert\beta\rVert^2$, y el factor es $1/(1+\lambda^{*})$, que se simplifica a $B/(B+p\sigma^2)$.
+:::
+
+::: {.solution exercise="ex_factor"}
+```{pyodide}
+p, s2, B = 10, 1.0, 5.0
+
+factor = B / (B + p * s2)
+
+print(round(factor, 6))
+float(factor)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_factor
+#| check: true
+if abs(result - 1/3) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: 1/3. Con diez predictores y esa señal, lo óptimo es quedarse con un tercio de cada coeficiente.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.333333 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuántos coeficientes anula el lasso
+
+En diseño ortonormal, con los coeficientes de mínimos cuadrados dados y $\lambda=0{,}9$, contar cuántos anula el lasso.
+
+```{pyodide}
+#| exercise: ex_ceros
+import numpy as np
+ols = np.array([1.2, -0.4, 0.35, -0.05, 0.62, 0.44])
+lam = 0.9
+
+ceros = ______
+
+print(ceros)
+int(ceros)
+```
+
+::: {.hint exercise="ex_ceros"}
+El umbral suave anula todo coeficiente con $|\hat\beta|\le\lambda/2$. Aquí $\lambda/2=0{,}45$.
+:::
+
+::: {.solution exercise="ex_ceros"}
+```{pyodide}
+import numpy as np
+ols = np.array([1.2, -0.4, 0.35, -0.05, 0.62, 0.44])
+lam = 0.9
+
+ceros = int((np.abs(ols) <= lam / 2).sum())
+
+print(ceros)
+int(ceros)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_ceros
+#| check: true
+if result == 4:
+    feedback = {"correct": True, "message": "Correcto: 4. Solo sobreviven 1.2 y 0.62, los únicos que superan 0.45 en valor absoluto.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 4 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 8**:
+
+1. Dibujar el camino completo de los coeficientes de ridge y del lasso sobre el mismo diseño, con $\lambda$ en escala logarítmica de $10^{-3}$ a $10^{3}$. Anotar en qué orden el lasso va anulando coeficientes y comprobar que ridge no anula ninguno en todo el recorrido.
+2. Comprobar la Proposición 8.6 fuera del diseño ortonormal: simular con un diseño cualquiera, estimar el ECM por Monte Carlo para una rejilla de $\lambda$ y ver si el mínimo sigue estando en un $\lambda>0$. Anotar cuánto se parece el óptimo empírico a $p\sigma^2/\lVert\beta\rVert^2$ y de qué depende la diferencia.
+3. Reproducir el experimento de la sección 5 variando la colinealidad, de $0{,}002$ a $0{,}5$ en la perturbación. Graficar las dos mejoras —la de los coeficientes y la del error de prueba— contra el menor valor singular, y anotar en `50-Errores/` por qué una crece y la otra no.
+
+## Del libro
+
+*An Introduction to Statistical Learning with Applications in Python* trata este material en §6.2 *Shrinkage Methods*, con ridge en §6.2.1 *Ridge Regression*, el lasso en §6.2.2 *The Lasso* y la elección del parámetro en §6.2.3 *Selecting the Tuning Parameter*.
+
+**Preguntas para leer §6.2 con lápiz:**
+
+1. §6.2.1 insiste en estandarizar los predictores antes de aplicar ridge, y §6.1 no lo pedía. Con la Definición 8.1, ¿qué término del objetivo deja de tener sentido si dos columnas están en unidades distintas, y por qué la selección de subconjuntos no tenía ese problema?
+2. §6.2.2 explica los ceros del lasso con las regiones de restricción, el rombo y el círculo. Con la Proposición 8.4, ¿en qué punto de la demostración aparece la no derivabilidad que el rombo representa, y qué papel juega el subdiferencial?
+3. §6.2.3 elige el parámetro por validación cruzada. Con la Proposición 8.5, ¿qué habría que poner en lugar de $d+1$ para usar en su lugar el $C_p$ de la lección 7, y por qué ese número ya no es entero?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/ridge-y-lasso.md`, enlazada a [[seleccion-de-subconjuntos]], [[svd]] y [[sesgo-varianza]]. Conviene rehacer a mano la demostración de la Proposición 8.5: sustituir la SVD en la fórmula cerrada y ver cómo $V$ se cancela deja claro de una vez que ridge actúa por direcciones y no por columnas, que es lo que explica todo lo demás.
+
+```
+¿Qué minimiza ridge?::RSS + λ por la suma de los cuadrados de los coeficientes
+¿Cuál es su forma cerrada?::(XᵀX + λI)⁻¹Xᵀy
+¿Por qué existe siempre?::Porque los eigenvalores de XᵀX son ≥ 0 y sumar λI los desplaza a ≥ λ > 0
+¿Funciona con p > n?::Sí: es lo único que deja ajustar algo ahí
+¿Qué hace ridge en diseño ortonormal?::Multiplica todos los coeficientes por el mismo factor 1/(1+λ)
+¿Y el lasso?::El umbral suave: resta λ/2 al valor absoluto y corta en cero
+¿Cuándo anula el lasso un coeficiente?::Cuando |β̂| ≤ λ/2
+¿Puede ridge anular uno solo?::No: β̂ridge = 0 solo si Xᵀy = 0, y entonces se anulan todos
+¿Cuánto encoge ridge la dirección j?::Por el factor d_j²/(d_j²+λ), menor cuanto menor sea d_j
+¿Qué son los grados de libertad efectivos?::La traza de S_λ, que vale la suma de d_j²/(d_j²+λ)
+¿Qué valen en λ = 0?::El rango de X, y decrecen de forma continua hasta cero
+¿Existe siempre un λ que mejora mínimos cuadrados?::Sí: ECM'(0) = −2pσ² < 0, así que encoger un poco siempre gana
+¿Cuál es el λ óptimo?::pσ²/‖β‖², y el factor óptimo es ‖β‖²/(‖β‖²+pσ²)
+¿Qué mejora más el encogimiento con colinealidad?::Los coeficientes, mucho más que la predicción: los errores se cancelan al predecir
+¿Cómo se traduce el alpha de sklearn?::En Ridge, alpha = λ; en Lasso, λ = 2·n·alpha
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 8.2 se demuestra con la semidefinición positiva de $X^\top X$ y el desplazamiento de sus eigenvalores, y se comprueba con $n=20$ y $p=50$: el rango pasa de $19$ a $50$ para todo $\lambda>0$, el eigenvalor menor vale exactamente $\lambda$, y de los $50$ eigenvalores $31$ son cero. La Proposición 8.4 se demuestra separando el objetivo componente a componente y resolviendo las tres ramas del lasso con el subdiferencial en el origen; se comprueba en diseño ortonormal, donde las cinco razones de ridge salen todas $0{,}588235$ y el lasso deja dos ceros exactos moviendo los otros tres exactamente $0{,}35=\lambda/2$. La Proposición 8.5 se demuestra sustituyendo la SVD y usando la invariancia cíclica de la traza; se comprueba contra la traza de la matriz sombrero a diez decimales, y sobre un diseño con $d_6/d_1\approx 1/122$ los grados de libertad bajan de $6$ a $4{,}957$ con $\lambda=1$, con el factor de la dirección colineal en $0{,}0114$ frente a $0{,}9856$ o más de las otras cinco. La Proposición 8.6 se demuestra desarrollando la norma y derivando; se comprueba con $20\,000$ muestras, donde $\text{ECM}(\lambda^{*})$ da $1{,}374$ contra $4{,}050$ de mínimos cuadrados y la razón medida coincide con $\lVert\beta\rVert^2/(\lVert\beta\rVert^2+p\sigma^2)=0{,}339315$. La Proposición 8.7 se demuestra con el argumento de la dirección $(1,-1)$, y se mide: el error de los coeficientes mejora un factor $2{,}63$ y el de prueba $0{,}000079$. Los tres visuales se contrastaron contra estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** La descomposición en valores singulares y sus propiedades son de Álgebra 11. La convexidad estricta como criterio de unicidad del mínimo es de Álgebra 15. Los grados de libertad como traza de la matriz que lleva $y$ a su ajuste, y el $C_p$ que los usa, son de Machine Learning 7 y de Estadística 13. El compromiso entre sesgo y varianza en su versión escalar, con el factor $\mu^2/(\mu^2+\sigma^2/n)$, es la Proposición 7.4 de Estadística 7, que esta lección generaliza sin rehacer.
+
+**Lo que se enuncia sin demostrar.** Que el resultado de la Proposición 8.6 sigue valiendo fuera del diseño ortonormal —el teorema de Hoerl y Kennard— se menciona y no se demuestra: la demostración general necesita la descomposición del error en la base de la SVD con un $\lambda$ común a direcciones de escalas distintas, y aquí se deja como reto. Que la solución del lasso es única cuando las columnas están en posición general se usa implícitamente al hablar de «la» solución, y no se justifica.
+
+**Lo que viene de los libros.**
+
+- [*An Introduction to Statistical Learning with Applications in Python*](https://www.statlearning.com/) (James, Witten, Hastie, Tibshirani, Taylor; Springer, 2023), §6.2 *Shrinkage Methods* con sus tres subsecciones — citado por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La Proposición 8.2 enunciada con el desplazamiento exacto de los eigenvalores, que convierte «ridge funciona con $p>n$» en un enunciado sobre la hessiana y no en una propiedad afortunada. La Proposición 8.6 con el $\lambda^{*}$ explícito y la razón de errores cuadráticos medios en forma cerrada, presentada como la versión vectorial del resultado escalar de Estadística 7. Y sobre todo la Proposición 8.7 con su medición: separar cuánto mejora el encogimiento los **coeficientes** de cuánto mejora la **predicción** es lo que explica que la regularización parezca imprescindible en unos problemas e irrelevante en otros, y el libro no lo separa.
+
+[Índice de ISLP verificado el 13-09-2026 contra los marcadores del PDF oficial.]{.sello}
+:::
