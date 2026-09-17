@@ -1,13 +1,14 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **17-09-2026**, tras publicar dos lecciones: **ML 7**
-(selección de subconjuntos, ISLP §6.1) y **Python 10** (carga, formatos y
-limpieza, McKinney §6.1 y §7.1–7.4). **Las 60 publicadas cumplen el molde: 60 de
-60, y no queda ninguna en el molde viejo.**
+Última actualización: **17-09-2026**, tras publicar cuatro lecciones: **ML 7**
+(selección de subconjuntos, ISLP §6.1), **ML 8** (encogimiento, ridge y lasso,
+ISLP §6.2), **Python 10** (carga, formatos y limpieza, McKinney §6.1 y §7.1–7.4)
+y **Python 11** (wrangling, uniones y reshape, McKinney §8). **Las 62 publicadas
+cumplen el molde: 62 de 62, y no queda ninguna en el molde viejo.**
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. **Estadística queda cerrada en 25 de 25.** Del
 plan siguen faltando lecciones por escribir en los demás módulos: Python tiene
-16 planeadas y 10 publicadas, ML 7 de 90, y Series y Causal están vacíos. El
+16 planeadas y 11 publicadas, ML 8 de 90, y Series y Causal están vacíos. El
 detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -74,17 +75,17 @@ hay que empezar a hacer:
 |---|---|---|---|---|
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
-| Python | 10 | 16 | **10 de 10** | 11 a 16, la Fase 1 |
+| Python | 11 | 16 | **11 de 11** | 12 a 16, la Fase 1 |
 | Series de tiempo | 0 | 11 | — | todas |
-| Machine Learning | 7 | 90 | **7 de 7** | 08 a 19 de la Fase 2, y el resto |
+| Machine Learning | 8 | 90 | **8 de 8** | 09 a 19 de la Fase 2, y el resto |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **60 lecciones** publicadas, **60** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 118 según el plan.
+- **62 lecciones** publicadas, **62** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 116 según el plan.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
   logística (§4.1–4.3, publicada), **04** modelos generativos (§4.4) y **05**
@@ -110,22 +111,23 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   marginales exactas, que es más fuerte que cualquier librería; y `np.trapz` se
   retiró del espacio de nombres en NumPy 2.0, así que las celdas nuevas no lo
   usan.
-- **128 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
+- **133 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
   Siguen los mismos cuatro avisos, todos anteriores: tres de no idempotencia
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. Los seis visuales de esta tanda no añaden ninguno.
-- **1148 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **311 celdas** que el gate ejecuta en cada build.
-- Glosario: **285 términos + 43 símbolos**. Las **20 entradas** de esta tanda
-  —12 de ML 7 y 8 de Python 10— son todas de tipo `termino`: **cero símbolos
+- **1228 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **325 celdas** que el gate ejecuta en cada build.
+- Glosario: **299 términos + 43 símbolos**. Las **34 entradas** de estas dos
+  tandas —12 de ML 7, 8 de Python 10, 7 de ML 8 y 7 de Python 11— son todas de
+  tipo `termino`: **cero símbolos
   globales nuevos**, por la regla aclarada en el punto 6. Los símbolos propios
   de cada lección se declaran en su tabla `::: {.notacion}` y no salen de ahí.
 - Índices verificados: Think Stats 3e (75 secciones), MML (80), **Think Bayes 2e
   (20 capítulos y 193 secciones, traídas enteras el 12-09-2026; el capítulo 19
   publica las suyas sin numerar)**, McKinney 3E (capítulos + las secciones de los
-  capítulos 6 y 7; las subsecciones del 6 no llevan número en el sitio publicado,
-  así que no se registran ni se citan) e **ISLP (13 capítulos, 81 secciones N.M y 176 sub-subsecciones N.M.K —257 entradas— traídas el 13-09-2026 de los
+  capítulos 6, 7 y 8; las subsecciones del 6 y del 8 no llevan número en el sitio
+  publicado, así que no se registran ni se citan) e **ISLP (13 capítulos, 81 secciones N.M y 176 sub-subsecciones N.M.K —257 entradas— traídas el 13-09-2026 de los
   marcadores del PDF oficial)**. Desde esa fecha `citas.py` admite **tres niveles**: se puede citar
   `ISLP §10.7.1 Backpropagation`. La función `rango()` se generalizó a cualquier profundidad, porque la anterior
   desempaquetaba dos valores del `split` y reventaba con el tercer nivel; se comprobó que los casos de dos niveles
@@ -621,6 +623,86 @@ las dos, y **ninguna celda imprime la representación de un DataFrame**. La
 afirmación de que los `float64` sobreviven a la ida y vuelta se declara como
 booleano calculado, no como dígitos, precisamente para que el gate la compruebe en
 las dos versiones en vez de fijar el formato de una.
+
+
+### 3.10 ML 8 y Python 11 (17-09-2026)
+
+**ML 8, «Encogimiento: ridge y lasso», ISLP §6.2.** Dos definiciones, cinco
+proposiciones, tres visuales. Lo que la sostiene:
+
+- la **Proposición 8.2** convierte «ridge funciona con $p>n$» en un enunciado
+  sobre la hessiana: los eigenvalores de $X^\top X$ son $\ge 0$ y sumar
+  $\lambda I$ los desplaza a $\ge\lambda>0$, así que la función objetivo es
+  estrictamente convexa y el mínimo es único **para todo** $\lambda>0$. Medido
+  con $n=20$ y $p=50$: el rango pasa de $19$ a $50$, y $31$ de los $50$
+  eigenvalores eran cero;
+- la **Proposición 8.4** da las dos formas cerradas en diseño ortonormal. Ridge
+  multiplica por $1/(1+\lambda)$ —las cinco razones salen $0{,}588235$— y el
+  lasso es el umbral suave, que deja dos ceros exactos y mueve los otros tres
+  exactamente $\lambda/2$. Se añade que, **en general**, $\hat\beta_{\text{ridge}}=0$
+  solo si $X^\top y=0$: ridge no puede anular un coeficiente sin anularlos todos;
+- la **Proposición 8.5** lee ridge en la base de la SVD: encoge la dirección $j$
+  por $d_j^2/(d_j^2+\lambda)$, y los **grados de libertad efectivos** son la suma
+  de esos factores. Sobre un diseño con $d_6/d_1\approx 1/122$, con $\lambda=1$
+  las cinco direcciones informativas conservan factores $\ge 0{,}9856$ y la
+  colineal cae a $0{,}0114$: se pierde un grado de libertad entero, y lo pierde
+  la dirección que no llevaba información. Ese número continuo **ocupa el lugar
+  del $d+1$ de ML 7**;
+- la **Proposición 8.6** es el teorema del encogimiento, con todo explícito:
+  $\text{ECM}(\lambda)=(\lambda^2\lVert\beta\rVert^2+p\sigma^2)/(1+\lambda)^2$,
+  derivada en cero $-2p\sigma^2<0$, óptimo en $\lambda^{*}=p\sigma^2/\lVert\beta\rVert^2$
+  y razón $\lVert\beta\rVert^2/(\lVert\beta\rVert^2+p\sigma^2)$. Es la
+  Proposición 7.4 de Estadística 7 con un vector en lugar de un escalar. Medido:
+  $1{,}374$ contra $4{,}050$, razón $0{,}339315$ en simulación y en fórmula.
+
+**La Proposición 8.7 es la que conviene no perder.** En un diseño casi colineal,
+mínimos cuadrados devuelve $\hat\beta_1=-0{,}62$ y $\hat\beta_6=2{,}15$ donde la
+verdad es $1{,}5$ y $0$; ridge con el $\lambda$ de validación cruzada devuelve
+$0{,}70$ y $0{,}82$. **El error de los coeficientes mejora un factor $2{,}63$ y el
+error de prueba mejora $0{,}000079$**, o sea nada. Las dos cosas son ciertas a la
+vez porque los dos errores se cancelan al predecir, y esa es la dirección de
+valor singular pequeño de la 8.5. Separar las dos preguntas —interpretar contra
+predecir— es lo que explica que la regularización parezca imprescindible en unos
+problemas e irrelevante en otros. El libro no lo separa.
+
+**Convenciones de scikit-learn, que hay que traducir.** `Ridge(alpha)` minimiza
+$\lVert y-X\beta\rVert^2+\alpha\lVert\beta\rVert^2$, así que $\alpha=\lambda$.
+Pero `Lasso(alpha)` minimiza $\frac{1}{2n}\lVert y-X\beta\rVert^2+\alpha\lVert\beta\rVert_1$,
+de donde **$\lambda=2n\alpha$**. Comparar un $\lambda$ propio con un $\alpha$ de la
+librería sin traducirlo produce discrepancias que parecen errores de
+implementación y son de unidades.
+
+**Python 11, «wrangling, joins y reshape», McKinney §8.** Una definición, tres
+proposiciones, dos visuales. Nivel L4, con modo de falla y diagnóstico en cada
+resultado:
+
+- la **Proposición 11.2** completa las cuatro uniones con el mismo argumento de
+  la 10.6, unificadas con $\max\{m,1\}$, y saca el corolario comprobable de una
+  línea: `left` conserva las filas de la izquierda **si y solo si** la clave es
+  única en la derecha. Medido: $4$, $7$, $5$ y $8$ filas, con la fórmula
+  acertando en los cuatro tipos;
+- la **Proposición 11.3** dice que pasar a la forma ancha crea exactamente
+  $i\cdot j-n$ faltantes, y **cuándo la vuelta no recupera el original**: si la
+  columna de valores tenía $f$ faltantes propios, la vuelta devuelve $n-f$ filas,
+  porque el hueco estructural y el dato perdido son indistinguibles en una celda
+  vacía. Un cauce que va y vuelve entre las dos formas pierde filas en cada
+  viaje sin que ningún paso parezca roto;
+- la **Proposición 11.4** lee el choque de claves como un problema de señal:
+  `pivot` falla y `pivot_table` calla, así que **el remedio evidente es el que
+  borra el aviso**. Medido: $9$ filas, $8$ pares distintos, y la celda en choque
+  pasa a valer $50{,}5$, la media de un $2$ y un $99$.
+
+**Un aviso de la regla 19b que costó una segunda pasada.** El visual de la
+densidad de Python 11 tenía un control —el número de celdas observadas— que solo
+cambiaba el **relleno** de las celdas, no su posición. Es exactamente el caso que
+la regla persigue, y `visuales.py` lo cazó con «los marcadores apenas se mueven
+(0.0 px)». Se arregló añadiendo una barra de densidad cuyo ancho depende de
+$n/(i\cdot j)$, que sí es geometría. **Colorear no es mover**: si un control solo
+cambia opacidades o rellenos, el gate lo va a marcar, y tiene razón.
+
+**El índice de McKinney creció otra vez.** Se trajeron las secciones del capítulo
+8 desde <https://wesmckinney.com/book/data-wrangling>: §8.1 a §8.4. Sus
+subsecciones tampoco llevan número, igual que las del 6, así que no se registran.
 
 
 ---
