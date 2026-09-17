@@ -1,0 +1,959 @@
+---
+title: "Selección de subconjuntos"
+subtitle: "Machine Learning · Lección 7"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/06-validacion-cruzada, estadistica/13-regresion-primeros-principios, estadistica/14-inferencia-coeficientes]
+siguientes: []
+libro: "ISLP §6.1 Subset Selection · §6.1.1 Best Subset Selection · §6.1.2 Stepwise Selection · §6.1.3 Choosing the Optimal Model"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - scikit-learn
+---
+
+::: {.meta-leccion data-leccion="ml/07-seleccion-de-subconjuntos"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §6.1]{.item}
+[**Prereqs** [Validación cruzada](06-validacion-cruzada.qmd) · [Regresión desde primeros principios](../estadistica/13-regresion-primeros-principios.qmd) · [Inferencia sobre los coeficientes](../estadistica/14-inferencia-coeficientes.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir la [selección del mejor subconjunto]{.g} y contar exactamente cuántos modelos ajusta.
+2. Demostrar que la [suma de cuadrados residual]{.g} no crece al añadir predictores, y deducir que elegir por ella devuelve siempre el modelo completo.
+3. Derivar el [Cp de Mallows]{.g data-t="cp de mallows"} del [optimismo]{.g} exacto de la lección anterior, y demostrar que estima el [error de prueba]{.g} sin sesgo.
+4. Demostrar que el tamaño elegido no crece cuando crece la penalización, y deducir de ahí que el [BIC]{.g data-t="criterio de información bayesiano"} nunca elige un modelo más grande que el Cp.
+5. Demostrar que el [R² ajustado]{.g data-t="coeficiente de determinación ajustado"} admite toda variable cuyo [estadístico t]{.g} supere 1 en valor absoluto, y medir con qué frecuencia el ruido puro pasa ese umbral.
+6. Definir la [selección paso a paso]{.g}, contar su coste, y exhibir un diseño donde no encuentra el mejor subconjunto de tamaño dos aunque ese subconjunto ajuste sin error.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 6**: la Proposición 6.2, que da el optimismo del [error de entrenamiento]{.g} en forma exacta. La sección 2 de esta lección es esa proposición despejada, y el Cp sale de ella sin ningún supuesto nuevo.
+- **Estadística 13**: la matriz sombrero, la proyección y el RSS como norma del residuo. Toda la sección 1 se apoya en que un ajuste por [mínimos cuadrados]{.g} es una proyección.
+- **Estadística 14**: el error estándar de un coeficiente y su estadístico t, que es lo que la Proposición 7.6 convierte en umbral de admisión.
+- **Álgebra 5**: la proyección ortogonal sobre un subespacio, con la que se construye y se demuestra el contraejemplo de la sección 4.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 8**: ridge y lasso, que atacan este mismo problema encogiendo coeficientes en vez de recorrer subconjuntos, y cuyo parámetro se elige con los criterios de aquí o por validación cruzada.
+- **Machine Learning 9**: la regresión en alta dimensión, donde $p>n$ y la selección del mejor subconjunto deja de estar definida porque el RSS llega a cero en muchos modelos a la vez.
+- **Machine Learning 19**: las pruebas múltiples, que miden el mismo daño de esta lección con el lenguaje de los valores p.
+- **Estadística 17**: el p-hacking, que es este procedimiento visto desde el otro lado; mirar $2^p$ modelos y quedarse con el mejor es exactamente lo que aquella lección mide.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | El número de observaciones |
+| $p$ | pe | El número de predictores disponibles |
+| $d$ | de | El número de predictores que un modelo concreto usa, sin contar el intercepto |
+| $\mathcal{M}_d$ | eme sub de | El modelo de $d$ predictores con el menor RSS de todos los de ese tamaño |
+| $\text{RSS}_d$ | erre ese ese sub de | La suma de cuadrados residual de $\mathcal{M}_d$ |
+| $\text{TSS}$ | te ese ese | La suma de cuadrados total, $\sum_i (y_i-\bar{y})^2$ |
+| $\hat{\sigma}^2$ | sigma gorro cuadrado | La varianza del error estimada con el modelo completo |
+| $\lambda$ | lambda | El precio que un criterio le pone a cada parámetro estimado |
+| $t_j$ | te sub jota | El estadístico t del coeficiente $j$: su valor dividido por su error estándar |
+:::
+
+## 1. Por qué el ajuste no puede elegir el modelo
+
+La [selección del mejor subconjunto]{.g} separa el problema en dos mitades que se resuelven de formas distintas.
+
+::: {.definicion}
+**Definición 7.1 (selección del mejor subconjunto).** Dados $p$ predictores, para cada tamaño $d=0,1,\dots,p$ se ajustan los $\binom{p}{d}$ modelos con exactamente $d$ de ellos y se llama $\mathcal{M}_d$ al de menor RSS. La selección del mejor subconjunto devuelve el mejor de los $p+1$ finalistas $\mathcal{M}_0,\dots,\mathcal{M}_p$ según un criterio que estime el error de prueba.
+:::
+
+La primera mitad —hallar $\mathcal{M}_d$ dentro de cada tamaño— está bien planteada: comparar dos modelos del mismo tamaño por su RSS es legítimo, porque los dos estiman el mismo número de parámetros. La segunda mitad es la que decide, y la siguiente proposición dice por qué no puede resolverse con el RSS.
+
+::: {.proposicion}
+**Proposición 7.2 (el RSS no sabe parar).** Sean dos [modelos anidados]{.g data-t="modelo anidado"}, $A\subseteq B$, ajustados por mínimos cuadrados sobre los mismos datos. Entonces
+$$\text{RSS}(B)\;\le\;\text{RSS}(A),$$
+y la desigualdad es estricta salvo que la columna añadida sea ortogonal al residuo de $A$. En consecuencia $\text{RSS}_0\ge\text{RSS}_1\ge\cdots\ge\text{RSS}_p$, el mínimo de $\text{RSS}_d$ sobre $d$ se alcanza siempre en $d=p$, y lo mismo vale para el $R^2$, que es una función decreciente del RSS. La selección del mejor subconjunto ajusta $2^p$ modelos.
+:::
+
+::: {.demostracion}
+*Demostración.* El ajuste por mínimos cuadrados con las columnas de $A$ es la proyección ortogonal de $y$ sobre el subespacio $S_A$ generado por esas columnas y el vector de unos (Álgebra 5), y $\text{RSS}(A)=\lVert y-P_{S_A}y\rVert^2$ es la distancia al cuadrado de $y$ a $S_A$. Como $A\subseteq B$ implica $S_A\subseteq S_B$, el ínfimo de $\lVert y-v\rVert^2$ sobre $v\in S_B$ se toma sobre un conjunto mayor, así que no puede ser mayor:
+$$\text{RSS}(B)=\min_{v\in S_B}\lVert y-v\rVert^2\;\le\;\min_{v\in S_A}\lVert y-v\rVert^2=\text{RSS}(A).$$
+
+Para la estrictez, sea $B=A\cup\{x\}$ y sea $r=y-P_{S_A}y$ el residuo de $A$. Descomponiendo $x = P_{S_A}x + z$ con $z\perp S_A$, la proyección sobre $S_B$ añade a la de $S_A$ el término $(\langle r,z\rangle/\lVert z\rVert^2)\,z$, de donde
+$$\text{RSS}(A)-\text{RSS}(B)=\frac{\langle r,z\rangle^2}{\lVert z\rVert^2}\;\ge\;0,$$
+que es cero exactamente cuando $\langle r,z\rangle=0$. Con errores de ley continua ese suceso tiene probabilidad cero, así que la caída es estricta con probabilidad uno.
+
+La cadena $\text{RSS}_0\ge\cdots\ge\text{RSS}_p$ se sigue de aplicar lo anterior a $\mathcal{M}_d$ y a $\mathcal{M}_d$ más cualquier variable: el resultado es un modelo de tamaño $d+1$ con RSS no mayor, y $\mathcal{M}_{d+1}$ es el mejor de ese tamaño, luego $\text{RSS}_{d+1}\le\text{RSS}_d$. Como $R^2=1-\text{RSS}/\text{TSS}$ y $\text{TSS}$ no depende del modelo, maximizar $R^2$ y minimizar RSS son el mismo problema.
+
+El recuento de modelos es el de los subconjuntos de un conjunto de $p$ elementos, $\sum_{d=0}^{p}\binom{p}{d}=2^p$. [∎]{.fin-demo}
+:::
+
+Con diez predictores de los que solo tres entran de verdad en la respuesta, la tabla siguiente muestra la cadena completa. El RSS baja en los diez pasos, incluidos los siete que añaden variables cuyo coeficiente verdadero es cero.
+
+```{pyodide}
+import itertools
+import numpy as np
+
+def rss(X, y, cols):
+    """RSS del ajuste por minimos cuadrados con intercepto y las columnas dadas."""
+    unos = np.ones((len(y), 1))
+    D = np.column_stack([unos] + [X[:, j] for j in cols]) if cols else unos
+    b, *_ = np.linalg.lstsq(D, y, rcond=None)
+    r = y - D @ b
+    return float(r @ r)
+
+rng = np.random.default_rng(7)
+n, p = 80, 10
+X = rng.normal(size=(n, p))
+beta = np.array([2.0, 1.4, -0.9, 0.7, 0, 0, 0, 0, 0, 0, 0])   # solo 3 predictores importan
+y = np.column_stack([np.ones(n), X]) @ beta + rng.normal(scale=1.0, size=n)
+
+mejores = {}
+for k in range(p + 1):
+    subs = itertools.combinations(range(p), k)
+    mejores[k] = min(subs, key=lambda c: rss(X, y, c)) if k else ()
+
+tss = rss(X, y, ())
+print(" d   RSS(M_d)      R2       variables")
+for k in range(p + 1):
+    c = mejores[k]
+    print("%2d %11.4f  %.6f   %s" % (k, rss(X, y, c), 1 - rss(X, y, c) / tss, list(c)))
+
+serie = [rss(X, y, mejores[k]) for k in range(p + 1)]
+print("\nRSS estrictamente decreciente:", all(serie[k] > serie[k + 1] for k in range(p)))
+print("el minimo de RSS esta en d =", int(np.argmin(serie)))
+print("modelos ajustados: 2^%d = %d" % (p, 2 ** p))
+```
+
+Los tres predictores verdaderos son los que el procedimiento encuentra primero, en orden, y $\mathcal{M}_3$ los recupera exactamente. Lo que la tabla también muestra es que nada en la columna del RSS señala ese punto: la caída de $\mathcal{M}_3$ a $\mathcal{M}_4$ es de $1{,}10$, menor que las anteriores pero del mismo signo, y el mínimo de la columna está en $d=10$.
+
+## 2. El optimismo, cobrado
+
+La lección anterior midió exactamente cuánto miente el error de entrenamiento. Convertirlo en criterio es despejar.
+
+::: {.definicion}
+**Definición 7.3 (los cuatro criterios).** Para un modelo de $d$ predictores con intercepto, sobre $n$ observaciones y con $\hat{\sigma}^2$ estimada del modelo completo:
+$$C_p=\frac{1}{n}\big(\text{RSS}+2(d+1)\hat{\sigma}^2\big),\qquad
+\text{BIC}=\frac{1}{n}\big(\text{RSS}+\log(n)\,(d+1)\hat{\sigma}^2\big),$$
+$$R^2_{\text{aj}}=1-\frac{\text{RSS}/(n-d-1)}{\text{TSS}/(n-1)}.$$
+El [criterio de información de Akaike]{.g data-t="criterio de información de akaike"} coincide con $C_p$ salvo un factor constante en mínimos cuadrados con errores normales, así que ordena los modelos igual. Los tres primeros se minimizan; el cuarto se maximiza.
+:::
+
+El libro escribe $C_p=(\text{RSS}+2d\hat{\sigma}^2)/n$, con $d$ y no $d+1$. La diferencia es $2\hat{\sigma}^2/n$, la misma para todos los modelos, así que no cambia cuál gana. La versión con $d+1$ se usa aquí porque cuenta los parámetros que de verdad se estiman, intercepto incluido, y con ella la proposición siguiente sale exacta en vez de aproximada.
+
+::: {.proposicion}
+**Proposición 7.4 ($C_p$ estima el error de prueba sin sesgo).** Bajo los supuestos de la Proposición 6.2 —modelo lineal con diseño de rango completo, errores de media cero, varianza $\sigma^2$ e incorrelados— y con $\sigma^2$ conocida, el criterio $C_p=(\text{RSS}+2(d+1)\sigma^2)/n$ cumple
+$$E[C_p]\;=\;E[\text{Prueba}]\;=\;\sigma^2\,\frac{n+d+1}{n},$$
+donde el error de prueba se mide sobre una respuesta nueva en los mismos predictores.
+:::
+
+::: {.demostracion}
+*Demostración.* La Proposición 6.2 da $E[\text{RSS}/n]=\sigma^2(n-d-1)/n$ y $E[\text{Prueba}]=\sigma^2(n+d+1)/n$. Restando,
+$$E[\text{Prueba}]-E[\text{RSS}/n]=\sigma^2\,\frac{(n+d+1)-(n-d-1)}{n}=\frac{2\sigma^2(d+1)}{n},$$
+que es justo el término que $C_p$ suma. Tomando esperanza en la definición,
+$$E[C_p]=E\!\left[\frac{\text{RSS}}{n}\right]+\frac{2(d+1)\sigma^2}{n}=E[\text{Prueba}].$$
+
+Que es la igualdad buscada. [∎]{.fin-demo}
+:::
+
+El criterio no es una advertencia contra los modelos grandes sino la corrección exacta de un sesgo conocido. La simulación siguiente lo comprueba con $20\,000$ muestras: el error de entrenamiento se queda $0{,}213$ por debajo del de prueba, la corrección vale $0{,}211$, y el $C_p$ queda a $0{,}002$ del objetivo.
+
+```{pyodide}
+import numpy as np
+
+# Prop 7.4 en datos: Cp con d+1 parametros estima el error de prueba sin sesgo.
+rng = np.random.default_rng(74)
+n, d, s = 80, 4, 1.3
+X = rng.normal(size=(n, d))
+Z = np.column_stack([np.ones(n), X])
+mu = Z @ np.array([1.0, 0.8, -0.5, 0.3, 0.9])
+H = Z @ np.linalg.solve(Z.T @ Z, Z.T)
+
+cp, prueba, entren = [], [], []
+for _ in range(20000):
+    y = mu + rng.normal(scale=s, size=n)
+    ajuste = H @ y
+    sc = float(np.sum((y - ajuste) ** 2))
+    entren.append(sc / n)
+    cp.append((sc + 2 * (d + 1) * s ** 2) / n)
+    y2 = mu + rng.normal(scale=s, size=n)          # mismo diseno, ruido nuevo
+    prueba.append(float(np.mean((y2 - ajuste) ** 2)))
+
+teorico = s ** 2 * (n + d + 1) / n
+print("E[entrenamiento]: simulado %.5f | teorico %.5f" % (np.mean(entren), s ** 2 * (n - d - 1) / n))
+print("E[prueba]       : simulado %.5f | teorico %.5f" % (np.mean(prueba), teorico))
+print("E[Cp]           : simulado %.5f | teorico %.5f" % (np.mean(cp), teorico))
+print("sesgo de Cp     : %+.5f" % (np.mean(cp) - np.mean(prueba)))
+print("sesgo del error de entrenamiento: %+.5f" % (np.mean(entren) - np.mean(prueba)))
+print("la correccion 2(d+1)s2/n vale %.5f" % (2 * (d + 1) * s ** 2 / n))
+```
+
+Todos los criterios de la Definición 7.3 salvo el $R^2$ ajustado tienen la misma forma: $\text{RSS}_d+\lambda(d+1)\hat{\sigma}^2$, con $\lambda=2$ para el $C_p$ y $\lambda=\log n$ para el BIC. Esa forma común basta para ordenarlos entre sí.
+
+::: {.proposicion}
+**Proposición 7.5 (más precio, modelo no mayor).** Para $\lambda\ge 0$ sea
+$$d^{*}(\lambda)\;\in\;\arg\min_{0\le d\le p}\ \big\{\text{RSS}_d+\lambda\,(d+1)\,\hat{\sigma}^2\big\}.$$
+Si $\lambda_1<\lambda_2$, entonces $d^{*}(\lambda_1)\ge d^{*}(\lambda_2)$ para cualquier elección de minimizantes. En particular, como $\log n>2$ si y solo si $n\ge 8$, el BIC nunca selecciona un modelo con más predictores que el $C_p$ en cuanto hay ocho observaciones.
+:::
+
+::: {.demostracion}
+*Demostración.* Escríbase $g(d)=\text{RSS}_d$ y $c(d)=(d+1)\hat{\sigma}^2$, con $c$ estrictamente creciente. Sean $d_1=d^{*}(\lambda_1)$ y $d_2=d^{*}(\lambda_2)$. Que cada uno minimice su criterio da
+$$g(d_1)+\lambda_1 c(d_1)\;\le\;g(d_2)+\lambda_1 c(d_2),\qquad
+g(d_2)+\lambda_2 c(d_2)\;\le\;g(d_1)+\lambda_2 c(d_1).$$
+Sumando las dos desigualdades, los términos $g$ se cancelan y queda
+$$\lambda_1 c(d_1)+\lambda_2 c(d_2)\;\le\;\lambda_1 c(d_2)+\lambda_2 c(d_1),$$
+es decir $(\lambda_2-\lambda_1)\big(c(d_2)-c(d_1)\big)\le 0$. Como $\lambda_2-\lambda_1>0$, se concluye $c(d_2)\le c(d_1)$, y como $c$ es estrictamente creciente, $d_2\le d_1$.
+
+Para la consecuencia basta observar que $\log n>2$ equivale a $n>e^2=7{,}389\ldots$, y como $n$ es entero, a $n\ge 8$. [∎]{.fin-demo}
+:::
+
+La demostración no usa nada de la forma de $\text{RSS}_d$: vale para cualquier sucesión de ajustes penalizada linealmente por un coste creciente. Es el mismo argumento de intercambio que reaparecerá en la lección 8 al recorrer el camino del lasso.
+
+```{pyodide}
+import itertools
+import numpy as np
+
+def rss(X, y, cols):
+    unos = np.ones((len(y), 1))
+    D = np.column_stack([unos] + [X[:, j] for j in cols]) if cols else unos
+    b, *_ = np.linalg.lstsq(D, y, rcond=None)
+    r = y - D @ b
+    return float(r @ r)
+
+rng = np.random.default_rng(7)
+n, p = 80, 10
+X = rng.normal(size=(n, p))
+beta = np.array([2.0, 1.4, -0.9, 0.7, 0, 0, 0, 0, 0, 0, 0])
+y = np.column_stack([np.ones(n), X]) @ beta + rng.normal(scale=1.0, size=n)
+
+sc = np.array([rss(X, y, min(itertools.combinations(range(p), k), key=lambda c: rss(X, y, c)))
+               if k else rss(X, y, ()) for k in range(p + 1)])
+d = np.arange(p + 1)
+s2 = sc[-1] / (n - p - 1)                 # sigma^2 estimada con el modelo completo
+tss = sc[0]
+
+cp = (sc + 2 * (d + 1) * s2) / n
+bic = (sc + np.log(n) * (d + 1) * s2) / n
+adj = 1 - (sc / (n - d - 1)) / (tss / (n - 1))
+
+print(" d      RSS       Cp        BIC     R2 ajustado")
+for k in range(p + 1):
+    print("%2d %9.4f %8.5f %8.5f   %8.5f" % (k, sc[k], cp[k], bic[k], adj[k]))
+
+print("\nelige RSS         : d = %d" % int(np.argmin(sc)))
+print("elige R2 ajustado : d = %d" % int(np.argmax(adj)))
+print("elige Cp          : d = %d" % int(np.argmin(cp)))
+print("elige BIC         : d = %d" % int(np.argmin(bic)))
+print("la verdad tiene    : d = 3")
+print("log(n) = %.4f, mayor que 2: %s" % (np.log(n), bool(np.log(n) > 2)))
+
+# Proposicion 7.5: el tamano elegido no crece cuando crece la penalizacion.
+lams = np.linspace(0.0, 40.0, 4001)
+tam = [int(np.argmin(sc + lam * (d + 1) * s2)) for lam in lams]
+print("tamano no creciente en lambda:", all(tam[i] >= tam[i + 1] for i in range(len(tam) - 1)))
+print("lambda=2 (Cp) elige d = %d ; lambda=log n (BIC) elige d = %d"
+      % (tam[int(2 / 40 * 4000)], tam[int(np.log(n) / 40 * 4000)]))
+```
+
+Sobre el mismo conjunto de la sección 1, los cuatro criterios dan tres respuestas distintas: el RSS elige $d=10$, el $R^2$ ajustado elige $d=5$, y el $C_p$ y el BIC eligen $d=3$, que es el número de predictores que la respuesta usa de verdad.
+
+```{=html}
+<div class="viz-criterios">
+  <div class="controles">
+    <label>Observaciones n
+      <select id="cr-n">
+        <option value="40">n = 40</option>
+        <option value="80" selected>n = 80</option>
+        <option value="200">n = 200</option>
+      </select>
+    </label>
+    <label>Ruido σ <input id="cr-s" type="range" min="0.4" max="3" step="0.1" value="1"> <span id="cr-s-v">1.0</span></label>
+  </div>
+  <svg id="cr-svg" viewBox="0 0 660 330" role="img" aria-label="A la izquierda, el error de entrenamiento esperado, el Cp y el BIC contra el número de predictores, cada uno con su mínimo marcado; a la derecha, el R cuadrado ajustado contra el mismo eje, con su máximo marcado."></svg>
+  <p class="lectura" id="cr-lectura"></p>
+</div>
+<style>
+.viz-criterios { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-criterios .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-criterios label { display: flex; align-items: center; gap: .4rem; }
+.viz-criterios input[type=range] { width: 130px; padding: 0; }
+.viz-criterios select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-criterios svg { width: 100%; height: auto; display: block; }
+.viz-criterios .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_R = "#7a7f8a", C_C = "#0F6E68", C_B = "#B4342E", C_A = "#8A5A00";
+  var svg = document.getElementById("cr-svg"), lec = document.getElementById("cr-lectura");
+  var cn = document.getElementById("cr-n"), cs = document.getElementById("cr-s"), es = document.getElementById("cr-s-v");
+
+  // Senal fija: lo que cada uno de los tres predictores verdaderos explica.
+  var SENAL = [130, 35, 28], P = 10;
+  // Marco anclado a constantes, nunca a los datos dibujados (regla 19b).
+  var XA = 46, WA = 250, XB = 388, WB = 250, Y0 = 24, YH = 236;
+  var EMAX = 4.0, AMIN = -0.1, AMAX = 0.9;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function pxA(d) { return XA + d / P * WA; }
+  function pxB(d) { return XB + d / P * WB; }
+  function pyE(v) { return Y0 + (EMAX - v) / EMAX * YH; }
+  function pyA(v) { return Y0 + (AMAX - v) / (AMAX - AMIN) * YH; }
+
+  // E[RSS_d] = senal no capturada + sigma^2 (n - d - 1), que es la Proposicion 6.2.
+  function rss(d, n, s2) {
+    var resto = 0;
+    for (var j = Math.min(d, 3); j < 3; j++) resto += SENAL[j];
+    return resto + s2 * (n - d - 1);
+  }
+
+  function curva(f, px, py, color, ancho) {
+    var s = "";
+    for (var d = 0; d <= P; d++) s += (d ? " L" : "M") + px(d).toFixed(1) + " " + py(f(d)).toFixed(1);
+    svg.appendChild(el("path", { d: s, stroke: color, "stroke-width": ancho || 2.3, fill: "none" }));
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var n = +cn.value, s = +cs.value, s2 = s * s;
+    es.textContent = s.toFixed(1);
+
+    var tss = rss(0, n, s2);
+    var fEnt = function (d) { return rss(d, n, s2) / n; };
+    var fCp  = function (d) { return (rss(d, n, s2) + 2 * (d + 1) * s2) / n; };
+    var fBic = function (d) { return (rss(d, n, s2) + Math.log(n) * (d + 1) * s2) / n; };
+    var fAdj = function (d) { return 1 - (rss(d, n, s2) / (n - d - 1)) / (tss / (n - 1)); };
+
+    // rejilla y marcos, fijos
+    for (var t = 0; t <= EMAX; t += 1) {
+      svg.appendChild(el("path", { d: "M" + XA + " " + pyE(t).toFixed(1) + " L" + (XA + WA) + " " + pyE(t).toFixed(1),
+        stroke: C_L, "stroke-width": 1, fill: "none", opacity: .5 }));
+      svg.appendChild(el("text", { x: XA - 7, y: pyE(t) + 4, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .65 }, t.toFixed(0)));
+    }
+    for (var a = 0; a <= 0.8; a += 0.2) {
+      svg.appendChild(el("path", { d: "M" + XB + " " + pyA(a).toFixed(1) + " L" + (XB + WB) + " " + pyA(a).toFixed(1),
+        stroke: C_L, "stroke-width": 1, fill: "none", opacity: .5 }));
+      svg.appendChild(el("text", { x: XB - 7, y: pyA(a) + 4, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .65 }, a.toFixed(1)));
+    }
+    svg.appendChild(el("text", { x: XA, y: 14, "font-size": 11.5, fill: C_T }, "error por observación"));
+    svg.appendChild(el("text", { x: XB, y: 14, "font-size": 11.5, fill: C_T }, "R² ajustado"));
+    svg.appendChild(el("text", { x: XA + WA / 2, y: 322, "text-anchor": "middle", "font-size": 11, fill: C_T, opacity: .75 }, "predictores d"));
+    svg.appendChild(el("text", { x: XB + WB / 2, y: 322, "text-anchor": "middle", "font-size": 11, fill: C_T, opacity: .75 }, "predictores d"));
+
+    curva(fEnt, pxA, pyE, C_R, 1.8);
+    curva(fCp,  pxA, pyE, C_C);
+    curva(fBic, pxA, pyE, C_B);
+    curva(fAdj, pxB, pyA, C_A);
+
+    function optimo(f, mayor) {
+      var mejor = 0;
+      for (var d = 1; d <= P; d++) if (mayor ? f(d) > f(mejor) : f(d) < f(mejor)) mejor = d;
+      return mejor;
+    }
+    var dCp = optimo(fCp, false), dBic = optimo(fBic, false), dAdj = optimo(fAdj, true), dEnt = optimo(fEnt, false);
+
+    svg.appendChild(el("circle", { cx: pxA(dEnt).toFixed(1), cy: pyE(fEnt(dEnt)).toFixed(1), r: 4, fill: C_R }));
+    svg.appendChild(el("circle", { cx: pxA(dCp).toFixed(1),  cy: pyE(fCp(dCp)).toFixed(1),  r: 4.6, fill: C_C }));
+    svg.appendChild(el("circle", { cx: pxA(dBic).toFixed(1), cy: pyE(fBic(dBic)).toFixed(1), r: 4.6, fill: C_B }));
+    svg.appendChild(el("circle", { cx: pxB(dAdj).toFixed(1), cy: pyA(fAdj(dAdj)).toFixed(1), r: 4.6, fill: C_A }));
+
+    // la verdad, en d = 3
+    svg.appendChild(el("path", { d: "M" + pxA(3).toFixed(1) + " " + Y0 + " L" + pxA(3).toFixed(1) + " " + (Y0 + YH),
+      stroke: C_T, "stroke-width": 1, fill: "none", "stroke-dasharray": "3 4", opacity: .45 }));
+    svg.appendChild(el("path", { d: "M" + pxB(3).toFixed(1) + " " + Y0 + " L" + pxB(3).toFixed(1) + " " + (Y0 + YH),
+      stroke: C_T, "stroke-width": 1, fill: "none", "stroke-dasharray": "3 4", opacity: .45 }));
+
+    lec.innerHTML = "Con n = <strong>" + n + "</strong> y σ = <strong>" + s.toFixed(1) + "</strong>, el error de " +
+      "entrenamiento (gris) tiene su mínimo en d = <strong>" + dEnt + "</strong>, siempre el modelo completo, " +
+      "porque el RSS no sabe parar (Proposición 7.2). El C<sub>p</sub> (verde) elige d = <strong>" + dCp +
+      "</strong> y el BIC (rojo) d = <strong>" + dBic + "</strong>, nunca mayor que el anterior (Proposición 7.5, " +
+      "log n = " + Math.log(n).toFixed(2) + "). El R² ajustado (ámbar) elige d = <strong>" + dAdj +
+      "</strong>. La línea de puntos marca d = 3, que es donde está la verdad.";
+  }
+
+  cn.addEventListener("change", dibujar);
+  cs.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. El umbral que el R² ajustado fija sin decirlo
+
+El $R^2$ ajustado queda fuera de la Proposición 7.5 porque no tiene la forma $\text{RSS}_d+\lambda(d+1)\hat{\sigma}^2$: divide en vez de sumar. Esa diferencia se puede convertir en un umbral explícito.
+
+::: {.proposicion}
+**Proposición 7.6 (el $R^2$ ajustado admite toda variable con $|t|>1$).** Sea un modelo con $d$ predictores y sea el mismo modelo más una variable $x$, con $n-d-2>0$. Sea $t$ el estadístico t del coeficiente de $x$ en el modelo grande, calculado con la varianza estimada de ese mismo modelo. Entonces
+$$R^2_{\text{aj}}(\text{grande})>R^2_{\text{aj}}(\text{pequeño})\quad\Longleftrightarrow\quad t^2>1 .$$
+:::
+
+::: {.demostracion}
+*Demostración.* Sean $\text{RSS}_0$ y $\text{RSS}_1$ las sumas de cuadrados del modelo pequeño y del grande, con $n-d-1$ y $n-d-2$ grados de libertad. Como $\text{TSS}/(n-1)$ es común a los dos, el $R^2$ ajustado sube exactamente cuando
+$$\frac{\text{RSS}_1}{n-d-2}<\frac{\text{RSS}_0}{n-d-1}.$$
+Escribiendo $m=n-d-2$ y sumando y restando $\text{RSS}_1$ en el lado derecho, la desigualdad $\text{RSS}_1(m+1)<\text{RSS}_0\,m$ equivale a
+$$\text{RSS}_1\;<\;(\text{RSS}_0-\text{RSS}_1)\,m,
+\qquad\text{esto es}\qquad
+\frac{\text{RSS}_0-\text{RSS}_1}{\text{RSS}_1/m}\;>\;1 .$$
+El lado izquierdo es el estadístico $F$ de la comparación de los dos modelos anidados, que para una sola variable añadida vale $t^2$, con $t$ el estadístico t de esa variable calculado con $\hat{\sigma}^2=\text{RSS}_1/m$ (Estadística 14). [∎]{.fin-demo}
+:::
+
+Un umbral de $|t|>1$ es mucho más bajo que el $|t|>2$ que corresponde a un nivel del 5 %. La consecuencia se mide: una variable de ruido puro, sin ninguna relación con la respuesta, supera ese umbral cerca de un tercio de las veces.
+
+```{pyodide}
+import numpy as np
+
+def ajusta(D, y):
+    b, *_ = np.linalg.lstsq(D, y, rcond=None)
+    r = y - D @ b
+    return b, float(r @ r)
+
+# Prop 7.6: el R2 ajustado sube al anadir una variable si y solo si su t^2 supera 1.
+rng = np.random.default_rng(76)
+n, k, M = 60, 3, 20000
+acuerdos = admitidas = 0
+for _ in range(M):
+    X = rng.normal(size=(n, k))
+    x = rng.normal(size=n)                        # ruido puro, sin relacion con y
+    y = 1.0 + X @ np.array([0.9, -0.4, 0.6]) + rng.normal(scale=1.1, size=n)
+    D0 = np.column_stack([np.ones(n), X])
+    D1 = np.column_stack([D0, x])
+    _, sc0 = ajusta(D0, y)
+    b1, sc1 = ajusta(D1, y)
+    tss = float(np.sum((y - y.mean()) ** 2))
+    adj0 = 1 - (sc0 / (n - k - 1)) / (tss / (n - 1))
+    adj1 = 1 - (sc1 / (n - k - 2)) / (tss / (n - 1))
+    ee = np.sqrt(sc1 / (n - k - 2) * np.linalg.inv(D1.T @ D1)[-1, -1])
+    t = b1[-1] / ee
+    sube = adj1 > adj0
+    acuerdos += int(sube == (t ** 2 > 1))
+    admitidas += int(sube)
+
+print("acuerdo entre «sube el R2 ajustado» y «t^2 > 1»: %d de %d" % (acuerdos, M))
+print("ruido puro admitido por el R2 ajustado: %.4f" % (admitidas / M))
+
+# La cola exacta de la t, por Simpson: sin scipy, como en Estadistica 09.
+def densidad_t(x, v):
+    from math import lgamma, pi, log
+    logc = lgamma((v + 1) / 2) - lgamma(v / 2) - 0.5 * log(v * pi)
+    return np.exp(logc - (v + 1) / 2 * np.log1p(x ** 2 / v))
+
+v = n - k - 2
+x = np.linspace(-1.0, 1.0, 20001)
+h = x[1] - x[0]
+w = np.ones_like(x); w[1:-1:2] = 4; w[2:-1:2] = 2
+centro = float(h / 3 * np.sum(w * densidad_t(x, v)))
+print("P(|t_%d| > 1) exacta: %.4f" % (v, 1 - centro))
+print("P(|Z| > 1), el limite normal: %.4f" % (1 - float(h / 3 * np.sum(w * np.exp(-x ** 2 / 2) / np.sqrt(2 * np.pi)))))
+```
+
+Las $20\,000$ repeticiones dan acuerdo perfecto entre las dos condiciones de la proposición, y el $32{,}88$ % de admisiones medido cuadra con el $32{,}17$ % que da la cola exacta de la $t$ con $55$ grados de libertad. Ese es el precio de usar el $R^2$ ajustado como criterio de parada: una de cada tres variables inútiles entra.
+
+```{=html}
+<div class="viz-lambda">
+  <div class="controles">
+    <label>Observaciones n <input id="lm-n" type="range" min="12" max="400" step="4" value="80"> <span id="lm-n-v">80</span></label>
+    <label>Ruido σ <input id="lm-s" type="range" min="0.4" max="3" step="0.1" value="1"> <span id="lm-s-v">1.0</span></label>
+  </div>
+  <svg id="lm-svg" viewBox="0 0 660 300" role="img" aria-label="El número de predictores elegidos como función escalonada del precio por parámetro, sobre un eje fijo, con las posiciones del Cp y del BIC marcadas sobre el eje."></svg>
+  <p class="lectura" id="lm-lectura"></p>
+</div>
+<style>
+.viz-lambda { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-lambda .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-lambda label { display: flex; align-items: center; gap: .4rem; }
+.viz-lambda input[type=range] { width: 150px; padding: 0; }
+.viz-lambda svg { width: 100%; height: auto; display: block; }
+.viz-lambda .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_C = "#0F6E68", C_B = "#B4342E", C_E = "#3a3f4a";
+  var svg = document.getElementById("lm-svg"), lec = document.getElementById("lm-lectura");
+  var cn = document.getElementById("lm-n"), en = document.getElementById("lm-n-v");
+  var cs = document.getElementById("lm-s"), es = document.getElementById("lm-s-v");
+
+  var SENAL = [130, 35, 28], P = 10;
+  // Marco anclado: lambda de 0 a 12, d de 0 a 10, siempre.
+  var LMAX = 12, X0 = 44, XW = 580, Y0 = 26, YH = 208;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(l) { return X0 + l / LMAX * XW; }
+  function py(d) { return Y0 + (P - d) / P * YH; }
+  function rss(d, n, s2) {
+    var resto = 0;
+    for (var j = Math.min(d, 3); j < 3; j++) resto += SENAL[j];
+    return resto + s2 * (n - d - 1);
+  }
+  function elegido(l, n, s2) {
+    var mejor = 0, vm = rss(0, n, s2) + l * 1 * s2;
+    for (var d = 1; d <= P; d++) {
+      var v = rss(d, n, s2) + l * (d + 1) * s2;
+      if (v < vm) { vm = v; mejor = d; }
+    }
+    return mejor;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var n = +cn.value, s = +cs.value, s2 = s * s;
+    en.textContent = String(n); es.textContent = s.toFixed(1);
+
+    for (var d = 0; d <= P; d += 2) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(d).toFixed(1) + " L" + (X0 + XW) + " " + py(d).toFixed(1),
+        stroke: C_L, "stroke-width": 1, fill: "none", opacity: .5 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(d) + 4, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .65 }, String(d)));
+    }
+    svg.appendChild(el("text", { x: X0, y: 15, "font-size": 11.5, fill: C_T }, "predictores elegidos d*(λ)"));
+    svg.appendChild(el("text", { x: X0 + XW / 2, y: 292, "text-anchor": "middle", "font-size": 11, fill: C_T, opacity: .75 }, "precio por parámetro λ"));
+
+    // la escalera
+    var paso = LMAX / 240, s_d = "", prev = null;
+    for (var i = 0; i <= 240; i++) {
+      var l = i * paso, d = elegido(l, n, s2);
+      if (prev !== null && d !== prev) s_d += " L" + px(l).toFixed(1) + " " + py(d).toFixed(1);
+      s_d += (i ? " L" : "M") + px(l).toFixed(1) + " " + py(d).toFixed(1);
+      prev = d;
+    }
+    svg.appendChild(el("path", { d: s_d, stroke: C_E, "stroke-width": 2.4, fill: "none" }));
+
+    var lb = Math.log(n), dCp = elegido(2, n, s2), dBic = elegido(lb, n, s2);
+    [[2, C_C, "C_p", dCp], [Math.min(lb, LMAX), C_B, "BIC", dBic]].forEach(function (m) {
+      svg.appendChild(el("path", { d: "M" + px(m[0]).toFixed(1) + " " + Y0 + " L" + px(m[0]).toFixed(1) + " " + (Y0 + YH),
+        stroke: m[1], "stroke-width": 1.4, fill: "none", "stroke-dasharray": "4 4", opacity: .85 }));
+      svg.appendChild(el("circle", { cx: px(m[0]).toFixed(1), cy: py(m[3]).toFixed(1), r: 5, fill: m[1] }));
+      svg.appendChild(el("text", { x: px(m[0]) + 7, y: Y0 + 12, "font-size": 11, fill: m[1] }, m[2]));
+    });
+
+    lec.innerHTML = "Con n = <strong>" + n + "</strong> y σ = <strong>" + s.toFixed(1) + "</strong>, la escalera " +
+      "baja y nunca sube: subir el precio por parámetro no puede agrandar el modelo elegido (Proposición 7.5). " +
+      "El C<sub>p</sub> paga λ = 2 y se lleva d = <strong>" + dCp + "</strong>; el BIC paga λ = log n = <strong>" +
+      lb.toFixed(2) + "</strong> y se lleva d = <strong>" + dBic + "</strong>. Con n ≥ 8 el marcador del BIC está " +
+      "siempre a la derecha del C<sub>p</sub>, y por eso su modelo nunca es mayor.";
+  }
+
+  cn.addEventListener("input", dibujar);
+  cs.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Lo que la selección paso a paso no puede prometer
+
+Ajustar $2^p$ modelos deja de ser posible enseguida: con $p=30$ son mil millones. La alternativa recorre los tamaños de uno en uno.
+
+::: {.definicion}
+**Definición 7.7 (selección paso a paso).** La **selección hacia adelante** arranca del modelo sin predictores y, en cada paso, añade la variable que más baja el RSS entre las que faltan, hasta llegar al tamaño deseado. La **selección hacia atrás** arranca del modelo completo y quita en cada paso la variable cuya ausencia menos sube el RSS. Las dos producen una sucesión encajada de modelos, uno por tamaño.
+:::
+
+::: {.proposicion}
+**Proposición 7.8 (el coste baja y la garantía se pierde).** La selección hacia adelante ajusta $1+\tfrac{1}{2}p(p+1)$ modelos, frente a los $2^p$ del mejor subconjunto. A cambio, el modelo que devuelve en el tamaño $d$ puede no ser $\mathcal{M}_d$. En concreto, existe un diseño con $p=3$ y respuesta $y$ tal que la selección hacia adelante devuelve en el tamaño dos un modelo con $\text{RSS}=9/17$, mientras que $\mathcal{M}_2$ tiene $\text{RSS}=0$.
+:::
+
+::: {.demostracion}
+*Demostración.* El recuento es inmediato: el paso $i$-ésimo, con $i=1,\dots,p$, evalúa $p-i+1$ candidatos, y hay que añadir el modelo vacío. La suma $1+\sum_{i=1}^{p}(p-i+1)=1+\tfrac{1}{2}p(p+1)$.
+
+Para el contraejemplo, sean $u,v,w$ tres vectores ortonormales y centrados de $\mathbb{R}^n$, y sean
+$$y=u+v,\qquad x_1=\tfrac{0{,}8}{\sqrt{2}}(u+v)+0{,}6\,w,\qquad x_2=u,\qquad x_3=v .$$
+El vector $x_1$ es unitario, porque $0{,}8^2+0{,}6^2=1$. Con $\lVert y\rVert^2=2$, las tres proyecciones de tamaño uno dan
+$$\text{RSS}(\{x_1\})=2-\langle y,x_1\rangle^2=2-(0{,}8\sqrt{2})^2=0{,}72,\qquad
+\text{RSS}(\{x_2\})=\text{RSS}(\{x_3\})=2-1=1 .$$
+El primer paso hacia adelante elige por tanto $x_1$. En el segundo paso, sea el candidato $x_2=u$: como $u$ ya está en el subespacio, el residuo de $y$ tras $u$ es $v$, y el residuo de $x_1$ tras $u$ es $z=\tfrac{0{,}8}{\sqrt{2}}v+0{,}6w$, con $\lVert z\rVert^2=0{,}32+0{,}36=0{,}68$ y $\langle v,z\rangle=0{,}8/\sqrt{2}$. Luego
+$$\text{RSS}(\{x_1,x_2\})=\lVert v\rVert^2-\frac{\langle v,z\rangle^2}{\lVert z\rVert^2}=1-\frac{0{,}32}{0{,}68}=1-\frac{8}{17}=\frac{9}{17},$$
+y por simetría $\text{RSS}(\{x_1,x_3\})$ vale lo mismo. Como todo modelo de tamaño dos que contenga a $x_1$ es uno de esos dos, la selección hacia adelante no puede bajar de $9/17$. En cambio $\{x_2,x_3\}=\{u,v\}$ genera un subespacio que contiene a $y=u+v$, así que $\text{RSS}(\mathcal{M}_2)=0$. [∎]{.fin-demo}
+:::
+
+El contraejemplo no depende de ningún sorteo: los tres números $0{,}72$, $9/17$ y $0$ son exactos y se siguen de la geometría. Lo que lo hace posible es que $x_1$ gane en solitario por correlación —$0{,}800$ contra $0{,}707$— y a la vez arrastre una componente $w$ que no sirve para nada y que ya no se puede soltar.
+
+```{pyodide}
+import itertools
+import numpy as np
+
+def rss(X, y, cols):
+    unos = np.ones((len(y), 1))
+    D = np.column_stack([unos] + [X[:, j] for j in cols]) if cols else unos
+    b, *_ = np.linalg.lstsq(D, y, rcond=None)
+    r = y - D @ b
+    return float(r @ r)
+
+def mejor(X, y, k):
+    return min(itertools.combinations(range(X.shape[1]), k), key=lambda c: rss(X, y, c))
+
+def adelante(X, y, k):
+    sel = []
+    for _ in range(k):
+        resto = [j for j in range(X.shape[1]) if j not in sel]
+        sel.append(min(resto, key=lambda j: rss(X, y, tuple(sorted(sel + [j])))))
+    return tuple(sorted(sel))
+
+# El diseno de la Proposicion 7.8, construido y no sorteado.
+rng = np.random.default_rng(78)
+n = 40
+A = rng.normal(size=(n, 3))
+A = A - A.mean(axis=0)
+Q, _ = np.linalg.qr(A)
+u, v, w = Q[:, 0], Q[:, 1], Q[:, 2]
+
+y = u + v                                          # la respuesta
+x1 = 0.8 * (u + v) / np.sqrt(2) + 0.6 * w          # el senuelo
+X = np.column_stack([x1, u, v])
+
+print("correlacion de cada predictor con y: %.6f  %.6f  %.6f"
+      % tuple(float(np.corrcoef(X[:, j], y)[0, 1]) for j in range(3)))
+print()
+for c in [(0,), (1,), (2,), (0, 1), (0, 2), (1, 2), (0, 1, 2)]:
+    print("  RSS%-10s = %.10f" % (str(list(c)), rss(X, y, c)))
+print()
+print("mejor de tamano 1: %s      RSS = %.10f" % (list(mejor(X, y, 1)), rss(X, y, mejor(X, y, 1))))
+print("adelante, paso 2 : %s   RSS = %.10f" % (list(adelante(X, y, 2)), rss(X, y, adelante(X, y, 2))))
+print("mejor de tamano 2: %s   RSS = %.10f" % (list(mejor(X, y, 2)), rss(X, y, mejor(X, y, 2))))
+print()
+print("9/17 = %.10f" % (9 / 17))
+print("adelante encuentra el mejor de tamano 2:", adelante(X, y, 2) == mejor(X, y, 2))
+for q in (3, 10, 20, 30):
+    print("p = %2d  ->  mejor subconjunto %10d modelos, adelante %4d"
+          % (q, 2 ** q, 1 + q * (q + 1) // 2))
+```
+
+El fallo tiene una causa identificable: la selección hacia adelante toma una decisión irrevocable en el primer paso con la información de un solo predictor. La selección hacia atrás no cae en este mismo diseño —arranca del modelo completo, que ajusta sin error, y puede soltar $x_1$—, pero tiene el problema recíproco, y además no puede usarse cuando $p>n$, porque el modelo completo no está definido. Esa es la situación de la lección 9.
+
+```{=html}
+<div class="viz-costo">
+  <div class="controles">
+    <label>Predictores p <input id="co-p" type="range" min="2" max="40" step="1" value="20"> <span id="co-p-v">20</span></label>
+    <label>Ajustes por segundo
+      <select id="co-v">
+        <option value="1000">mil</option>
+        <option value="1000000" selected>un millón</option>
+        <option value="1000000000">mil millones</option>
+      </select>
+    </label>
+  </div>
+  <svg id="co-svg" viewBox="0 0 660 300" role="img" aria-label="En escala logarítmica, el número de modelos que ajusta el mejor subconjunto frente al que ajusta la selección hacia adelante, con el valor de p elegido marcado sobre las dos curvas."></svg>
+  <p class="lectura" id="co-lectura"></p>
+</div>
+<style>
+.viz-costo { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-costo .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-costo label { display: flex; align-items: center; gap: .4rem; }
+.viz-costo input[type=range] { width: 150px; padding: 0; }
+.viz-costo select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-costo svg { width: 100%; height: auto; display: block; }
+.viz-costo .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_S = "#B4342E", C_A = "#0F6E68";
+  var svg = document.getElementById("co-svg"), lec = document.getElementById("co-lectura");
+  var cp = document.getElementById("co-p"), ep = document.getElementById("co-p-v"), cv = document.getElementById("co-v");
+
+  // Marco anclado: p de 0 a 40, log10 del numero de modelos de 0 a 13.
+  var PMAX = 40, LMAX = 13, X0 = 50, XW = 580, Y0 = 24, YH = 228;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(p) { return X0 + p / PMAX * XW; }
+  function py(l) { return Y0 + (LMAX - l) / LMAX * YH; }
+  function lsub(p) { return p * Math.log10(2); }               // log10(2^p)
+  function lade(p) { return Math.log10(1 + p * (p + 1) / 2); } // log10(1 + p(p+1)/2)
+
+  function tiempo(seg) {
+    if (seg < 1) return (seg * 1000).toFixed(1) + " ms";
+    if (seg < 90) return seg.toFixed(1) + " s";
+    if (seg < 5400) return (seg / 60).toFixed(1) + " min";
+    if (seg < 172800) return (seg / 3600).toFixed(1) + " h";
+    if (seg < 3.15e9) return (seg / 86400).toFixed(1) + " días";
+    return (seg / 3.15e7).toFixed(1) + " años";
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var p = +cp.value, vel = +cv.value;
+    ep.textContent = String(p);
+
+    for (var l = 0; l <= LMAX; l += 2) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(l).toFixed(1) + " L" + (X0 + XW) + " " + py(l).toFixed(1),
+        stroke: C_L, "stroke-width": 1, fill: "none", opacity: .5 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(l) + 4, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .65 }, "10^" + l));
+    }
+    svg.appendChild(el("text", { x: X0, y: 15, "font-size": 11.5, fill: C_T }, "modelos ajustados"));
+    svg.appendChild(el("text", { x: X0 + XW / 2, y: 292, "text-anchor": "middle", "font-size": 11, fill: C_T, opacity: .75 }, "predictores disponibles p"));
+
+    [[lsub, C_S], [lade, C_A]].forEach(function (c) {
+      var s = "";
+      for (var q = 0; q <= PMAX; q++) s += (q ? " L" : "M") + px(q).toFixed(1) + " " + py(Math.min(c[0](q), LMAX)).toFixed(1);
+      svg.appendChild(el("path", { d: s, stroke: c[1], "stroke-width": 2.4, fill: "none" }));
+    });
+
+    // el techo de lo que cabe en un segundo a la velocidad elegida, y hasta que p alcanza
+    var techo = Math.min(Math.log10(vel), LMAX), pmax = Math.log2(vel);
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(techo).toFixed(1) + " L" + (X0 + XW) + " " + py(techo).toFixed(1),
+      stroke: C_T, "stroke-width": 1.4, fill: "none", "stroke-dasharray": "5 4", opacity: .6 }));
+    svg.appendChild(el("text", { x: X0 + XW - 4, y: py(techo) - 7, "text-anchor": "end", "font-size": 11, fill: C_T, opacity: .75 },
+      "lo que cabe en un segundo"));
+    svg.appendChild(el("path", { d: "M" + px(pmax).toFixed(1) + " " + py(techo).toFixed(1) + " L" + px(pmax).toFixed(1) + " " + (Y0 + YH),
+      stroke: C_S, "stroke-width": 1.4, fill: "none", "stroke-dasharray": "3 4", opacity: .7 }));
+    svg.appendChild(el("circle", { cx: px(pmax).toFixed(1), cy: py(techo).toFixed(1), r: 3.6, fill: C_S, "fill-opacity": .55 }));
+
+    var ns = Math.pow(2, p), na = 1 + p * (p + 1) / 2;
+    svg.appendChild(el("circle", { cx: px(p).toFixed(1), cy: py(Math.min(lsub(p), LMAX)).toFixed(1), r: 4.8, fill: C_S }));
+    svg.appendChild(el("circle", { cx: px(p).toFixed(1), cy: py(lade(p)).toFixed(1), r: 4.8, fill: C_A }));
+    svg.appendChild(el("path", { d: "M" + px(p).toFixed(1) + " " + py(lade(p)).toFixed(1) + " L" + px(p).toFixed(1) + " " + py(Math.min(lsub(p), LMAX)).toFixed(1),
+      stroke: C_T, "stroke-width": 1.6, fill: "none", opacity: .55 }));
+
+    lec.innerHTML = "Con p = <strong>" + p + "</strong>, el mejor subconjunto ajusta <strong>" +
+      ns.toExponential(2) + "</strong> modelos y la selección hacia adelante <strong>" + na +
+      "</strong>: un factor de <strong>" + (ns / na).toExponential(2) + "</strong>. A la velocidad elegida, " +
+      "el primero tarda <strong>" + tiempo(ns / vel) + "</strong> y el segundo <strong>" + tiempo(na / vel) +
+      "</strong>. La raya horizontal marca lo que cabe en un segundo a esa velocidad, y la corta " +
+      "la curva roja en p = <strong>" + pmax.toFixed(1) + "</strong>: ese es el mayor número de predictores " +
+      "que el mejor subconjunto alcanza a recorrer en ese tiempo. La curva roja es una recta en escala " +
+      "logarítmica porque 2^p crece exponencialmente; la verde es casi plana porque 1 + p(p+1)/2 crece " +
+      "como un polinomio de grado dos.";
+  }
+
+  cp.addEventListener("input", dibujar);
+  cv.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Contraste con la librería
+
+Esta lección es de nivel **L3**, y ese nivel promete implementar el resultado en NumPy puro y empatar con la librería. Se contrastan dos cosas: el RSS de un subconjunto contra el de `LinearRegression`, y el camino completo de la selección hacia adelante contra `SequentialFeatureSelector`.
+
+El segundo contraste necesita un cuidado. `SequentialFeatureSelector` elige por validación cruzada, no por RSS de entrenamiento, así que por omisión resuelve un problema distinto. Para que los dos criterios coincidan se le pasa una partición que entrena y mide sobre **todas** las observaciones: con ella su puntuación es el $R^2$ de entrenamiento, y maximizarlo es minimizar el RSS.
+
+```{pyodide}
+import numpy as np
+from sklearn.feature_selection import SequentialFeatureSelector
+from sklearn.linear_model import LinearRegression
+
+def rss(X, y, cols):
+    unos = np.ones((len(y), 1))
+    D = np.column_stack([unos] + [X[:, j] for j in cols]) if cols else unos
+    b, *_ = np.linalg.lstsq(D, y, rcond=None)
+    r = y - D @ b
+    return float(r @ r)
+
+def adelante(X, y, k):
+    sel = []
+    for _ in range(k):
+        resto = [j for j in range(X.shape[1]) if j not in sel]
+        sel.append(min(resto, key=lambda j: rss(X, y, tuple(sorted(sel + [j])))))
+    return tuple(sorted(sel))
+
+rng = np.random.default_rng(7)
+n, p = 80, 10
+X = rng.normal(size=(n, p))
+y = np.column_stack([np.ones(n), X]) @ np.array([2.0, 1.4, -0.9, 0.7, 0, 0, 0, 0, 0, 0, 0]) \
+    + rng.normal(scale=1.0, size=n)
+
+cols = (0, 1, 2)
+lib = LinearRegression().fit(X[:, cols], y)
+sc_lib = float(np.sum((y - lib.predict(X[:, cols])) ** 2))
+print("RSS propio     : %.12f" % rss(X, y, cols))
+print("RSS sklearn    : %.12f" % sc_lib)
+print("iguales a 1e-10:", bool(abs(rss(X, y, cols) - sc_lib) < 1e-10))
+
+todo = np.arange(n)
+sfs = SequentialFeatureSelector(LinearRegression(), n_features_to_select=3,
+                                direction="forward", cv=[(todo, todo)], scoring="r2")
+sfs.fit(X, y)
+suyo = tuple(int(j) for j in np.flatnonzero(sfs.get_support()))
+mio = adelante(X, y, 3)
+print("\nadelante propio          :", list(mio))
+print("SequentialFeatureSelector:", list(suyo))
+print("mismo subconjunto:", mio == suyo)
+
+# Sobre el diseno de la Proposicion 7.8 la libreria comete el mismo error.
+rng2 = np.random.default_rng(78)
+A = rng2.normal(size=(40, 3))
+A = A - A.mean(axis=0)
+Q, _ = np.linalg.qr(A)
+u, v, w = Q[:, 0], Q[:, 1], Q[:, 2]
+y2 = u + v
+X2 = np.column_stack([0.8 * (u + v) / np.sqrt(2) + 0.6 * w, u, v])
+todo2 = np.arange(40)
+sfs2 = SequentialFeatureSelector(LinearRegression(), n_features_to_select=2,
+                                 direction="forward", cv=[(todo2, todo2)], scoring="r2")
+sfs2.fit(X2, y2)
+suyo2 = tuple(int(j) for j in np.flatnonzero(sfs2.get_support()))
+print("\nsobre el diseno de la Proposicion 7.8:")
+print("  adelante propio          :", list(adelante(X2, y2, 2)), "RSS %.10f" % rss(X2, y2, adelante(X2, y2, 2)))
+print("  SequentialFeatureSelector:", list(suyo2), "RSS %.10f" % rss(X2, y2, suyo2))
+print("  el mejor de tamano 2 es  : [1, 2] RSS %.10f" % rss(X2, y2, (1, 2)))
+print("  la libreria comete el mismo error:", suyo2 == (0, 1))
+```
+
+El tercer bloque es el que conviene retener: puesta a resolver el mismo problema con el mismo criterio, la librería devuelve el mismo subconjunto equivocado. La Proposición 7.8 habla del procedimiento, no de una implementación concreta.
+
+## Ejercicios
+
+### Ejercicio 1, El precio de cada criterio
+
+Calcular, con $n=100$, cuánto paga el BIC por cada parámetro y cuántas veces más caro es que el $C_p$.
+
+```{pyodide}
+#| exercise: ex_precio
+import numpy as np
+n = 100
+
+precio_bic = ______
+razon = ______
+
+print(round(precio_bic, 4), round(razon, 4))
+float(razon)
+```
+
+::: {.hint exercise="ex_precio"}
+El $C_p$ paga $\lambda=2$ por parámetro y el BIC paga $\lambda=\log n$. La razón entre ambos es $\log(n)/2$.
+:::
+
+::: {.solution exercise="ex_precio"}
+```{pyodide}
+import numpy as np
+n = 100
+
+precio_bic = np.log(n)
+razon = np.log(n) / 2
+
+print(round(precio_bic, 4), round(razon, 4))
+float(razon)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_precio
+#| check: true
+if abs(result - 2.302585092994046) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: log(100)/2 = 2.3026, así que el BIC cobra 2,3 veces lo del Cp.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 2.302585 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, El umbral del R² ajustado
+
+Un modelo con $d=6$ predictores y $n=50$ observaciones tiene $\text{RSS}_0=120$. Se añade una variable y el RSS baja a $\text{RSS}_1=116$. Decidir con la Proposición 7.6 si el $R^2$ ajustado sube, calculando el $F=t^2$ de la comparación.
+
+```{pyodide}
+#| exercise: ex_umbral
+n, d = 50, 6
+rss0, rss1 = 120.0, 116.0
+
+f = ______
+
+print(round(f, 4), "sube el R2 ajustado:", bool(f > 1))
+float(f)
+```
+
+::: {.hint exercise="ex_umbral"}
+$F=(\text{RSS}_0-\text{RSS}_1)\big/\big(\text{RSS}_1/(n-d-2)\big)$, con $n-d-2$ grados de libertad en el modelo grande.
+:::
+
+::: {.solution exercise="ex_umbral"}
+```{pyodide}
+n, d = 50, 6
+rss0, rss1 = 120.0, 116.0
+
+f = (rss0 - rss1) / (rss1 / (n - d - 2))
+
+print(round(f, 4), "sube el R2 ajustado:", bool(f > 1))
+float(f)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_umbral
+#| check: true
+if abs(result - 1.4482758620689655) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: F = 1.4483 > 1, así que el R² ajustado sube aunque la variable no sea significativa al 5 %.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 1.448276 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 7**:
+
+1. Repetir el experimento de la sección 2 sorteando $500$ conjuntos de datos con la misma verdad de tres predictores, y contar cuántas veces acierta el tamaño cada criterio. Anotar la tasa de acierto del $C_p$, del BIC y del $R^2$ ajustado, y comprobar que el BIC nunca elige un modelo mayor que el $C_p$ en ninguna de las $500$ repeticiones.
+2. Sustituir la $\hat{\sigma}^2$ del modelo completo por la del modelo en curso y rehacer la tabla de la sección 2. Anotar qué le pasa al criterio y por qué la Proposición 7.4 deja de aplicarse.
+3. Programar la selección hacia atrás y correrla sobre el diseño de la Proposición 7.8. Comprobar que ahí sí encuentra $\mathcal{M}_2$, y después construir un diseño donde sea la selección hacia atrás la que falle. Anotar en `50-Errores/` qué tiene en común con el de la lección.
+
+## Del libro
+
+*An Introduction to Statistical Learning with Applications in Python* trata este material en §6.1 *Subset Selection*, con la búsqueda exhaustiva en §6.1.1 *Best Subset Selection*, los métodos paso a paso en §6.1.2 *Stepwise Selection* y los criterios en §6.1.3 *Choosing the Optimal Model*.
+
+Las otras tres secciones del capítulo 6 **no se tratan aquí**: §6.2 *Shrinkage Methods* es la lección 8, §6.4 *Considerations in High Dimensions* es la lección 9, y §6.3 *Dimension Reduction Methods* espera a que esté escrita la lección de componentes principales, porque la regresión sobre componentes es esa descomposición seguida de unos mínimos cuadrados.
+
+**Preguntas para leer §6.1 con lápiz:**
+
+1. §6.1.3 presenta $C_p$, AIC, BIC y $R^2$ ajustado como cuatro opciones del mismo rango. Con las Proposiciones 7.5 y 7.6, ¿cuál de los cuatro queda fuera de la familia $\text{RSS}+\lambda(d+1)\hat{\sigma}^2$, y qué garantía se pierde con él?
+2. El libro estima $\hat{\sigma}^2$ con el modelo completo y lo usa en el criterio de todos los tamaños. ¿En qué paso de la demostración de la Proposición 7.4 se usa que $\sigma^2$ no dependa del modelo que se está juzgando?
+3. §6.1.2 describe la selección hacia adelante y advierte que puede no dar el mejor subconjunto. Con el diseño de la Proposición 7.8, ¿qué propiedad del primer paso hace irrevocable el error, y por qué la selección hacia atrás no lo comete en ese diseño concreto?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/seleccion-de-subconjuntos.md`, enlazada a [[validacion-cruzada]], [[optimismo]] y [[proyeccion-ortogonal]]. Conviene rehacer a mano la demostración de la Proposición 7.5: el argumento de sumar las dos desigualdades de optimalidad y ver que los términos del ajuste se cancelan reaparece en cuanto haya un parámetro que ponga precio a la complejidad.
+
+```
+¿Qué es M_d?::El modelo de d predictores con el menor RSS de todos los de ese tamaño
+¿Cuántos modelos ajusta el mejor subconjunto?::2^p
+¿Por qué el RSS no puede elegir el tamaño?::Porque no crece al añadir predictores: su mínimo está siempre en d = p
+¿Cuánto baja el RSS al añadir una columna?::⟨r,z⟩²/‖z‖², con z la parte de la columna ortogonal al modelo previo
+¿Qué corrige el Cp?::El optimismo exacto del error de entrenamiento, 2σ²(d+1)/n
+¿Qué promete el Cp?::Que E[Cp] = E[error de prueba] = σ²(n+d+1)/n, con σ² conocida
+¿En qué se diferencian Cp y BIC?::En el precio por parámetro: λ = 2 contra λ = log n
+¿Quién elige el modelo más grande, Cp o BIC?::El Cp, nunca al revés, en cuanto n ≥ 8
+¿Por qué n ≥ 8?::Porque log n > 2 equivale a n > e² = 7,389
+¿Cuándo sube el R² ajustado?::Si y solo si el t de la variable añadida cumple t² > 1
+¿Con qué frecuencia pasa ese umbral el ruido puro?::Cerca de un tercio de las veces: 0,3217 con 55 grados de libertad
+¿Cuántos modelos mira la selección hacia adelante?::1 + p(p+1)/2
+¿Qué pierde a cambio?::La garantía de encontrar M_d: puede devolver RSS 9/17 donde el mejor par ajusta sin error
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 7.2 se demuestra con la monotonía del ínfimo sobre subespacios encajados y la fórmula de la caída, $\langle r,z\rangle^2/\lVert z\rVert^2$; se comprueba sobre $2^{10}=1024$ modelos ajustados, donde el RSS baja en los diez pasos y su mínimo queda en $d=10$. La Proposición 7.4 se deduce de la Proposición 6.2 de Machine Learning 6 restando las dos esperanzas, y se comprueba con $20\,000$ muestras: el $C_p$ simulado da $1{,}79567$ contra el teórico $1{,}79563$, con un sesgo de $-0{,}00220$ frente al $-0{,}21345$ del error de entrenamiento. La Proposición 7.5 se demuestra por el argumento de intercambio, sumando las dos desigualdades de optimalidad, y se comprueba barriendo $4001$ valores de $\lambda$ entre $0$ y $40$. La Proposición 7.6 se demuestra despejando la desigualdad entre las dos varianzas residuales hasta dejar el estadístico $F$, y se comprueba con acuerdo perfecto en $20\,000$ repeticiones, con una tasa de admisión del ruido de $0{,}3288$ medida contra $0{,}3217$ calculada por Simpson. La Proposición 7.8 se demuestra construyendo el diseño a partir de tres vectores ortonormales, con $\text{RSS}=0{,}72$, $9/17$ y $0$ obtenidos analíticamente y confirmados a diez decimales. Los tres visuales se contrastaron contra estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** El optimismo exacto del error de entrenamiento y la traza de la matriz sombrero son la Proposición 6.2 de Machine Learning 6, y esta lección la usa sin rehacerla. La proyección ortogonal sobre un subespacio y su caracterización por el residuo son de Álgebra 5. El error estándar de un coeficiente y la equivalencia entre el estadístico $F$ de una variable y el cuadrado de su estadístico $t$ son de Estadística 14.
+
+**Lo que se enuncia sin demostrar.** Que el AIC coincide con el $C_p$ salvo un factor constante en mínimos cuadrados con errores normales: aquí se usa solo para justificar que ordenan igual, y la equivalencia depende de la forma de la verosimilitud normal, que no se desarrolla en esta página. Que el BIC es consistente para la selección de modelos cuando el modelo verdadero está entre los candidatos se menciona en el libro y no se trata aquí.
+
+**Lo que viene de los libros.**
+
+- [*An Introduction to Statistical Learning with Applications in Python*](https://www.statlearning.com/) (James, Witten, Hastie, Tibshirani, Taylor; Springer, 2023), §6.1 *Subset Selection* con sus tres subsecciones — citado por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La Proposición 7.4 con el $C_p$ definido sobre $d+1$ parámetros, que lo convierte en insesgado exacto en vez de aproximado, y su derivación como resta directa de las dos esperanzas de la lección anterior. La Proposición 7.5 y su demostración por intercambio, que ordena $C_p$ y BIC sin suponer nada sobre los datos y fija el umbral $n\ge 8$. La Proposición 7.6, que convierte el $R^2$ ajustado en un umbral explícito sobre el estadístico $t$ y mide lo que ese umbral deja pasar. Y el diseño de la Proposición 7.8, construido con tres vectores ortonormales para que los tres RSS salgan exactos y el fallo de la selección hacia adelante quede demostrado en vez de ilustrado.
+
+[Índice de ISLP verificado el 13-09-2026 contra los marcadores del PDF oficial.]{.sello}
+:::
