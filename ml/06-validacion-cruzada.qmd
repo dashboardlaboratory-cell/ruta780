@@ -1,0 +1,609 @@
+---
+title: "Validación cruzada"
+subtitle: "Machine Learning · Lección 6"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/01-aprendizaje-estadistico, estadistica/13-regresion-primeros-principios, estadistica/11-bootstrap]
+siguientes: []
+libro: "ISLP §5.1 Cross-Validation · §5.1.1 The Validation Set Approach · §5.1.2 Leave-One-Out Cross-Validation · §5.1.3 k-Fold Cross-Validation · §5.1.4 Bias-Variance Trade-Off for k-Fold Cross-Validation · §5.1.5 Cross-Validation on Classification Problems"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - scikit-learn
+---
+
+::: {.meta-leccion data-leccion="ml/06-validacion-cruzada"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §5.1]{.item}
+[**Prereqs** [Sesgo y varianza](01-aprendizaje-estadistico.qmd) · [Regresión desde primeros principios](../estadistica/13-regresion-primeros-principios.qmd) · [Bootstrap](../estadistica/11-bootstrap.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Distinguir el error de entrenamiento del error de prueba, y demostrar exactamente cuánto subestima el primero al segundo en mínimos cuadrados.
+2. Leer el [apalancamiento]{.g data-t="apalancamiento"} $h_{ii}$ como la parte del ajuste que cada observación se debe a sí misma, y demostrar que los $h_{ii}$ suman el número de parámetros.
+3. Definir la [validación cruzada]{.g} de $k$ [pliegues]{.g data-t="pliegue"} y situar la validación simple y la de dejar uno fuera como sus casos extremos.
+4. Demostrar que la validación de dejar uno fuera tiene forma cerrada en mínimos cuadrados, y calcularla con un solo ajuste en vez de $n$.
+5. Enunciar qué error estima exactamente la validación con $k$ pliegues, y deducir de ahí su sesgo.
+6. Demostrar que seleccionar variables antes de validar invalida la estimación, y medir cuánto.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 1**: la descomposición sesgo-varianza y el error irreducible. Esta lección mide en datos lo que aquella descompuso en teoría.
+- **Estadística 13**: la matriz sombrero $H=Z(Z^\top Z)^{-1}Z^\top$ y sus propiedades. Toda la sección 2 sale de que sea idempotente.
+- **Estadística 11**: el bootstrap y la idea de remuestrear para estimar lo que no se puede calcular. La validación cruzada es la otra mitad del capítulo 5 de ISLP, y esa mitad ya está escrita ahí.
+- **Machine Learning 3 a 5**: los modelos que ahora hay que comparar entre sí sin engañarse.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 7**: la regularización, cuyo parámetro se elige por validación cruzada y de ninguna otra forma.
+- **Machine Learning 8 a 12**: splines, árboles, bosques y redes, todos con parámetros que solo se pueden fijar midiendo fuera de la muestra.
+- **Machine Learning 16**: las pruebas múltiples, que es el mismo problema de la sección 5 con otro disfraz.
+- **Series de tiempo**: donde esta lección **no** se aplica tal cual, porque partir al azar rompe el orden temporal.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | El número de observaciones |
+| $p$ | pe | El número de predictores, sin contar el intercepto |
+| $k$ | ka | El número de pliegues |
+| $H$ | hache | La matriz sombrero, que proyecta $y$ sobre el espacio columna del diseño |
+| $h_{ii}$ | hache sub i i | El apalancamiento de la observación $i$: la entrada diagonal de $H$ |
+| $\hat{y}_{(i)}$ | y gorro sub entre paréntesis i | La predicción en $i$ del modelo ajustado **sin** la observación $i$ |
+| $\sigma^2$ | sigma cuadrado | La varianza del error, constante |
+:::
+
+## 1. Dos errores que no son el mismo
+
+::: {.definicion}
+**Definición 6.1 (error de entrenamiento y error de prueba).** Sea $\hat{f}$ un modelo ajustado sobre una muestra $(x_i,y_i)_{i=1}^n$. El **error de entrenamiento** es
+$$\text{Ent} \;=\; \frac{1}{n}\sum_{i=1}^{n}\big(y_i-\hat{f}(x_i)\big)^2,$$
+calculado sobre las mismas observaciones que se usaron para ajustar. El **error de prueba** es la misma media sobre observaciones nuevas, no usadas en el ajuste.
+:::
+
+El error de entrenamiento se puede calcular siempre; el de prueba, casi nunca. Toda la lección trata de estimar el segundo sin tener datos nuevos.
+
+::: {.proposicion}
+**Proposición 6.2 (el optimismo, en forma exacta).** Sea el modelo lineal $y=Z\beta+\varepsilon$ con $Z$ de rango completo y $p+1$ columnas, y errores de media cero, varianza $\sigma^2$ e incorrelados. Sea $\hat{y}=Hy$ el ajuste por mínimos cuadrados. Entonces
+$$E[\text{Ent}] = \sigma^2\,\frac{n-p-1}{n}, \qquad E[\text{Prueba}] = \sigma^2\,\frac{n+p+1}{n},$$
+donde el error de prueba se mide sobre una respuesta nueva medida en los mismos predictores. En consecuencia
+$$\frac{E[\text{Prueba}]}{E[\text{Ent}]} \;=\; \frac{n+p+1}{n-p-1} \;>\; 1,$$
+y la brecha crece con $p$ y se cierra con $n$.
+:::
+
+::: {.demostracion}
+*Demostración.* La matriz $H$ es simétrica e idempotente y su traza vale $p+1$ (Estadística 13). El residuo es $y-\hat{y}=(I-H)y=(I-H)\varepsilon$, porque $(I-H)Z\beta=0$. Entonces
+$$E\big[\lVert (I-H)\varepsilon\rVert^2\big] = \sigma^2\operatorname{tr}(I-H) = \sigma^2(n-p-1),$$
+usando que $I-H$ también es idempotente. Dividiendo entre $n$ se obtiene la primera igualdad.
+
+Para la segunda, sea $y^\ast=Z\beta+\varepsilon^\ast$ con $\varepsilon^\ast$ independiente de $\varepsilon$ y con la misma ley. Escribiendo
+$$y^\ast-\hat{y} = \varepsilon^\ast - H\varepsilon,$$
+y usando la independencia para anular el término cruzado,
+$$E\big[\lVert y^\ast-\hat{y}\rVert^2\big] = E\lVert\varepsilon^\ast\rVert^2 + E\lVert H\varepsilon\rVert^2 = \sigma^2 n + \sigma^2\operatorname{tr}(H) = \sigma^2(n+p+1).$$
+Dividiendo entre $n$ queda la segunda igualdad, y el cociente es inmediato. [∎]{.fin-demo}
+:::
+
+La diferencia entre los dos valores es $2\sigma^2(p+1)/n$: cada parámetro estimado cuesta $2\sigma^2/n$ de optimismo, y por eso el error de entrenamiento **siempre** premia a los modelos más grandes.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(6)
+n, p, s = 60, 3, 1.2
+X = rng.normal(size=(n, p))
+Z = np.column_stack([np.ones(n), X])
+mu = Z @ np.array([2.0, 1.3, -0.8, 0.5])
+H = Z @ np.linalg.solve(Z.T @ Z, Z.T)
+
+ent, pru = [], []
+for _ in range(20000):
+    y = mu + rng.normal(scale=s, size=n)
+    ajuste = H @ y
+    ent.append(np.mean((y - ajuste) ** 2))
+    y2 = mu + rng.normal(scale=s, size=n)          # mismo diseno, ruido nuevo
+    pru.append(np.mean((y2 - ajuste) ** 2))
+
+print("error de entrenamiento: simulado %.4f | teorico %.4f"
+      % (np.mean(ent), s ** 2 * (n - p - 1) / n))
+print("error de prueba       : simulado %.4f | teorico %.4f"
+      % (np.mean(pru), s ** 2 * (n + p + 1) / n))
+print("razon: simulada %.4f | teorica %.4f"
+      % (np.mean(pru) / np.mean(ent), (n + p + 1) / (n - p - 1)))
+print("traza de H, que debe valer p+1 =", p + 1, ":", round(np.trace(H), 10))
+```
+
+```{=html}
+<div class="viz-optimismo">
+  <div class="controles">
+    <label>Predictores p <input id="op-p" type="range" min="1" max="24" step="1" value="3"> <span id="op-p-v">3</span></label>
+    <label>Observaciones n
+      <select id="op-n">
+        <option value="60" selected>n = 60</option>
+        <option value="200">n = 200</option>
+      </select>
+    </label>
+  </div>
+  <svg id="op-svg" viewBox="0 0 640 320" role="img" aria-label="Las dos curvas del error esperado como función del número de predictores, sobre un eje fijo: la de entrenamiento baja y la de prueba sube, y entre ellas la brecha del optimismo."></svg>
+  <p class="lectura" id="op-lectura"></p>
+</div>
+<style>
+.viz-optimismo { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-optimismo .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-optimismo label { display: flex; align-items: center; gap: .4rem; }
+.viz-optimismo input[type=range] { width: 140px; padding: 0; }
+.viz-optimismo select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-optimismo svg { width: 100%; height: auto; display: block; }
+.viz-optimismo .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_E = "#0F6E68", C_P = "#B4342E";
+  var svg = document.getElementById("op-svg"), lec = document.getElementById("op-lectura");
+  var cp = document.getElementById("op-p"), ep = document.getElementById("op-p-v");
+  var cn = document.getElementById("op-n");
+
+  // Marco anclado: p de 0 a 25, error de 0 a 2.2, siempre.
+  var PMAX = 25, EMAX = 2.2, X0 = 52, XW = 556, Y0 = 26, YH = 244, S2 = 1.44;
+
+  function px(p) { return X0 + p / PMAX * XW; }
+  function py(e) { return Y0 + (EMAX - e) / EMAX * YH; }
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function curva(f, color, n) {
+    var d = "";
+    for (var q = 0; q <= PMAX; q++) d += (q ? " L" : "M") + px(q).toFixed(1) + " " + py(f(q, n)).toFixed(1);
+    svg.appendChild(el("path", { d: d, stroke: color, "stroke-width": 2.4, fill: "none" }));
+  }
+
+  function ent(q, n) { return S2 * (n - q - 1) / n; }
+  function pru(q, n) { return S2 * (n + q + 1) / n; }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var q = +cp.value, n = +cn.value;
+    ep.textContent = String(q);
+
+    for (var t = 0; t <= 2; t += 0.5) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(t).toFixed(1) + " L" + (X0 + XW) + " " + py(t).toFixed(1),
+        stroke: C_L, "stroke-width": 1, fill: "none", opacity: 0.5 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(t) + 4, "text-anchor": "end", "font-size": 11,
+        fill: C_T, opacity: 0.65 }, t.toFixed(1)));
+    }
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(S2).toFixed(1) + " L" + (X0 + XW) + " " + py(S2).toFixed(1),
+      stroke: C_T, "stroke-width": 1, fill: "none", "stroke-dasharray": "4 4", opacity: 0.5 }));
+    svg.appendChild(el("text", { x: X0 + XW - 4, y: py(S2) - 7, "text-anchor": "end", "font-size": 11,
+      fill: C_T, opacity: 0.7 }, "σ² = 1.44, el error irreducible"));
+
+    curva(ent, C_E, n); curva(pru, C_P, n);
+
+    // la brecha en el p elegido: se desplaza con el control
+    var ye = py(ent(q, n)), yp = py(pru(q, n));
+    svg.appendChild(el("path", { d: "M" + px(q).toFixed(1) + " " + ye.toFixed(1) + " L" + px(q).toFixed(1) +
+      " " + yp.toFixed(1), stroke: C_T, "stroke-width": 2.2, fill: "none" }));
+    svg.appendChild(el("circle", { cx: px(q).toFixed(1), cy: ye.toFixed(1), r: 4.2, fill: C_E }));
+    svg.appendChild(el("circle", { cx: px(q).toFixed(1), cy: yp.toFixed(1), r: 4.2, fill: C_P }));
+    svg.appendChild(el("text", { x: px(q) + 9, y: (ye + yp) / 2 + 4, "font-size": 11.5, fill: C_T },
+      "brecha " + (pru(q, n) - ent(q, n)).toFixed(3)));
+
+    lec.innerHTML = "Con n = <strong>" + n + "</strong> y p = <strong>" + q + "</strong>, el error de " +
+      "entrenamiento esperado vale <strong>" + ent(q, n).toFixed(3) + "</strong> y el de prueba <strong>" +
+      pru(q, n).toFixed(3) + "</strong>. La brecha es 2σ²(p+1)/n = <strong>" +
+      (pru(q, n) - ent(q, n)).toFixed(3) + "</strong>: cada parámetro cuesta 2σ²/n de optimismo " +
+      "(Proposición 6.2). Las dos curvas se separan al añadir predictores y se juntan al añadir datos.";
+  }
+
+  cp.addEventListener("input", dibujar);
+  cn.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Dejar uno fuera, sin pagarlo
+
+::: {.definicion}
+**Definición 6.3 (validación cruzada de $k$ pliegues).** Se reparten las $n$ observaciones en $k$ bloques disjuntos de tamaño aproximado $n/k$. Para cada bloque se ajusta el modelo con los $k-1$ restantes y se mide el error sobre el bloque apartado. La **estimación por validación cruzada** es el promedio de esos $k$ errores.
+
+Con $k=n$ cada bloque es una sola observación y se llama **validación dejando uno fuera**. Con $k=2$, o con un único corte en dos mitades, se reduce al enfoque de validación simple.
+:::
+
+::: {.proposicion}
+**Proposición 6.4 (la forma cerrada de dejar uno fuera).** En mínimos cuadrados, sea $\hat{y}_i$ el ajuste con todas las observaciones y $h_{ii}$ el apalancamiento de la observación $i$, con $h_{ii}<1$. Entonces la predicción del modelo ajustado sin esa observación cumple
+$$y_i-\hat{y}_{(i)} \;=\; \frac{y_i-\hat{y}_i}{1-h_{ii}},$$
+y en consecuencia
+$$\text{CV}_{(n)} \;=\; \frac{1}{n}\sum_{i=1}^{n}\left(\frac{y_i-\hat{y}_i}{1-h_{ii}}\right)^{\!2}.$$
+Los $n$ ajustes se calculan con **uno solo**.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $\hat\beta_{(i)}$ el ajuste sin la observación $i$ y $\hat{y}_{(i)}=z_i^\top\hat\beta_{(i)}$ su predicción en ese punto. Considérese el conjunto de datos modificado que sustituye $y_i$ por $\hat{y}_{(i)}$ y deja el resto igual. Su suma de cuadrados en un $b$ cualquiera vale
+$$\sum_{j\neq i}(y_j-z_j^\top b)^2 + (\hat{y}_{(i)}-z_i^\top b)^2.$$
+El primer sumando se minimiza en $b=\hat\beta_{(i)}$ por definición, y el segundo se anula en ese mismo $b$, también por definición. Un punto que minimiza los dos sumandos a la vez minimiza la suma, así que el ajuste por mínimos cuadrados del conjunto modificado es $\hat\beta_{(i)}$.
+
+Aplicando ahora la linealidad del sombrero a ese conjunto modificado, y separando el término $j=i$,
+$$\hat{y}_{(i)} \;=\; \sum_{j\neq i} h_{ij}y_j + h_{ii}\hat{y}_{(i)} \;=\; \hat{y}_i - h_{ii}y_i + h_{ii}\hat{y}_{(i)}.$$
+Despejando, $\hat{y}_{(i)}(1-h_{ii}) = \hat{y}_i - h_{ii}y_i$, lo que exige $h_{ii}<1$. Restando de $y_i$,
+$$y_i-\hat{y}_{(i)} = \frac{y_i(1-h_{ii}) - \hat{y}_i + h_{ii}y_i}{1-h_{ii}} = \frac{y_i-\hat{y}_i}{1-h_{ii}}.$$
+Elevando al cuadrado y promediando se obtiene la fórmula. [∎]{.fin-demo}
+:::
+
+El apalancamiento $h_{ii}$ mide qué parte del propio ajuste se debe a la observación $i$. Donde vale casi $1$, el modelo la reproduce casi exactamente y su residuo de entrenamiento no dice nada; el denominador $1-h_{ii}$ es justo la corrección que lo devuelve a su tamaño honesto. Y como los $h_{ii}$ suman $p+1$, su promedio es $(p+1)/n$: la misma cantidad que aparecía en el optimismo de la Proposición 6.2.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(6)
+n, p = 60, 3
+X = rng.normal(size=(n, p))
+Z = np.column_stack([np.ones(n), X])
+y = Z @ np.array([2.0, 1.3, -0.8, 0.5]) + rng.normal(scale=1.2, size=n)
+
+H = Z @ np.linalg.solve(Z.T @ Z, Z.T)
+h = np.diag(H)
+res = y - H @ y
+cerrada = np.mean((res / (1 - h)) ** 2)
+
+lento = []
+for i in range(n):
+    m = np.ones(n, bool)
+    m[i] = False
+    b = np.linalg.lstsq(Z[m], y[m], rcond=None)[0]
+    lento.append((y[i] - Z[i] @ b) ** 2)
+
+print("con la formula cerrada, un solo ajuste : %.10f" % cerrada)
+print("con %d reajustes, uno por observacion   : %.10f" % (n, np.mean(lento)))
+print("iguales a 1e-10:", np.allclose(cerrada, np.mean(lento), atol=1e-10))
+print("suma de los apalancamientos, que vale p+1:", round(h.sum(), 10))
+print("apalancamiento medio %.4f, maximo %.4f" % (h.mean(), h.max()))
+```
+
+## 3. Qué estima exactamente $k$ pliegues
+
+::: {.proposicion}
+**Proposición 6.5 (el sesgo de $k$).** La validación cruzada con $k$ pliegues estima el error esperado de un modelo entrenado con $n(k-1)/k$ observaciones, no con $n$. Como el error esperado decrece con el tamaño de la muestra de entrenamiento, la estimación está **sesgada hacia arriba** respecto del error del modelo que de verdad se va a usar, y el sesgo decrece al crecer $k$; con $k=n$ el entrenamiento usa $n-1$ observaciones y el sesgo es el menor posible.
+:::
+
+::: {.demostracion}
+*Demostración.* Cada uno de los $k$ términos del promedio se obtiene ajustando sobre $k-1$ bloques, es decir sobre $n(k-1)/k$ observaciones, y evaluando sobre un bloque que no intervino. Cada término es por tanto una estimación insesgada del error esperado de un modelo entrenado con ese tamaño, y el promedio de estimaciones insesgadas de la misma cantidad lo sigue siendo.
+
+La comparación con el error del modelo entrenado con las $n$ observaciones se sigue de que el error esperado es no creciente en el tamaño de la muestra de entrenamiento, y la monotonía en $k$ de que $n(k-1)/k$ crece con $k$. [∎]{.fin-demo}
+:::
+
+Con $k=5$ el modelo evaluado se entrena con el $80$ % de los datos y con $k=10$ con el $90$ %, de modo que el sesgo ya es pequeño para las dos. La razón habitual para no subir hasta $n$ es el costo, salvo en mínimos cuadrados, donde la Proposición 6.4 lo vuelve gratis.
+
+```{=html}
+<div class="viz-pliegues">
+  <div class="controles">
+    <label>Pliegues k <input id="pl-k" type="range" min="2" max="10" step="1" value="5"> <span id="pl-k-v">5</span></label>
+    <label>Pliegue que se aparta <input id="pl-i" type="range" min="0" max="4" step="1" value="1"> <span id="pl-i-v">1</span></label>
+  </div>
+  <svg id="pl-svg" viewBox="0 0 640 250" role="img" aria-label="Las sesenta observaciones repartidas en bloques; el bloque apartado se marca aparte del resto, que forman el conjunto de entrenamiento."></svg>
+  <p class="lectura" id="pl-lectura"></p>
+</div>
+<style>
+.viz-pliegues { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-pliegues .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-pliegues label { display: flex; align-items: center; gap: .4rem; }
+.viz-pliegues input[type=range] { width: 140px; padding: 0; }
+.viz-pliegues svg { width: 100%; height: auto; display: block; }
+.viz-pliegues .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_E = "#0F6E68", C_V = "#B45309";
+  var svg = document.getElementById("pl-svg"), lec = document.getElementById("pl-lectura");
+  var ck = document.getElementById("pl-k"), ek = document.getElementById("pl-k-v");
+  var ci = document.getElementById("pl-i"), ei = document.getElementById("pl-i-v");
+
+  var N = 60;
+  // Marco anclado: la barra de observaciones ocupa siempre el mismo ancho.
+  var X0 = 42, XW = 556, Y0 = 60, ALTO = 52;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var k = +ck.value;
+    ci.max = String(k - 1);
+    var i = Math.min(+ci.value, k - 1);
+    ci.value = String(i);
+    ek.textContent = String(k); ei.textContent = String(i);
+
+    svg.appendChild(el("text", { x: X0, y: Y0 - 16, "font-size": 11.5, fill: C_T, opacity: 0.72 },
+      "las " + N + " observaciones, repartidas en " + k + " bloques"));
+
+    var corte = function (b) { return Math.round(b * N / k); };
+    for (var b = 0; b < k; b++) {
+      var a = corte(b), z = corte(b + 1);
+      var x = X0 + a / N * XW, an = (z - a) / N * XW;
+      var val = b === i;
+      svg.appendChild(el("rect", { x: x.toFixed(1), y: Y0, width: (an - 3).toFixed(1), height: ALTO, rx: 4,
+        fill: val ? C_V : C_E, "fill-opacity": val ? 0.24 : 0.10,
+        stroke: val ? C_V : C_E, "stroke-width": val ? 2.4 : 1.2 }));
+      svg.appendChild(el("text", { x: (x + (an - 3) / 2).toFixed(1), y: Y0 + ALTO / 2 + 4.5,
+        "text-anchor": "middle", "font-size": 11.5, fill: C_T }, String(z - a)));
+    }
+
+    // marcador del bloque apartado: se desplaza con los dos controles
+    var a2 = corte(i), z2 = corte(i + 1);
+    var xm = X0 + (a2 + z2) / 2 / N * XW;
+    svg.appendChild(el("path", { d: "M" + xm.toFixed(1) + " " + (Y0 + ALTO + 6) + " L" + xm.toFixed(1) +
+      " " + (Y0 + ALTO + 30), stroke: C_V, "stroke-width": 2.2, fill: "none" }));
+    svg.appendChild(el("text", { x: xm.toFixed(1), y: Y0 + ALTO + 46, "text-anchor": "middle",
+      "font-size": 11.5, fill: C_V }, "se aparta para medir"));
+
+    var entrena = N - (z2 - a2);
+    svg.appendChild(el("text", { x: X0, y: Y0 + ALTO + 82, "font-size": 11.5, fill: C_T, opacity: 0.72 },
+      "entrenamiento: " + entrena + " de " + N + " observaciones"));
+    var anchoE = entrena / N * XW;
+    svg.appendChild(el("rect", { x: X0, y: Y0 + ALTO + 92, width: anchoE.toFixed(1), height: 16, rx: 3,
+      fill: C_E, "fill-opacity": 0.2, stroke: C_E, "stroke-width": 1.2 }));
+
+    lec.innerHTML = "Con k = <strong>" + k + "</strong>, cada ajuste usa <strong>" + entrena +
+      "</strong> de las " + N + " observaciones, o sea n(k−1)/k = <strong>" +
+      (N * (k - 1) / k).toFixed(1) + "</strong>. Eso es lo que la estimación mide (Proposición 6.5): " +
+      "el error de un modelo entrenado con ese tamaño, no con " + N + ". Subir k acerca las dos cosas; " +
+      "con k = " + N + " el entrenamiento usaría " + (N - 1) + ".";
+  }
+
+  ck.addEventListener("input", dibujar);
+  ci.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Lo que invalida la estimación
+
+::: {.proposicion}
+**Proposición 6.6 (la selección tiene que ocurrir dentro).** La estimación por validación cruzada es insesgada para el error del **procedimiento completo** solo si cada bloque apartado no interviene en ninguna decisión del ajuste, la selección de variables incluida. Si la selección usa las etiquetas de todas las observaciones, la estimación puede alejarse arbitrariamente del error verdadero.
+:::
+
+::: {.demostracion}
+*Demostración.* La primera parte es la Definición 6.3 leída con cuidado: cada término mide un modelo construido sin mirar el bloque que lo evalúa, así que estima sin sesgo el error de ese procedimiento; si alguna decisión usó el bloque, el modelo evaluado ya no es independiente de él y el argumento se cae.
+
+Para la segunda basta un contraejemplo. Sean $X$ con $P$ columnas de ruido independiente e $y$ etiquetas sorteadas con independencia de $X$. El error verdadero de **cualquier** procedimiento es el del azar, porque nada en $X$ informa sobre $y$. Sin embargo, elegir las $m$ columnas con mayor diferencia de medias entre clases **usando todas las etiquetas** selecciona precisamente las que el ruido hizo parecer informativas, y esa apariencia persiste dentro de cada pliegue, porque los bloques apartados participaron en la elección. La celda siguiente mide la diferencia. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+from sklearn.model_selection import KFold
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+
+rng = np.random.default_rng(7)
+n, P = 80, 1500
+X = rng.normal(size=(n, P))        # ruido puro
+y = rng.integers(0, 2, n)          # etiquetas independientes de X
+
+def mejores(X, y, m=15):
+    d = X[y == 1].mean(0) - X[y == 0].mean(0)
+    return np.argsort(-np.abs(d))[:m]
+
+kf = KFold(n_splits=10, shuffle=True, random_state=1)
+
+sel = mejores(X, y)                # se elige mirando TODAS las etiquetas
+mal = []
+for tr, te in kf.split(X):
+    m = LinearDiscriminantAnalysis().fit(X[np.ix_(tr, sel)], y[tr])
+    mal.append((m.predict(X[np.ix_(te, sel)]) == y[te]).mean())
+
+bien = []
+for tr, te in kf.split(X):
+    s = mejores(X[tr], y[tr])      # la eleccion ocurre dentro del pliegue
+    m = LinearDiscriminantAnalysis().fit(X[np.ix_(tr, s)], y[tr])
+    bien.append((m.predict(X[np.ix_(te, s)]) == y[te]).mean())
+
+print("las etiquetas son independientes de X: el acierto verdadero es 0.5")
+print("seleccion fuera de la validacion: %.4f" % np.mean(mal))
+print("seleccion dentro de cada pliegue: %.4f" % np.mean(bien))
+```
+
+Sobre ruido puro, el procedimiento equivocado declara un $82{,}5$ % de aciertos donde la verdad es el $50$ %. La distancia no se corrige con una constante, porque lo que se está midiendo es un modelo que ya había visto las respuestas que se le iban a preguntar.
+
+## 5. Contraste con la librería
+
+Esta lección es de nivel **L3**, y ese nivel promete implementar el resultado en NumPy puro y empatar con la librería. Se contrastan las dos cosas: el reparto en pliegues contra el de `scikit-learn`, usando el mismo objeto `KFold` para que la partición sea idéntica, y el error medio que resulta.
+
+```{pyodide}
+import numpy as np
+from sklearn.model_selection import KFold, cross_val_score
+from sklearn.linear_model import LinearRegression
+
+rng = np.random.default_rng(6)
+n, p = 60, 3
+X = rng.normal(size=(n, p))
+Z = np.column_stack([np.ones(n), X])
+y = Z @ np.array([2.0, 1.3, -0.8, 0.5]) + rng.normal(scale=1.2, size=n)
+
+kf = KFold(n_splits=5, shuffle=True, random_state=0)
+mio = []
+for tr, te in kf.split(X):
+    b = np.linalg.lstsq(Z[tr], y[tr], rcond=None)[0]
+    mio.append(np.mean((y[te] - Z[te] @ b) ** 2))
+mio = np.mean(mio)
+suyo = -cross_val_score(LinearRegression(), X, y, cv=kf,
+                        scoring="neg_mean_squared_error").mean()
+
+print("k-fold propio  : %.10f" % mio)
+print("cross_val_score: %.10f" % suyo)
+print("iguales a 1e-10:", np.allclose(mio, suyo, atol=1e-10))
+```
+
+El empate exige que la partición sea la misma, y por eso se le pasa el mismo objeto `KFold` a las dos. Con particiones distintas los dos números difieren sin que ninguno esté mal: la estimación por validación cruzada depende del sorteo, y esa variabilidad es parte de lo que se está midiendo.
+
+## Ejercicios
+
+### Ejercicio 1, El optimismo
+
+Calcular la brecha esperada entre el error de prueba y el de entrenamiento con $n=100$, $p=9$ y $\sigma^2=4$, usando la Proposición 6.2.
+
+```{pyodide}
+#| exercise: ex_opt
+n, p, s2 = 100, 9, 4.0
+
+brecha = ______
+
+print(round(brecha, 4))
+float(brecha)
+```
+
+::: {.hint exercise="ex_opt"}
+La diferencia entre las dos esperanzas de la Proposición 6.2 vale $2\sigma^2(p+1)/n$.
+:::
+
+::: {.solution exercise="ex_opt"}
+```{pyodide}
+n, p, s2 = 100, 9, 4.0
+
+brecha = 2 * s2 * (p + 1) / n
+
+print(round(brecha, 4))
+float(brecha)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_opt
+#| check: true
+if abs(result - 0.8) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: 0.8, que sobre un error irreducible de 4 es un 20 % de optimismo.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.8 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Dejar uno fuera sin reajustar
+
+Calcular la validación dejando uno fuera con la fórmula cerrada de la Proposición 6.4, a partir de los residuos y los apalancamientos ya calculados.
+
+```{pyodide}
+#| exercise: ex_loocv
+import numpy as np
+rng = np.random.default_rng(6)
+n, p = 60, 3
+X = rng.normal(size=(n, p))
+Z = np.column_stack([np.ones(n), X])
+y = Z @ np.array([2.0, 1.3, -0.8, 0.5]) + rng.normal(scale=1.2, size=n)
+H = Z @ np.linalg.solve(Z.T @ Z, Z.T)
+h = np.diag(H)
+res = y - H @ y
+
+cv = ______
+
+print(round(cv, 6))
+float(cv)
+```
+
+::: {.hint exercise="ex_loocv"}
+Cada residuo se divide por $1-h_{ii}$ antes de elevar al cuadrado, y luego se promedia.
+:::
+
+::: {.solution exercise="ex_loocv"}
+```{pyodide}
+import numpy as np
+rng = np.random.default_rng(6)
+n, p = 60, 3
+X = rng.normal(size=(n, p))
+Z = np.column_stack([np.ones(n), X])
+y = Z @ np.array([2.0, 1.3, -0.8, 0.5]) + rng.normal(scale=1.2, size=n)
+H = Z @ np.linalg.solve(Z.T @ Z, Z.T)
+h = np.diag(H)
+res = y - H @ y
+
+cv = np.mean((res / (1 - h)) ** 2)
+
+print(round(cv, 6))
+float(cv)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_loocv
+#| check: true
+if abs(result - 1.636284) < 1e-4:
+    feedback = {"correct": True, "message": "Correcto: 1.636284, el mismo numero que dan los 60 reajustes.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 1.636284 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 6**:
+
+1. Medir la variabilidad de la estimación: repetir la validación con $k=5$ sobre $200$ particiones distintas y graficar la distribución de las estimaciones. Comparar su desviación típica con la de $k=10$ y con la de dejar uno fuera, que no tiene sorteo.
+2. Comprobar la Proposición 6.5 en datos: estimar la curva de error contra tamaño de entrenamiento y leer en ella cuánto sesgo introduce cada $k$. Anotar a partir de qué $k$ el sesgo es menor que el error de Monte Carlo.
+3. Reproducir la Proposición 6.6 variando el número de columnas de ruido de $50$ a $5000$, y graficar cómo crece el acierto ilusorio. Anotar en `50-Errores/` por qué el problema empeora al añadir predictores inútiles.
+
+## Del libro
+
+*An Introduction to Statistical Learning with Applications in Python* trata este material en §5.1 *Cross-Validation*, con la validación simple en §5.1.1 *The Validation Set Approach*, dejar uno fuera en §5.1.2 *Leave-One-Out Cross-Validation*, los $k$ pliegues en §5.1.3 *k-Fold Cross-Validation*, el compromiso entre sesgo y varianza en §5.1.4 *Bias-Variance Trade-Off for k-Fold Cross-Validation* y el caso de clasificación en §5.1.5 *Cross-Validation on Classification Problems*.
+
+La otra mitad del capítulo, §5.2 *The Bootstrap*, **no se repite aquí**: está escrita en Estadística 11, con la distribución empírica, el error estándar, los intervalos por percentiles y un caso donde el método falla.
+
+**Preguntas para leer §5.1 con lápiz:**
+
+1. §5.1.2 da la fórmula cerrada de dejar uno fuera y la presenta como un atajo de cálculo. Con la demostración de la Proposición 6.4, ¿en qué paso se usa que el modelo sea lineal, y por qué el atajo desaparece para un árbol o una red?
+2. §5.1.4 argumenta que dejar uno fuera tiene más varianza que $k=10$ porque promedia modelos muy correlacionados entre sí. Con la Proposición 6.5, ¿qué parte de ese argumento queda demostrada aquí y cuál se enuncia sin demostrar?
+3. §5.1.5 pasa a clasificación cambiando el error cuadrático por la tasa de aciertos. Revisando la demostración de la Proposición 6.5, ¿en qué paso se usó la forma concreta del error, y qué dice eso sobre qué métricas admiten el mismo argumento?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/validacion-cruzada.md`, enlazada a [[sesgo-varianza]], [[bootstrap]] y [[matriz-sombrero]]. Conviene rehacer a mano la demostración de la Proposición 6.4: el truco de sustituir $y_i$ por su propia predicción y notar que el ajuste no cambia es de los que no se olvidan, y deja claro por qué el apalancamiento aparece en el denominador.
+
+```
+¿Qué mide el error de entrenamiento?::El error sobre las mismas observaciones que se usaron para ajustar
+¿Cuánto subestima al de prueba?::La brecha esperada es 2σ²(p+1)/n: cada parámetro cuesta 2σ²/n
+¿Cuánto vale E[error de entrenamiento]?::σ²(n−p−1)/n, por la traza de I−H
+¿Y E[error de prueba] con el mismo diseño?::σ²(n+p+1)/n
+¿Qué es h_ii?::El apalancamiento: la parte del ajuste en i que se debe a la propia observación i
+¿Cuánto suman los h_ii?::p+1, la traza de la matriz sombrero
+¿Cuál es la fórmula cerrada de dejar uno fuera?::La media de ((y_i − ŷ_i)/(1 − h_ii))², con un solo ajuste
+¿Por qué aparece 1 − h_ii?::Porque el residuo de entrenamiento está encogido por la parte que la propia observación aporta a su ajuste
+¿Qué error estima k pliegues?::El de un modelo entrenado con n(k−1)/k observaciones, no con n
+¿Hacia dónde está sesgado?::Hacia arriba, y el sesgo decrece al crecer k
+¿Qué invalida la estimación?::Que el bloque apartado intervenga en cualquier decisión, la selección de variables incluida
+¿Cuánto llega a mentir?::Sobre ruido puro, 82,5 % de aciertos donde la verdad es 50 %
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 6.2 se demuestra con la idempotencia de la matriz sombrero y su traza, y se comprueba simulando $20\,000$ muestras con diseño fijo: el error de entrenamiento sale $1{,}3445$ contra el $1{,}3440$ teórico, el de prueba $1{,}5375$ contra $1{,}5360$, y la razón $1{,}1435$ contra $1{,}1429$. La Proposición 6.4 se demuestra sustituyendo la respuesta por su propia predicción dejando uno fuera y aplicando la linealidad del sombrero, y se comprueba contra los $60$ reajustes: los dos dan $1{,}6362840333$, iguales a $10^{-10}$. La Proposición 6.5 se sigue de la definición del procedimiento. La Proposición 6.6 se demuestra con un contraejemplo medido: con $1500$ columnas de ruido y etiquetas independientes, seleccionar fuera de la validación da $0{,}8250$ de aciertos y seleccionar dentro da $0{,}4375$, siendo $0{,}5$ la verdad. Los dos visuales se contrastaron contra estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** La matriz sombrero, su idempotencia y su traza son de Estadística 13. La descomposición sesgo-varianza es de Machine Learning 1. El bootstrap, que es la otra mitad del capítulo 5 del libro, está en Estadística 11 y no se repite: esta lección se apoya en él por el hilo y no reescribe ninguno de sus resultados.
+
+**Lo que se enuncia sin demostrar.** Que dejar uno fuera tiene **más varianza** que $k=10$ porque promedia modelos muy correlacionados entre sí: el libro lo argumenta y esta página lo menciona sin demostrarlo, porque el argumento depende de supuestos sobre la correlación entre los ajustes que no se fijan aquí. Lo que sí queda demostrado es la parte del sesgo, que es la Proposición 6.5. Que el error esperado es no creciente en el tamaño de la muestra de entrenamiento se toma como conocido.
+
+**Lo que viene de los libros.**
+
+- [*An Introduction to Statistical Learning with Applications in Python*](https://www.statlearning.com/) (James, Witten, Hastie, Tibshirani, Taylor; Springer, 2023), §5.1 *Cross-Validation* con sus cinco subsecciones — citado por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La Proposición 6.2 con las dos esperanzas exactas y su razón, que convierte «el error de entrenamiento es optimista» en una cantidad que se puede calcular antes de ver ningún dato, y que enlaza el optimismo con la traza del sombrero, o sea con el mismo $p+1$ que reaparece en el apalancamiento medio. La demostración de la Proposición 6.4 por sustitución de la respuesta, en vez de por la fórmula de actualización de rango uno. Y la Proposición 6.6 enunciada como una condición sobre el procedimiento entero, con el contraejemplo medido en lugar de la advertencia.
+
+[Índice de ISLP verificado el 13-09-2026 contra los marcadores del PDF oficial.]{.sello}
+:::

@@ -94,6 +94,7 @@ MIGRADAS = {
     "ml/03-regresion-logistica.qmd",
     "ml/04-modelos-generativos.qmd",
     "ml/05-modelos-lineales-generalizados.qmd",
+    "ml/06-validacion-cruzada.qmd",
     "python/01-tipos-y-estructuras.qmd",
     "python/02-funciones-y-scope.qmd",
     "python/03-comprehensions.qmd",
