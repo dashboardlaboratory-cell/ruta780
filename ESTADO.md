@@ -1,13 +1,14 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **16-09-2026**, tras publicar cuatro lecciones: **Python 7**
-(ejes y reducciones), **Python 8** (reshape, orden y ventanas), **ML 4** (modelos
-generativos) y **ML 5** (modelos lineales generalizados). **Las 56 publicadas
-cumplen el molde: 56 de 56, y no queda ninguna en el molde viejo.**
+Última actualización: **16-09-2026**, tras publicar seis lecciones: **Python 7**
+(ejes y reducciones), **Python 8** (reshape, orden y ventanas), **Python 9**
+(Series y DataFrame, que abre pandas), **ML 4** (modelos generativos), **ML 5**
+(modelos lineales generalizados) y **ML 6** (validación cruzada). **Las 58
+publicadas cumplen el molde: 58 de 58, y no queda ninguna en el molde viejo.**
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. **Estadística queda cerrada en 25 de 25.** Del
 plan siguen faltando lecciones por escribir en los demás módulos: Python tiene
-16 planeadas y 8 publicadas, ML 5 de 90, y Series y Causal están vacíos. El
+16 planeadas y 9 publicadas, ML 6 de 90, y Series y Causal están vacíos. El
 detalle está en la tabla del punto 2.
 
 Antes de esto, el 12-09-2026 se habían publicado Estadística 18 a 24 —las
@@ -72,17 +73,17 @@ hay que empezar a hacer:
 |---|---|---|---|---|
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
-| Python | 8 | 16 | **8 de 8** | 09 a 16, la Fase 1 |
+| Python | 9 | 16 | **9 de 9** | 10 a 16, la Fase 1 |
 | Series de tiempo | 0 | 11 | — | todas |
-| Machine Learning | 5 | 90 | **5 de 5** | 06 a 16 de la Fase 2, y el resto |
+| Machine Learning | 6 | 90 | **6 de 6** | 07 a 16 de la Fase 2, y el resto |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **56 lecciones** publicadas, **56** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 122 según el plan.
+- **58 lecciones** publicadas, **58** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 120 según el plan.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
   logística (§4.1–4.3, publicada), **04** modelos generativos (§4.4) y **05**
@@ -108,14 +109,14 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   marginales exactas, que es más fuerte que cualquier librería; y `np.trapz` se
   retiró del espacio de nombres en NumPy 2.0, así que las celdas nuevas no lo
   usan.
-- **118 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
+- **122 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
   Quedan cuatro avisos, todos anteriores a esta tanda: tres de no idempotencia
   —Est 03, Est 22 y Mat 10— y uno nuevo que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. No se tocó en esta tanda; queda anotado.
-- **1040 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **284 celdas** que el gate ejecuta en cada build.
-- Glosario: **260 términos + 43 símbolos**. Las **41 entradas** que añadió la
+- **1074 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **297 celdas** que el gate ejecuta en cada build.
+- Glosario: **265 términos + 43 símbolos**. Las **41 entradas** que añadió la
   tanda de Python son todas de tipo `termino`: no se añadió ningún símbolo
   global, que es donde están las colisiones ya auditadas del punto 6.
 - Índices verificados: Think Stats 3e (75 secciones), MML (80), **Think Bayes 2e
@@ -430,6 +431,53 @@ orden y ventanas»**, que es lo que de verdad falta entre la 6 y pandas:
 
 **El índice del módulo se actualizó** con el título nuevo, siguiendo la misma
 regla que se fijó para `ml/index.qmd`: que el índice no siga mintiendo.
+
+### 3.8 ML 6 y Python 9 (16-09-2026)
+
+**ML 6 quedó en §5.1, no en el capítulo 5 entero.** El plan la listaba como
+«Remuestreo: validación cruzada y bootstrap», y la segunda mitad —§5.2 *The
+Bootstrap*— **ya está escrita**: es Estadística 11, con la distribución
+empírica, el error estándar, los intervalos por percentiles, un caso donde el
+método falla y las pruebas de permutación. Es la misma situación que la de
+Python 8, y se resolvió igual: la lección se queda con §5.1 y sus cinco
+subsecciones, el bootstrap se enhebra a Estadística 11 por el `.hilo` y por
+Fuentes, y la fila del índice pasa a «Validación cruzada» con libro `ISLP 5.1`.
+
+Lo que sostiene la lección:
+
+- la **Proposición 6.2** da el optimismo en forma **exacta**, no como advertencia:
+  $E[\text{Ent}]=\sigma^2(n-p-1)/n$ y $E[\text{Prueba}]=\sigma^2(n+p+1)/n$, de
+  donde la brecha es $2\sigma^2(p+1)/n$ y cada parámetro cuesta $2\sigma^2/n$ de
+  optimismo. Sale de la traza de la matriz sombrero, o sea del mismo $p+1$ que
+  reaparece en el apalancamiento medio;
+- la **Proposición 6.4**, dejar uno fuera en forma cerrada, demostrada por
+  sustitución de la respuesta por su propia predicción en vez de por la fórmula
+  de actualización de rango uno. Los $60$ reajustes y el ajuste único dan
+  $1{,}6362840333$ los dos;
+- la **Proposición 6.6**, que enuncia la fuga de información como una condición
+  sobre el procedimiento entero y la demuestra con un contraejemplo **medido**:
+  sobre $1500$ columnas de ruido y etiquetas independientes, seleccionar fuera
+  de la validación declara $82{,}5$ % de aciertos donde la verdad es $50$ %.
+
+**Python 9 abre pandas, y con ella una dependencia nueva en el CI.** El workflow
+instalaba `numpy`, `scipy`, `scikit-learn` y `playwright`; ahora instala también
+**`pandas`**, o el gate de salidas no podría ejecutar ninguna celda de las
+lecciones 9 a 14.
+
+Aviso de versiones, que conviene tener presente al escribir las que faltan: la
+máquina de trabajo tiene **pandas 1.2.4** y el runner instala la 2.x. Las celdas
+de esta lección se escribieron a propósito dentro del subconjunto que se comporta
+igual en las dos —alineación, `.loc` contra `.iloc`, promoción de dtype— y
+**imprimen escalares y booleanos, nunca la representación de un DataFrame**, que
+sí cambia de formato entre versiones.
+
+La lección es de nivel **L4**, así que cada resultado va con su modo de falla y
+su diagnóstico. El que más rinde es la **Proposición 9.6**: un solo faltante
+convierte una columna `int64` en `float64`, y por encima de $2^{53}$ eso hace
+indistinguibles dos identificadores distintos. Encadena con la Proposición 6.8 de
+la lección de NumPy, y el remedio de producción es el dtype `Int64`, con
+mayúscula. También queda medida la **Proposición 9.5**: dos tablas de cuatro
+celdas suman una de nueve con **una sola** celda con valor.
 
 **ML 5, «Modelos lineales generalizados», ISLP §4.6.** Dos definiciones, seis
 proposiciones, dos visuales. El arco es el del libro: primero qué rompe la recta
