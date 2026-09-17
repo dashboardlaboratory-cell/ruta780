@@ -1,0 +1,659 @@
+---
+title: "pandas: wrangling, joins y reshape"
+subtitle: "Python · Lección 11"
+nivel: L4
+modulo: python
+fase: F1
+prereqs: [python/10-carga-formatos-y-limpieza, python/09-pandas-series-dataframe]
+siguientes: []
+libro: "McKinney 3E §8.1 Hierarchical Indexing · §8.2 Combining and Merging Datasets · §8.3 Reshaping and Pivoting"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - pandas
+---
+
+::: {.meta-leccion data-leccion="python/11-wrangling-joins-y-reshape"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F1]{.item}
+[**Libro** McKinney cap. 8]{.item}
+[**Prereqs** [Carga, formatos y limpieza](10-carga-formatos-y-limpieza.qmd) · [Series y DataFrame](09-pandas-series-dataframe.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir el [índice jerárquico]{.g} y decir qué guarda de más y qué de menos que una tabla de dos entradas.
+2. Contar por adelantado las filas de las cuatro uniones —interna, por la izquierda, por la derecha y externa— a partir de las multiplicidades de la clave.
+3. Decidir cuándo una [unión por la izquierda]{.g} conserva el número de filas de la tabla izquierda, y comprobarlo antes de ejecutarla.
+4. Demostrar que pasar de la [forma larga]{.g} a la [forma ancha]{.g} crea exactamente $i\cdot j-n$ faltantes, y calcular ese número sin ejecutar nada.
+5. Explicar por qué la vuelta de ancho a largo recupera el original **solo** si la columna de valores no tenía faltantes propios, y detectar el caso en que no.
+6. Distinguir cuándo `pivot` falla de cuándo `pivot_table` calla, y medir cuántas colisiones hay antes de elegir.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 10**: la Proposición 10.6, que cuenta las filas de la unión interna como $\sum_k m_1(k)m_2(k)$. Esta lección completa las otras tres uniones con el mismo argumento y no repite el de la interna.
+- **Python 9**: el índice, la alineación por etiqueta y la promoción de tipo al entrar un faltante. Todo lo que aquí se crea con `unstack` es exactamente ese faltante.
+- **Python 3**: los iteradores y la idea de recorrer sin materializar, que es lo que separa la forma larga de la ancha.
+- **Estadística 15**: el mecanismo de los faltantes, para no confundir un hueco estructural con un dato perdido.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 12**: `groupby` y la agregación, que en la forma larga es una operación por nivel y en la ancha es una suma por columnas.
+- **Python 13**: la visualización, que casi siempre pide una de las dos formas y no la otra.
+- **Python 14**: las series de tiempo, donde el índice jerárquico lleva la fecha en un nivel y la serie en otro.
+- **Machine Learning 16**: el aprendizaje no supervisado, que parte de una matriz en forma ancha con todas sus celdas llenas.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | El número de filas observadas en la forma larga |
+| $i$ | i | Cuántas etiquetas distintas tiene el primer nivel |
+| $j$ | jota | Cuántas etiquetas distintas tiene el segundo nivel |
+| $m_1(k)$ | eme sub uno de ka | Cuántas veces aparece la clave $k$ en la tabla izquierda, cero si no aparece |
+| $m_2(k)$ | eme sub dos de ka | Lo mismo en la tabla derecha |
+| $K_1, K_2$ | ka uno, ka dos | Los conjuntos de claves presentes en cada tabla |
+| $n/(i\cdot j)$ | ene entre i por jota | La densidad de la tabla: qué proporción de combinaciones se observó |
+:::
+
+## 1. Un índice que guarda solo lo que pasó
+
+::: {.definicion}
+**Definición 11.1 (índice jerárquico).** Un índice jerárquico es un índice cuyas etiquetas son tuplas de dos o más **niveles**. Con niveles de $i$ y $j$ etiquetas distintas, el producto admitiría $i\cdot j$ combinaciones, pero el índice guarda solo las $n$ que aparecen en los datos, con $n\le i\cdot j$. Una clave parcial selecciona el bloque correspondiente y deja caer ese nivel.
+:::
+
+La consecuencia práctica es que el índice jerárquico y la tabla de dos entradas contienen la misma información y cuestan distinto: uno guarda $n$ valores, la otra reserva $i\cdot j$ celdas. La razón entre ambos es el inverso de la densidad.
+
+```{pyodide}
+import pandas as pd
+
+largo = pd.DataFrame({
+    "sujeto": ["s1", "s1", "s1", "s2", "s2", "s3", "s3", "s4"],
+    "visita": ["v1", "v2", "v3", "v1", "v3", "v2", "v3", "v1"],
+    "valor":  [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+})
+s = largo.set_index(["sujeto", "visita"])["valor"]
+print("niveles del indice:", list(s.index.names))
+print("etiquetas del nivel 0:", list(s.index.levels[0]))
+print("etiquetas del nivel 1:", list(s.index.levels[1]))
+print("etiquetas que el producto permitiria: %d x %d = %d"
+      % (len(s.index.levels[0]), len(s.index.levels[1]),
+         len(s.index.levels[0]) * len(s.index.levels[1])))
+print("etiquetas que el indice guarda de verdad:", len(s))
+print("el indice es unico:", bool(s.index.is_unique))
+print()
+
+bloque = s.loc["s1"]
+print("s.loc['s1'] devuelve", len(bloque), "valores, indexados por", list(bloque.index))
+print("el nivel 'sujeto' ya no esta:", bloque.index.name)
+print()
+
+ancho = s.unstack()
+print("tras unstack, forma:", ancho.shape)
+print("celdas:", int(ancho.size), "| con valor:", int(ancho.notna().sum().sum()),
+      "| vacias:", int(ancho.isna().sum().sum()))
+print("la forma larga guarda %d valores y la ancha reserva %d celdas" % (len(s), int(ancho.size)))
+print("razon ancha/larga = %.4f, que es 1/densidad" % (int(ancho.size) / len(s)))
+print()
+print("sumar por nivel no necesita desapilar:", list(s.groupby(level="visita").sum().round(1)))
+print("y coincide con sumar las columnas de la ancha:", list(ancho.sum().round(1)))
+```
+
+Las dos últimas líneas importan más de lo que parecen: agregar por nivel sobre la forma larga da el mismo resultado que agregar por columnas sobre la ancha, así que **[desapilar]{.g data-t="desapilar"} para poder agregar casi nunca hace falta**. Lo que sí cambia es el coste, y con $i$ y $j$ grandes la diferencia deja de ser cosmética.
+
+## 2. Las cuatro uniones, contadas de antemano
+
+La lección anterior contó la unión interna. Las otras tres salen del mismo argumento, y conviene tenerlas juntas.
+
+::: {.proposicion}
+**Proposición 11.2 (el recuento de las cuatro uniones).** Sean dos tablas con clave, con multiplicidades $m_1$ y $m_2$ y conjuntos de claves $K_1$ y $K_2$. El número de filas de cada unión es
+$$
+|\text{interna}|=\sum_{k\in K_1\cap K_2} m_1(k)\,m_2(k),
+\qquad
+|\text{izquierda}|=\sum_{k\in K_1} m_1(k)\,\max\{m_2(k),1\},
+$$
+$$
+|\text{derecha}|=\sum_{k\in K_2} \max\{m_1(k),1\}\,m_2(k),
+\qquad
+|\text{externa}|=\sum_{k\in K_1\cup K_2} \max\{m_1(k),1\}\,\max\{m_2(k),1\}.
+$$
+En consecuencia, la unión por la izquierda conserva las $n_1$ filas de la tabla izquierda **si y solo si** $m_2(k)\le 1$ para toda clave $k\in K_1$, esto es, si la clave es única en la derecha restringida a las claves que aparecen a la izquierda.
+:::
+
+::: {.demostracion}
+*Demostración.* La unión interna produce una fila por cada par de filas con la misma clave, y para una clave fija esos pares son el producto cartesiano de los dos bloques: $m_1(k)m_2(k)$ filas. Sumando sobre las claves comunes se obtiene la primera fórmula, que es la Proposición 10.6.
+
+La unión por la izquierda hace lo mismo y además conserva las filas de la izquierda cuya clave no aparece en la derecha, emparejándolas con una fila de faltantes. Para $k\in K_1\cap K_2$ aporta $m_1(k)m_2(k)$; para $k\in K_1\setminus K_2$ aporta $m_1(k)$, una por fila sin pareja. Las dos expresiones se unifican escribiendo $\max\{m_2(k),1\}$, porque $m_2(k)=0$ en el segundo caso. La unión por la derecha es la misma con los papeles cambiados.
+
+La externa conserva las filas sin pareja de los dos lados, así que aporta $\max\{m_1(k),1\}\max\{m_2(k),1\}$ por clave de $K_1\cup K_2$: cuando las dos multiplicidades son positivas es el producto cartesiano; cuando una es cero, el máximo la sustituye por $1$ y queda el bloque del otro lado.
+
+Para el corolario, $|\text{izquierda}|-n_1=\sum_{k\in K_1}m_1(k)\big(\max\{m_2(k),1\}-1\big)$. Cada sumando es no negativo, y es cero exactamente cuando $m_2(k)\le 1$. La suma es cero si y solo si todos lo son. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import pandas as pd
+
+izq = pd.DataFrame({"k": ["a", "a", "b", "c", "c", "c"], "u": range(6)})
+der = pd.DataFrame({"k": ["a", "b", "b", "d"],           "v": range(10, 14)})
+
+m1 = izq["k"].value_counts().to_dict()
+m2 = der["k"].value_counts().to_dict()
+print("multiplicidades a la izquierda:", dict(sorted(m1.items())))
+print("multiplicidades a la derecha  :", dict(sorted(m2.items())))
+print()
+
+def formula(tipo):
+    """Las cuatro cuentas de la Proposicion 11.2, desde las multiplicidades."""
+    if tipo == "inner":
+        claves = set(m1) & set(m2)
+        return sum(m1[k] * m2[k] for k in claves)
+    if tipo == "left":
+        return sum(m1[k] * max(m2.get(k, 0), 1) for k in m1)
+    if tipo == "right":
+        return sum(max(m1.get(k, 0), 1) * m2[k] for k in m2)
+    return sum(max(m1.get(k, 0), 1) * max(m2.get(k, 0), 1) for k in set(m1) | set(m2))
+
+for tipo in ["inner", "left", "right", "outer"]:
+    real = len(izq.merge(der, on="k", how=tipo))
+    print("%-6s -> pandas %d | formula %d | coinciden %s" % (tipo, real, formula(tipo), real == formula(tipo)))
+
+print()
+print("filas de la izquierda:", len(izq))
+print("left conserva esas filas:", len(izq.merge(der, on="k", how="left")) == len(izq))
+print("la clave de la derecha es unica:", bool(der["k"].is_unique))
+print("la clave que la rompe es la que se repite:",
+      [k for k, v in m2.items() if v > 1 and k in m1])
+
+der_u = der.drop_duplicates(subset="k")
+print()
+print("deduplicando la derecha, left da", len(izq.merge(der_u, on="k", how="left")),
+      "filas, exactamente las de la izquierda")
+print("y ahora la clave de la derecha es unica:", bool(der_u["k"].is_unique))
+```
+
+**Modo de falla.** Una unión por la izquierda que se creía inocua y devuelve siete filas donde había seis. Como el crecimiento es de una sola fila, no salta a la vista; y como la fila extra es un duplicado parcial, cualquier suma posterior sobre esa tabla cuenta dos veces la observación de la clave `b`.
+
+**Diagnóstico.** Antes de unir, `der["k"].is_unique`. Si sale falso, `der["k"].value_counts()` dice qué claves y cuántas veces, y basta cruzar esa lista con las claves presentes a la izquierda para saber si el problema va a materializarse.
+
+**Remedio.** Decidir qué significa la repetición. Si son duplicados de verdad, `drop_duplicates(subset="k")`. Si son observaciones distintas que deben conservarse, la unión correcta es la que devuelve siete filas y lo que hay que corregir es la suma posterior, no la unión. Lo que no sirve es descubrirlo después.
+
+```{=html}
+<div class="viz-uniones">
+  <div class="controles">
+    <label>Tipo de unión
+      <select id="un-t">
+        <option value="inner" selected>interna</option>
+        <option value="left">por la izquierda</option>
+        <option value="right">por la derecha</option>
+        <option value="outer">externa</option>
+      </select>
+    </label>
+    <label>Repeticiones de «b» a la derecha <input id="un-b" type="range" min="0" max="4" step="1" value="2"> <span id="un-b-v">2</span></label>
+  </div>
+  <svg id="un-svg" viewBox="0 0 660 320" role="img" aria-label="Las claves de las dos tablas en dos columnas, con una línea por cada fila que la unión produce y las claves sin pareja marcadas según el tipo de unión las conserve o las descarte."></svg>
+  <p class="lectura" id="un-lectura"></p>
+</div>
+<style>
+.viz-uniones { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-uniones .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-uniones label { display: flex; align-items: center; gap: .4rem; }
+.viz-uniones input[type=range] { width: 120px; padding: 0; }
+.viz-uniones select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-uniones svg { width: 100%; height: auto; display: block; }
+.viz-uniones .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_OK = "#0F6E68", C_NO = "#B4342E", C_H = "#8A5A00";
+  var svg = document.getElementById("un-svg"), lec = document.getElementById("un-lectura");
+  var ct = document.getElementById("un-t"), cb = document.getElementById("un-b"), eb = document.getElementById("un-b-v");
+
+  var IZQ = { a: 2, b: 1, c: 3 };
+  // Marco anclado: dos columnas fijas y ocho ranuras fijas por lado.
+  var XI = 120, XD = 500, Y0 = 40, DY = 30, RANURAS = 8;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var tipo = ct.value, nb = +cb.value;
+    eb.textContent = String(nb);
+    var DER = { a: 1, d: 1 }; if (nb > 0) DER.b = nb;
+
+    var filasI = [], filasD = [];
+    ["a", "b", "c"].forEach(function (k) { for (var i = 0; i < (IZQ[k] || 0); i++) filasI.push(k); });
+    ["a", "b", "d"].forEach(function (k) { for (var i = 0; i < (DER[k] || 0); i++) filasD.push(k); });
+
+    function conserva(k, lado) {
+      var m1 = IZQ[k] || 0, m2 = DER[k] || 0;
+      if (m1 > 0 && m2 > 0) return true;
+      if (lado === "i") return tipo === "left" || tipo === "outer";
+      return tipo === "right" || tipo === "outer";
+    }
+
+    // lineas de emparejamiento
+    var total = 0;
+    filasI.forEach(function (k, a) {
+      filasD.forEach(function (k2, b) {
+        if (k !== k2) return;
+        total++;
+        svg.appendChild(el("path", { d: "M" + (XI + 44) + " " + (Y0 + a * DY + 11) + " L" + (XD - 44) + " " + (Y0 + b * DY + 11),
+          stroke: C_OK, "stroke-width": 1.4, fill: "none", opacity: .5 }));
+      });
+    });
+    // filas sin pareja que la union conserva
+    var sueltas = 0;
+    filasI.forEach(function (k, a) {
+      if ((DER[k] || 0) === 0 && conserva(k, "i")) { sueltas++;
+        svg.appendChild(el("path", { d: "M" + (XI + 44) + " " + (Y0 + a * DY + 11) + " L" + (XD - 44) + " " + (Y0 + a * DY + 11),
+          stroke: C_H, "stroke-width": 1.4, fill: "none", "stroke-dasharray": "4 4", opacity: .75 })); }
+    });
+    filasD.forEach(function (k, b) {
+      if ((IZQ[k] || 0) === 0 && conserva(k, "d")) { sueltas++;
+        svg.appendChild(el("path", { d: "M" + (XI + 44) + " " + (Y0 + b * DY + 11) + " L" + (XD - 44) + " " + (Y0 + b * DY + 11),
+          stroke: C_H, "stroke-width": 1.4, fill: "none", "stroke-dasharray": "4 4", opacity: .75 })); }
+    });
+
+    [[XI, filasI, "i"], [XD, filasD, "d"]].forEach(function (col) {
+      svg.appendChild(el("text", { x: col[0], y: 24, "text-anchor": "middle", "font-size": 11.5, fill: C_T, opacity: .75 },
+        col[2] === "i" ? "izquierda" : "derecha"));
+      col[1].forEach(function (k, r) {
+        var m1 = IZQ[k] || 0, m2 = DER[k] || 0;
+        var casa = m1 > 0 && m2 > 0;
+        var col2 = casa ? C_OK : (conserva(k, col[2]) ? C_H : C_NO);
+        svg.appendChild(el("rect", { x: col[0] - 44, y: Y0 + r * DY, width: 88, height: 22, rx: 5,
+          fill: col2, "fill-opacity": .12, stroke: col2, "stroke-width": 1.3 }));
+        svg.appendChild(el("text", { x: col[0], y: Y0 + r * DY + 16, "text-anchor": "middle", "font-size": 12,
+          fill: C_T, "font-family": "var(--bs-font-monospace,monospace)" }, k));
+      });
+    });
+
+    var nombres = { inner: "interna", left: "por la izquierda", right: "por la derecha", outer: "externa" };
+    lec.innerHTML = "La unión <strong>" + nombres[tipo] + "</strong> produce <strong>" + (total + sueltas) +
+      "</strong> filas: <strong>" + total + "</strong> de parejas y <strong>" + sueltas +
+      "</strong> de filas sin pareja que este tipo conserva (Proposición 11.2). La clave «b» aparece " +
+      "<strong>" + (IZQ.b || 0) + "</strong> vez a la izquierda y <strong>" + nb +
+      "</strong> a la derecha, así que aporta <strong>" + ((IZQ.b || 0) * nb) + "</strong> filas. " +
+      "En verde las claves que casan, en ámbar las que sobreviven sin pareja, en rojo las que se descartan.";
+  }
+
+  ct.addEventListener("change", dibujar);
+  cb.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Largo y ancho, y lo que se crea al pasar
+
+::: {.proposicion}
+**Proposición 11.3 (el paso a la forma ancha crea $i\cdot j-n$ faltantes).** Sea una tabla en forma larga con $n$ filas, un primer nivel de $i$ etiquetas distintas, un segundo de $j$, y el par de niveles único en cada fila. Al pasarla a forma ancha el resultado es una tabla de $i$ filas por $j$ columnas, con $i\cdot j$ celdas, de las cuales exactamente $n$ tienen valor y exactamente $i\cdot j-n$ quedan vacías.
+
+La operación inversa recupera la tabla larga original **si y solo si** la columna de valores no contenía faltantes propios. Si contenía $f$, la vuelta devuelve $n-f$ filas, porque los faltantes creados por la estructura y los que ya estaban son indistinguibles.
+:::
+
+::: {.demostracion}
+*Demostración.* La forma ancha se define poniendo en la celda $(a,b)$ el valor de la fila cuyo par de niveles es $(a,b)$. Las filas de la tabla ancha son las $i$ etiquetas del primer nivel y sus columnas las $j$ del segundo, de donde $i\cdot j$ celdas. La aplicación que lleva cada fila de la tabla larga a su celda es inyectiva, porque el par es único, así que llena exactamente $n$ celdas distintas; las $i\cdot j-n$ restantes no reciben ninguna y quedan marcadas como faltantes.
+
+Para la vuelta, la operación inversa recorre las $i\cdot j$ celdas y descarta las vacías, quedándose con las que tienen valor. Si la columna original no tenía faltantes, las celdas con valor son exactamente las $n$ de partida y se recupera la tabla entera. Si tenía $f$ faltantes, esas $f$ filas ocupan celdas que quedan marcadas igual que las estructurales, y el descarte las elimina junto con ellas: quedan $n-f$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import pandas as pd
+
+# Forma larga: una fila por cada par (sujeto, visita) OBSERVADO.
+largo = pd.DataFrame({
+    "sujeto": ["s1", "s1", "s1", "s2", "s2", "s3", "s3", "s4"],
+    "visita": ["v1", "v2", "v3", "v1", "v3", "v2", "v3", "v1"],
+    "valor":  [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+})
+n = len(largo)
+i = int(largo["sujeto"].nunique())
+j = int(largo["visita"].nunique())
+
+ancho = largo.pivot(index="sujeto", columns="visita", values="valor")
+print("filas observadas n = %d | sujetos i = %d | visitas j = %d" % (n, i, j))
+print("forma de la tabla ancha:", ancho.shape, "que es i x j")
+print("celdas de la tabla ancha: %d" % (i * j))
+print("faltantes creados: %d | i*j - n = %d" % (int(ancho.isna().sum().sum()), i * j - n))
+print("coinciden:", int(ancho.isna().sum().sum()) == i * j - n)
+print("densidad de la tabla: %d/%d = %.4f" % (n, i * j, n / (i * j)))
+print()
+
+vuelta = (ancho.reset_index()
+               .melt(id_vars="sujeto", var_name="visita", value_name="valor")
+               .dropna(subset=["valor"])
+               .sort_values(["sujeto", "visita"])
+               .reset_index(drop=True))
+orig = largo.sort_values(["sujeto", "visita"]).reset_index(drop=True)
+print("filas tras la vuelta:", len(vuelta), "| originales:", n)
+print("la ida y vuelta recupera el largo exactamente:", bool(vuelta.equals(orig)))
+print()
+
+# Si el valor ya tenia faltantes, la vuelta NO los distingue de los creados.
+con_falta = largo.copy()
+con_falta.loc[0, "valor"] = float("nan")
+a2 = con_falta.pivot(index="sujeto", columns="visita", values="valor")
+v2 = (a2.reset_index().melt(id_vars="sujeto", var_name="visita", value_name="valor")
+        .dropna(subset=["valor"]))
+print("con un faltante en el valor, la vuelta da", len(v2), "filas de las", n, "originales")
+print("se pierde justo la fila cuyo valor faltaba:", n - len(v2) == 1)
+```
+
+**Modo de falla.** Un cauce que va y vuelve entre las dos formas —ancha para graficar, larga para agregar— y pierde una fila en cada vuelta por cada faltante propio. Como el número de filas baja de a poco, ningún paso individual parece roto.
+
+**Diagnóstico.** Comparar $n$ antes y después de la vuelta. Si no coinciden, la diferencia es exactamente el número de faltantes que la columna de valores tenía antes de desapilar, y `largo["valor"].isna().sum()` lo confirma.
+
+**Remedio.** Marcar los faltantes propios con un valor centinela antes de desapilar, o llevar una columna booleana `observado` que sobreviva al viaje. La distinción entre «no se midió» y «se midió y salió faltante» no cabe en una celda vacía, y si importa hay que guardarla aparte.
+
+```{=html}
+<div class="viz-densidad">
+  <div class="controles">
+    <label>Sujetos i <input id="de-i" type="range" min="2" max="9" step="1" value="4"> <span id="de-i-v">4</span></label>
+    <label>Visitas j <input id="de-j" type="range" min="2" max="8" step="1" value="3"> <span id="de-j-v">3</span></label>
+    <label>Observadas n <input id="de-n" type="range" min="1" max="72" step="1" value="8"> <span id="de-n-v">8</span></label>
+  </div>
+  <svg id="de-svg" viewBox="0 0 660 300" role="img" aria-label="La cuadrícula de todas las combinaciones de sujeto y visita, con las celdas observadas rellenas y las no observadas vacías, y el recuento de faltantes que el paso a la forma ancha crearía."></svg>
+  <p class="lectura" id="de-lectura"></p>
+</div>
+<style>
+.viz-densidad { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-densidad .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-densidad label { display: flex; align-items: center; gap: .4rem; }
+.viz-densidad input[type=range] { width: 120px; padding: 0; }
+.viz-densidad svg { width: 100%; height: auto; display: block; }
+.viz-densidad .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_V = "#0F6E68", C_F = "#B4342E";
+  var svg = document.getElementById("de-svg"), lec = document.getElementById("de-lectura");
+  var ci = document.getElementById("de-i"), ei = document.getElementById("de-i-v");
+  var cj = document.getElementById("de-j"), ej = document.getElementById("de-j-v");
+  var cn = document.getElementById("de-n"), en = document.getElementById("de-n-v");
+
+  // Marco anclado: la cuadricula siempre ocupa el mismo rectangulo.
+  var X0 = 60, XW = 420, Y0 = 40, YH = 210;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // un orden fijo y reproducible en el que se van llenando las celdas
+  function ocupadas(i, j, n) {
+    var idx = [], k;
+    for (k = 0; k < i * j; k++) idx.push(k);
+    idx.sort(function (a, b) { return ((a * 37) % (i * j + 7)) - ((b * 37) % (i * j + 7)); });
+    return idx.slice(0, n);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var i = +ci.value, j = +cj.value;
+    cn.max = String(i * j);
+    var n = Math.min(+cn.value, i * j);
+    ei.textContent = String(i); ej.textContent = String(j); en.textContent = String(n);
+
+    var llenas = {}; ocupadas(i, j, n).forEach(function (k) { llenas[k] = 1; });
+    var aw = XW / j, ah = YH / i;
+    for (var a = 0; a < i; a++) for (var b = 0; b < j; b++) {
+      var k = a * j + b, hay = llenas[k];
+      svg.appendChild(el("rect", { x: (X0 + b * aw + 1.5).toFixed(1), y: (Y0 + a * ah + 1.5).toFixed(1),
+        width: (aw - 3).toFixed(1), height: (ah - 3).toFixed(1), rx: 3,
+        fill: hay ? C_V : C_F, "fill-opacity": hay ? .3 : .07,
+        stroke: hay ? C_V : C_F, "stroke-width": 1.2, "stroke-dasharray": hay ? "" : "3 3" }));
+    }
+    svg.appendChild(el("text", { x: X0, y: 26, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "la cuadrícula i × j que reserva la forma ancha"));
+    svg.appendChild(el("text", { x: X0 - 10, y: Y0 + YH / 2, "text-anchor": "end", "font-size": 11,
+      fill: C_T, opacity: .7 }, "i = " + i));
+    svg.appendChild(el("text", { x: X0 + XW / 2, y: Y0 + YH + 20, "text-anchor": "middle", "font-size": 11,
+      fill: C_T, opacity: .7 }, "j = " + j));
+
+    // el resumen, a la derecha
+    var XR = 520;
+    [["celdas i·j", i * j, C_T], ["con valor n", n, C_V], ["faltantes i·j − n", i * j - n, C_F]].forEach(function (r, q) {
+      svg.appendChild(el("text", { x: XR, y: Y0 + 18 + q * 44, "font-size": 11, fill: C_T, opacity: .7 }, r[0]));
+      svg.appendChild(el("text", { x: XR, y: Y0 + 40 + q * 44, "font-size": 19, fill: r[2] }, String(r[1])));
+    });
+    svg.appendChild(el("text", { x: XR, y: Y0 + 150, "font-size": 11, fill: C_T, opacity: .7 }, "densidad"));
+    svg.appendChild(el("text", { x: XR, y: Y0 + 172, "font-size": 19, fill: C_T }, (n / (i * j)).toFixed(3)));
+    // la barra de densidad: crece con n y se encoge al agrandar la cuadricula
+    var BW = 110;
+    svg.appendChild(el("rect", { x: XR, y: Y0 + 184, width: BW, height: 12, rx: 3,
+      fill: C_F, "fill-opacity": .12, stroke: C_F, "stroke-width": 1 }));
+    svg.appendChild(el("rect", { x: XR, y: Y0 + 184, width: (BW * n / (i * j)).toFixed(1), height: 12, rx: 3,
+      fill: C_V, "fill-opacity": .5, stroke: C_V, "stroke-width": 1.2 }));
+    svg.appendChild(el("circle", { cx: (XR + BW * n / (i * j)).toFixed(1), cy: Y0 + 190, r: 4, fill: C_V }));
+
+    lec.innerHTML = "Con i = <strong>" + i + "</strong>, j = <strong>" + j + "</strong> y n = <strong>" + n +
+      "</strong> filas observadas, pasar a la forma ancha reserva <strong>" + (i * j) + "</strong> celdas y crea " +
+      "<strong>" + (i * j - n) + "</strong> faltantes, que es i·j − n (Proposición 11.3). La densidad es " +
+      "<strong>" + (n / (i * j)).toFixed(3) + "</strong>, y la forma ancha cuesta <strong>" +
+      (n ? (i * j / n).toFixed(2) : "∞") + "</strong> veces lo que la larga. Cuantos más niveles, más vacía " +
+      "queda la cuadrícula: con i y j al máximo y la misma n, casi todo son huecos.";
+  }
+
+  ci.addEventListener("input", dibujar);
+  cj.addEventListener("input", dibujar);
+  cn.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Cuando el par no es único
+
+La Proposición 11.3 supuso que el par de niveles era único en cada fila. Si no lo es, las dos operaciones disponibles se comportan de forma opuesta, y la diferencia importa.
+
+::: {.proposicion}
+**Proposición 11.4 (fallar o callar).** Sea una tabla en forma larga con $n$ filas y $u$ pares distintos de niveles, con $u\le n$. El número de **colisiones** es $n-u$.
+
+Si $n>u$, la operación de pivote estricta no puede producir una tabla, porque tendría que poner dos valores en una celda, y levanta un error. La operación con agregación sí produce una tabla: resume cada celda con la función que se le indique, y por tanto **no señala** las colisiones. Contar con la función que cuenta devuelve, en cada celda, la multiplicidad de ese par, y localiza las colisiones exactamente donde el valor pasa de uno.
+:::
+
+::: {.demostracion}
+*Demostración.* Cada fila se asocia a un par de niveles; el número de pares distintos es $u$ y el de filas $n$, así que por el principio del palomar hay $n-u$ filas que comparten par con otra. Una tabla de dos entradas tiene una celda por par, y una celda guarda un valor, de modo que la asignación solo está bien definida cuando la aplicación fila $\to$ par es inyectiva, esto es, cuando $n=u$; en otro caso no existe tal tabla y el error es la respuesta correcta.
+
+La operación con agregación sustituye el valor de la celda por $g$ aplicada al conjunto de valores de ese par, y $g$ está definida para conjuntos de cualquier tamaño. Con $g$ el cardinal se obtiene $m(a,b)$, la multiplicidad del par, que vale $1$ en las celdas sin colisión y más en las demás; la suma de los $m(a,b)$ sobre las celdas ocupadas es $n$, y el número de celdas ocupadas es $u$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import pandas as pd
+
+largo = pd.DataFrame({
+    "sujeto": ["s1", "s1", "s1", "s2", "s2", "s3", "s3", "s4"],
+    "visita": ["v1", "v2", "v3", "v1", "v3", "v2", "v3", "v1"],
+    "valor":  [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+})
+# Una medicion repetida del par (s1, v2): el par deja de ser unico.
+choque = pd.concat([largo, pd.DataFrame({"sujeto": ["s1"], "visita": ["v2"], "valor": [99.0]})],
+                   ignore_index=True)
+
+filas = len(choque)
+distintos = len(choque.groupby(["sujeto", "visita"]))
+print("filas: %d | pares (sujeto, visita) distintos: %d | colisiones: %d"
+      % (filas, distintos, filas - distintos))
+print("el par es unico:", filas == distintos)
+print()
+
+try:
+    choque.pivot(index="sujeto", columns="visita", values="valor")
+    print("pivot devolvio una tabla")
+except Exception as e:
+    print("pivot levanta", type(e).__name__)
+print()
+
+pt = choque.pivot_table(index="sujeto", columns="visita", values="valor", aggfunc="mean")
+print("pivot_table si devuelve una tabla, de forma", pt.shape)
+print("en la celda en choque pone la media de 2.0 y 99.0:", float(pt.loc["s1", "v2"]))
+cuenta = choque.pivot_table(index="sujeto", columns="visita", values="valor", aggfunc="count")
+print("y con aggfunc='count' se ve donde estaba el choque:", int(cuenta.loc["s1", "v2"]))
+print("el resto de las celdas observadas tienen cuenta 1:",
+      int((cuenta.fillna(0) == 1).sum().sum()), "de", distintos)
+```
+
+**Modo de falla.** El error de la operación estricta es molesto y se arregla cambiándola por la que agrega, que es lo que sugiere el mensaje. Hecho eso, la tabla sale y el cauce sigue; lo que nadie vuelve a mirar es que la celda `(s1, v2)` ahora vale $50{,}5$, la media de un $2$ y un $99$ que probablemente no debían estar juntos. **El error era la única señal, y cambiarlo por una media la apaga.**
+
+**Diagnóstico.** Antes de decidir, contar: `len(tabla)` frente a `len(tabla.groupby([nivel1, nivel2]))`. La diferencia es el número de colisiones, y la misma operación con la función que cuenta dice en qué celdas están.
+
+**Remedio.** Si la repetición es un duplicado, quitarla. Si son mediciones distintas, el par de niveles elegido no identifica la observación y falta un nivel —la fecha, el intento, el instrumento—: añadirlo devuelve la unicidad y hace que la Proposición 11.3 vuelva a aplicarse. Agregar es legítimo solo cuando la media de esas mediciones es lo que se quiere, y entonces conviene dejarlo escrito.
+
+## Ejercicios
+
+### Ejercicio 1, Las filas de una unión externa
+
+Con la Proposición 11.2, calcular cuántas filas produce la unión externa si la clave `a` aparece $2$ veces a la izquierda y $3$ a la derecha, `b` aparece $4$ y $0$, y `c` aparece $0$ y $5$.
+
+```{pyodide}
+#| exercise: ex_outer
+m1 = {"a": 2, "b": 4, "c": 0}
+m2 = {"a": 3, "b": 0, "c": 5}
+
+filas = ______
+
+print(filas)
+int(filas)
+```
+
+::: {.hint exercise="ex_outer"}
+La externa suma $\max\{m_1(k),1\}\cdot\max\{m_2(k),1\}$ sobre todas las claves: $2\cdot 3$, $4\cdot 1$ y $1\cdot 5$.
+:::
+
+::: {.solution exercise="ex_outer"}
+```{pyodide}
+m1 = {"a": 2, "b": 4, "c": 0}
+m2 = {"a": 3, "b": 0, "c": 5}
+
+filas = sum(max(m1[k], 1) * max(m2[k], 1) for k in m1)
+
+print(filas)
+int(filas)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_outer
+#| check: true
+if result == 15:
+    feedback = {"correct": True, "message": "Correcto: 2·3 + 4·1 + 1·5 = 15. Las claves sin pareja aportan su propia multiplicidad.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 15 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Los faltantes que crea desapilar
+
+Una tabla larga tiene $n=450$ filas, con $i=30$ sujetos y $j=24$ meses. Calcular cuántos faltantes crea el paso a la forma ancha y cuál es la densidad.
+
+```{pyodide}
+#| exercise: ex_huecos
+n, i, j = 450, 30, 24
+
+faltantes = ______
+
+print(faltantes, round(n / (i * j), 4))
+int(faltantes)
+```
+
+::: {.hint exercise="ex_huecos"}
+La Proposición 11.3 dice que son $i\cdot j-n$. La densidad es $n/(i\cdot j)$.
+:::
+
+::: {.solution exercise="ex_huecos"}
+```{pyodide}
+n, i, j = 450, 30, 24
+
+faltantes = i * j - n
+
+print(faltantes, round(n / (i * j), 4))
+int(faltantes)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_huecos
+#| check: true
+if result == 270:
+    feedback = {"correct": True, "message": "Correcto: 720 − 450 = 270 huecos, con densidad 0.625. Más de la tercera parte de la tabla ancha estaría vacía.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 270 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Python 11**:
+
+1. Programar una función que, dadas dos tablas y una clave, devuelva las cuatro cuentas de la Proposición 11.2 **sin ejecutar ninguna unión**, y contrastarla contra `merge` en veinte pares de tablas sorteadas con multiplicidades distintas. Anotar el caso que más creció y por qué.
+2. Medir el coste real de las dos formas: construir una tabla larga de un millón de filas con densidad $0{,}05$ y comparar la memoria de la forma larga contra la de la ancha. Comprobar que la razón se parece a $1/\text{densidad}$ y anotar en qué se desvía y por qué.
+3. Tomar un cauce que va y vuelve entre las dos formas cinco veces, con faltantes propios en la columna de valores, y registrar cuántas filas quedan en cada vuelta. Anotar en `50-Errores/` la corrección con la columna booleana `observado` y comprobar que con ella el número de filas ya no baja.
+
+## Del libro
+
+*Python for Data Analysis, 3rd Edition* trata este material en §8.1 *Hierarchical Indexing*, §8.2 *Combining and Merging Datasets* y §8.3 *Reshaping and Pivoting*.
+
+Las subsecciones de este capítulo **no llevan número** en el sitio publicado, igual que las del capítulo 6, así que se citan las tres secciones de primer nivel y no se baja más. La unión interna y su recuento están en la lección 10 y no se repiten aquí: esta lección completa las otras tres uniones con el mismo argumento.
+
+**Preguntas para leer el capítulo 8 con lápiz:**
+
+1. §8.2 presenta `merge` y `join` como dos formas de lo mismo, una por columnas y otra por índice. Con la Proposición 11.2, ¿cambia alguna de las cuatro cuentas según se una por columna o por índice, y de qué depende la respuesta?
+2. §8.3 describe `stack` y `unstack` como inversas una de la otra. Con la Proposición 11.3, ¿en qué caso concreto dejan de serlo, y qué información habría que guardar aparte para que volvieran a serlo?
+3. §8.1 muestra cómo agregar por nivel sobre un índice jerárquico. Con lo medido en la sección 1, ¿qué se gana desapilando antes de agregar, y qué se paga?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/uniones-y-reshape.md`, enlazada a [[carga-y-limpieza]], [[series-y-dataframe]] y [[datos-faltantes]]. Conviene rehacer a mano la unificación de las cuatro fórmulas de la Proposición 11.2 con el $\max\{m,1\}$: ver que los cuatro casos son el mismo con distintas decisiones sobre las claves sin pareja ahorra tener que recordar cuatro reglas.
+
+```
+¿Qué guarda un índice jerárquico?::Solo las combinaciones observadas, no el producto i·j de los niveles
+¿Cuántas filas tiene la unión interna?::La suma sobre las claves comunes de m1(k)·m2(k)
+¿Y la unión por la izquierda?::La suma sobre K1 de m1(k)·máx(m2(k),1)
+¿Y la externa?::La suma sobre K1 ∪ K2 de máx(m1(k),1)·máx(m2(k),1)
+¿Cuándo conserva left las filas de la izquierda?::Si y solo si la clave es única en la derecha, sobre las claves que aparecen a la izquierda
+¿Cómo se comprueba antes de unir?::Con der[clave].is_unique
+¿Cuántos faltantes crea pasar a la forma ancha?::Exactamente i·j − n
+¿Cuánto cuesta la forma ancha frente a la larga?::i·j frente a n, o sea 1/densidad
+¿Cuándo la vuelta recupera el largo?::Solo si la columna de valores no tenía faltantes propios
+¿Por qué?::Porque un faltante propio y un hueco estructural quedan indistinguibles en la celda
+¿Qué hace pivot si el par se repite?::Levanta un error: no existe tal tabla
+¿Y pivot_table?::Agrega y no avisa, así que apaga la única señal que había
+¿Cuántas colisiones hay?::n − u, con u el número de pares distintos
+¿Cómo se localizan?::Pivotando con la función que cuenta: las celdas con valor mayor que 1
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 11.2 se demuestra contando pares por clave y unificando los cuatro casos con $\max\{m,1\}$, y se comprueba contra `merge` en los cuatro tipos sobre las mismas dos tablas: $4$, $7$, $5$ y $8$ filas, con la fórmula acertando en los cuatro. El corolario sobre la unión por la izquierda se demuestra viendo que $|\text{izquierda}|-n_1$ es una suma de términos no negativos, y se comprueba en los dos sentidos: con la clave repetida da $7$ frente a $6$, y deduplicando la derecha vuelve a dar $6$. La Proposición 11.3 se demuestra por inyectividad de la aplicación fila $\to$ celda, y se comprueba con $n=8$, $i=4$ y $j=3$: la tabla ancha tiene $12$ celdas y $4$ faltantes, que es $i\cdot j-n$; la vuelta recupera el largo exactamente, y con un faltante propio devuelve $7$ filas de las $8$. La Proposición 11.4 se demuestra por el principio del palomar, y se comprueba con una colisión: $9$ filas y $8$ pares distintos, la operación estricta levanta un error y la que agrega devuelve $50{,}5$ en la celda en choque, con la cuenta en $2$ mientras las otras siete valen $1$. Los dos visuales se contrastaron contra estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** El recuento de la unión interna es la Proposición 10.6 de Python 10, y aquí se cita como caso particular sin rehacer su demostración. El índice, la alineación por etiqueta y el comportamiento del faltante son de Python 9. La distinción entre un dato que falta y un dato que no existe pertenece a Estadística 15, y esta lección solo trata su representación.
+
+**Lo que se enuncia sin demostrar.** Que `merge` implementa exactamente la semántica de unión descrita —una fila por par con clave coincidente— se toma como comportamiento documentado de la librería y se verifica en el caso concreto, no se demuestra. Que el orden de las filas que devuelve cada tipo de unión es el que es, y no otro, no se usa en ningún argumento: todas las comprobaciones de esta página ordenan antes de comparar.
+
+**Lo que viene de los libros.**
+
+- [*Python for Data Analysis, 3rd Edition*](https://wesmckinney.com/book/) (Wes McKinney, O'Reilly, 2022), §8.1 *Hierarchical Indexing*, §8.2 *Combining and Merging Datasets* y §8.3 *Reshaping and Pivoting* — citadas por número y título. El sitio declara que su contenido no se puede copiar ni reproducir, así que no se transcribe texto.
+
+**Lo que es mío, no del libro.** Las cuatro fórmulas de la Proposición 11.2 unificadas con $\max\{m,1\}$, y el corolario que convierte «cuidado con las uniones» en una condición comprobable de una línea antes de ejecutarlas. La Proposición 11.3 con el recuento exacto $i\cdot j-n$ y, sobre todo, la condición de reversibilidad: que la vuelta pierda exactamente los faltantes propios es lo que hace peligroso un cauce que va y vuelve, y no suele decirse. Y la Proposición 11.4 leída como un problema de señal: la operación estricta falla y la que agrega calla, de modo que el remedio evidente es el que borra el aviso.
+
+[Índice de McKinney 3E verificado el 17-09-2026; las secciones del capítulo 8 se trajeron ese día de <https://wesmckinney.com/book/data-wrangling>.]{.sello}
+:::
