@@ -1,0 +1,711 @@
+---
+title: "pandas: carga, formatos y limpieza"
+subtitle: "Python · Lección 10"
+nivel: L4
+modulo: python
+fase: F1
+prereqs: [python/09-pandas-series-dataframe, python/04-archivos-y-errores]
+siguientes: []
+libro: "McKinney 3E §6.1 Reading and Writing Data in Text Format · §7.1 Handling Missing Data · §7.2 Data Transformation · §7.4 String Manipulation"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - pandas
+---
+
+::: {.meta-leccion data-leccion="python/10-carga-formatos-y-limpieza"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F1]{.item}
+[**Libro** McKinney §6.1 y §7.1–7.4]{.item}
+[**Prereqs** [Series y DataFrame](09-pandas-series-dataframe.qmd) · [Excepciones y contextos](04-archivos-y-errores.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir el [formato delimitado]{.g} y decir exactamente qué información pierde respecto del marco que lo originó.
+2. Demostrar que la ida y vuelta por CSV no es la identidad, que sí es idempotente a partir de la segunda vuelta, y decir qué columnas sobreviven intactas y cuáles no.
+3. Explicar por qué la [inferencia de tipo]{.g} depende de qué filas se miran, y predecir cuándo un [bloque de lectura]{.g} devuelve un tipo distinto del de la columna entera.
+4. Deducir del hecho de que un [valor faltante]{.g} no es igual a sí mismo las dos consecuencias que más cuestan: que la comparación no lo encuentra y que agrupar descarta sus filas.
+5. Demostrar que el número de filas de una [unión interna]{.g} es la suma de los productos de [multiplicidades]{.g data-t="multiplicidad"}, y deducir que la [normalización de cadenas]{.g} nunca puede reducir ese número.
+6. Elegir en cada caso entre arreglar el dato y declarar el tipo al leer, con el criterio de qué falla antes y más ruidosamente.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 9**: la Series, el índice y la Proposición 9.6, que muestra cómo un solo faltante convierte una columna `int64` en `float64`. Esta lección empieza donde aquella termina: en el momento en que ese faltante entra por un archivo.
+- **Python 4**: los contextos y las excepciones, con los que se lee un archivo sin dejarlo abierto y se distingue un error de formato de uno de contenido.
+- **Estadística 15**: qué significa que un dato falte y qué se puede estimar según el mecanismo. Aquí se trata la mecánica, no la estadística, y las dos se necesitan.
+- **Python 2**: el ámbito y los cierres, que explican por qué una función de limpieza aplicada con `map` ve lo que ve.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 11**: el wrangling, las uniones y el reshape, donde la Proposición 10.6 de esta lección decide cuántas filas salen de cada combinación.
+- **Python 12**: `groupby` y la agregación, que es donde la Proposición 10.5 cobra: las claves faltantes desaparecen sin aviso.
+- **Python 14**: las series de tiempo, donde el faltante se llama `NaT` y la inferencia de tipo tiene que acertar con las fechas.
+- **Machine Learning 9**: la regresión en alta dimensión, que empieza por una matriz que alguien tuvo que cargar y limpiar sin cambiar los tipos por el camino.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | El número de filas de una tabla |
+| $\varphi$ | fi | La ida y vuelta por CSV: escribir el marco y volver a leerlo |
+| $m_1(k)$ | eme sub uno de ka | Cuántas veces aparece la clave $k$ en la tabla de la izquierda |
+| $m_2(k)$ | eme sub dos de ka | Cuántas veces aparece la clave $k$ en la tabla de la derecha |
+| $\nu$ | nu | La función que normaliza una clave: quitar espacios y pasar a minúsculas |
+| `NaN` | ene a ene | La marca de faltante para números; no es igual a sí misma |
+| `dtype` | de tipo | El tipo de una columna, que en pandas pertenece a la columna y no a la celda |
+:::
+
+## 1. Lo que un archivo de texto no guarda
+
+::: {.definicion}
+**Definición 10.1 (formato delimitado).** Un archivo delimitado representa una tabla como texto: cada línea es una fila, un separador marca el paso de una columna a la siguiente, y la primera línea puede llevar los nombres. El archivo guarda **la representación textual de cada valor y nada más**: no guarda el [dtype]{.g} de ninguna columna, ni la distinción entre un número y la cadena que lo representa.
+:::
+
+De ahí que leer un archivo delimitado exija adivinar. La [inferencia de tipo]{.g} mira los valores de cada columna y elige el dtype más estrecho que los admite a todos. Adivinar bien casi siempre es lo que hace cómodo a `read_csv`; el precio se paga en los casos donde la cadena y el número no significan lo mismo.
+
+::: {.proposicion}
+**Proposición 10.2 (la ida y vuelta no es la identidad, pero es idempotente).** Sea $\varphi$ la operación de escribir un marco como CSV con el formato por defecto y volver a leerlo. Entonces:
+
+(a) los valores `float64` sobreviven exactos, porque el formato por defecto escribe la representación más corta que vuelve al mismo número;
+
+(b) $\varphi$ no conserva los dtypes: una columna de cadenas cuyos valores se parecen a números vuelve como columna numérica;
+
+(c) $\varphi\neq\mathrm{id}$, pero $\varphi\circ\varphi=\varphi$: a partir de la segunda vuelta el marco ya no cambia.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (c), que es lo que no es evidente. Escribir es aplicar a cada celda una función de representación $\rho$ que depende solo del valor; leer es aplicar a cada columna la inferencia $\iota$, que depende solo del conjunto de cadenas de esa columna. Así $\varphi=\iota\circ\rho$.
+
+Sea $T$ el conjunto de marcos cuyos dtypes son **estables**, esto es, tales que $\iota(\rho(D))=D$. La inferencia elige, por construcción, un dtype al que pertenecen todos los valores leídos, y volver a escribir esos valores produce las mismas cadenas: un entero leído como `int64` se escribe como el mismo dígito y se vuelve a inferir `int64`. Luego $\varphi(D)\in T$ para todo $D$, y sobre $T$ la operación es la identidad. Componiendo, $\varphi(\varphi(D))=\varphi(D)$.
+
+Que $\varphi\neq\mathrm{id}$ se ve con un solo contraejemplo: la columna de cadenas `"01"`, `"02"`, `"03"` se escribe tal cual y la inferencia la lee como los enteros $1,2,3$, así que el cero a la izquierda desaparece y el dtype pasa de `object` a `int64`. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import io
+import pandas as pd
+
+def vuelta(df):
+    """Escribe el marco como CSV y lo vuelve a leer: la funcion phi de la proposicion."""
+    return pd.read_csv(io.StringIO(df.to_csv(index=False)))
+
+df = pd.DataFrame({
+    "id":    [1, 2, 3],
+    "x":     [0.1, 1 / 3, 2 ** 0.5],
+    "clave": ["01", "02", "03"],      # identificadores con cero a la izquierda
+    "flag":  [True, False, True],
+})
+
+a = vuelta(df)
+print("tipos de ida   :", [str(t) for t in df.dtypes])
+print("tipos de vuelta:", [str(t) for t in a.dtypes])
+print()
+print("los float vuelven exactos:", bool((a["x"].values == df["x"].values).all()))
+print("la clave '01' vuelve como:", repr(a["clave"].iloc[0]))
+print("se conservan los tipos   :", bool((df.dtypes.values == a.dtypes.values).all()))
+print()
+b, c = vuelta(a), vuelta(vuelta(a))
+print("phi(df)  == df      :", a.equals(df))
+print("phi2(df) == phi(df) :", b.equals(a))
+print("phi3(df) == phi2(df):", c.equals(b))
+print()
+d = pd.read_csv(io.StringIO(df.to_csv(index=False)), dtype={"clave": "string"})
+print("declarando el tipo, la clave vuelve como:", repr(d["clave"].iloc[0]))
+```
+
+**Modo de falla.** Una columna de identificadores con ceros a la izquierda —códigos postales, números de documento, claves de producto— pierde el cero en la primera lectura. El daño no se ve: la columna existe, tiene el mismo número de filas y se puede sumar. Se descubre al cruzarla con otra tabla, donde `"01"` y `1` no coinciden y la unión devuelve menos filas de las que debía.
+
+**Diagnóstico.** Comparar `df.dtypes` antes y después. Si una columna que se esperaba de texto aparece como `int64` o `float64`, la inferencia la convirtió.
+
+**Remedio.** Declarar el tipo al leer con `dtype={"clave": "string"}`, que es la misma familia de [tipos de extensión]{.g data-t="tipo de extensión"} que la Proposición 9.6 recomendaba para los enteros con faltantes. Declarar el tipo al leer siempre gana a arreglar el dato después, porque después el cero ya no está.
+
+```{=html}
+<div class="viz-vuelta">
+  <div class="controles">
+    <label>Valor en el marco
+      <select id="vv-v">
+        <option value="01" selected>la cadena "01"</option>
+        <option value="7">la cadena "7"</option>
+        <option value="0.1">el número 0.1</option>
+        <option value="1/3">el número 1/3</option>
+        <option value="True">el booleano True</option>
+        <option value="2024-01-05">la fecha 2024-01-05</option>
+        <option value="NA">el texto "NA"</option>
+      </select>
+    </label>
+    <label><input id="vv-d" type="checkbox"> declarar dtype al leer</label>
+  </div>
+  <svg id="vv-svg" viewBox="0 0 660 250" role="img" aria-label="Tres cajas en fila que muestran el valor en el marco original, el texto que se escribe en el archivo y el valor que vuelve al leerlo, con el tipo de cada uno y una marca de si la ida y vuelta lo conservó."></svg>
+  <p class="lectura" id="vv-lectura"></p>
+</div>
+<style>
+.viz-vuelta { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-vuelta .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.3rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-vuelta label { display: flex; align-items: center; gap: .4rem; }
+.viz-vuelta select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-vuelta svg { width: 100%; height: auto; display: block; }
+.viz-vuelta .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_OK = "#0F6E68", C_NO = "#B4342E";
+  var svg = document.getElementById("vv-svg"), lec = document.getElementById("vv-lectura");
+  var cv = document.getElementById("vv-v"), cd = document.getElementById("vv-d");
+
+  // Cada caso: [valor tal como se escribe en Python, dtype de ida, texto en el archivo,
+  //             valor de vuelta, dtype de vuelta, valor de vuelta si se declara el dtype]
+  var CASOS = {
+    "01":         ['"01"', "object",         "01",         "1",            "int64",   '"01"'],
+    "7":          ['"7"', "object",          "7",          "7",            "int64",   '"7"'],
+    "0.1":        ["0.1", "float64",         "0.1",        "0.1",          "float64", "0.1"],
+    "1/3":        ["0.3333333333333333", "float64", "0.3333333333333333", "0.3333333333333333", "float64", "0.3333333333333333"],
+    "True":       ["True", "bool",           "True",       "True",         "bool",    "True"],
+    "2024-01-05": ['"2024-01-05"', "datetime64", "2024-01-05", '"2024-01-05"', "object", "2024-01-05"],
+    "NA":         ['"NA"', "object",         "NA",         "NaN",          "float64", '"NA"']
+  };
+  // Marco anclado a constantes: tres cajas siempre en el mismo sitio.
+  var CX = [40, 250, 460], CY = 58, CW = 160, CH = 96;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function caja(i, titulo, valor, tipo, color) {
+    svg.appendChild(el("rect", { x: CX[i], y: CY, width: CW, height: CH, rx: 8,
+      fill: "none", stroke: color || C_L, "stroke-width": 1.6 }));
+    svg.appendChild(el("text", { x: CX[i] + CW / 2, y: CY - 12, "text-anchor": "middle",
+      "font-size": 11.5, fill: C_T, opacity: .75 }, titulo));
+    svg.appendChild(el("text", { x: CX[i] + CW / 2, y: CY + 42, "text-anchor": "middle",
+      "font-size": 15, fill: C_T, "font-family": "var(--bs-font-monospace,monospace)" }, valor));
+    svg.appendChild(el("text", { x: CX[i] + CW / 2, y: CY + 72, "text-anchor": "middle",
+      "font-size": 12, fill: color || C_T, opacity: .9 }, tipo));
+  }
+  function flecha(x1, x2, y, texto) {
+    svg.appendChild(el("path", { d: "M" + x1 + " " + y + " L" + (x2 - 9) + " " + y,
+      stroke: C_T, "stroke-width": 1.5, fill: "none", opacity: .65 }));
+    svg.appendChild(el("path", { d: "M" + (x2 - 9) + " " + (y - 4.5) + " L" + x2 + " " + y + " L" + (x2 - 9) + " " + (y + 4.5),
+      stroke: C_T, "stroke-width": 1.5, fill: "none", opacity: .65 }));
+    svg.appendChild(el("text", { x: (x1 + x2) / 2, y: y - 10, "text-anchor": "middle",
+      "font-size": 11, fill: C_T, opacity: .7 }, texto));
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var c = CASOS[cv.value], declarar = cd.checked;
+    var salida = declarar ? c[5] : c[3];
+    var tipoSalida = declarar ? (c[1] === "object" ? "string" : c[1]) : c[4];
+    var igual = (salida === c[0]) || (salida === c[0].replace(/"/g, ""));
+    var color = igual ? C_OK : C_NO;
+
+    caja(0, "en el marco", c[0], c[1], C_L);
+    caja(1, "en el archivo", c[2], "texto", C_L);
+    caja(2, "al volver a leer", salida, tipoSalida, color);
+    flecha(CX[0] + CW, CX[1], CY + CH / 2, "to_csv");
+    flecha(CX[1] + CW, CX[2], CY + CH / 2, "read_csv");
+
+    svg.appendChild(el("circle", { cx: CX[2] + CW / 2, cy: CY + CH + 28, r: 8, fill: color, "fill-opacity": .18,
+      stroke: color, "stroke-width": 1.6 }));
+    svg.appendChild(el("text", { x: CX[2] + CW / 2, y: CY + CH + 32, "text-anchor": "middle",
+      "font-size": 11, fill: color }, igual ? "=" : "≠"));
+    svg.appendChild(el("text", { x: CX[2] + CW / 2, y: CY + CH + 52, "text-anchor": "middle",
+      "font-size": 11.5, fill: color }, igual ? "la vuelta conserva el valor" : "la vuelta lo cambia"));
+
+    lec.innerHTML = "El archivo guarda <strong>" + c[2] + "</strong> y nada más: el dtype <strong>" + c[1] +
+      "</strong> no viaja con él (Definición 10.1). " + (declarar
+        ? "Declarando el dtype al leer, el valor vuelve como <strong>" + salida + "</strong>, del tipo <strong>" + tipoSalida + "</strong>."
+        : "Dejando que pandas lo adivine, vuelve como <strong>" + salida + "</strong>, del tipo <strong>" + tipoSalida + "</strong>.") +
+      (igual ? " La ida y vuelta conserva este valor." : " La ida y vuelta lo cambia, y a partir de aquí ya es idempotente: volver a escribirlo y leerlo da lo mismo (Proposición 10.2c).");
+  }
+
+  cv.addEventListener("change", dibujar);
+  cd.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. La inferencia mira filas, no columnas
+
+Un archivo que no cabe en memoria se lee por partes. Esa decisión, que parece solo de memoria, cambia los tipos.
+
+::: {.proposicion}
+**Proposición 10.3 (el tipo depende del bloque).** La inferencia de tipo se aplica a los valores que el lector tiene delante. Al leer con `chunksize`, cada [bloque de lectura]{.g} se infiere por separado, así que dos bloques de la **misma** columna pueden salir con dtypes distintos. En consecuencia, un programa que procese los bloques de uno en uno puede funcionar sobre los primeros y fallar sobre uno posterior, y concatenarlos produce el dtype común más ancho, que es `object` en cuanto uno de ellos lo sea.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea una columna cuyos primeros $n-1$ valores son dígitos y el último es la cadena `"no disponible"`. Leída entera, la inferencia debe admitir a todos los valores y elige `object`. Leída en bloques de tamaño $b<n-1$, los bloques que no contienen la última fila solo ven dígitos, y la inferencia elige para ellos el tipo más estrecho que los admite, `int64`; el bloque que contiene la última fila elige `object`.
+
+Como `pd.concat` toma el tipo común más ancho de las partes, y ese tipo entre `int64` y `object` es `object`, el resultado de concatenar coincide con el de leer entero. La diferencia sobrevive solo mientras los bloques se traten por separado, que es justamente el modo en que se usa `chunksize`. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import io
+import pandas as pd
+
+# Una columna de 30000 valores donde el ultimo no es un numero.
+n = 30000
+columna = ["7"] * (n - 1) + ["no disponible"]
+bruto = pd.DataFrame({"v": columna}).to_csv(index=False)
+
+entero = pd.read_csv(io.StringIO(bruto))
+print("leido de una sola vez, dtype:", str(entero["v"].dtype))
+
+trozos = list(pd.read_csv(io.StringIO(bruto), chunksize=10000))
+print("leido en bloques de 10000  :", [str(t["v"].dtype) for t in trozos])
+print("filas por bloque           :", [len(t) for t in trozos])
+print()
+print("el bloque 0 es numerico:", bool(pd.api.types.is_numeric_dtype(trozos[0]["v"])))
+print("el bloque 2 es numerico:", bool(pd.api.types.is_numeric_dtype(trozos[2]["v"])))
+print("al concatenar, dtype   :", str(pd.concat(trozos, ignore_index=True)["v"].dtype))
+print()
+# el diagnostico: declarar el tipo hace que los tres bloques coincidan
+fijos = list(pd.read_csv(io.StringIO(bruto), chunksize=10000, dtype={"v": "string"}))
+print("declarando dtype='string' :", [str(t["v"].dtype) for t in fijos])
+print("todos iguales:", len({str(t["v"].dtype) for t in fijos}) == 1)
+```
+
+**Modo de falla.** Un proceso que suma la columna bloque a bloque funciona durante los dos primeros y revienta en el tercero con un error de tipo. Sobre un archivo grande eso ocurre después de minutos de trabajo ya hecho, y el mensaje señala la operación, no la fila que lo causó.
+
+**Diagnóstico.** Recorrer los bloques imprimiendo `bloque.dtypes` y comparar. Si cambian de un bloque a otro, la causa está en la inferencia y no en la aritmética.
+
+**Remedio.** Declarar `dtype` al leer, con lo que los tres bloques coinciden por construcción, y convertir después con `pd.to_numeric(..., errors="coerce")`, que manda a `NaN` lo que no sea número en vez de cambiar el tipo de la columna entera.
+
+```{=html}
+<div class="viz-bloques">
+  <div class="controles">
+    <label>Tamaño de bloque <input id="bl-b" type="range" min="4" max="40" step="2" value="10"> <span id="bl-b-v">10</span> mil filas</label>
+    <label>El valor raro está en la fila <input id="bl-f" type="range" min="1" max="40" step="1" value="30"> <span id="bl-f-v">30</span> mil</label>
+  </div>
+  <svg id="bl-svg" viewBox="0 0 660 210" role="img" aria-label="Una barra que representa el archivo de cuarenta mil filas, partida en bloques por el tamaño elegido, con cada bloque coloreado según el tipo que la inferencia le asigna y una marca en la fila que contiene el valor no numérico."></svg>
+  <p class="lectura" id="bl-lectura"></p>
+</div>
+<style>
+.viz-bloques { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-bloques .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.3rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-bloques label { display: flex; align-items: center; gap: .4rem; }
+.viz-bloques input[type=range] { width: 130px; padding: 0; }
+.viz-bloques svg { width: 100%; height: auto; display: block; }
+.viz-bloques .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_NUM = "#0F6E68", C_OBJ = "#B4342E";
+  var svg = document.getElementById("bl-svg"), lec = document.getElementById("bl-lectura");
+  var cb = document.getElementById("bl-b"), eb = document.getElementById("bl-b-v");
+  var cf = document.getElementById("bl-f"), ef = document.getElementById("bl-f-v");
+
+  // Marco anclado: el archivo son siempre 40 mil filas y ocupa siempre el mismo ancho.
+  var TOTAL = 40, X0 = 34, XW = 592, Y0 = 52, YH = 62;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(f) { return X0 + f / TOTAL * XW; }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var b = +cb.value, f = +cf.value;
+    eb.textContent = String(b); ef.textContent = String(f);
+
+    var nb = Math.ceil(TOTAL / b), malo = -1, tipos = [];
+    for (var i = 0; i < nb; i++) {
+      var ini = i * b, fin = Math.min((i + 1) * b, TOTAL);
+      var tiene = (f > ini && f <= fin);
+      if (tiene) malo = i;
+      tipos.push(tiene ? "object" : "int64");
+      svg.appendChild(el("rect", { x: px(ini).toFixed(1), y: Y0, width: (px(fin) - px(ini)).toFixed(1), height: YH,
+        fill: tiene ? C_OBJ : C_NUM, "fill-opacity": .16, stroke: tiene ? C_OBJ : C_NUM, "stroke-width": 1.5 }));
+      if (fin - ini > 3)
+        svg.appendChild(el("text", { x: ((px(ini) + px(fin)) / 2).toFixed(1), y: Y0 + YH / 2 + 4, "text-anchor": "middle",
+          "font-size": 11.5, fill: tiene ? C_OBJ : C_NUM }, tipos[i]));
+    }
+
+    // la fila con el valor no numerico
+    svg.appendChild(el("path", { d: "M" + px(f).toFixed(1) + " " + (Y0 - 16) + " L" + px(f).toFixed(1) + " " + (Y0 + YH + 16),
+      stroke: C_T, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("circle", { cx: px(f).toFixed(1), cy: (Y0 - 16).toFixed(1), r: 4.6, fill: C_T }));
+    svg.appendChild(el("text", { x: px(f).toFixed(1), y: Y0 + YH + 32, "text-anchor": "middle", "font-size": 11, fill: C_T },
+      '"no disponible"'));
+    svg.appendChild(el("text", { x: X0, y: 24, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "el archivo, 40 mil filas, partido en bloques de lectura"));
+
+    lec.innerHTML = "Con bloques de <strong>" + b + " mil</strong> filas salen <strong>" + nb +
+      "</strong> bloques, y el valor no numérico cae en el bloque <strong>" + (malo + 1) + "</strong>. " +
+      "Ese bloque se infiere <strong>object</strong> y los otros <strong>" + (nb - 1) + "</strong> se infieren " +
+      "<strong>int64</strong> (Proposición 10.3): la misma columna, dos tipos. Leído de una sola vez el archivo " +
+      "entero daría <strong>object</strong>, porque la inferencia vería el valor raro desde el principio.";
+  }
+
+  cb.addEventListener("input", dibujar);
+  cf.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. El faltante que no se deja comparar
+
+::: {.definicion}
+**Definición 10.4 (valor faltante).** pandas marca la ausencia de un dato con `NaN` en las columnas numéricas, con `NaT` en las de fecha y con `None` en las de objeto. Las tres comparten la propiedad que define al `NaN` del estándar de coma flotante: **no son iguales a sí mismas**. Las funciones `isna` y `notna` son las que las reconocen; el operador `==` no.
+:::
+
+::: {.proposicion}
+**Proposición 10.5 (dos consecuencias de que `NaN` $\neq$ `NaN`).** Sea una columna con $f$ faltantes de $n$ valores.
+
+(a) La expresión `columna == np.nan` devuelve falso en las $n$ posiciones, incluidas las $f$ faltantes, mientras que `columna.isna()` devuelve verdadero exactamente en esas $f$.
+
+(b) Si esa columna se usa como clave de agrupación, el total de los conteos por grupo vale $n-f$ y no $n$: las $f$ filas de clave faltante no aparecen en ningún grupo, aunque el resto de sus valores estén completos.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (a), el estándar IEEE 754 define la comparación de igualdad como falsa cuando alguno de los operandos es `NaN`. Aplicada elemento a elemento, la comparación es falsa en las posiciones faltantes por esa regla, y en las no faltantes porque un número real distinto de `NaN` tampoco es igual a `NaN`. En total, falso en las $n$ posiciones.
+
+Para (b), agrupar parte las filas según el valor de la clave y forma un grupo por cada valor **distinto**. Como los faltantes no son iguales entre sí, no pueden agruparse por igualdad, y el comportamiento por defecto los descarta. Las filas que quedan repartidas son las de clave presente, que son $n-f$, y la suma de los conteos de una partición es el tamaño de lo repartido. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+import pandas as pd
+
+print("nan == nan:", bool(np.nan == np.nan))
+s = pd.Series([1.0, np.nan, 3.0, np.nan])
+print("(s == nan).sum():", int((s == np.nan).sum()), "| s.isna().sum():", int(s.isna().sum()))
+print()
+
+rng = np.random.default_rng(10)
+n = 1000
+clave = pd.Series(rng.choice(["a", "b", "c"], size=n))
+clave[rng.choice(n, size=137, replace=False)] = np.nan
+tabla = pd.DataFrame({"g": clave, "v": pd.Series(rng.normal(size=n))})
+
+conteo = tabla.groupby("g")["v"].count()
+print("filas totales        :", n)
+print("claves faltantes     :", int(tabla["g"].isna().sum()))
+print("suma de los conteos  :", int(conteo.sum()))
+print("filas perdidas       :", n - int(conteo.sum()))
+print("la perdida iguala a las claves faltantes:",
+      n - int(conteo.sum()) == int(tabla["g"].isna().sum()))
+print("con dropna=False, suma:", int(tabla.groupby("g", dropna=False)["v"].count().sum()))
+print()
+todas = float(tabla["v"].mean())
+agrupadas = float(tabla.dropna(subset=["g"])["v"].mean())
+print("media sobre las 1000 filas         : %.6f" % todas)
+print("media sobre las 863 que agrupa     : %.6f" % agrupadas)
+print("diferencia                         : %.6f" % (todas - agrupadas))
+print("ningun valor de v falta:", bool(tabla["v"].notna().all()))
+```
+
+La última línea es la que conviene retener: la columna que se está resumiendo **no tiene ni un faltante**. Las $137$ filas se pierden por el estado de otra columna, la que sirve de clave, y el resultado no lleva ninguna señal de que falten.
+
+**Modo de falla.** Un informe agregado que no cuadra con el total, por un margen que nadie sabe explicar. Aquí la diferencia entre la media sobre las mil filas y la media sobre las $863$ que se agrupan es de $0{,}0095$, lo bastante pequeña para pasar por ruido y lo bastante grande para mover una cifra publicada.
+
+**Diagnóstico.** Comparar la suma de los conteos con el número de filas de la tabla. Si no coinciden, la diferencia es exactamente el número de claves faltantes, y `tabla["g"].isna().sum()` lo confirma en una línea.
+
+**Remedio.** `groupby(..., dropna=False)` cuando las filas de clave faltante deban contarse, o filtrarlas explícitamente antes con `dropna(subset=["g"])` cuando no. Lo que no sirve es dejar la decisión al valor por omisión, porque entonces no queda registro de cuál se tomó.
+
+## 4. Limpiar claves es unir claves
+
+Normalizar una columna de texto —quitar espacios, pasar a minúsculas— es el paso habitual antes de cruzar dos tablas. La operación tiene una propiedad que conviene ver antes de aplicarla.
+
+::: {.proposicion}
+**Proposición 10.6 (la unión cuenta productos de multiplicidades).** Sean dos tablas y una columna de clave en cada una. Para cada valor $k$ sean $m_1(k)$ y $m_2(k)$ sus [multiplicidades]{.g data-t="multiplicidad"}. El número de filas de la unión interna por esa clave es
+$$N=\sum_{k} m_1(k)\,m_2(k).$$
+Sea además $\nu$ una [normalización]{.g data-t="normalización de cadenas"} cualquiera, aplicada a la clave de las dos tablas antes de unir, y sea $N_\nu$ el número de filas resultante. Entonces
+$$N_\nu\;\ge\;N,$$
+con igualdad si y solo si no hay dos claves distintas que $\nu$ identifique y que aparezcan a la vez en los dos lados.
+:::
+
+::: {.demostracion}
+*Demostración.* La unión interna produce una fila por cada par $(i,j)$ de filas con la misma clave. Fijado un valor $k$, los pares con esa clave son los del producto cartesiano de las $m_1(k)$ filas de la izquierda por las $m_2(k)$ de la derecha, que son $m_1(k)m_2(k)$. Los conjuntos de pares de valores distintos son disjuntos, así que el total es la suma.
+
+Para la desigualdad, agrúpense las claves originales por su imagen bajo $\nu$. Si $\nu$ manda las claves $k_1,\dots,k_r$ al mismo valor $k$, la multiplicidad de $k$ tras normalizar es $\sum_{i} m_1(k_i)$ en la izquierda y $\sum_{i} m_2(k_i)$ en la derecha, de modo que esa clase aporta
+$$\Big(\sum_{i} m_1(k_i)\Big)\Big(\sum_{i} m_2(k_i)\Big)\;=\;\sum_{i}m_1(k_i)m_2(k_i)\;+\;\sum_{i\neq j}m_1(k_i)m_2(k_j)\;\ge\;\sum_{i}m_1(k_i)m_2(k_i),$$
+que es lo que aportaban antes las $r$ claves por separado. Sumando sobre las clases se obtiene $N_\nu\ge N$. Los términos cruzados son no negativos, y su suma es cero exactamente cuando para todo par $i\neq j$ se tiene $m_1(k_i)m_2(k_j)=0$, esto es, cuando no hay dos claves identificadas por $\nu$ presentes a la vez en los dos lados. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import pandas as pd
+
+crudo = pd.Series(["Ana", "ana ", " ANA", "Luis", "luis", "Beto"])
+norm = crudo.str.strip().str.lower()
+print("claves distintas antes :", int(crudo.nunique()))
+print("claves distintas despues:", int(norm.nunique()))
+print("la normalizacion es inyectiva:", int(crudo.nunique()) == int(norm.nunique()))
+print()
+
+izq = pd.DataFrame({"k": ["Ana", "ana ", " ANA", "Luis"], "a": [1, 2, 3, 4]})
+der = pd.DataFrame({"k": ["Ana", "ana ", " ANA", "Luis"], "b": [10, 20, 30, 40]})
+crudas = len(izq.merge(der, on="k"))
+
+izq_n = izq.assign(k=izq["k"].str.strip().str.lower())
+der_n = der.assign(k=der["k"].str.strip().str.lower())
+limpias = len(izq_n.merge(der_n, on="k"))
+
+print("filas de la union sin normalizar:", crudas)
+print("filas de la union normalizada   :", limpias)
+
+m1 = izq_n["k"].value_counts()
+m2 = der_n["k"].value_counts()
+suma = int((m1 * m2).sum())
+print("suma de m1(k)*m2(k) sobre las claves:", suma)
+print("coincide con las filas de la union  :", suma == limpias)
+print("desglose:", {k: (int(m1[k]), int(m2[k]), int(m1[k] * m2[k])) for k in sorted(m1.index)})
+print("la union no puede encoger al normalizar:", limpias >= crudas)
+```
+
+Cuatro filas contra cuatro filas producen diez. El desglose lo explica sin misterio: la clave `ana` quedó con multiplicidad tres en los dos lados y aporta $3\times 3=9$, mientras que `luis` aporta $1\times 1=1$. La normalización hizo su trabajo —las tres escrituras de un mismo nombre ahora coinciden— y el precio es que también coinciden entre sí.
+
+**Modo de falla.** Una tabla de resultados con más filas que la de entrada, y cualquier suma calculada sobre ella inflada por un factor que varía de clave en clave. Como el factor no es constante, el total no se puede corregir dividiendo.
+
+**Diagnóstico.** Comparar `len(union)` con `len(izquierda)` antes de seguir. Si la unión es mayor, la clave no es única en alguno de los dos lados, y `izq["k"].value_counts().max()` dice en cuál y cuánto.
+
+**Remedio.** Decidir antes de unir cuál de las dos tablas debe tener clave única, comprobarlo con `is_unique`, y si no lo es, agregar ese lado antes de la unión. La normalización se queda; lo que cambia es el orden: primero normalizar, después deduplicar, después unir.
+
+```{=html}
+<div class="viz-union">
+  <div class="controles">
+    <label>Variantes de la clave a la izquierda <input id="un-i" type="range" min="1" max="5" step="1" value="3"> <span id="un-i-v">3</span></label>
+    <label>Variantes a la derecha <input id="un-d" type="range" min="1" max="5" step="1" value="3"> <span id="un-d-v">3</span></label>
+    <label><input id="un-n" type="checkbox" checked> normalizar antes de unir</label>
+  </div>
+  <svg id="un-svg" viewBox="0 0 660 300" role="img" aria-label="Dos columnas de filas, la izquierda y la derecha, con una línea por cada par que la unión produce; al normalizar las variantes de la clave colapsan en una sola y el número de líneas pasa a ser el producto de las multiplicidades."></svg>
+  <p class="lectura" id="un-lectura"></p>
+</div>
+<style>
+.viz-union { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-union .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.3rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-union label { display: flex; align-items: center; gap: .4rem; }
+.viz-union input[type=range] { width: 110px; padding: 0; }
+.viz-union svg { width: 100%; height: auto; display: block; }
+.viz-union .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_P = "#0F6E68", C_X = "#B4342E";
+  var svg = document.getElementById("un-svg"), lec = document.getElementById("un-lectura");
+  var ci = document.getElementById("un-i"), ei = document.getElementById("un-i-v");
+  var cd = document.getElementById("un-d"), ed = document.getElementById("un-d-v");
+  var cn = document.getElementById("un-n");
+
+  var VAR = ["Ana", "ana ", " ANA", "ANA", "aNa"];
+  // Marco anclado: dos columnas fijas y cinco ranuras siempre en el mismo sitio.
+  var XI = 96, XD = 500, Y0 = 46, DY = 42;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var a = +ci.value, b = +cd.value, norm = cn.checked;
+    ei.textContent = String(a); ed.textContent = String(b);
+
+    svg.appendChild(el("text", { x: XI, y: 24, "text-anchor": "middle", "font-size": 11.5, fill: C_T, opacity: .75 }, "izquierda"));
+    svg.appendChild(el("text", { x: XD, y: 24, "text-anchor": "middle", "font-size": 11.5, fill: C_T, opacity: .75 }, "derecha"));
+
+    // las lineas primero, para que las cajas queden encima
+    var pares = 0;
+    for (var i = 0; i < a; i++) for (var j = 0; j < b; j++) {
+      var casan = norm || (VAR[i] === VAR[j]);
+      if (!casan) continue;
+      pares++;
+      svg.appendChild(el("path", { d: "M" + (XI + 52) + " " + (Y0 + i * DY + 13) + " L" + (XD - 52) + " " + (Y0 + j * DY + 13),
+        stroke: norm ? C_X : C_P, "stroke-width": 1.4, fill: "none", opacity: .55 }));
+    }
+
+    [[XI, a], [XD, b]].forEach(function (col) {
+      for (var k = 0; k < col[1]; k++) {
+        svg.appendChild(el("rect", { x: col[0] - 52, y: Y0 + k * DY, width: 104, height: 26, rx: 5,
+          fill: "none", stroke: C_L, "stroke-width": 1.4 }));
+        svg.appendChild(el("text", { x: col[0], y: Y0 + k * DY + 18, "text-anchor": "middle", "font-size": 12.5,
+          fill: C_T, "font-family": "var(--bs-font-monospace,monospace)" }, norm ? "ana" : '"' + VAR[k] + '"'));
+      }
+    });
+
+    var sinNorm = 0;
+    for (var i2 = 0; i2 < a; i2++) for (var j2 = 0; j2 < b; j2++) if (VAR[i2] === VAR[j2]) sinNorm++;
+
+    lec.innerHTML = "Con <strong>" + a + "</strong> variantes a la izquierda y <strong>" + b +
+      "</strong> a la derecha, " + (norm
+        ? "normalizar las lleva todas a la misma clave, así que la unión produce m₁·m₂ = <strong>" + a + "×" + b +
+          " = " + (a * b) + "</strong> filas (Proposición 10.6)."
+        : "sin normalizar solo casan las escrituras idénticas, y la unión produce <strong>" + sinNorm + "</strong> filas.") +
+      " Sin normalizar saldrían <strong>" + sinNorm + "</strong> y normalizando <strong>" + (a * b) +
+      "</strong>: la unión nunca encoge al normalizar, y crece justo en los términos cruzados de la demostración.";
+  }
+
+  ci.addEventListener("input", dibujar);
+  cd.addEventListener("input", dibujar);
+  cn.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## Ejercicios
+
+### Ejercicio 1, Cuántas filas salen de la unión
+
+Con la Proposición 10.6, calcular cuántas filas produce la unión interna si la clave `ana` aparece $4$ veces a la izquierda y $2$ a la derecha, y la clave `luis` aparece $3$ y $5$ veces.
+
+```{pyodide}
+#| exercise: ex_union
+m1 = {"ana": 4, "luis": 3}
+m2 = {"ana": 2, "luis": 5}
+
+filas = ______
+
+print(filas)
+int(filas)
+```
+
+::: {.hint exercise="ex_union"}
+El número de filas es $\sum_k m_1(k)\,m_2(k)$: se multiplica clave a clave y después se suma.
+:::
+
+::: {.solution exercise="ex_union"}
+```{pyodide}
+m1 = {"ana": 4, "luis": 3}
+m2 = {"ana": 2, "luis": 5}
+
+filas = sum(m1[k] * m2[k] for k in m1)
+
+print(filas)
+int(filas)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_union
+#| check: true
+if result == 23:
+    feedback = {"correct": True, "message": "Correcto: 4×2 + 3×5 = 23, de siete filas a la izquierda y siete a la derecha.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 23 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Encontrar los faltantes
+
+Una columna tiene faltantes. Contar cuántos hay, sin usar `isna`, aprovechando que un faltante no es igual a sí mismo.
+
+```{pyodide}
+#| exercise: ex_falta
+import pandas as pd
+import numpy as np
+
+s = pd.Series([1.0, np.nan, 3.0, np.nan, 5.0])
+
+faltan = ______
+
+print(faltan)
+int(faltan)
+```
+
+::: {.hint exercise="ex_falta"}
+Por la Definición 10.4, `s != s` es verdadero exactamente en las posiciones faltantes. Sumar esa serie de booleanos los cuenta.
+:::
+
+::: {.solution exercise="ex_falta"}
+```{pyodide}
+import pandas as pd
+import numpy as np
+
+s = pd.Series([1.0, np.nan, 3.0, np.nan, 5.0])
+
+faltan = (s != s).sum()
+
+print(faltan)
+int(faltan)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_falta
+#| check: true
+if result == 2:
+    feedback = {"correct": True, "message": "Correcto: 2. La expresión s != s es el truco que isna encapsula.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 2 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Python 10**:
+
+1. Construir un marco con una columna de cada dtype que pandas maneja —entero, flotante, booleano, texto, fecha, categórica— y medir cuáles sobreviven a la ida y vuelta por CSV y cuáles no. Anotar la tabla de supervivencia y comprobar la Proposición 10.2c en cada columna: que a partir de la segunda vuelta ya nada cambia.
+2. Tomar el archivo del punto anterior y leerlo con cinco tamaños de bloque distintos, registrando los dtypes de cada bloque. Anotar a partir de qué tamaño desaparecen las discrepancias y por qué ese número depende de dónde esté la fila rara y no de cuántas filas haya.
+3. Programar una comprobación reutilizable que, antes de cada unión, verifique que la clave es única en el lado que debe serlo y avise con el factor de crecimiento esperado, $\sum_k m_1(k)m_2(k)\,/\,n$, cuando no lo sea. Guardarla en `50-Errores/` con los tres casos que la disparan.
+
+## Del libro
+
+*Python for Data Analysis, 3rd Edition* trata la carga en §6.1 *Reading and Writing Data in Text Format* y la limpieza en §7.1 *Handling Missing Data*, §7.2 *Data Transformation* y §7.4 *String Manipulation*.
+
+Las otras tres secciones del capítulo 6 —§6.2 *Binary Data Formats*, §6.3 *Interacting with Web APIs* y §6.4 *Interacting with Databases*— **no se tratan aquí**, y la razón es que ninguna se puede ejecutar en esta página: el intérprete corre dentro del navegador, sin sistema de archivos persistente, sin red y sin base de datos. Escribir sobre ellas sin poder correrlas iría contra la regla de no publicar código que no se haya ejecutado. §7.3 *Extension Data Types* ya está tratada en la lección 9, y §7.5 *Categorical Data* espera a la lección 12, donde la agrupación le da uso.
+
+**Preguntas para leer §6.1 y §7.1 con lápiz:**
+
+1. §6.1 enumera los argumentos de `read_csv` que controlan la inferencia. Con la Proposición 10.3, ¿cuáles de ellos dejan de tener efecto cuando se lee con `chunksize`, y cuáles siguen aplicándose bloque a bloque?
+2. §7.1 presenta `dropna` y `fillna` como las dos formas de tratar un faltante. Con la Proposición 10.5b, ¿en qué se diferencia perder una fila por `dropna` de perderla por agrupar con una clave faltante, y cuál de las dos deja rastro?
+3. §7.2 describe `replace` y `map` para transformar valores. Con la Proposición 10.6, ¿qué hay que comprobar sobre una tabla de correspondencias antes de aplicarla a una clave que después se va a unir?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/carga-y-limpieza.md`, enlazada a [[series-y-dataframe]], [[datos-faltantes]] y [[dtype]]. Conviene rehacer a mano la demostración de la Proposición 10.6: el desarrollo del producto de dos sumas en la parte diagonal más los términos cruzados es lo que explica de dónde salen las filas de más, y una vez visto ya no hace falta contar a mano ninguna unión.
+
+```
+¿Qué guarda un archivo delimitado?::El texto de cada valor y nada más: ningún dtype viaja con él
+¿Sobreviven los float a la ida y vuelta por CSV?::Sí, exactos, porque el formato por defecto escribe la representación más corta que vuelve al mismo número
+¿Y las claves con cero a la izquierda?::No: "01" vuelve como el entero 1
+¿Qué propiedad tiene la ida y vuelta?::No es la identidad, pero es idempotente: phi(phi(D)) = phi(D)
+¿Por qué chunksize cambia los tipos?::Porque la inferencia se aplica a lo que el lector ve, y cada bloque ve filas distintas
+¿Qué dtype sale al concatenar int64 con object?::object, el común más ancho
+¿Cuánto vale (columna == np.nan).sum()?::Cero siempre, porque NaN no es igual a nada, ni a sí mismo
+¿Cómo se cuentan los faltantes sin isna?::Con (s != s).sum(), que es verdadero solo en las posiciones faltantes
+¿Qué le pasa a una fila con clave faltante al agrupar?::Desaparece: la suma de los conteos vale n − f, no n
+¿Cómo se detecta esa pérdida?::Comparando la suma de los conteos con el número de filas; la diferencia es el número de claves faltantes
+¿Cuántas filas tiene una unión interna?::La suma sobre las claves de m1(k)·m2(k)
+¿Puede encoger una unión al normalizar las claves?::No: N_ν ≥ N, y crece en los términos cruzados
+¿Cuándo hay igualdad?::Cuando ningún par de claves que la normalización identifica aparece en los dos lados a la vez
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 10.2 se demuestra separando la escritura, que actúa celda a celda, de la inferencia, que actúa columna a columna, y observando que la imagen de la inferencia son marcos de dtype estable; se comprueba en las tres partes: los `float64` vuelven exactos, la clave `"01"` vuelve como el entero $1$, y las igualdades $\varphi^2=\varphi$ y $\varphi^3=\varphi^2$ salen verdaderas mientras $\varphi=\mathrm{id}$ sale falsa. La Proposición 10.3 se demuestra con una columna de $30\,000$ valores cuyo último elemento no es numérico: leída entera da `object`, leída en bloques de $10\,000$ da `int64`, `int64` y `object`, y concatenada vuelve a dar `object`. La Proposición 10.5 se demuestra desde la regla de comparación del estándar IEEE 754 y desde que agrupar es partir por igualdad; se comprueba con $1000$ filas y $137$ claves faltantes, donde la suma de los conteos da $863$ y la media se mueve $0{,}0095$ pese a que la columna resumida no tiene ningún faltante. La Proposición 10.6 se demuestra contando pares en el producto cartesiano de cada clave y desarrollando el producto de las sumas en la parte diagonal más los términos cruzados; se comprueba con una unión que pasa de $4$ filas a $10$, desglosadas en $3\times3$ y $1\times1$. Los tres visuales se contrastaron contra estas mismas reglas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** La Series, el índice y la promoción de dtype al entrar un faltante son de Python 9, y la Proposición 9.6 de aquella lección —un solo faltante convierte `int64` en `float64`— es la que justifica aquí el uso de los tipos de extensión, sin volver a demostrarla. La estadística del dato faltante, con MCAR, MAR y MNAR, es de Estadística 15 y no se repite: esta lección trata la mecánica de la marca, no el mecanismo que la produce.
+
+**Lo que se enuncia sin demostrar.** Que el formato de escritura por omisión de pandas produce la representación decimal más corta que vuelve al mismo `float64`: es una propiedad del algoritmo de conversión de la biblioteca estándar, aquí se comprueba en los valores de la celda y no se demuestra. Que `pd.concat` toma el tipo común más ancho se usa como comportamiento documentado de la librería, y se verifica en el caso concreto.
+
+**Lo que viene de los libros.**
+
+- [*Python for Data Analysis, 3rd Edition*](https://wesmckinney.com/book/) (Wes McKinney, O'Reilly, 2022), §6.1 *Reading and Writing Data in Text Format*, §7.1 *Handling Missing Data*, §7.2 *Data Transformation* y §7.4 *String Manipulation* — citadas por número y título. El sitio declara que su contenido no se puede copiar ni reproducir, así que no se transcribe texto.
+
+**Lo que es mío, no del libro.** La Proposición 10.2 entera, y en particular la idempotencia $\varphi^2=\varphi$, que convierte «los tipos se pierden al pasar por CSV» en un enunciado que se puede comprobar y que dice además cuándo deja de perderse nada. La Proposición 10.3 enunciada como una propiedad de la inferencia y no como una advertencia sobre `chunksize`. La lectura de la Proposición 10.5b como una pérdida silenciosa medida en filas, con el caso construido para que la columna resumida esté completa y la pérdida venga solo de la clave. Y la Proposición 10.6 con su desigualdad y su condición de igualdad, que convierte la normalización de claves en una operación con una consecuencia contable en vez de en una buena práctica.
+
+[Índice de McKinney 3E verificado el 17-09-2026; las secciones del capítulo 6 se trajeron ese día de <https://wesmckinney.com/book/accessing-data>.]{.sello}
+:::
