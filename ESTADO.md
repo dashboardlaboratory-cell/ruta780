@@ -1,15 +1,16 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **16-09-2026**, tras publicar seis lecciones: **Python 7**
-(ejes y reducciones), **Python 8** (reshape, orden y ventanas), **Python 9**
-(Series y DataFrame, que abre pandas), **ML 4** (modelos generativos), **ML 5**
-(modelos lineales generalizados) y **ML 6** (validación cruzada). **Las 58
-publicadas cumplen el molde: 58 de 58, y no queda ninguna en el molde viejo.**
+Última actualización: **17-09-2026**, tras publicar dos lecciones: **ML 7**
+(selección de subconjuntos, ISLP §6.1) y **Python 10** (carga, formatos y
+limpieza, McKinney §6.1 y §7.1–7.4). **Las 60 publicadas cumplen el molde: 60 de
+60, y no queda ninguna en el molde viejo.**
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. **Estadística queda cerrada en 25 de 25.** Del
 plan siguen faltando lecciones por escribir en los demás módulos: Python tiene
-16 planeadas y 9 publicadas, ML 6 de 90, y Series y Causal están vacíos. El
+16 planeadas y 10 publicadas, ML 7 de 90, y Series y Causal están vacíos. El
 detalle está en la tabla del punto 2.
+
+El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
 
 Antes de esto, el 12-09-2026 se habían publicado Estadística 18 a 24 —las
 bayesianas, desbloqueadas al verificar el índice entero de Think Bayes— y
@@ -73,17 +74,17 @@ hay que empezar a hacer:
 |---|---|---|---|---|
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
-| Python | 9 | 16 | **9 de 9** | 10 a 16, la Fase 1 |
+| Python | 10 | 16 | **10 de 10** | 11 a 16, la Fase 1 |
 | Series de tiempo | 0 | 11 | — | todas |
-| Machine Learning | 6 | 90 | **6 de 6** | 07 a 16 de la Fase 2, y el resto |
+| Machine Learning | 7 | 90 | **7 de 7** | 08 a 19 de la Fase 2, y el resto |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **58 lecciones** publicadas, **58** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 120 según el plan.
+- **60 lecciones** publicadas, **60** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 118 según el plan.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
   logística (§4.1–4.3, publicada), **04** modelos generativos (§4.4) y **05**
@@ -109,20 +110,22 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   marginales exactas, que es más fuerte que cualquier librería; y `np.trapz` se
   retiró del espacio de nombres en NumPy 2.0, así que las celdas nuevas no lo
   usan.
-- **122 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
-  Quedan cuatro avisos, todos anteriores a esta tanda: tres de no idempotencia
-  —Est 03, Est 22 y Mat 10— y uno nuevo que conviene mirar, `ml/03` visual 1,
+- **128 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
+  Siguen los mismos cuatro avisos, todos anteriores: tres de no idempotencia
+  —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
-  la regla 19b persigue. No se tocó en esta tanda; queda anotado.
-- **1074 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **297 celdas** que el gate ejecuta en cada build.
-- Glosario: **265 términos + 43 símbolos**. Las **41 entradas** que añadió la
-  tanda de Python son todas de tipo `termino`: no se añadió ningún símbolo
-  global, que es donde están las colisiones ya auditadas del punto 6.
+  la regla 19b persigue. Los seis visuales de esta tanda no añaden ninguno.
+- **1148 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **311 celdas** que el gate ejecuta en cada build.
+- Glosario: **285 términos + 43 símbolos**. Las **20 entradas** de esta tanda
+  —12 de ML 7 y 8 de Python 10— son todas de tipo `termino`: **cero símbolos
+  globales nuevos**, por la regla aclarada en el punto 6. Los símbolos propios
+  de cada lección se declaran en su tabla `::: {.notacion}` y no salen de ahí.
 - Índices verificados: Think Stats 3e (75 secciones), MML (80), **Think Bayes 2e
   (20 capítulos y 193 secciones, traídas enteras el 12-09-2026; el capítulo 19
-  publica las suyas sin numerar)**, McKinney 3E (capítulos + las 6 secciones del
-  cap. 7) e **ISLP (13 capítulos, 81 secciones N.M y 176 sub-subsecciones N.M.K —257 entradas— traídas el 13-09-2026 de los
+  publica las suyas sin numerar)**, McKinney 3E (capítulos + las secciones de los
+  capítulos 6 y 7; las subsecciones del 6 no llevan número en el sitio publicado,
+  así que no se registran ni se citan) e **ISLP (13 capítulos, 81 secciones N.M y 176 sub-subsecciones N.M.K —257 entradas— traídas el 13-09-2026 de los
   marcadores del PDF oficial)**. Desde esa fecha `citas.py` admite **tres niveles**: se puede citar
   `ISLP §10.7.1 Backpropagation`. La función `rango()` se generalizó a cualquier profundidad, porque la anterior
   desempaquetaba dos valores del `split` y reventaba con el tercer nivel; se comprobó que los casos de dos niveles
@@ -293,11 +296,33 @@ Lo que sigue, en orden de coste creciente:
 1. **Las decisiones del punto 6 que siguen abiertas**, y son baratas: las
    colisiones de `T`, `Q`, `B` y `p` en el glosario global, el barrido de
    términos en busca de más colisiones como la de `parámetro`, y qué hacer con
-   el cuaderno de retos, que solo llega a Est 5 y Mat 7 mientras las lecciones
-   lo citan mucho más adelante. Ahora son **catorce** secciones de retos
-   pendientes: las diez de antes más las de Py 1 a Py 6, que las lecciones
-   nuevas ya citan. **Py 7, ML 3 y ML 4 sí tienen su sección** desde el
-   16-09-2026, y para ML hubo que crear `F2-retos.ipynb`, que no existía.
+   el cuaderno de retos. **El número real, contado el 17-09-2026, es 33**, no
+   catorce: la cuenta que venía arrastrándose estaba mal. Lo que falta es Python
+   5, Matemática 8 a 18, Estadística 6 a 16 y 18 a 25, y ML 1 y 2. Lo que sí
+   está cubierto es Python 1 a 4 y 6 a 10, Matemática 1 a 7, Estadística 1 a 5
+   y 17, y ML 3 a 7. Para recontarlo sin fiarse de esta línea:
+
+   ```sh
+   python3 - <<'EOF'
+   import json, pathlib, re
+   hay = set()
+   for nb in ['F0-retos','F1-retos','F2-retos']:
+       d = json.load(open(f'proyectos/notebooks/{nb}.ipynb', encoding='utf-8'))
+       for c in d['cells']:
+           for l in (c['source'] if c['cell_type']=='markdown' else []):
+               m = re.match(r'##\s+(Matemática|Estadística|Python|ML)\s+(\d+)', l.strip())
+               if m: hay.add((m.group(1), int(m.group(2))))
+               m = re.match(r'##\s+Lección\s+(\d+)', l.strip())
+               if m: hay.add(('Python', int(m.group(1))))
+   falta = []
+   for p in sorted(pathlib.Path('.').glob('*/[0-9]*.qmd')):
+       m = re.search(r'retos\.ipynb`, sección \*\*(\w+)\s*(\d+)\*\*', p.read_text(encoding='utf-8'))
+       if not m: continue
+       mod = {'Est':'Estadística','Mat':'Matemática','Py':'Python'}.get(m.group(1), m.group(1))
+       if (mod, int(m.group(2))) not in hay: falta.append(f'{mod} {m.group(2)}')
+   print(len(falta), 'pendientes:', falta)
+   EOF
+   ```
 2. **ML: el plan listado está incompleto, y el propio plan ya lo sabía.**
    Anotado el 13-09-2026 al traer el tercer nivel del índice de ISLP.
 
@@ -502,6 +527,101 @@ necesita arrancar con el intercepto en $\log\bar{y}$ —partir de cero pone toda
 las medias ajustadas en $1$ y la primera hessiana queda mal escalada—, y
 `PoissonRegressor` apaga su penalización con `alpha=0.0`, que es el análogo del
 `C=np.inf` ya anotado para la logística.
+
+### 3.9 ML 7 y Python 10, y el desglose de ISLP 6 (17-09-2026)
+
+**ISLP capítulo 6 se partió en tres lecciones, y una cuarta queda aplazada.**
+Con el método acordado de decidirlo justo antes de escribir: **07** selección de
+subconjuntos (§6.1), **08** encogimiento, ridge y lasso (§6.2), y **09**
+regresión en alta dimensión (§6.4). **§6.3 *Dimension Reduction Methods* no se
+puede escribir todavía**, porque la regresión sobre componentes principales es
+PCA seguida de mínimos cuadrados y la lección de PCA no existe; queda como fila
+**17** del índice, justo detrás de la de PCA, que pasó a ser la 16.
+
+**Eso obligó a renumerar `ml/index.qmd` entero**, de la 08 a la 38, y a corregir
+las referencias cruzadas que quedaban mintiendo en lecciones ya publicadas: ML 4
+(«14 y 15» → «16 y 18»), ML 5 («7» → «8», «8» → «10»), ML 6 («7» → «7 y 8»,
+«8 a 12» → «10 a 14», «16» → «19») y Python 8 («35» → «38»). **Conviene contar
+con este coste cada vez que se desglose un capítulo**: es mecánico, pero si se
+salta, el hilo de las lecciones apunta a lecciones que no son.
+
+Lo que sostiene **ML 7**:
+
+- la **Proposición 7.2** demuestra que el RSS no crece entre modelos anidados,
+  con la caída exacta $\langle r,z\rangle^2/\lVert z\rVert^2$, y de ahí que
+  elegir por RSS o por $R^2$ devuelva **siempre** el modelo completo;
+- la **Proposición 7.4** sale de restar las dos esperanzas de la Proposición 6.2
+  de ML 6. Se define $C_p$ sobre $d+1$ parámetros y no sobre $d$ como el libro:
+  la diferencia es constante y no cambia el ganador, pero con $d+1$ el criterio
+  es **insesgado exacto**. Medido con $20\,000$ muestras: sesgo $-0{,}00220$
+  frente al $-0{,}21345$ del error de entrenamiento;
+- la **Proposición 7.5** ordena $C_p$ y BIC por un argumento de intercambio que
+  no usa nada de la forma del RSS: sumar las dos desigualdades de optimalidad
+  cancela los ajustes y deja $(\lambda_2-\lambda_1)(c(d_2)-c(d_1))\le 0$. De
+  ahí que el BIC **nunca** elija un modelo mayor que el $C_p$ en cuanto
+  $n\ge 8$, que es donde $\log n>2$;
+- la **Proposición 7.6** convierte el $R^2$ ajustado en un umbral explícito:
+  sube al añadir una variable **si y solo si** su $t^2>1$. El ruido puro pasa
+  ese umbral el $32{,}88$ % de las veces medido, contra el $32{,}17$ % de la cola
+  exacta de la $t$ con $55$ grados de libertad, calculada por Simpson sin scipy;
+- la **Proposición 7.8** exhibe un diseño construido con tres vectores
+  ortonormales donde la selección hacia adelante devuelve $\text{RSS}=9/17$ y el
+  mejor par ajusta **sin error**. Los tres números —$0{,}72$, $9/17$ y $0$— son
+  exactos y se demuestran; no se sortearon.
+
+**El contraste L3 de ML 7 necesitó un truco que conviene recordar.**
+`SequentialFeatureSelector` elige por validación cruzada, así que por omisión
+resuelve otro problema y no puede empatar con una selección por RSS. Pasándole
+`cv=[(todo, todo)]` —una partición que entrena y mide sobre todas las
+observaciones— su puntuación pasa a ser el $R^2$ de entrenamiento y los dos
+criterios coinciden. Con eso empata, y además **comete el mismo error** sobre el
+diseño de la Proposición 7.8, que es lo que demuestra que el fallo es del
+procedimiento y no de la implementación.
+
+**Python 10 se quedó con §6.1 del capítulo 6 y con §7.1, §7.2 y §7.4 del 7.**
+El resto del capítulo 6 —§6.2 binarios, §6.3 APIs web, §6.4 bases de datos— **no
+se puede ejecutar en esta página**: Pyodide corre en el navegador, sin sistema de
+archivos persistente, sin red y sin base de datos, y no se publica código que no
+se haya corrido. §7.3 ya está en Python 9 y §7.5 espera a Python 12.
+
+- la **Proposición 10.2** es la que más rinde: la ida y vuelta por CSV **no es la
+  identidad pero es idempotente**, $\varphi^2=\varphi$. Los `float64` vuelven
+  exactos y la clave `"01"` vuelve como el entero $1$;
+- la **Proposición 10.3** enuncia la inferencia por bloques como propiedad y no
+  como advertencia: la misma columna sale `int64`, `int64` y `object` leída en
+  bloques de $10\,000$, y `object` leída entera;
+- la **Proposición 10.5** mide la pérdida silenciosa de `groupby`: $137$ claves
+  faltantes de $1000$ filas, la suma de los conteos da $863$, y la media se mueve
+  $0{,}0095$ **aunque la columna resumida no tenga ni un faltante**;
+- la **Proposición 10.6** demuestra que la unión interna tiene
+  $\sum_k m_1(k)m_2(k)$ filas y que normalizar las claves **nunca** puede
+  reducir ese número, con la condición exacta de igualdad. Medido: de $4$ filas
+  a $10$, desglosadas en $3\times3$ y $1\times1$.
+
+**Dos cosas que se arreglaron de paso, y que estaban mal desde antes:**
+
+1. **Los `data-ids` de la portada estaban atrasados.** `index.qmd` listaba 6
+   lecciones de Python y 3 de ML cuando había 9 y 6 publicadas, así que la barra
+   de progreso de la portada llevaba semanas mintiendo. El paso 7 del método
+   dice «`data-ids` del módulo **y de la portada**»; se saltó la segunda mitad en
+   las dos tandas anteriores. Ahora están las 10 y las 7.
+2. **Dos filas del índice arrastraban dos lecciones en un solo `data-leccion`**
+   —`python/08` y `ml/05`—, con lo que marcar una marcaba la otra.
+
+**El índice de McKinney creció.** Se trajeron las secciones del capítulo 6 desde
+<https://wesmckinney.com/book/accessing-data>: §6.1 a §6.5. Sus **subsecciones no
+llevan número** en el sitio publicado, así que no se registran y no son citables,
+igual que pasa con el capítulo 19 de Think Bayes. Con eso, de McKinney hay
+secciones verificadas de los capítulos 6 y 7, y capítulos del resto.
+
+**Aviso de versiones, otra vez.** Las celdas de Python 10 se escribieron dentro
+del subconjunto que se comporta igual en pandas 1.2.4 (la máquina) y 2.x (el CI):
+`groupby(dropna=...)` existe desde 1.1, `read_csv(chunksize=)` se itera igual en
+las dos, y **ninguna celda imprime la representación de un DataFrame**. La
+afirmación de que los `float64` sobreviven a la ida y vuelta se declara como
+booleano calculado, no como dígitos, precisamente para que el gate la compruebe en
+las dos versiones en vez de fijar el formato de una.
+
 
 ---
 
@@ -759,12 +879,19 @@ falla el build. Codificar el SVG en base64.
   cierta suma de cuadrados dividida por $\sigma^2$ sigue una $\chi^2$ (con
   $n-1$ y $n-2$ grados respectivamente). Está declarado en Fuentes de las dos.
   Si alguna lección futura lo necesita demostrado, hay que decidir dónde va.
-- **El cuaderno de retos va por Estadística 5.** Las lecciones 6 a 15 cierran
-  con «en `proyectos/notebooks/F1-retos.ipynb`, sección **Est N**», y ese
-  cuaderno solo tiene secciones hasta Estadística 5 y Álgebra 7. O se
-  escriben las diez que faltan —tres retos por lección, como las que ya están—,
-  o se quita la referencia del bloque *Reto*. Encontrado al publicar Est 15;
-  sin decidir.
+- **Al cuaderno de retos le faltan 33 secciones, no diez.** Las lecciones
+  cierran con «en `proyectos/notebooks/FN-retos.ipynb`, sección **X N**», y esa
+  sección no existe en 33 de las 60 publicadas: Python 5, Matemática 8 a 18,
+  Estadística 6 a 16 y 18 a 25, y ML 1 y 2. O se escriben —tres retos por
+  lección, como las que ya están—, o se quita la referencia del bloque *Reto*.
+  **Sin decidir**, y es la deuda más grande que queda. Cada tanda nueva sí
+  escribe la suya, así que la deuda no crece: en esta se añadieron **ML 7** y
+  **Python 10**. El recuento exacto se saca con el script del punto 3.4.1.
+
+  Al añadirlas apareció además una trampa de etiqueta: los cuadernos titulan sus
+  secciones **`## Python 10`** y **`## ML 7`**, mientras que algunas lecciones
+  las citan como «sección **Py 10**». La abreviatura no casa con el título, así
+  que **se escribe el nombre completo del módulo** en las dos partes.
 
 - **Colisiones en `glosario/glosario.json` → `GLOSARIO_SIMBOLOS` (auditado
   12-09-2026, sin tocar todavía).** El enganche de `encabezado.html` es
