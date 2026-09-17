@@ -1,0 +1,538 @@
+---
+title: "pandas: Series y DataFrame"
+subtitle: "Python · Lección 9"
+nivel: L4
+modulo: python
+fase: F1
+prereqs: [python/08-reshape-orden-y-ventanas, python/06-numpy-primer-contacto]
+siguientes: []
+libro: "McKinney 3E, cap. 5 Getting Started with pandas"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - pandas
+---
+
+::: {.meta-leccion data-leccion="python/09-pandas-series-dataframe"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F1]{.item}
+[**Libro** McKinney cap. 5]{.item}
+[**Prereqs** [Reshape, orden y ventanas](08-reshape-orden-y-ventanas.qmd) · [Vistas y difusión](06-numpy-primer-contacto.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir una [Series]{.g data-t="Series"} por sus dos piezas, los valores y el [índice]{.g data-t="índice de pandas"}, y decir qué añade sobre un array.
+2. Demostrar que la aritmética entre Series alinea por **etiqueta** y no por posición, y predecir el resultado sin ejecutarlo.
+3. Demostrar que el índice del resultado es la unión, y acotar cuántas filas y cuántos faltantes salen.
+4. Distinguir `.loc` de `.iloc`, y caracterizar exactamente cuándo coinciden.
+5. Demostrar que un solo valor faltante convierte una columna de enteros en flotantes, y que por encima de $2^{53}$ eso destruye información.
+6. Reconocer el modo de falla de cada uno de esos resultados y el diagnóstico que lo detecta antes de que haga daño.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 6, Definición 6.1**: un array es un búfer, un dtype, una forma y unos pasos. Una Series añade una pieza más, el índice, y de ahí salen todas las diferencias.
+- **Python 6, Proposición 6.8**: la aritmética de coma flotante y la igualdad exacta. La Proposición 9.6 es esa misma aritmética apareciendo donde nadie la pidió.
+- **Python 7, Proposición 7.3**: la alineación por la derecha de NumPy, que empareja **posiciones**. pandas empareja etiquetas, y conviene tener las dos reglas juntas para no confundirlas.
+- **Python 8**: las vistas y las copias, que en pandas siguen existiendo debajo de cada columna.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 10 a 14**: carga, limpieza, joins, `groupby` y series de tiempo, todos construidos sobre el índice que aquí se define.
+- **Python 16**: la anatomía de un proyecto de datos, donde estos modos de falla son los que se comprueban en los tests.
+- **Machine Learning 2 a 6**: las matrices de diseño salen casi siempre de un DataFrame, y un faltante silencioso llega hasta el modelo.
+- **Estadística 15**: los datos faltantes con su teoría; aquí aparece el mecanismo por el que se cuelan sin avisar.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| `s.index` | — | Las etiquetas de una Series, una por valor |
+| `s.values` | — | El array de NumPy con los valores, sin las etiquetas |
+| `s.loc[e]` | — | El valor cuya **etiqueta** es `e` |
+| `s.iloc[j]` | — | El valor que ocupa la **posición** `j` |
+| `NaN` | — | El faltante de coma flotante, que pandas usa para las etiquetas sin valor |
+| `Int64` | — | El entero de pandas que admite faltantes, con mayúscula inicial |
+| $2^{53}$ | dos elevado a cincuenta y tres | El mayor entero a partir del cual `float64` deja de representar todos los enteros |
+:::
+
+## 1. Una Series es un array con etiquetas
+
+::: {.definicion}
+**Definición 9.1 (Series).** Una **Series** consta de dos piezas: un array de valores, con su dtype en el sentido de la Definición 6.1, y un **índice**, que asigna a cada posición una etiqueta. El índice es una aplicación de etiquetas a posiciones, y es lo único que una Series tiene y un array no.
+
+Un **DataFrame** es un conjunto de Series que comparten un mismo índice de filas, más un índice de columnas que las nombra.
+:::
+
+Las dos piezas se pueden leer por separado, y esa separación es la que explica el resto de la lección: las operaciones de pandas consultan el índice antes de tocar los valores.
+
+::: {.proposicion}
+**Proposición 9.2 (la aritmética alinea por etiqueta).** Sean $s$ y $t$ dos Series. La operación $s+t$ empareja los valores por **etiqueta** y no por posición: para cada etiqueta $e$ presente en los dos índices, el resultado en $e$ vale $s[e]+t[e]$. En particular, permutar el índice de un operando cambia el resultado, y permutar sus valores junto con su índice no lo cambia.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Definición 9.1 el índice asigna etiquetas a posiciones, y la operación se define consultando esa asignación en los dos operandos antes de combinar los valores. El emparejamiento queda por tanto determinado por las etiquetas, y no interviene ninguna posición.
+
+De ahí las dos consecuencias. Permutar el índice de $s$ dejando sus valores en su sitio cambia qué valor lleva cada etiqueta, así que cambia cada suma. Permutar a la vez índice y valores deja intacta la asignación etiqueta-valor, de modo que cada suma es la misma y solo cambia el orden en que aparecen. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+import pandas as pd
+
+a = pd.Series([10, 20, 30], index=["b", "a", "c"])
+b = pd.Series([1, 2, 3], index=["a", "b", "c"])
+s = a + b
+print("a: valores", list(a.values), "con indice", list(a.index))
+print("b: valores", list(b.values), "con indice", list(b.index))
+print("suma alineada por etiqueta:", [(k, int(v)) for k, v in s.items()])
+print("por posicion habria dado  :", list(a.values + b.values))
+```
+
+La suma por etiqueta da $21$, $12$ y $33$; la suma por posición habría dado $11$, $22$ y $33$. Coinciden solo en la etiqueta `c`, que es la única que ocupa la misma posición en los dos índices.
+
+::: {.proposicion}
+**Proposición 9.3 (el índice del resultado es la unión).** El índice de $s+t$ es la unión de los dos índices. Si $m$ es el número de etiquetas comunes, el resultado tiene $|I_s|+|I_t|-m$ filas, de las cuales exactamente $|I_s|+|I_t|-2m$ son faltantes. En consecuencia el resultado nunca tiene menos filas que el mayor de los operandos, y tiene más en cuanto alguna etiqueta no sea común.
+:::
+
+::: {.demostracion}
+*Demostración.* Una etiqueta presente en un solo operando no tiene con qué combinarse, y la convención de pandas es conservarla con valor faltante en vez de descartarla; una presente en los dos produce un valor. El índice resultante contiene por tanto todas las etiquetas de los dos, que es la unión, y su tamaño es el del principio de inclusión-exclusión, $|I_s|+|I_t|-m$.
+
+Las filas con valor son las $m$ comunes, así que las faltantes son $|I_s|+|I_t|-m-m$. Y como la unión contiene a cada uno de los dos índices, su tamaño es al menos el mayor de los dos, con igualdad exactamente cuando uno contiene al otro. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import pandas as pd
+
+c = pd.Series([1, 2], index=["a", "b"])
+d = pd.Series([10, 20], index=["b", "c"])
+u = c + d
+print("indices:", list(c.index), "y", list(d.index))
+print("union  :", list(u.index), "-> %d filas" % len(u))
+print("faltantes:", int(u.isna().sum()), "de %d" % len(u))
+print("la unica etiqueta comun es 'b', y ahi vale:", float(u["b"]))
+```
+
+**El modo de falla.** Dos Series de dos filas producen una de tres, con dos faltantes. Un error de tecleo en una etiqueta —un espacio de más, una mayúscula— no lanza ninguna excepción: aparece como filas nuevas llenas de faltantes. El diagnóstico es comprobar el tamaño y los faltantes **después** de cada operación entre objetos con índices distintos, en vez de suponer que alinearon.
+
+```{=html}
+<div class="viz-alineacion">
+  <div class="controles">
+    <label>Desplazamiento del segundo índice <input id="ai-d" type="range" min="0" max="4" step="1" value="1"> <span id="ai-d-v">1</span></label>
+    <label>Etiquetas por Series <input id="ai-n" type="range" min="2" max="5" step="1" value="4"> <span id="ai-n-v">4</span></label>
+  </div>
+  <svg id="ai-svg" viewBox="0 0 640 300" role="img" aria-label="Los dos índices sobre una misma fila de etiquetas posibles, y debajo la unión resultante, con las etiquetas comunes marcadas y las que salen faltantes en otro tono."></svg>
+  <p class="lectura" id="ai-lectura"></p>
+</div>
+<style>
+.viz-alineacion { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-alineacion .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-alineacion label { display: flex; align-items: center; gap: .4rem; }
+.viz-alineacion input[type=range] { width: 130px; padding: 0; }
+.viz-alineacion svg { width: 100%; height: auto; display: block; }
+.viz-alineacion .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_A = "#0F6E68", C_B = "#B45309", C_F = "#B4342E";
+  var svg = document.getElementById("ai-svg"), lec = document.getElementById("ai-lectura");
+  var cd = document.getElementById("ai-d"), ed = document.getElementById("ai-d-v");
+  var cn = document.getElementById("ai-n"), en = document.getElementById("ai-n-v");
+
+  var ETQ = ["a", "b", "c", "d", "e", "f", "g", "h", "i"];
+  // Marco anclado: nueve casillas fijas, siempre en el mismo sitio.
+  var X0 = 48, CW = 62, Y1 = 56, Y2 = 124, Y3 = 216, CH = 38;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function casilla(j, y, txt, color, lleno) {
+    svg.appendChild(el("rect", { x: (X0 + j * CW).toFixed(1), y: y, width: CW - 6, height: CH, rx: 3,
+      fill: lleno ? color : "none", "fill-opacity": lleno ? 0.16 : 0,
+      stroke: color, "stroke-width": lleno ? 2.2 : 1, "stroke-opacity": lleno ? 1 : 0.35 }));
+    if (txt !== "") svg.appendChild(el("text", { x: (X0 + j * CW + (CW - 6) / 2).toFixed(1),
+      y: y + CH / 2 + 4.5, "text-anchor": "middle", "font-size": 12, fill: C_T,
+      "font-family": "var(--bs-font-monospace,monospace)" }, txt));
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var n = +cn.value;
+    cd.max = String(9 - n);
+    var d = Math.min(+cd.value, 9 - n);
+    cd.value = String(d);
+    ed.textContent = String(d); en.textContent = String(n);
+
+    var ia = [], ib = [];
+    for (var j = 0; j < n; j++) { ia.push(j); ib.push(j + d); }
+    var comunes = ia.filter(function (j) { return ib.indexOf(j) >= 0; });
+    var union = [];
+    for (var j = 0; j < 9; j++) if (ia.indexOf(j) >= 0 || ib.indexOf(j) >= 0) union.push(j);
+
+    svg.appendChild(el("text", { x: X0, y: Y1 - 12, "font-size": 11.5, fill: C_A }, "indice de s"));
+    svg.appendChild(el("text", { x: X0, y: Y2 - 12, "font-size": 11.5, fill: C_B }, "indice de t"));
+    svg.appendChild(el("text", { x: X0, y: Y3 - 12, "font-size": 11.5, fill: C_T, opacity: 0.72 },
+      "indice de s + t: la union"));
+
+    for (var j = 0; j < 9; j++) {
+      casilla(j, Y1, ia.indexOf(j) >= 0 ? ETQ[j] : "", C_A, ia.indexOf(j) >= 0);
+      casilla(j, Y2, ib.indexOf(j) >= 0 ? ETQ[j] : "", C_B, ib.indexOf(j) >= 0);
+      var enU = union.indexOf(j) >= 0, com = comunes.indexOf(j) >= 0;
+      casilla(j, Y3, enU ? (com ? ETQ[j] : "NaN") : "", com ? C_A : C_F, enU);
+    }
+
+    // La llave de la union se estira con los dos controles: su extremo derecho
+    // esta en la ultima etiqueta de la union, que depende de n y del desplazamiento.
+    var ultima = union[union.length - 1];
+    var xIzq = X0 + 4, xDer = X0 + ultima * CW + (CW - 6) - 4, yL = Y3 + CH + 12;
+    svg.appendChild(el("path", { d: "M" + xIzq.toFixed(1) + " " + (yL - 6) + " L" + xIzq.toFixed(1) +
+      " " + yL + " L" + xDer.toFixed(1) + " " + yL + " L" + xDer.toFixed(1) + " " + (yL - 6),
+      stroke: C_T, "stroke-width": 1.8, fill: "none" }));
+    svg.appendChild(el("circle", { cx: xDer.toFixed(1), cy: yL.toFixed(1), r: 4, fill: C_T }));
+    svg.appendChild(el("text", { x: xDer.toFixed(1), y: yL + 20, "text-anchor": "end",
+      "font-size": 11.5, fill: C_T }, union.length + " filas, hasta '" + ETQ[ultima] + "'"));
+
+    // marcador de la primera comun, que se desplaza con el desplazamiento
+    if (comunes.length) {
+      var x = X0 + comunes[0] * CW + (CW - 6) / 2;
+      svg.appendChild(el("path", { d: "M" + x.toFixed(1) + " " + (Y2 + CH + 2) + " L" + x.toFixed(1) +
+        " " + (Y3 - 2), stroke: C_A, "stroke-width": 2, fill: "none", "stroke-dasharray": "3 3" }));
+      svg.appendChild(el("circle", { cx: x.toFixed(1), cy: (Y3 - 2).toFixed(1), r: 3.4, fill: C_A }));
+    }
+
+    lec.innerHTML = "Los dos índices tienen <strong>" + n + "</strong> etiquetas y comparten <strong>" +
+      comunes.length + "</strong>. La unión tiene " + n + " + " + n + " − " + comunes.length +
+      " = <strong>" + union.length + "</strong> filas, y de ellas <strong>" +
+      (union.length - comunes.length) + "</strong> salen faltantes (Proposición 9.3). " +
+      (comunes.length === 0
+        ? "Sin ninguna etiqueta comun el resultado es todo NaN, y aun asi la operacion no lanza nada."
+        : "Desplazar un indice reduce las comunes sin que ninguna operacion proteste.");
+  }
+
+  cd.addEventListener("input", dibujar);
+  cn.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Etiqueta contra posición
+
+::: {.proposicion}
+**Proposición 9.4 (`.loc` y `.iloc` coinciden solo en un caso).** Sea $s$ una Series con índice de enteros $(e_0,\dots,e_{n-1})$. Entonces `s.loc[j]` y `s.iloc[j]` devuelven el mismo valor para toda $j$ válida si y solo si $e_j=j$ para toda $j$, es decir si el índice es exactamente $0,1,\dots,n-1$ en ese orden.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Definición 9.1, `s.iloc[j]` devuelve el valor de la posición $j$ y `s.loc[j]` el de la posición $i$ tal que $e_i=j$. Los dos coinciden para toda $j$ exactamente cuando la posición buscada por etiqueta es la propia $j$, o sea cuando $e_j=j$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import pandas as pd
+
+e = pd.Series([100, 200, 300], index=[2, 0, 1])
+print("indice:", list(e.index))
+print(".loc[0], por etiqueta =", int(e.loc[0]))
+print(".iloc[0], por posicion =", int(e.iloc[0]))
+print("coinciden:", int(e.loc[0]) == int(e.iloc[0]))
+f = pd.Series([100, 200, 300], index=[0, 1, 2])
+print("con indice 0, 1, 2 coinciden:", int(f.loc[0]) == int(f.iloc[0]))
+```
+
+**El modo de falla.** Un índice de enteros aparece solo con filtrar o con ordenar: `df[df.x > 0]` conserva las etiquetas originales, así que el índice deja de ser $0,1,\dots,n-1$ y las dos formas de indexar se separan sin previo aviso. El diagnóstico es no usar nunca el corchete pelado con enteros sobre un objeto filtrado, y elegir `.loc` o `.iloc` a conciencia; el remedio, `reset_index(drop=True)` cuando de verdad se quiere renumerar.
+
+## 3. El faltante que cambia el tipo
+
+::: {.proposicion}
+**Proposición 9.5 (alineación en los dos ejes).** Al sumar dos DataFrames, la alineación ocurre en filas y en columnas a la vez. Si $A$ tiene $f_A$ filas y $c_A$ columnas, y $B$ tiene $f_B$ y $c_B$, con $m_f$ filas y $m_c$ columnas comunes, el resultado tiene $(f_A+f_B-m_f)\times(c_A+c_B-m_c)$ celdas, de las cuales solo $m_f\cdot m_c$ pueden no ser faltantes.
+:::
+
+::: {.demostracion}
+*Demostración.* La Proposición 9.3 se aplica por separado a cada eje, porque la operación consulta los dos índices con la misma regla. El número de celdas es el producto de los dos tamaños de unión. Una celda tiene valor en los dos operandos solo si su fila está en las $m_f$ comunes **y** su columna en las $m_c$ comunes, y esas son $m_f\cdot m_c$; las demás carecen de valor en al menos uno. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import pandas as pd
+
+A = pd.DataFrame({"x": [1, 2], "y": [3, 4]}, index=["p", "q"])
+B = pd.DataFrame({"y": [10, 20], "z": [30, 40]}, index=["q", "r"])
+S = A + B
+print("filas   :", list(A.index), "y", list(B.index), "-> union", list(S.index))
+print("columnas:", list(A.columns), "y", list(B.columns), "-> union", list(S.columns))
+print("forma del resultado:", S.shape, "= 9 celdas")
+print("celdas con valor   :", int(S.notna().sum().sum()))
+print("la unica celda comun es (q, y) y vale:", float(S.loc["q", "y"]))
+```
+
+Dos tablas de cuatro celdas cada una suman una de nueve con **una sola** celda con valor. El resto es el producto cartesiano de lo que no coincidía.
+
+::: {.proposicion}
+**Proposición 9.6 (un faltante destruye enteros grandes).** Una columna de dtype `int64` que reciba un valor faltante pasa a `float64`, porque `NaN` es un valor de coma flotante y el dtype debe admitir a todos sus elementos. Los enteros mayores que $2^{53}$ no son todos representables en `float64`, de modo que dos valores distintos por encima de esa cota pueden quedar convertidos en el mismo número.
+:::
+
+::: {.demostracion}
+*Demostración.* Un array de NumPy tiene un único dtype (Definición 6.1), así que la columna necesita un tipo común a los enteros presentes y al faltante. `NaN` no pertenece a ningún dtype entero, de modo que el tipo común más estrecho disponible es `float64`.
+
+Un `float64` dedica $52$ bits a la mantisa, con un bit implícito, así que representa exactamente los enteros hasta $2^{53}$. A partir de ahí el espaciado entre representables es $2$, y $2^{53}+1$ queda entre dos vecinos: se redondea a $2^{53}$. Los dos enteros distintos colapsan en el mismo flotante. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+import pandas as pd
+
+g = pd.Series([2**53, 2**53 + 1], dtype="int64")
+print("dtype original:", g.dtype, "| los dos valores son distintos:", int(g.iloc[0]) != int(g.iloc[1]))
+
+h = pd.concat([g, pd.Series([np.nan])])
+print("tras un solo faltante, dtype:", h.dtype)
+print("siguen siendo distintos:", h.iloc[0] != h.iloc[1])
+print("los dos valen ahora: %.1f" % h.iloc[0])
+print("el mayor entero exacto en float64 es 2**53 =", 2**53)
+print()
+k = pd.concat([pd.Series([2**53, 2**53 + 1], dtype="Int64"), pd.Series([pd.NA], dtype="Int64")])
+print("con dtype Int64, que admite faltantes, el dtype es:", k.dtype)
+print("y los dos valores siguen distintos:", bool(k.iloc[0] != k.iloc[1]))
+print("el faltante existe igual:", bool(pd.isna(k.iloc[2])))
+```
+
+```{=html}
+<div class="viz-espaciado">
+  <div class="controles">
+    <label>Magnitud 2^k <input id="es-k" type="range" min="50" max="56" step="1" value="53"> <span id="es-k-v">53</span></label>
+    <label>Entero que se guarda <input id="es-d" type="range" min="0" max="15" step="1" value="1"> <span id="es-d-v">+1</span></label>
+  </div>
+  <svg id="es-svg" viewBox="0 0 640 260" role="img" aria-label="Una ventana de dieciséis enteros consecutivos a partir de una potencia de dos. Arriba los enteros, abajo los valores que float64 puede representar, y el enlace que muestra a cuál se redondea el entero elegido."></svg>
+  <p class="lectura" id="es-lectura"></p>
+</div>
+<style>
+.viz-espaciado { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-espaciado .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.1rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-espaciado label { display: flex; align-items: center; gap: .4rem; }
+.viz-espaciado input[type=range] { width: 140px; padding: 0; }
+.viz-espaciado svg { width: 100%; height: auto; display: block; }
+.viz-espaciado .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var C_I = "#0F6E68", C_R = "#B45309", C_M = "#B4342E";
+  var svg = document.getElementById("es-svg"), lec = document.getElementById("es-lectura");
+  var ck = document.getElementById("es-k"), ek = document.getElementById("es-k-v");
+  var cd = document.getElementById("es-d"), ed = document.getElementById("es-d-v");
+
+  var N = 16;
+  // Marco anclado: dieciseis posiciones fijas, siempre del mismo ancho.
+  var X0 = 44, PASO = 36, Y1 = 78, Y2 = 172;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(j) { return X0 + j * PASO; }
+
+  function dibujar() {
+    var k = +ck.value, d = +cd.value;
+    ek.textContent = String(k); ed.textContent = "+" + d;
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    var sep = k <= 52 ? 1 : Math.pow(2, k - 52);   // espaciado de float64 en enteros
+    var repr = Math.floor(d / sep) * sep;          // a que representable se redondea
+
+    svg.appendChild(el("text", { x: X0, y: Y1 - 26, "font-size": 11.5, fill: C_I },
+      "los enteros 2^" + k + " + 0 .. 15, todos distintos en int64"));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + Y1 + " L" + px(N - 1) + " " + Y1,
+      stroke: C_L, "stroke-width": 1.2, fill: "none" }));
+    for (var j = 0; j < N; j++) {
+      var act = j === d;
+      svg.appendChild(el("path", { d: "M" + px(j) + " " + (Y1 - (act ? 16 : 7)) + " L" + px(j) + " " + Y1,
+        stroke: act ? C_M : C_I, "stroke-width": act ? 2.6 : 1.4, fill: "none" }));
+      if (j % 5 === 0 || act)
+        svg.appendChild(el("text", { x: px(j), y: Y1 - (act ? 22 : 13), "text-anchor": "middle",
+          "font-size": 10.5, fill: act ? C_M : C_T, opacity: act ? 1 : 0.6 }, "+" + j));
+    }
+
+    svg.appendChild(el("text", { x: X0, y: Y2 + 44, "font-size": 11.5, fill: C_R },
+      "lo que float64 puede representar: 1 de cada " + sep));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + Y2 + " L" + px(N - 1) + " " + Y2,
+      stroke: C_L, "stroke-width": 1.2, fill: "none" }));
+    for (var j2 = 0; j2 < N; j2 += sep) {
+      var act2 = j2 === repr;
+      svg.appendChild(el("path", { d: "M" + px(j2) + " " + Y2 + " L" + px(j2) + " " + (Y2 + (act2 ? 16 : 8)),
+        stroke: act2 ? C_M : C_R, "stroke-width": act2 ? 2.6 : 1.6, fill: "none" }));
+      svg.appendChild(el("text", { x: px(j2), y: Y2 + (act2 ? 32 : 22), "text-anchor": "middle",
+        "font-size": 10.5, fill: act2 ? C_M : C_T, opacity: act2 ? 1 : 0.6 }, "+" + j2));
+    }
+
+    svg.appendChild(el("path", { d: "M" + px(d) + " " + (Y1 + 4) + " L" + px(repr) + " " + (Y2 - 4),
+      stroke: C_M, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("circle", { cx: px(repr), cy: Y2 - 4, r: 3.6, fill: C_M }));
+
+    var cuantos = sep;
+    lec.innerHTML = "Por encima de 2^52 el espaciado de <code>float64</code> vale 2^(k−52), aquí <strong>" +
+      sep + "</strong>. El entero 2^" + k + " + <strong>" + d + "</strong> se redondea a 2^" + k +
+      " + <strong>" + repr + "</strong>, así que <strong>" + cuantos + "</strong> enteros consecutivos " +
+      "acaban en el mismo valor" + (sep === 1 ? ", que en este caso es él mismo y no se pierde nada." :
+      " y dejan de distinguirse (Proposición 9.6).") + " Un solo faltante en la columna basta para " +
+      "provocar esta conversión.";
+  }
+
+  ck.addEventListener("input", dibujar);
+  cd.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+**El modo de falla.** Identificadores largos —números de cuenta, marcas de tiempo en nanosegundos, claves de catálogo— caben de sobra en `int64` y dejan de ser únicos en cuanto un `join` mal emparejado introduce un faltante en su columna. El daño es silencioso y sobrevive al guardado. El diagnóstico es comprobar el dtype de las columnas de identificadores después de cada unión; el remedio, declararlas `Int64` o directamente como texto, que es lo que un identificador es.
+
+## Ejercicios
+
+### Ejercicio 1, Predecir la alineación
+
+Sin ejecutar nada más, calcular cuántas filas tiene la suma de dos Series cuyos índices tienen $5$ y $4$ etiquetas con $2$ en común, y cuántas de esas filas son faltantes. Devolver la pareja.
+
+```{pyodide}
+#| exercise: ex_union
+tam_s, tam_t, comunes = 5, 4, 2
+
+filas, faltantes = ______
+
+print(filas, faltantes)
+(filas, faltantes)
+```
+
+::: {.hint exercise="ex_union"}
+La Proposición 9.3 da las dos cantidades: la unión por inclusión-exclusión, y los faltantes restando dos veces las comunes.
+:::
+
+::: {.solution exercise="ex_union"}
+```{pyodide}
+tam_s, tam_t, comunes = 5, 4, 2
+
+filas, faltantes = tam_s + tam_t - comunes, tam_s + tam_t - 2 * comunes
+
+print(filas, faltantes)
+(filas, faltantes)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_union
+#| check: true
+if tuple(result) == (7, 5):
+    feedback = {"correct": True, "message": "Correcto: 7 filas y 5 faltantes. Solo 2 de las 7 llevan valor.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba (7, 5) y obtuve {tuple(result)}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Salvar los identificadores
+
+Construir la Series de forma que los dos identificadores sigan siendo distintos después de añadir el faltante.
+
+```{pyodide}
+#| exercise: ex_int64
+import pandas as pd
+
+ids = pd.Series([2**53, 2**53 + 1], dtype=______)
+con_faltante = pd.concat([ids, pd.Series([pd.NA], dtype=ids.dtype)])
+
+print(con_faltante.dtype, bool(con_faltante.iloc[0] != con_faltante.iloc[1]))
+bool(con_faltante.iloc[0] != con_faltante.iloc[1])
+```
+
+::: {.hint exercise="ex_int64"}
+El entero de pandas que admite faltantes se escribe con mayúscula inicial, como cadena.
+:::
+
+::: {.solution exercise="ex_int64"}
+```{pyodide}
+import pandas as pd
+
+ids = pd.Series([2**53, 2**53 + 1], dtype="Int64")
+con_faltante = pd.concat([ids, pd.Series([pd.NA], dtype=ids.dtype)])
+
+print(con_faltante.dtype, bool(con_faltante.iloc[0] != con_faltante.iloc[1]))
+bool(con_faltante.iloc[0] != con_faltante.iloc[1])
+```
+:::
+
+```{pyodide}
+#| exercise: ex_int64
+#| check: true
+if result is True:
+    feedback = {"correct": True, "message": "Correcto: con Int64 el faltante convive con los enteros y no hay conversion a float64.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": "Con int64 en minuscula los dos valores colapsan. Hace falta el tipo que admite faltantes.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Python 9**:
+
+1. Escribir `alinea_igual(s, t)` que prediga, sin ejecutar la suma, el número de filas y de faltantes del resultado, y comprobarla contra la suma real sobre veinte pares de índices sorteados.
+2. Provocar el modo de falla de la Proposición 9.4: filtrar un DataFrame, comprobar que el índice deja de ser $0..n-1$, y encontrar una expresión que devuelva valores distintos con `.loc` y con `.iloc`. Anotarla en `50-Errores/`.
+3. Medir el daño de la Proposición 9.6 sobre identificadores reales: generar un millón de enteros por encima de $2^{53}$, introducir un faltante y contar cuántos dejan de ser únicos. Repetir con `Int64` y comprobar que no se pierde ninguno.
+
+## Del libro
+
+*Python for Data Analysis* 3E trata este material en su capítulo 5, *Getting Started with pandas*. El sitio del libro declara que su contenido no se puede copiar ni reproducir, así que se cita número y título y no se le atribuye ninguna frase.
+
+**Preguntas para leer el capítulo 5 con lápiz:**
+
+1. El capítulo presenta la alineación automática como una comodidad. Con las Proposiciones 9.2 y 9.3, ¿en qué caso esa comodidad produce un resultado mayor que los dos operandos, y qué comprobación lo detecta antes de seguir?
+2. El capítulo introduce `reindex`. Con la Definición 9.1, ¿qué pieza de la Series cambia esa operación y cuál deja intacta, y por qué eso explica los faltantes que aparecen?
+3. El capítulo trata los valores faltantes y menciona los tipos que los admiten. Con la Proposición 9.6, ¿qué columnas concretas de una tabla real conviene declarar con esos tipos, y qué se pierde si se decide después de haber guardado los datos?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/pandas-alineacion.md`, enlazada a [[arrays-y-vistas]], [[ejes-y-reducciones]] y [[datos-faltantes]]. Conviene poner lado a lado la regla de alineación de NumPy, que empareja posiciones por la derecha, y la de pandas, que empareja etiquetas: son las dos reglas que más se confunden, y ninguna avisa cuando se aplica la que no era.
+
+```
+¿De qué está hecha una Series?::Un array de valores con su dtype, más un índice que asigna etiquetas a posiciones
+¿Por qué alinea la aritmética?::Porque la operación consulta el índice antes de combinar valores; las posiciones no intervienen
+¿Cuál es el índice de s + t?::La unión de los dos índices
+¿Cuántas filas tiene?::|I_s| + |I_t| − m, con m las etiquetas comunes
+¿Cuántas salen faltantes?::|I_s| + |I_t| − 2m
+¿Puede el resultado ser mayor que los dos operandos?::Sí, siempre que alguna etiqueta no sea común, y sin lanzar ninguna excepción
+¿Cuándo coinciden .loc y .iloc?::Solo si el índice es exactamente 0, 1, …, n−1 en ese orden
+¿Qué rompe esa coincidencia?::Filtrar u ordenar, que conservan las etiquetas originales
+¿Qué pasa al sumar dos DataFrames?::La alineación ocurre en los dos ejes; solo m_f·m_c celdas pueden tener valor
+¿Qué le hace un faltante a una columna int64?::La convierte en float64, porque NaN es un flotante y el dtype es único
+¿Por qué eso destruye información?::Por encima de 2^53 float64 no representa todos los enteros: 2^53 y 2^53+1 colapsan
+¿Cuál es el remedio?::El dtype Int64, con mayúscula, que admite faltantes sin dejar de ser entero
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** Las Proposiciones 9.2 y 9.3 se demuestran desde la Definición 9.1 y se comprueban ejecutándolas: la suma alineada da $21$, $12$ y $33$ donde la suma por posición habría dado $11$, $22$ y $33$, y dos Series de dos filas con una etiqueta común producen tres filas con dos faltantes. La Proposición 9.4 se demuestra caracterizando cuándo la posición buscada por etiqueta es la propia posición, y se comprueba con un índice $(2,0,1)$, donde `.loc[0]` vale $200$ y `.iloc[0]` vale $100$. La Proposición 9.5 aplica la anterior a los dos ejes y se comprueba con dos tablas de cuatro celdas que suman nueve con una sola celda con valor, $14$. La Proposición 9.6 se demuestra con el dtype único de la Definición 6.1 y el espaciado de `float64`, y se comprueba viendo que $2^{53}$ y $2^{53}+1$ dejan de ser distintos tras un faltante, y que con `Int64` siguen siéndolo. El visual se contrastó contra la Proposición 9.3 en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** Que un array tiene un único dtype de ancho fijo es la Definición 6.1. Que la coma flotante no representa todos los reales, y que la igualdad exacta entre flotantes no sirve como prueba, es la Proposición 6.8. La regla de alineación por la derecha de NumPy, con la que conviene no confundir esta, es la Definición 6.5 y la Proposición 7.3.
+
+**Lo que se enuncia sin demostrar.** Que pandas conserva las etiquetas no comunes en vez de descartarlas es una convención de la librería, documentada y comprobada aquí, y no un teorema; una librería distinta podría haber elegido la intersección. Que `float64` dedica $52$ bits a la mantisa se toma del estándar IEEE 754.
+
+**Lo que viene de los libros.**
+
+- [*Python for Data Analysis*, 3ª edición](https://wesmckinney.com/book/) (Wes McKinney, O'Reilly, 2022), capítulo 5 *Getting Started with pandas* — citado por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La Proposición 9.3 con las dos cuentas exactas, filas y faltantes, que convierte «la alineación a veces sorprende» en algo que se predice antes de ejecutar. La Proposición 9.4 enunciada como una equivalencia, con el único caso en que las dos formas de indexar coinciden. Y la Proposición 9.6 encadenada con la Proposición 6.8 de la lección de NumPy: lo que destruye el identificador es la coma flotante a la que el faltante obliga, y por eso el daño sobrevive aunque el faltante se rellene después.
+
+[Índice de McKinney verificado el 12-09-2026 contra el índice publicado del sitio oficial del libro.]{.sello}
+:::
