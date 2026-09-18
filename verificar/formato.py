@@ -101,6 +101,7 @@ MIGRADAS = {
     "ml/10-bases-y-splines.qmd",
     "ml/11-suavizado-y-gams.qmd",
     "ml/12-arboles-de-decision.qmd",
+    "ml/13-bagging-bosques-y-boosting.qmd",
     "python/01-tipos-y-estructuras.qmd",
     "python/02-funciones-y-scope.qmd",
     "python/03-comprehensions.qmd",
