@@ -128,11 +128,11 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 - **1416 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
   sobre **360 celdas** que el gate ejecuta en cada build, y comprobadas **con las
   dos parejas de versiones** (ver el punto 5).
-- Glosario: **334 términos + 43 símbolos**. Las **34 entradas** de estas dos
-  tandas —12 de ML 7, 8 de Python 10, 7 de ML 8 y 7 de Python 11— son todas de
-  tipo `termino`: **cero símbolos
-  globales nuevos**, por la regla aclarada en el punto 6. Los símbolos propios
-  de cada lección se declaran en su tabla `::: {.notacion}` y no salen de ahí.
+- Glosario: **334 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+  18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
+  de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
+  **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
+  su tabla `::: {.notacion}` y no salen de ahí.
 - Índices verificados: Think Stats 3e (75 secciones), MML (80), **Think Bayes 2e
   (20 capítulos y 193 secciones, traídas enteras el 12-09-2026; el capítulo 19
   publica las suyas sin numerar)**, McKinney 3E (capítulos + las secciones de los
@@ -990,7 +990,10 @@ citas inventadas de septiembre.
    solo para salidas reproducibles; `cumple` para todo lo demás.
 6. **Glosario**: añadir términos y símbolos nuevos, correr `glosario/build.py`.
 7. **Publicar** la lección: fila en el índice del módulo, `data-ids` del módulo
-   y de la portada, barra lateral de `_quarto.yml`, `grafo/build_graph.py`.
+   y de la portada, barra lateral de `_quarto.yml`, `grafo/build_graph.py`, y
+   **`python3 proyectos/genera_retos.py --escribe`**, que añade su sección al
+   cuaderno de retos. Ese último paso se saltó durante semanas y la deuda llegó
+   a 33 secciones.
 8. **Los cinco gates**, y `quarto preview` para ver la página de verdad.
 
 ```sh
@@ -1307,19 +1310,33 @@ falla el build. Codificar el SVG en base64.
   cierta suma de cuadrados dividida por $\sigma^2$ sigue una $\chi^2$ (con
   $n-1$ y $n-2$ grados respectivamente). Está declarado en Fuentes de las dos.
   Si alguna lección futura lo necesita demostrado, hay que decidir dónde va.
-- **Al cuaderno de retos le faltan 33 secciones, no diez.** Las lecciones
-  cierran con «en `proyectos/notebooks/FN-retos.ipynb`, sección **X N**», y esa
-  sección no existe en 33 de las 60 publicadas: Python 5, Matemática 8 a 18,
-  Estadística 6 a 16 y 18 a 25, y ML 1 y 2. O se escriben —tres retos por
-  lección, como las que ya están—, o se quita la referencia del bloque *Reto*.
-  **Sin decidir**, y es la deuda más grande que queda. Cada tanda nueva sí
-  escribe la suya, así que la deuda no crece: en esta se añadieron **ML 7** y
-  **Python 10**. El recuento exacto se saca con el script del punto 3.4.1.
+- **El cuaderno de retos: CERRADO el 18-09-2026.** Llegó a faltar en **33** de las
+  68 lecciones publicadas —Python 5, Matemática 8 a 18, Estadística 6 a 16 y 18 a
+  25, y ML 1 y 2—, y llevaba días sin bajar porque cada tanda solo escribía la
+  suya.
 
-  Al añadirlas apareció además una trampa de etiqueta: los cuadernos titulan sus
-  secciones **`## Python 10`** y **`## ML 7`**, mientras que algunas lecciones
-  las citan como «sección **Py 10**». La abreviatura no casa con el título, así
-  que **se escribe el nombre completo del módulo** en las dos partes.
+  **Se cerró sin inventar nada.** Cada lección ya llevaba sus tres retos escritos
+  en su bloque `## Reto`; lo que faltaba era trasladarlos al cuaderno. De ahí
+  **`proyectos/genera_retos.py`**, que lee el bloque de cada lección y escribe la
+  sección con el molde de las que ya existían: encabezado, un título y una celda
+  por reto, y el cierre «Qué me costó / qué aprendí». **Es idempotente**: las
+  secciones que ya están no se vuelven a añadir.
+
+  Al pasar el texto de la lección a una celda de código hubo que traducir el
+  LaTeX, y ahí estuvo el trabajo real: quitar las barras a secas dejaba `dots`,
+  `ge`, `bar{X}_n` y `A^top A`, que no se leen. El script mapea griegas y
+  operadores a su carácter —`\sigma`→σ, `\top`→ᵀ, `\ge`→≥— y convierte los
+  acentos en palabra: `\bar{X}`→«X barra», `\hat{p}`→«p gorro». Quedan cero
+  residuos, comprobado con un barrido sobre los tres cuadernos.
+
+  **Al publicar una lección nueva, correrlo:**
+
+  ```sh
+  python3 proyectos/genera_retos.py            # informe: que falta
+  python3 proyectos/genera_retos.py --escribe  # lo escribe
+  ```
+
+
 
 - **Colisiones de símbolos: RESUELTAS el 18-09-2026.** La auditoría del 12-09
   quedaba pendiente de decidir; se decidió y se aplicó, y la regla está ahora en
