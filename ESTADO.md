@@ -1,19 +1,23 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **18-09-2026**, tras publicar ocho lecciones: **ML 7**
+Última actualización: **18-09-2026**, tras publicar diez lecciones: **ML 7**
 (selección de subconjuntos, ISLP §6.1), **ML 8** (encogimiento, ISLP §6.2),
 **ML 9** (alta dimensión, ISLP §6.4), **Python 10** (carga y limpieza, McKinney
 §6.1 y §7), **Python 11** (uniones y reshape, McKinney §8) y **Python 12**
 (groupby y agregación, McKinney §10) y **ML 10** (bases, polinomios y splines,
-ISLP §7.1–7.4) y **Python 13** (visualización, McKinney §9.1–9.2). **Las 66
-publicadas cumplen el molde: 66 de 66, y no queda ninguna en el molde viejo.**
+ISLP §7.1–7.4), **ML 11** (suavizado, regresión local y GAMs, ISLP §7.5–7.7),
+**Python 13** (visualización, McKinney §9.1–9.2) y **Python 14** (series de
+tiempo, McKinney §11). **Las 68 publicadas cumplen el molde: 68 de 68, y no queda
+ninguna en el molde viejo.**
+
+**Con ML 11 queda cubierto el capítulo 7 de ISLP entero.**
 
 **Con ML 9 queda cubierto el capítulo 6 de ISLP entero salvo §6.3**, que espera a
 la lección de componentes principales.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. **Estadística queda cerrada en 25 de 25.** Del
 plan siguen faltando lecciones por escribir en los demás módulos: Python tiene
-16 planeadas y 13 publicadas, ML 10 de 90, y Series y Causal están vacíos. El
+16 planeadas y 14 publicadas, ML 11 de 90, y Series y Causal están vacíos. El
 detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -80,17 +84,17 @@ hay que empezar a hacer:
 |---|---|---|---|---|
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
-| Python | 13 | 16 | **13 de 13** | 14 a 16, la Fase 1 |
+| Python | 14 | 16 | **14 de 14** | 15 y 16, la Fase 1 |
 | Series de tiempo | 0 | 11 | — | todas |
-| Machine Learning | 10 | 90 | **10 de 10** | 11 a 20 de la Fase 2, y el resto |
+| Machine Learning | 11 | 90 | **11 de 11** | 12 a 20 de la Fase 2, y el resto |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **66 lecciones** publicadas, **66** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 112 según el plan.
+- **68 lecciones** publicadas, **68** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 110 según el plan.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
   logística (§4.1–4.3, publicada), **04** modelos generativos (§4.4) y **05**
@@ -121,10 +125,10 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. Los seis visuales de esta tanda no añaden ninguno.
-- **1355 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **349 celdas** que el gate ejecuta en cada build, y comprobadas **con las
+- **1416 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **360 celdas** que el gate ejecuta en cada build, y comprobadas **con las
   dos parejas de versiones** (ver el punto 5).
-- Glosario: **320 términos + 43 símbolos**. Las **34 entradas** de estas dos
+- Glosario: **334 términos + 43 símbolos**. Las **34 entradas** de estas dos
   tandas —12 de ML 7, 8 de Python 10, 7 de ML 8 y 7 de Python 11— son todas de
   tipo `termino`: **cero símbolos
   globales nuevos**, por la regla aclarada en el punto 6. Los símbolos propios
@@ -132,8 +136,8 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 - Índices verificados: Think Stats 3e (75 secciones), MML (80), **Think Bayes 2e
   (20 capítulos y 193 secciones, traídas enteras el 12-09-2026; el capítulo 19
   publica las suyas sin numerar)**, McKinney 3E (capítulos + las secciones de los
-  capítulos 6, 7, 8, 9 y 10; las subsecciones del 6, del 8, del 9 y del 10 no
-  llevan número en el sitio publicado, así que no se registran ni se citan) e **ISLP (13 capítulos, 81 secciones N.M y 176 sub-subsecciones N.M.K —257 entradas— traídas el 13-09-2026 de los
+  capítulos 6 a 11; las subsecciones de casi todos no llevan número en el sitio
+  publicado, así que no se registran ni se citan) e **ISLP (13 capítulos, 81 secciones N.M y 176 sub-subsecciones N.M.K —257 entradas— traídas el 13-09-2026 de los
   marcadores del PDF oficial)**. Desde esa fecha `citas.py` admite **tres niveles**: se puede citar
   `ISLP §10.7.1 Backpropagation`. La función `rango()` se generalizó a cualquier profundidad, porque la anterior
   desempaquetaba dos valores del `split` y reventaba con el tercer nivel; se comprobó que los casos de dos niveles
@@ -893,6 +897,73 @@ detectará. Esa es la forma honesta de citar un valor por omisión.
 
 **§9.3 no se trata**, porque enumera bibliotecas que esta página no puede ejecutar.
 Queda dicho en la lección, con la razón.
+
+
+### 3.14 ML 11 y Python 14 (18-09-2026)
+
+**ISLP capítulo 7 queda cubierto entero.** ML 10 hizo §7.1–7.4 y ML 11 hace
+§7.5–7.7. Esta vez **no hubo que renumerar**: la fila 11 ya estaba reservada al
+partir el capítulo.
+
+**ML 11 se organiza alrededor de una sola definición.** La de **suavizador
+lineal**, $\hat{y}=Sy$ con $S$ independiente de $y$, que convierte tres métodos
+aparentemente distintos en un objeto y explica por qué los árboles de la lección
+12 quedan fuera: su matriz dependería de la respuesta y la traza dejaría de contar
+parámetros.
+
+- la **Proposición 11.2** trabaja la versión **discreta** del spline de suavizado,
+  con $\lVert Dg\rVert^2$ en lugar de la integral, porque así todo es calculable.
+  $S_\lambda=(I+\lambda D^\top D)^{-1}$ es simétrica, sus eigenvalores son
+  $1/(1+\lambda\mu_j)$ y los grados de libertad su suma. **El paralelo con ridge
+  es exacto**: allí los factores eran $d_j^2/(d_j^2+\lambda)$. El límite es
+  $\dim\ker(D)=2$, y $2$ es la dimensión de las funciones lineales;
+- la **Proposición 11.3** demuestra que la regresión local es un suavizador lineal
+  cuya matriz **no** es simétrica, y que reproduce constantes y rectas;
+- la **Proposición 11.5** da la identificabilidad —cada $f_j$ salvo una constante—
+  y la convergencia del backfitting, que en el caso lineal llega a mínimos
+  cuadrados. Medido: converge en $7$ iteraciones y coincide a $10^{-8}$.
+
+**El contraste L3 de ML 11 vale la pena recordarlo.** Si un método es lineal en
+$y$, alimentarlo con los **vectores unitarios** devuelve las columnas de su matriz.
+Con eso se extrae la matriz de un suavizador de la librería sin abrir su código, y
+de ahí sale que los grados de libertad de $k$ vecinos uniformes valen
+**exactamente** $n/k$, porque cada punto es vecino de sí mismo. El reto 2 pide
+aplicar la misma técnica a un árbol y comprobar que **falla**, que es la manera de
+ver qué significa «no lineal».
+
+**Python 14 no necesitó dependencias nuevas.** Lo que sostiene la lección:
+
+- la **Proposición 14.2** lee el remuestreo como el `groupby` de Python 12 con los
+  intervalos como clave, así que no rehace nada; y separa bajar de frecuencia, que
+  agrega, de subir, que **no produce datos**: $58$ faltantes de $61$ posiciones, y
+  rellenarlos los hace desaparecer junto con la señal de que ahí no se midió;
+- la **Proposición 14.3** da el retraso de una media móvil en forma cerrada,
+  $b(k-1)/2$, con una demostración de una línea: una función afín conmuta con la
+  media, y la media de los instantes de la ventana es $t-(k-1)/2$. Medido: $2{,}5$
+  exactos, y centrando desaparece. Además **la media móvil es un suavizador
+  lineal**, comprobado con la técnica de ML 11, con $\operatorname{tr}(L)=(n-k+1)/k$;
+- la **Proposición 14.4** cierra con el cambio de hora: el 27 de octubre de 2024 en
+  Madrid tiene **25 horas**, y la librería **se niega** a convertir una hora
+  ambigua en lugar de adivinar.
+
+**Cuatro fragilidades de versión cazadas en esta tanda**, todas por el contraste
+previo y ninguna por el CI:
+
+1. La **fórmula** de los grados de libertad se vuelve inestable a $\lambda$ enorme:
+   los eigenvalores «nulos» valen $10^{-15}$ y multiplicarlos por $10^{12}$ los
+   resucita. El límite se cuenta, no se evalúa.
+2. Imprimir el **mayor de los eigenvalores nulos** es ruido: hasta cambia de signo
+   entre versiones.
+3. Un residuo de convergencia a $10^{-13}$ y unos ceros con signo, otra vez.
+4. En Python 14, dos de una clase nueva: **`.loc` por rango sobre un índice
+   desordenado cambió de conducta** entre pandas 1.x y 3.0 —permitía y ahora
+   levanta error—, y la **clase de la excepción** de una hora ambigua cambió al
+   pasar de `pytz` a `zoneinfo`. Las celdas no afirman ninguna de las dos: ordenan
+   antes y capturan sin nombrar la clase. **Pero la lección lo cuenta en prosa**,
+   porque saberlo es contenido útil y está medido.
+
+Ese último punto merece quedarse como criterio: **cuando una conducta depende de la
+versión, la celda no la afirma y la prosa la explica.**
 
 
 ---
