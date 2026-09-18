@@ -1,27 +1,28 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **18-09-2026**, tras una sesión larga que publicó **doce
+Última actualización: **18-09-2026**, tras una sesión larga que publicó **trece
 lecciones** y cerró **tres deudas**.
 
 Las lecciones: **ML 7** (selección de subconjuntos, ISLP §6.1), **ML 8**
 (encogimiento, §6.2), **ML 9** (alta dimensión, §6.4), **ML 10** (bases y
-splines, §7.1–7.4), **ML 11** (suavizado y GAMs, §7.5–7.7), y **Python 10** a
-**16** (carga y limpieza, uniones y reshape, groupby, visualización, series de
-tiempo, rendimiento y anatomía de un proyecto).
+splines, §7.1–7.4), **ML 11** (suavizado y GAMs, §7.5–7.7), **ML 12** (árboles de
+decisión, §8.1), y **Python 10** a **16** (carga y limpieza, uniones y reshape,
+groupby, visualización, series de tiempo, rendimiento y anatomía de un proyecto).
 
-**Las 70 publicadas cumplen el molde: 70 de 70.**
+**Las 71 publicadas cumplen el molde: 71 de 71.**
 
 Tres hitos de esta sesión:
 
 - **El módulo de Python queda CERRADO en 16 de 16**, el tercero tras Estadística
   y Álgebra.
 - **ISLP capítulos 6 y 7 quedan cubiertos enteros**, salvo §6.3, que espera a la
-  lección de componentes principales.
+  lección de componentes principales, y **el capítulo 8 queda empezado** con
+  §8.1 en ML 12.
 - **Las tres deudas abiertas se cerraron**: las colisiones del glosario (punto 6),
   las 33 secciones de retos y los 106 símbolos sin declarar.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
-faltando lecciones por escribir: **ML va por 11 de 90**, y **Series de tiempo e
+faltando lecciones por escribir: **ML va por 12 de 90**, y **Series de tiempo e
 Inferencia causal están vacíos**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -90,15 +91,15 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 0 | 11 | — | todas |
-| Machine Learning | 11 | 90 | **11 de 11** | 12 a 20 de la Fase 2, y el resto |
+| Machine Learning | 12 | 90 | **12 de 12** | 13 a 20 de la Fase 2, y el resto |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **70 lecciones** publicadas, **70** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 108 según el plan.
+- **71 lecciones** publicadas, **71** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 107 según el plan.
 - **Tres módulos cerrados**: Estadística 25/25, Álgebra 18/18 y **Python 16/16**.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
@@ -125,15 +126,15 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   marginales exactas, que es más fuerte que cualquier librería; y `np.trapz` se
   retiró del espacio de nombres en NumPy 2.0, así que las celdas nuevas no lo
   usan.
-- **133 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
+- **151 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
   Siguen los mismos cuatro avisos, todos anteriores: tres de no idempotencia
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
-  la regla 19b persigue. Los seis visuales de esta tanda no añaden ninguno.
-- **1468 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **371 celdas** que el gate ejecuta en cada build, y comprobadas **con las
+  la regla 19b persigue. Los visuales de esta tanda no añaden ninguno.
+- **1525 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **378 celdas** que el gate ejecuta en cada build, y comprobadas **con las
   dos parejas de versiones** (ver el punto 5).
-- Glosario: **345 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **353 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -1024,6 +1025,79 @@ auditor de símbolos cazó el único que faltaba declarar. Las dos deudas cerrad
 hoy siguen en cero sin esfuerzo.
 
 
+### 3.16 ML 12, y la medición que rompió el CI (18-09-2026)
+
+**ML 12, «Árboles de decisión», cubre ISLP §8.1 entera.** Cinco resultados, y el
+orden invierte a propósito el del libro: la **caída del RSS se calcula primero**,
+porque de esa fórmula salen todas las preferencias del método.
+
+- la **12.2b**: partir un nodo baja el RSS en exactamente
+  $\frac{n_I n_D}{n_I+n_D}(\bar{y}_I-\bar{y}_D)^2$. Dicho así, el algoritmo no
+  busca «donde cambia la tendencia» sino **medias distintas con lados
+  equilibrados**: un corte que deja una sola observación aparte pesa casi $1$ por
+  extrema que sea, y uno que parte por la mitad pesa $n/4$;
+- la **12.3**: hay datos donde **todos** los cortes tienen caída exactamente $0$
+  y un árbol de dos niveles llega a RSS $0$ —la respuesta en diagonal sobre dos
+  variables binarias—. Ahí queda demostrado por qué el árbol se crece de más y se
+  poda después, en vez de pararlo por el camino;
+- la **12.5**: el tamaño del subárbol óptimo **no crece** al subir el precio de
+  una hoja. **Es la Proposición 7.5 de ML 7** con hojas en lugar de predictores:
+  aquella lección anunció que el argumento valía para cualquier ajuste penalizado
+  linealmente por un coste creciente, y aquí se cobra la promesa. La página lo
+  dice en el enunciado y en Fuentes, en vez de presentarlo como resultado nuevo;
+- la **12.7**: cualquier impureza cóncava mejora al partir (Jensen), y el error
+  de clasificación, por ser **lineal a trozos**, da ganancia cero en cortes donde
+  Gini gana. En $20\,000$ cortes al azar el error se queda en cero $10\,174$
+  veces y Gini solo $12$. Eso es el reparto de papeles del libro: Gini o entropía
+  para crecer, error para podar;
+- la **12.8**: el árbol **no** es un suavizador lineal, que es la deuda que dejó
+  abierta la Definición 11.1. Con la partición fija el ajuste es una proyección
+  de traza $J$; con la partición elegida mirando $y$, deja de ser lineal. La
+  «matriz» que se obtiene alimentándolo con los vectores unitarios tiene traza
+  $54{,}566667$ para un árbol de **cuatro** hojas y ni siquiera reproduce su
+  propia predicción.
+
+**La sucesión de podas se calcula sin tantear $\alpha$.** Enumerando los $26$
+subárboles del árbol crecido y quedándose con la **frontera inferior** de los
+puntos $(\lvert T\rvert,\text{RSS})$ salen los siete que llegan a ganar y los
+valores exactos donde cambia el ganador. El tramo de $3$ hojas va de $1{,}3777$ a
+$76{,}8005$, y los datos se generaron con tres tramos.
+
+**Lo que se comprueba y no se demuestra queda dicho.** Que la sucesión de
+subárboles óptimos está **encajada** se verifica por enumeración completa sobre un
+árbol concreto; la demostración general es de Breiman y no cabe aquí. Lo que sí se
+demuestra en general es que el tamaño no crece.
+
+#### El CI se rompió por una medición, y la causa vale más que el arreglo
+
+El empujón anterior (`28a83c9`) reventó el gate de salidas con **una sola**
+afirmación: Python 15 decía «la expresión `(a*b) + (c*d)` reserva 2 arreglos
+enteros de más» y en el runner ya no lo decía. La celda medía el **pico de
+memoria** con `tracemalloc` y dividía por el tamaño de un arreglo.
+
+Eso es exactamente lo que la Proposición 15.5 de esa misma lección prohíbe: un
+número que depende del asignador, de la versión y del sistema. Las dos parejas de
+versiones locales no lo cazaron porque **las dos son macOS**; el runner es Linux y
+usa Python 3.12 para el verificador, no el 3.14 del entorno de contraste.
+
+El arreglo no fue subir una tolerancia sino **dejar de medir**: un `np.ndarray`
+derivado que implementa `__array_ufunc__` cuenta los arreglos que cada operación
+pide **antes de que ocurra**. Una operación sin destino crea uno; con `out=` no
+crea ninguno. La expresión suelta crea $3$ —el resultado y dos temporales— y la
+versión con destinos crea $0$, y esos números son los mismos en cualquier máquina
+porque ya no se miden: se cuentan. La regla se aplicó también al ejercicio 2, que
+pedía los temporales de $4$ operaciones y contaba $4$ arreglos en vez de $3$.
+
+**La lección de método:** *medir* produce afirmaciones que el gate romperá tarde o
+temprano; *contar* produce afirmaciones que aguantan. Cuando una celda necesite un
+número que salga de un reloj o de un asignador, la salida es interceptar la
+operación, no cronometrarla mejor.
+
+**Y una limitación del contraste de dos versiones, ya vista dos veces.** En ML 9
+fue el mismo LAPACK en los dos entornos; aquí, el mismo sistema operativo. El
+contraste local es necesario y **no es suficiente**: lo que de verdad decide es si
+la afirmación depende de algo que el código no controla.
+
 ---
 
 ## 4. Cómo se escribe una lección
@@ -1067,6 +1141,16 @@ python3 verificar/visuales.py --estricto
 ## 5. Errores que ya se cometieron
 
 No repetirlos sale más barato que volver a encontrarlos.
+
+**El CI se rompió por una medición de memoria (18-09-2026).** La tercera vez, en
+Python 15, y la causa está desarrollada en el punto 3.16. En una línea: la celda
+**medía** el pico de `tracemalloc` para contar arreglos temporales, y ese número
+depende del asignador, de la versión y del sistema. Las dos parejas locales no lo
+cazaron porque las dos son macOS y el runner es Linux con Python 3.12.
+
+**La regla que queda:** cuando una afirmación necesite un número que salga de un
+reloj o de un asignador, se **intercepta la operación** en vez de medir su efecto.
+Contar es reproducible; medir, no.
 
 **El CI se rompió por el número de condición (18-09-2026).** La segunda vez, en
 ML 9. Y esta no la cazaba el contraste de versiones del punto anterior, por una
