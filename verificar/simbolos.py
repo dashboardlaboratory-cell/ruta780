@@ -36,9 +36,13 @@ LATEX = {"α":"alpha","β":"beta","γ":"gamma","δ":"delta","ε":"epsilon","θ":
          "κ":"kappa","π":"pi","ξ":"xi","η":"eta","ζ":"zeta"}
 
 def patron(s):
+    # La constante pi no es notacion de nadie: en 2\pi de la densidad normal no
+    # hay nada que declarar. Solo cuenta cuando actua como funcion, pi(theta).
+    if s == "\u03c0":
+        return re.compile(r"\\pi\s*[\(\{]|\\pi_")
     formas = [r"(?<![A-Za-z\\])" + re.escape(s) + r"(?![A-Za-z])"]
     if s in LATEX:
-        formas.append(r"\\" + LATEX[s] + r"\b")
+        formas.append(r"\\" + LATEX[s] + r"(?![A-Za-z])")
     return re.compile("|".join(formas))
 
 for s in SIMBOLOS:

@@ -1370,14 +1370,36 @@ falla el build. Codificar el SVG en base64.
      escriben `\alpha` y no `α`; sin eso el recuento salía cero y parecía que
      nadie las usaba. **No es un gate**: es la herramienta para decidir.
 
-- **Deuda nueva, medida con esa herramienta el 18-09-2026: los símbolos se usan
-  mucho más de lo que se declaran.** `α` aparece en fórmula en **18** lecciones y
-  solo **7** lo declaran en su tabla de notación; `β` en **19** y lo declaran
-  **10**. Eso no es la regla 21b sino la **16**, que pide declarar todo símbolo en
-  la tabla de su lección. Con el glosario global ya honesto el daño es menor —el
-  tooltip remite a la tabla—, pero la tabla no siempre está. **Sin decidir** si se
-  rellenan las que faltan o si la regla 16 se relaja a «los símbolos que la lección
-  usa de forma no estándar». Para ver el estado en cualquier momento:
+- **Los símbolos sin declarar: CERRADO el 18-09-2026.** La herramienta destapó
+  que los símbolos se usaban mucho más de lo que se declaraban: **139 pares
+  (lección, símbolo)** en 55 de las 68 lecciones. Luis decidió rellenarlos, y se
+  rellenaron: **106 filas nuevas** en las tablas `::: {.notacion}` de 41
+  lecciones, escritas una a una con el contexto de cada uso a la vista.
+
+  **No había un significado por defecto, y por eso no se pudo automatizar.** `z`
+  es el cuantil de la normal en Estadística 06, un vector genérico en Álgebra 15,
+  la fila del diseño en ML 06, el error de estimación en ML 08 y el argumento de
+  la función Gamma en Estadística 20. `λ` es una tasa, un eigenvalor o una
+  penalización según el módulo. Cada fila se escribió mirando la fórmula.
+
+  **Dos cosas que aparecieron por el camino y conviene no volver a tropezar con
+  ellas:**
+
+  1. **La constante $\pi$ no es notación de nadie.** El $2\pi$ de la densidad
+     normal no hay que declararlo. La herramienta solo cuenta $\pi$ cuando actúa
+     como función —$\pi(\theta)$, la densidad del prior—, que sí es notación.
+  2. **`Σ` tenía la misma enfermedad que `T`, `Q` y `B`.** La entrada decía
+     «símbolo de suma», y el tooltip se engancha igual sobre `\Sigma`, que en
+     Estadística 12 y 23 y en cuatro lecciones de Álgebra es la **matriz de
+     covarianzas**. Reescrita al molde de la regla 21b: los dos sentidos y «la
+     tabla de notación de la lección manda».
+
+  **Un fallo del propio auditor**, que costó una pasada de más: la frontera `\b`
+  no separa de `_`, así que `$\sigma_i$` no contaba como declarado y salían
+  falsos positivos. Se cambió por `(?![A-Za-z])`. Si alguien vuelve a escribir un
+  detector de símbolos, ese es el detalle.
+
+  Para comprobar el estado en cualquier momento:
 
   ```sh
   python3 verificar/simbolos.py          # todos los del glosario
