@@ -1,28 +1,29 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **18-09-2026**, tras una sesión larga que publicó **catorce
+Última actualización: **18-09-2026**, tras una sesión larga que publicó **quince
 lecciones** y cerró **tres deudas**.
 
 Las lecciones: **ML 7** (selección de subconjuntos, ISLP §6.1), **ML 8**
 (encogimiento, §6.2), **ML 9** (alta dimensión, §6.4), **ML 10** (bases y
 splines, §7.1–7.4), **ML 11** (suavizado y GAMs, §7.5–7.7), **ML 12** (árboles de
-decisión, §8.1), **ML 13** (bagging, bosques e impulso, §8.2), y **Python 10** a **16** (carga y limpieza, uniones y reshape,
+decisión, §8.1), **ML 13** (bagging, bosques e impulso, §8.2), **ML 14** (margen
+máximo, §9.1–9.2), y **Python 10** a **16** (carga y limpieza, uniones y reshape,
 groupby, visualización, series de tiempo, rendimiento y anatomía de un proyecto).
 
-**Las 72 publicadas cumplen el molde: 72 de 72.**
+**Las 73 publicadas cumplen el molde: 73 de 73.**
 
 Tres hitos de esta sesión:
 
 - **El módulo de Python queda CERRADO en 16 de 16**, el tercero tras Estadística
   y Álgebra.
 - **ISLP capítulos 6 y 7 quedan cubiertos enteros**, salvo §6.3, que espera a la
-  lección de componentes principales, y **el capítulo 8 queda cubierto entero**:
-  §8.1 en ML 12 y §8.2 en ML 13.
+  lección de componentes principales; **el capítulo 8 queda cubierto entero**
+  —§8.1 en ML 12 y §8.2 en ML 13— y **el 9 queda empezado** con §9.1–9.2 en ML 14.
 - **Las tres deudas abiertas se cerraron**: las colisiones del glosario (punto 6),
   las 33 secciones de retos y los 106 símbolos sin declarar.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
-faltando lecciones por escribir: **ML va por 13 de 90**, y **Series de tiempo e
+faltando lecciones por escribir: **ML va por 14 de 90**, y **Series de tiempo e
 Inferencia causal están vacíos**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -54,6 +55,7 @@ python3 -m playwright install chromium
 quarto --version
 python3 verificar/estructura.py
 python3 verificar/citas.py
+python3 verificar/referencias.py
 python3 verificar/salidas.py
 python3 verificar/formato.py
 python3 verificar/visuales.py
@@ -91,15 +93,15 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 0 | 11 | — | todas |
-| Machine Learning | 13 | 90 | **13 de 13** | 14 a 20 de la Fase 2, y el resto |
+| Machine Learning | 14 | 90 | **14 de 14** | 15 a 21 de la Fase 2, y el resto |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **72 lecciones** publicadas, **72** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 106 según el plan.
+- **73 lecciones** publicadas, **73** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 105 según el plan.
 - **Tres módulos cerrados**: Estadística 25/25, Álgebra 18/18 y **Python 16/16**.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
@@ -126,15 +128,15 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   marginales exactas, que es más fuerte que cualquier librería; y `np.trapz` se
   retiró del espacio de nombres en NumPy 2.0, así que las celdas nuevas no lo
   usan.
-- **153 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
+- **155 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
   Siguen los mismos cuatro avisos, todos anteriores: tres de no idempotencia
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. Los visuales de esta tanda no añaden ninguno.
-- **1581 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **385 celdas** que el gate ejecuta en cada build, y comprobadas **con las
+- **1616 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **391 celdas** que el gate ejecuta en cada build, y comprobadas **con las
   dos parejas de versiones** (ver el punto 5).
-- Glosario: **358 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **363 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -353,9 +355,9 @@ Lo que sigue, en orden de coste creciente:
    90. Quien escribió el plan ya había hecho la cuenta: **las 14 filas son el
    esqueleto, un título por capítulo, pendiente de desglosar.**
 
-   **Al día de hoy son 39 filas** —20 de ISLP en Fase 2, 13 de ESL y 6 de deep
-   learning en Fase 4—, porque se han desglosado los capítulos 4, 6, 7 y 8. Luis
-   preguntó el 18-09-2026 por qué la barra decía 90 con 39 filas a la vista, y
+   **Al día de hoy son 40 filas** —21 de ISLP en Fase 2, 13 de ESL y 6 de deep
+   learning en Fase 4—, porque se han desglosado los capítulos 4, 6, 7, 8 y 9.
+   Luis preguntó el 18-09-2026 por qué la barra decía 90 con 39 filas a la vista, y
    la decisión fue **dejar el 90 y explicarlo en la página**: `ml/index.qmd`
    lleva ahora un `callout-important` que dice cuántas están desglosadas,
    cuántas publicadas y por qué los capítulos sin desglosar aparecen con una
@@ -1167,6 +1169,74 @@ imprime: comprueba la identidad en **relativo** y afirma solo el signo, que es
 exacto. Es la regla 7 aplicada a un caso donde la cifra existe pero no significa
 nada.
 
+### 3.18 ML 14, el desglose del capítulo 9 y tres solvers tirados a la basura (18-09-2026)
+
+**El capítulo 9 se parte en dos**, como se hizo con el 4, el 6, el 7 y el 8. Tiene
+$13$ unidades enseñables y el ritmo real de estas páginas es de una lección por
+cada cuatro o cinco:
+
+- **ML 14** (esta): §9.1–9.2, el margen máximo y el clasificador de soporte
+  vectorial;
+- **ML 15**: §9.3–9.5, los núcleos, las más de dos clases y la pérdida bisagra.
+
+Eso obligó a **renumerar el índice de ML de la 15 a la 39**, que pasan a 16–40, y
+a subir en uno las $18$ referencias cruzadas «Machine Learning N» con $N\ge 15$
+repartidas por nueve lecciones. Se hizo con script y se verificó con otro que
+**resuelve cada referencia contra el título de la fila que apunta**: las $34$
+referencias del sitio resuelven, y ninguna apunta a una fila inexistente. Ese
+script **ya no es de usar y tirar**: quedó como `verificar/referencias.py` y corre
+en el CI justo después de las citas, así que la próxima renumeración que deje una
+referencia colgando rompe la construcción en lugar de pasar inadvertida.
+
+#### El resultado que hace calculable el capítulo
+
+El libro plantea el problema del margen máximo y lo deja en manos de un
+solucionador de optimización convexa. Esta página añade la **Proposición 14.4**:
+
+> el margen máximo vale la mitad de la distancia entre las envolventes convexas
+> de las dos clases, y el hiperplano óptimo es la **mediatriz** del segmento más
+> corto entre ellas.
+
+La cota superior sale de Cauchy-Schwarz en tres líneas; que se alcanza, de un
+argumento de convexidad. Con eso el margen se **calcula exactamente** con
+geometría de instituto: envolvente convexa por cadena monótona, distancia
+punto-segmento y mediatriz. El valor exacto sale $0{,}933609$ y probando $4000$
+direcciones al azar el mejor margen hallado es $0{,}933589$: se acerca por debajo
+y nunca lo pasa. De paso explica **por qué** los vectores de soporte son los que
+son, y la Proposición 14.6 queda como corolario geométrico en lugar de salir de
+las condiciones de complementariedad.
+
+#### Tres intentos de resolver el margen blando, y por qué se abandonaron
+
+Para §9.2 hacía falta el óptimo del programa cuadrático con holguras. Se
+intentaron tres caminos y **los tres se tiraron**:
+
+1. un SMO propio sin el término independiente en los errores: hueco de dualidad
+   enorme y la búsqueda al azar encontraba soluciones mejores;
+2. el SMO corregido con el término incluido: seguía sin converger, con huecos de
+   hasta $48$;
+3. un barrido por direcciones con malla adaptativa: el refinamiento estaba mal
+   planteado y para $C$ grandes el óptimo hallado era peor que el de la búsqueda
+   al azar por un factor de cuatro.
+
+A la tercera se paró, que es lo que manda el procedimiento de depuración: tres
+arreglos fallidos son un problema de arquitectura, no de detalle. **Y la
+arquitectura equivocada era intentar resolver el problema.**
+
+La Proposición 14.8 —al subir $C$, la holgura total no sube y el margen no
+crece— se demuestra con el mismo argumento de intercambio de la Proposición 7.5
+de ML 7, y **ese argumento no usa en ningún paso que la familia sea el conjunto
+de todos los hiperplanos**. Vale para cualquier familia, finita incluida. Así que
+la celda minimiza sobre una lista de $1\,449\,000$ hiperplanos fijada de
+antemano, la misma para todos los $C$, y la comprobación es **exacta**, no
+aproximada. El texto, la celda y el bloque de Fuentes dicen que eso es lo que se
+calcula, y el reto 3 pide medir qué se pierde al confundirlo con la solución del
+problema continuo.
+
+**La lección de método**: cuando un cálculo se resiste, conviene mirar si el
+enunciado que hay que comprobar necesita de verdad ese cálculo. Aquí no lo
+necesitaba, y el enunciado sale reforzado por ser más general.
+
 ---
 
 ## 4. Cómo se escribe una lección
@@ -1198,10 +1268,11 @@ citas inventadas de septiembre.
 8. **Los cinco gates**, y `quarto preview` para ver la página de verdad.
 
 ```sh
-python3 verificar/estructura.py && \
-python3 verificar/citas.py     && \
-python3 verificar/salidas.py   && \
-python3 verificar/formato.py   && \
+python3 verificar/estructura.py  && \
+python3 verificar/citas.py       && \
+python3 verificar/referencias.py && \
+python3 verificar/salidas.py     && \
+python3 verificar/formato.py     && \
 python3 verificar/visuales.py --estricto
 ```
 
