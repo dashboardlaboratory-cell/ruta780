@@ -1,28 +1,28 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **18-09-2026**, tras una sesión larga que publicó **trece
+Última actualización: **18-09-2026**, tras una sesión larga que publicó **catorce
 lecciones** y cerró **tres deudas**.
 
 Las lecciones: **ML 7** (selección de subconjuntos, ISLP §6.1), **ML 8**
 (encogimiento, §6.2), **ML 9** (alta dimensión, §6.4), **ML 10** (bases y
 splines, §7.1–7.4), **ML 11** (suavizado y GAMs, §7.5–7.7), **ML 12** (árboles de
-decisión, §8.1), y **Python 10** a **16** (carga y limpieza, uniones y reshape,
+decisión, §8.1), **ML 13** (bagging, bosques e impulso, §8.2), y **Python 10** a **16** (carga y limpieza, uniones y reshape,
 groupby, visualización, series de tiempo, rendimiento y anatomía de un proyecto).
 
-**Las 71 publicadas cumplen el molde: 71 de 71.**
+**Las 72 publicadas cumplen el molde: 72 de 72.**
 
 Tres hitos de esta sesión:
 
 - **El módulo de Python queda CERRADO en 16 de 16**, el tercero tras Estadística
   y Álgebra.
 - **ISLP capítulos 6 y 7 quedan cubiertos enteros**, salvo §6.3, que espera a la
-  lección de componentes principales, y **el capítulo 8 queda empezado** con
-  §8.1 en ML 12.
+  lección de componentes principales, y **el capítulo 8 queda cubierto entero**:
+  §8.1 en ML 12 y §8.2 en ML 13.
 - **Las tres deudas abiertas se cerraron**: las colisiones del glosario (punto 6),
   las 33 secciones de retos y los 106 símbolos sin declarar.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
-faltando lecciones por escribir: **ML va por 12 de 90**, y **Series de tiempo e
+faltando lecciones por escribir: **ML va por 13 de 90**, y **Series de tiempo e
 Inferencia causal están vacíos**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -91,15 +91,15 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 0 | 11 | — | todas |
-| Machine Learning | 12 | 90 | **12 de 12** | 13 a 20 de la Fase 2, y el resto |
+| Machine Learning | 13 | 90 | **13 de 13** | 14 a 20 de la Fase 2, y el resto |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **71 lecciones** publicadas, **71** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 107 según el plan.
+- **72 lecciones** publicadas, **72** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 106 según el plan.
 - **Tres módulos cerrados**: Estadística 25/25, Álgebra 18/18 y **Python 16/16**.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
@@ -126,15 +126,15 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   marginales exactas, que es más fuerte que cualquier librería; y `np.trapz` se
   retiró del espacio de nombres en NumPy 2.0, así que las celdas nuevas no lo
   usan.
-- **151 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
+- **153 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
   Siguen los mismos cuatro avisos, todos anteriores: tres de no idempotencia
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. Los visuales de esta tanda no añaden ninguno.
-- **1525 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **378 celdas** que el gate ejecuta en cada build, y comprobadas **con las
+- **1581 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **385 celdas** que el gate ejecuta en cada build, y comprobadas **con las
   dos parejas de versiones** (ver el punto 5).
-- Glosario: **353 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **358 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -1107,6 +1107,66 @@ fue el mismo LAPACK en los dos entornos; aquí, el mismo sistema operativo. El
 contraste local es necesario y **no es suficiente**: lo que de verdad decide es si
 la afirmación depende de algo que el código no controla.
 
+### 3.17 ML 13, y una afirmación del libro que la medición no sostiene (18-09-2026)
+
+**ML 13 cubre ISLP §8.2 entera** y con ella el capítulo 8. Cinco resultados:
+
+- la **13.2**: la varianza del promedio de $B$ ajustes de varianza $\sigma^2$ y
+  correlación $\rho$ vale $\rho\sigma^2+(1-\rho)\sigma^2/B$. La parte (c) es la que
+  ordena el capítulo: **la fracción del camino recorrido hasta el suelo vale
+  $1-1/B$ y no depende de $\rho$**. O sea, $B$ decide la velocidad —con $100$
+  árboles se ha recorrido el $99\,\%$ siempre— y $\rho$ decide dónde está el suelo.
+  Por eso el resto de la lección no trata de poner más árboles;
+- la **13.3**: qué estima exactamente el error fuera de la bolsa. Cada
+  observación queda fuera de unos $B/e$ árboles, así que la estimación evalúa un
+  bosque de ese tamaño y **no** del que se va a usar. Medido: $74{,}03$ veces
+  fuera contra las $73{,}39$ previstas, con $B=200$ y $n=200$;
+- la **13.5**: un predictor está disponible en un nodo con probabilidad $m/p$
+  —cuenta de subconjuntos— y **existen datos donde bajar $m$ mejora y datos donde
+  empeora**;
+- la **13.7**: un paso de impulso baja el RSS en exactamente
+  $(2\lambda-\lambda^2)\lVert g\rVert^2$, porque el ajuste por hojas cumple
+  $\langle r,g\rangle=\lVert g\rVert^2$. De ahí sale la condición exacta de
+  convergencia, $0<\lambda<2$, en lugar de «la tasa debe ser pequeña». La
+  identidad se comprueba en $190$ pasos, **incluida la tasa que diverge**;
+- la **13.8**: ninguna combinación de árboles deja de ser escalonada, con a lo
+  sumo $\sum_b(J_b-1)+1$ tramos. Medido: $8$, $101$ y $31$ tramos contra cotas de
+  $8$, $421$ y $61$.
+
+#### Lo que la medición no sostuvo
+
+ISLP motiva el bosque aleatorio con **un predictor muy fuerte**: los árboles del
+bagging lo usarían todos, quedarían muy parecidos y promediarlos serviría de
+poco. El razonamiento sobre $\rho$ es correcto, pero **la conclusión sobre el
+error no se sigue**, y al medirlo sale al revés: con una variable insustituible,
+bajar $m$ empeora el error en todos los valores probados, aunque $\rho$ caiga de
+$0{,}95$ a $0{,}16$.
+
+Lo que sí funciona es el caso de los **sustitutos**: cuatro predictores que miden
+lo mismo por caminos distintos. Ahí $m<p$ gana en las tres semillas probadas y el
+bagging no gana ninguna. La página enuncia eso como Proposición 13.5b —una
+afirmación de existencia, demostrable exhibiendo los dos conjuntos— y lo dice en
+«Del libro» y en Fuentes.
+
+**El método que evitó el error**: antes de escribir la sección se probaron seis
+configuraciones y se comprobó el hallazgo en varias semillas. La primera versión
+del experimento, con un solo diseño, habría «confirmado» lo que el libro dice sin
+que fuera cierto. Es el mismo caso que ML 10 con los splines y Runge.
+
+**Otro descuido propio, del mismo tipo que los ya anotados.** La prosa citaba
+$0{,}0887$ y $0{,}2396$ como prueba de que el impulso sobreajusta, de una fila que
+se había quitado de la tabla al reorganizarla. Se rehízo la tabla para que el
+sobreajuste **se midiera**: con $\lambda=1$ el entrenamiento recorre
+$0{,}2136\to0{,}0475$ mientras la prueba toca fondo en $0{,}2378$ y vuelve a subir
+a $0{,}2572$, y la celda lo afirma con dos booleanos. **Ninguna cifra de la prosa
+puede quedar huérfana de su celda.**
+
+**Y una divergencia que no se puede citar.** Con $\lambda=2{,}5$ el residuo se
+dispara a $10^{23}$ y sus dígitos difieren entre entornos. La celda no los
+imprime: comprueba la identidad en **relativo** y afirma solo el signo, que es
+exacto. Es la regla 7 aplicada a un caso donde la cifra existe pero no significa
+nada.
+
 ---
 
 ## 4. Cómo se escribe una lección
@@ -1150,6 +1210,18 @@ python3 verificar/visuales.py --estricto
 ## 5. Errores que ya se cometieron
 
 No repetirlos sale más barato que volver a encontrarlos.
+
+**Una cifra de la prosa se quedó huérfana de su celda (18-09-2026).** En ML 13,
+la prosa y el bloque de Fuentes citaban $0{,}0887$ y $0{,}2396$ como prueba de que
+el impulso sobreajusta, de una fila de la tabla que se había quitado al
+reorganizarla. Lo cazó la relectura, no un gate: `salidas.py` comprueba que la
+salida de la celda contenga lo declarado, **no** que las cifras de la prosa estén
+en alguna celda.
+
+**La regla que queda:** al reorganizar una tabla o una celda, releer la prosa que
+la comenta. Es el tercer caso de la misma familia, después de los resúmenes
+inventados del visual de Python 16 y de los dos textos del visual de ML 12 que su
+propio dibujo contradecía.
 
 **El CI se rompió por una medición de memoria (18-09-2026).** La tercera vez, en
 Python 15, y la causa está desarrollada en el punto 3.16. En una línea: la celda
