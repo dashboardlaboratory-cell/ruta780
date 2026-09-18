@@ -1,18 +1,19 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **18-09-2026**, tras publicar seis lecciones: **ML 7**
+Última actualización: **18-09-2026**, tras publicar ocho lecciones: **ML 7**
 (selección de subconjuntos, ISLP §6.1), **ML 8** (encogimiento, ISLP §6.2),
 **ML 9** (alta dimensión, ISLP §6.4), **Python 10** (carga y limpieza, McKinney
 §6.1 y §7), **Python 11** (uniones y reshape, McKinney §8) y **Python 12**
-(groupby y agregación, McKinney §10). **Las 64 publicadas cumplen el molde: 64 de
-64, y no queda ninguna en el molde viejo.**
+(groupby y agregación, McKinney §10) y **ML 10** (bases, polinomios y splines,
+ISLP §7.1–7.4) y **Python 13** (visualización, McKinney §9.1–9.2). **Las 66
+publicadas cumplen el molde: 66 de 66, y no queda ninguna en el molde viejo.**
 
 **Con ML 9 queda cubierto el capítulo 6 de ISLP entero salvo §6.3**, que espera a
 la lección de componentes principales.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. **Estadística queda cerrada en 25 de 25.** Del
 plan siguen faltando lecciones por escribir en los demás módulos: Python tiene
-16 planeadas y 12 publicadas, ML 9 de 90, y Series y Causal están vacíos. El
+16 planeadas y 13 publicadas, ML 10 de 90, y Series y Causal están vacíos. El
 detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -79,17 +80,17 @@ hay que empezar a hacer:
 |---|---|---|---|---|
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
-| Python | 12 | 16 | **12 de 12** | 13 a 16, la Fase 1 |
+| Python | 13 | 16 | **13 de 13** | 14 a 16, la Fase 1 |
 | Series de tiempo | 0 | 11 | — | todas |
-| Machine Learning | 9 | 90 | **9 de 9** | 10 a 19 de la Fase 2, y el resto |
+| Machine Learning | 10 | 90 | **10 de 10** | 11 a 20 de la Fase 2, y el resto |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **64 lecciones** publicadas, **64** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 114 según el plan.
+- **66 lecciones** publicadas, **66** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 112 según el plan.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
   logística (§4.1–4.3, publicada), **04** modelos generativos (§4.4) y **05**
@@ -120,10 +121,10 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. Los seis visuales de esta tanda no añaden ninguno.
-- **1289 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **337 celdas** que el gate ejecuta en cada build, y comprobadas **con las
+- **1355 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **349 celdas** que el gate ejecuta en cada build, y comprobadas **con las
   dos parejas de versiones** (ver el punto 5).
-- Glosario: **308 términos + 43 símbolos**. Las **34 entradas** de estas dos
+- Glosario: **320 términos + 43 símbolos**. Las **34 entradas** de estas dos
   tandas —12 de ML 7, 8 de Python 10, 7 de ML 8 y 7 de Python 11— son todas de
   tipo `termino`: **cero símbolos
   globales nuevos**, por la regla aclarada en el punto 6. Los símbolos propios
@@ -131,8 +132,8 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 - Índices verificados: Think Stats 3e (75 secciones), MML (80), **Think Bayes 2e
   (20 capítulos y 193 secciones, traídas enteras el 12-09-2026; el capítulo 19
   publica las suyas sin numerar)**, McKinney 3E (capítulos + las secciones de los
-  capítulos 6, 7, 8 y 10; las subsecciones del 6, del 8 y del 10 no llevan número
-  en el sitio publicado, así que no se registran ni se citan) e **ISLP (13 capítulos, 81 secciones N.M y 176 sub-subsecciones N.M.K —257 entradas— traídas el 13-09-2026 de los
+  capítulos 6, 7, 8, 9 y 10; las subsecciones del 6, del 8, del 9 y del 10 no
+  llevan número en el sitio publicado, así que no se registran ni se citan) e **ISLP (13 capítulos, 81 secciones N.M y 176 sub-subsecciones N.M.K —257 entradas— traídas el 13-09-2026 de los
   marcadores del PDF oficial)**. Desde esa fecha `citas.py` admite **tres niveles**: se puede citar
   `ISLP §10.7.1 Backpropagation`. La función `rango()` se generalizó a cualquier profundidad, porque la anterior
   desempaquetaba dos valores del `split` y reventaba con el tercer nivel; se comprobó que los casos de dos niveles
@@ -782,6 +783,116 @@ bien al escribirla.
 ejercicio 1 de Python 12 decía $2{,}7267$ y $-3{,}6067$ cuando eran $2{,}64$ y
 $-3{,}6933$. Lo cazó `salidas.py`. La lección es la de siempre: **correr la celda
 y leer su salida es parte de escribirla**, también en los ejercicios.
+
+
+### 3.12 ML 10, y el desglose de ISLP 7 (18-09-2026)
+
+**ISLP capítulo 7 se parte en dos.** El corte está donde el libro cambia de
+estrategia: hasta §7.4 se **construye una base** y se ajusta por mínimos
+cuadrados; de §7.5 en adelante se **penaliza o se localiza**. Así:
+
+- **ML 10**, §7.1–7.4: polinomios, funciones escalón, el marco de las funciones
+  base y los splines de regresión. Publicada.
+- **ML 11**, §7.5–7.7: splines de suavizado, regresión local y GAMs. Pendiente.
+
+Eso obligó a renumerar `ml/index.qmd` de la 11 a la 39 y a corregir **15
+referencias cruzadas**. Esta vez la comprobación **no se hizo de memoria**: hay un
+script que lee el índice, resuelve cada «Machine Learning N» contra el título de
+la fila N y las imprime en paralelo para leerlas de un vistazo. Merece la pena
+rehacerlo en cada desglose:
+
+```sh
+python3 - <<'EOF'
+import re, pathlib
+RAIZ = pathlib.Path(".")
+idx = (RAIZ/"ml"/"index.qmd").read_text(encoding="utf-8")
+filas = {int(m.group(1)): m.group(2) for m in re.finditer(
+    r'<span class="num">(\d+)</span>.*?<span class="tit">(?:<a [^>]*>)?(.*?)(?:</a>)?</span>', idx)}
+for p in sorted(RAIZ.glob("*/[0-9]*.qmd")):
+    for m in re.finditer(r"Machine Learning (\d+)(?:\s*(?:a|y)\s*(\d+))?\*\*: ([^\n.]{0,70})",
+                         p.read_text(encoding="utf-8")):
+        nums = [int(m.group(1))] + ([int(m.group(2))] if m.group(2) else [])
+        print(f"{p.parent.name}/{p.name:44s} ML {nums} -> "
+              f"{' / '.join(filas.get(n,'??') for n in nums)[:50]:52s} | dice: {m.group(3).strip()[:44]}")
+EOF
+```
+
+**Lo que sostiene ML 10:**
+
+- la **Proposición 10.2** parte la elección de base en dos mitades que suelen
+  confundirse: **el espacio decide el ajuste y la base decide el
+  condicionamiento**. Medido: la base de potencias pasa de $10^{0}$ a $10^{5}$ de
+  condición entre el grado 1 y el 15, la base ortonormal de la QR se queda en
+  $10^{0}$, y las dos dan el **mismo ajuste** a $10^{-6}$. Enlaza directamente con
+  lo aprendido rompiendo el CI en ML 9;
+- la **Proposición 10.3** demuestra que ajustar funciones escalón **devuelve las
+  medias por tramo**, leyendo las ecuaciones normales componente a componente. Une
+  la regresión con la agregación de Python 12, y da la base mejor condicionada de
+  la lección: $1{,}2634$;
+- la **Proposición 10.5** cuenta $4(K+1)-3K=K+4$ y demuestra que el coeficiente
+  de un nudo es **el salto de la tercera derivada dividido entre seis**. Medido
+  estrechando el intervalo: los saltos de $f$, $f'$ y $f''$ se dividen por diez al
+  dividir $h$ por diez, y el de $f'''$ se queda clavado en $-1{,}697943$. La
+  lectura que deja: **un nudo no rompe la curva, le da permiso para cambiar de
+  curvatura**.
+
+**Una afirmación que NO se escribió, y por qué.** El plan era demostrar que los
+splines se portan mejor que los polinomios cerca de los bordes, que es lo que
+sugiere §7.4.5. **Se midió antes de escribirlo y los datos no lo sostienen**: con
+regresión sobre $300$ observaciones ruidosas, el barrido de grados de libertad de
+$6$ a $20$ sale mezclado, porque el fenómeno de Runge es de **interpolación** y se
+atenúa mucho al ajustar por mínimos cuadrados con muchos puntos. La proposición se
+retiró, el bloque de Fuentes lleva un apartado **«Lo que NO se afirma»** diciéndolo,
+y el reto 2 pide reproducir la medición y contrastarla con el caso de
+interpolación. Conviene conservar ese apartado como recurso: es mejor que una
+proposición endeble.
+
+**Otra fragilidad de versión cazada por el contraste.** `float()` sobre un array
+de **un** elemento dejó de funcionar en NumPy 2. Se arregla con `.item()`. Van
+tres clases distintas ya: el `repr` de los escalares, el renombrado de dtypes, y
+esta.
+
+
+### 3.13 Python 13, y matplotlib en el CI (18-09-2026)
+
+**Dependencia nueva en el workflow.** El CI instalaba numpy, scipy, scikit-learn,
+pandas y playwright; ahora instala también **matplotlib**, o el gate de salidas no
+podría ejecutar ninguna celda de esta lección. Es el mismo trámite que hizo falta
+para pandas con Python 9, y conviene recordarlo para Python 14 en adelante.
+
+**El riesgo de versión aquí era el mayor de todos y salió bien.** La máquina tiene
+matplotlib **3.3.4** y el runner instala la **3.11.2**: ocho años de diferencia,
+con cambios de estilo por omisión en medio. Antes de escribir una sola línea se
+probaron seis candidatas a afirmación en las dos versiones, y **las seis salieron
+idénticas**: los bordes explícitos de un histograma, los diez bins por omisión, los
+límites automáticos con su margen del 5 %, los datos recuperados de un artista, las
+posiciones de las marcas y el recuento de artistas. Esa comprobación previa es lo
+que permitió escribir la lección con dígitos en vez de con vaguedades.
+
+**Lo que sostiene Python 13:**
+
+- la **Proposición 13.2** enuncia lo que esta plataforma ya practicaba sin
+  escribirlo: **un gráfico se puede comprobar sin mirarlo**, porque el artista
+  guarda los arreglos y no los píxeles. Es el principio de `verificar/visuales.py`,
+  y ahora está dicho en una lección;
+- la **Proposición 13.3** da la fórmula exacta de los límites automáticos,
+  $[\min-0{,}05R,\ \max+0{,}05R]$, de donde el alto del panel vale siempre
+  $1{,}1R$. La consecuencia medida: una subida real del $10$ % ocupa el $90{,}9$ %
+  del panel, un factor de exageración de **9,1**, que baja a $0{,}83$ fijando el eje
+  en $(0,12)$;
+- la **Proposición 13.4** muestra que el ancho de bin por omisión depende **solo de
+  dos observaciones**. Una única observación en $30$ multiplica el ancho por más de
+  cinco y deja el $99{,}8$ % de los datos apretado en $3$ barras de $10$;
+- la **Proposición 13.5** explica el eje actual como variable global y por qué el
+  mismo fragmento dibuja en sitios distintos según la historia del programa.
+
+El bloque de Fuentes dice explícitamente que el margen del $5$ % y los diez bins
+son **valores de configuración de la biblioteca**, no resultados: se afirman porque
+se midieron en las dos versiones, y si una futura los cambia, el gate de salidas lo
+detectará. Esa es la forma honesta de citar un valor por omisión.
+
+**§9.3 no se trata**, porque enumera bibliotecas que esta página no puede ejecutar.
+Queda dicho en la lección, con la razón.
 
 
 ---
