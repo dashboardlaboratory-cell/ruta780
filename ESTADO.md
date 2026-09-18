@@ -1321,39 +1321,48 @@ falla el build. Codificar el SVG en base64.
   las citan como «sección **Py 10**». La abreviatura no casa con el título, así
   que **se escribe el nombre completo del módulo** en las dos partes.
 
-- **Colisiones en `glosario/glosario.json` → `GLOSARIO_SIMBOLOS` (auditado
-  12-09-2026, sin tocar todavía).** El enganche de `encabezado.html` es
-  **global por carácter**, sin alcance por lección: si dos lecciones usan el
-  mismo símbolo con significados distintos, el tooltip acierta en una y miente
-  en la otra. Regla aclarada con Luis: **el glosario global solo admite un
-  símbolo si significa lo mismo en todo el sitio; si el significado depende de
-  la lección, va en la tabla `::: {.notacion}` de esa lección (ya obligatoria
-  por la regla 16), no en el glosario.** Confirmado que `r` y `R²` **no** están
-  en `GLOSARIO_SIMBOLOS` (no hay bug vivo ahí). Sí están, y con colisión
-  confirmada por lección, contrastando código fuente contra código fuente:
-    - **`T`**: registrado como «variable con distribución t de Student»
-      (origen Est 09). Pero en `estadistica/10.qmd:511` (Demostración Prop.
-      10.8) es el estadístico de prueba genérico —confirmado en vivo con
-      Playwright que el tooltip equivocado se muestra ahí—, y en
-      `matematica/02.qmd` es una transformación lineal.
-    - **`Q`**: registrado como «suma de cuadrados centrada» (Est 08/11). En
-      `matematica/07-gram-schmidt-qr.qmd` es la matriz ortogonal de $A=QR$.
-    - **`B`**: registrado como «número de remuestreos bootstrap» (Est 11). Es
-      una matriz cualquiera en `matematica/02` y `matematica/08`, una variable
-      causal genérica en `estadistica/05:692`, el extremo aleatorio de un IC
-      en `estadistica/09:65`, y un semieje de elipse en `estadistica/12:258`.
-    - **`p`**: la propia entrada ya admite tres sentidos («según el
-      contexto») — eso ya viola la regla aclarada. Además falta un cuarto
-      sentido sin avisar: en `estadistica/10` es el valor p (la lección
-      insiste en que **no** es una probabilidad, y el tooltip dice que sí lo
-      es), y en `matematica/09-eigenvalores.qmd:319` es el polinomio
-      característico $p(\lambda)$.
-  Moderadas —el tooltip ya avisa «según el contexto» o «tiene dos usos», así
-  que no miente sin matiz, pero igual violan «un símbolo, un significado»—:
-  `α` (exponente de Pareto vs. nivel de significancia), `β` (coeficientes de
-  regresión vs. error de tipo II), `δ` (tolerancia vs. tamaño de efecto), `θ`
-  (ángulo entre vectores vs. parámetro a estimar), `ε` (épsilon de máquina vs.
-  error del modelo). Pendiente decidir: ¿se sacan `T`, `Q`, `B`, `p` del
-  glosario global y se dejan solo en la tabla de notación de cada lección
-  (como ya se decidió para `r` y `R²`), y qué se hace con las cinco letras
-  griegas moderadas?
+- **Colisiones de símbolos: RESUELTAS el 18-09-2026.** La auditoría del 12-09
+  quedaba pendiente de decidir; se decidió y se aplicó, y la regla está ahora en
+  `CLAUDE.md` como **21b**.
+
+  **Lo que se encontró al mirarlo de verdad era peor que lo auditado.** `T` estaba
+  registrado como «variable con distribución t de Student» y se enganchaba a los
+  **67** superíndices de transpuesta de `matematica/06`, porque `A^{\mathsf{T}}A`
+  renderiza una `T` que KaTeX pone en su propio span. `B` decía «número de
+  remuestreos bootstrap» y se enganchaba a sucesos de probabilidad en Est 03, a
+  matrices en Álgebra, y a $\lVert\beta\rVert^2$ en ML 08.
+
+  **Lo que se hizo:**
+
+  1. **Fuera del glosario global `T`, `Q` y `B`**, que afirmaban un único
+     significado falso en otras lecciones. Las tres lecciones que los introducen
+     —Est 09, Est 08 y Est 11— los declaran en su tabla de notación, así que no se
+     perdió nada. Comprobado en el navegador: en `matematica/06` y
+     `estadistica/10` el enganche de los tres pasa a **cero**.
+  2. **`p`, `α`, `β`, `δ`, `θ` y `ε` se quedan, con la definición reescrita.** No
+     mentían —enumeraban sentidos— pero enumeraban **de menos** y se presentaban
+     como completas: `α` mencionaba 3 de los 8 sentidos que se usan, y `β` 2 de
+     13. Ahora dicen que el símbolo está sobrecargado, dan los sentidos frecuentes
+     y rematan con **«la tabla de notación de la lección manda»**. A `p` se le
+     añadieron los dos sentidos que le faltaban, incluido el valor p, que la
+     lección 10 insiste en que **no** es una probabilidad mientras el tooltip decía
+     que sí.
+  3. **`verificar/simbolos.py`**, que audita la regla 21b: lista, por símbolo, qué
+     lecciones lo usan en fórmula y cuáles lo declaran en su notación. Busca tanto
+     el carácter como su nombre de LaTeX, porque en los `.qmd` las griegas se
+     escriben `\alpha` y no `α`; sin eso el recuento salía cero y parecía que
+     nadie las usaba. **No es un gate**: es la herramienta para decidir.
+
+- **Deuda nueva, medida con esa herramienta el 18-09-2026: los símbolos se usan
+  mucho más de lo que se declaran.** `α` aparece en fórmula en **18** lecciones y
+  solo **7** lo declaran en su tabla de notación; `β` en **19** y lo declaran
+  **10**. Eso no es la regla 21b sino la **16**, que pide declarar todo símbolo en
+  la tabla de su lección. Con el glosario global ya honesto el daño es menor —el
+  tooltip remite a la tabla—, pero la tabla no siempre está. **Sin decidir** si se
+  rellenan las que faltan o si la regla 16 se relaja a «los símbolos que la lección
+  usa de forma no estándar». Para ver el estado en cualquier momento:
+
+  ```sh
+  python3 verificar/simbolos.py          # todos los del glosario
+  python3 verificar/simbolos.py α β θ    # los que se quieran
+  ```

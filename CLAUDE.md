@@ -108,6 +108,32 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
     `glosario/glosario.json` con `"tipo": "simbolo"`.** El tooltip se engancha
     solo sobre lo que KaTeX renderiza; basta con que la entrada exista.
 
+21b. **Un símbolo del glosario global no puede afirmar un significado que sea
+    falso en otra lección.** El enganche de `encabezado.html` es **global por
+    carácter**, sin alcance por lección: lo que diga la entrada se muestra en
+    todo el sitio. De ahí dos conductas, según el caso:
+
+    · Si el símbolo significa **lo mismo en todas partes**, se define normal.
+
+    · Si su significado **depende de la lección**, la entrada global no elige
+      uno: dice que está sobrecargado, enumera los sentidos frecuentes y
+      remata con **«la tabla de notación de la lección manda»**. Así el tooltip
+      informa en vez de mentir. Es lo que hacen `p`, `α`, `β`, `δ`, `θ` y `ε`.
+
+    · Si ni siquiera eso sirve —porque la entrada tendría que enumerar media
+      docena de sentidos sin ninguno dominante—, **el símbolo sale del glosario
+      global** y vive solo en la tabla `::: {.notacion}` de cada lección.
+
+    El 18-09-2026 salieron `T`, `Q` y `B` por esa vía: `T` decía «variable con
+    distribución t de Student» y se enganchaba a los **67** superíndices de
+    transpuesta de `matematica/06`; `B` decía «número de remuestreos bootstrap»
+    y se enganchaba a sucesos de probabilidad, a matrices y a ‖β‖². Las tres
+    lecciones que los introducen los declaran en su tabla de notación, así que
+    no se perdió nada.
+
+    **Para auditarlo** hay un script en `ESTADO.md` §6 que lista, por símbolo,
+    qué lecciones lo usan en fórmula y cuáles lo declaran en su notación.
+
 ## Reglas de números
 
 6. **Todo número que la prosa afirme se declara en `verificar/afirmaciones.json`.**
