@@ -1,0 +1,945 @@
+---
+title: "Árboles de decisión"
+subtitle: "Machine Learning · Lección 12"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/11-suavizado-y-gams, ml/06-validacion-cruzada, ml/01-aprendizaje-estadistico]
+siguientes: []
+libro: "ISLP §8.1 The Basics of Decision Trees · §8.1.1 Regression Trees · §8.1.2 Classification Trees · §8.1.3 Trees Versus Linear Models · §8.1.4 Advantages and Disadvantages of Trees"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="ml/12-arboles-de-decision"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §8.1]{.item}
+[**Prereqs** [Suavizado y GAMs](11-suavizado-y-gams.qmd) · [Validación cruzada](06-validacion-cruzada.qmd) · [Aprendizaje estadístico](01-aprendizaje-estadistico.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir un [árbol de regresión]{.g} como una partición del espacio de predictores con una constante en cada región.
+2. Demostrar que la caída del RSS de un corte vale exactamente $\frac{n_I n_D}{n_I+n_D}(\bar{y}_I-\bar{y}_D)^2$, y leer ahí qué cortes prefiere el algoritmo.
+3. Exhibir datos donde **ningún** corte mejora el RSS y sin embargo dos niveles lo explican todo, y deducir por qué el árbol se deja crecer y se poda después.
+4. Demostrar que el tamaño del subárbol óptimo no crece cuando sube el precio de una hoja, y recorrer la sucesión de podas.
+5. Distinguir las tres medidas de [impureza]{.g} y demostrar que ninguna empeora al partir, con la diferencia decisiva entre las estrictamente cóncavas y la que es lineal a trozos.
+6. Demostrar que un árbol **no** es un suavizador lineal, y decir qué le pasa entonces a la traza como cuenta de grados de libertad.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 11**: la Definición 11.1 de suavizador lineal, que dejaba fuera a los árboles por una razón que aquí se demuestra.
+- **Machine Learning 1**: el compromiso entre sesgo y varianza, que es lo que la poda gradúa.
+- **Machine Learning 6**: la validación cruzada, que es como se elige el precio de una hoja.
+- **Machine Learning 7**: el criterio $\text{RSS}+\alpha\,(\text{tamaño})$, que allí contaba coeficientes y aquí cuenta hojas.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 13**: bagging, bosques aleatorios y boosting, que promedian muchos árboles para quitarles la varianza que la sección 5 explica.
+- **Machine Learning 27**: la descomposición sesgo-varianza formal, donde la inestabilidad de la sección 5 se convierte en un término que se puede acotar.
+- **Machine Learning 29**: los modelos aditivos y MARS, que son partición recursiva con funciones bisagra en lugar de constantes, y heredan de aquí el crecer de más y podar.
+- **Series de tiempo**: los árboles sobre variables de calendario, donde la partición recursiva sustituye a las variables indicadoras escritas a mano.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $R_m$ | erre sub eme | La $m$-ésima región de la partición: una hoja del árbol |
+| $J$ | jota | El número de regiones, igual al número de hojas |
+| $c_m$ | ce sub eme | La constante que el árbol predice dentro de $R_m$ |
+| $t$ | te | El umbral de un corte |
+| $j$ | jota minúscula | El índice del predictor por el que se corta |
+| $n_I$, $n_D$ | ene sub i, ene sub de | Cuántas observaciones caen a cada lado de un corte |
+| $\bar{y}_I$, $\bar{y}_D$ | y barra sub i, y barra sub de | Las medias de la respuesta a cada lado |
+| $T$ | te mayúscula | Un árbol; $T_0$ es el árbol crecido sin podar |
+| $\lvert T\rvert$ | tamaño de te | El número de hojas de $T$ |
+| $\alpha$ | alfa | El precio de una hoja en el criterio de poda |
+| $\hat{p}_{mk}$ | pe gorro sub eme ka | La proporción de la clase $k$ dentro de la región $R_m$ |
+| $\phi$ | fi | Una función de impureza cualquiera, de $[0,1]$ en $[0,\infty)$ |
+| $G$ | ge | El índice de Gini de un nodo |
+| $D$ | de | La entropía de un nodo |
+| $E$ | e | El error de clasificación de un nodo |
+| $w$ | doble ve | El peso de un hijo: su tamaño entre el del padre |
+| $H$ | hache | La matriz que promedia dentro de cada región de una partición fija |
+| $S$ | ese | La matriz de un suavizador lineal, de la Definición 11.1 |
+:::
+
+## 1. Una partición y una constante en cada trozo
+
+::: {.definicion}
+**Definición 12.1 (árbol de regresión).** Un **árbol de regresión** es una partición del espacio de predictores en $J$ regiones $R_1,\dots,R_J$ disjuntas, obtenidas por cortes sucesivos de la forma $x_j\le t$, junto con una constante $c_m$ por región. Su predicción es
+$$\hat{f}(x)=\sum_{m=1}^{J}c_m\,\mathbf{1}\{x\in R_m\}.$$
+Las regiones son las [hojas]{.g data-t="hoja"} del árbol y cada corte es un **nodo interno**. El procedimiento que las construye es la [partición recursiva binaria]{.g}.
+:::
+
+La definición separa dos decisiones que conviene no confundir: **qué partición** y **qué constante en cada trozo**. La segunda tiene respuesta cerrada y la primera no la tiene, y de esa asimetría sale todo el capítulo.
+
+::: {.proposicion}
+**Proposición 12.2 (la constante, y lo que gana un corte).** Sea $y_1,\dots,y_n$ la respuesta en un nodo, con media $\bar{y}$ y $\text{RSS}=\sum_i(y_i-\bar{y})^2$. Entonces:
+
+(a) para cualquier constante $c$, $\ \sum_i (y_i-c)^2=\text{RSS}+n(c-\bar{y})^2$, y por tanto la media es la única constante que minimiza la suma de cuadrados;
+
+(b) si un corte parte el nodo en dos lados de tamaños $n_I$ y $n_D$ y medias $\bar{y}_I$ y $\bar{y}_D$, la caída del RSS vale exactamente
+$$\text{RSS}-\text{RSS}_I-\text{RSS}_D=\frac{n_I\,n_D}{n_I+n_D}\,(\bar{y}_I-\bar{y}_D)^2\ \ge 0;$$
+
+(c) si el predictor toma $v$ valores distintos en el nodo, hay exactamente $v-1$ cortes que producen particiones distintas, así que el mejor corte se encuentra probándolos todos.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (a), $\sum_i(y_i-c)^2=\sum_i\big((y_i-\bar{y})+(\bar{y}-c)\big)^2$. El término cruzado es $2(\bar{y}-c)\sum_i(y_i-\bar{y})=0$ porque la media anula la suma de desviaciones, y queda $\text{RSS}+n(c-\bar{y})^2$. El segundo sumando es positivo salvo en $c=\bar{y}$.
+
+Para (b), por (a) aplicado a cada lado con $c=\bar{y}$:
+$$\text{RSS}=\sum_{i\in I}(y_i-\bar{y})^2+\sum_{i\in D}(y_i-\bar{y})^2=\text{RSS}_I+n_I(\bar{y}_I-\bar{y})^2+\text{RSS}_D+n_D(\bar{y}_D-\bar{y})^2.$$
+La media global cumple $\bar{y}=(n_I\bar{y}_I+n_D\bar{y}_D)/(n_I+n_D)$, de donde $\bar{y}_I-\bar{y}=\frac{n_D}{n_I+n_D}(\bar{y}_I-\bar{y}_D)$ y $\bar{y}_D-\bar{y}=-\frac{n_I}{n_I+n_D}(\bar{y}_I-\bar{y}_D)$. Sustituyendo,
+$$n_I(\bar{y}_I-\bar{y})^2+n_D(\bar{y}_D-\bar{y})^2=\frac{n_In_D^2+n_Dn_I^2}{(n_I+n_D)^2}(\bar{y}_I-\bar{y}_D)^2=\frac{n_In_D}{n_I+n_D}(\bar{y}_I-\bar{y}_D)^2.$$
+
+Para (c), dos umbrales dan la misma partición si y solo si no hay ningún valor observado entre ellos; los umbrales que separan valores consecutivos distintos son $v-1$, y cada uno da una partición distinta. [∎]{.fin-demo}
+:::
+
+La parte (b) dice con precisión **qué busca el algoritmo**: cortes donde los dos lados tengan medias muy distintas, con un peso $n_In_D/(n_I+n_D)$ que castiga los cortes desequilibrados. Un corte que deja una sola observación a un lado tiene peso casi $1$ por mucho que esa observación sea extrema; uno que parte por la mitad tiene peso $n/4$.
+
+```{pyodide}
+import numpy as np
+
+def rss(y):
+    """Suma de cuadrados dentro de un grupo, alrededor de su media."""
+    return float(((y - y.mean()) ** 2).sum()) if y.size else 0.0
+
+rng = np.random.default_rng(12)
+n = 60
+x = np.sort(rng.uniform(0, 10, n))
+y = np.where(x < 4, 2.0, np.where(x < 7, 5.0, 1.0)) + rng.normal(0, 0.6, n)
+
+# (a) dentro de una region, la constante que minimiza la suma de cuadrados es la media
+region = y[:20]
+m = region.mean()
+print("en una region de %d puntos, la media vale %.4f" % (len(region), m))
+for c in [m - 1.0, m, m + 0.7]:
+    directo = float(((region - c) ** 2).sum())
+    descompuesto = rss(region) + len(region) * (c - m) ** 2
+    print("   c = %7.4f -> suma %.4f | RSS + n(c-media)^2 = %.4f | iguales a 1e-10: %s"
+          % (c, directo, descompuesto, bool(abs(directo - descompuesto) < 1e-10)))
+print("el segundo termino es cero solo en c = media, y positivo en cualquier otro")
+print()
+
+# (b) la caida del RSS de un corte, contra la formula
+v = np.unique(x)
+umbrales = (v[:-1] + v[1:]) / 2.0
+base = rss(y)
+peor = 0.0
+mejor_t, mejor_caida = None, -1.0
+for t in umbrales:
+    iz = x <= t
+    caida = base - rss(y[iz]) - rss(y[~iz])
+    nI, nD = int(iz.sum()), int((~iz).sum())
+    formula = nI * nD / (nI + nD) * (y[iz].mean() - y[~iz].mean()) ** 2
+    peor = max(peor, abs(caida - formula))
+    if caida > mejor_caida:
+        mejor_t, mejor_caida = float(t), float(caida)
+
+print("valores distintos de x: %d, asi que hay %d cortes posibles" % (len(v), len(umbrales)))
+print("la caida del RSS y la formula coinciden en los %d a 1e-10: %s"
+      % (len(umbrales), bool(peor < 1e-10)))
+print()
+print("RSS de la raiz          : %.4f" % base)
+print("mejor corte             : x = %.4f" % mejor_t)
+print("caida del RSS ahi       : %.4f" % mejor_caida)
+iz = x <= mejor_t
+print("medias de los dos lados : %.4f y %.4f" % (y[iz].mean(), y[~iz].mean()))
+print("tamanos de los dos lados: %d y %d" % (int(iz.sum()), int((~iz).sum())))
+print("RSS que queda           : %.4f" % (base - mejor_caida))
+```
+
+Los datos tienen tres tramos de verdad —en $x=4$ y en $x=7$—, y el primer corte cae en $x=6{,}9098$, no en $4$: el algoritmo elige el corte de mayor caída, y ese es el que separa el tramo alto del bajo. El otro corte verdadero aparece en el nivel siguiente.
+
+```{=html}
+<div class="viz-corte">
+  <div class="controles">
+    <label>Umbral del corte <input id="co-t" type="range" min="0.4" max="9.6" step="0.05" value="5.0"> <span id="co-t-v">5.00</span></label>
+    <label>Datos
+      <select id="co-d">
+        <option value="tramos" selected>tres tramos</option>
+        <option value="rampa">una rampa</option>
+        <option value="plano">sin señal</option>
+      </select>
+    </label>
+  </div>
+  <svg id="co-svg" viewBox="0 0 660 320" role="img" aria-label="Los datos con el corte propuesto, la media de cada lado como segmento horizontal, y debajo la curva de la caída del RSS en función del umbral con la posición actual marcada."></svg>
+  <p class="lectura" id="co-lectura"></p>
+</div>
+<style>
+.viz-corte { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-corte .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-corte label { display: flex; align-items: center; gap: .4rem; }
+.viz-corte input[type=range] { width: 170px; padding: 0; }
+.viz-corte select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-corte svg { width: 100%; height: auto; display: block; }
+.viz-corte .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_C = "#8A6D1F";
+  var svg = document.getElementById("co-svg"), lec = document.getElementById("co-lectura");
+  var ct = document.getElementById("co-t"), et = document.getElementById("co-t-v"), cd = document.getElementById("co-d");
+  var X0 = 52, XW = 566, Y0 = 26, YH = 150, Y2 = 216, H2 = 74;
+
+  // Datos deterministas: siempre los mismos puntos, sin azar.
+  function datos(modo) {
+    var xs = [], ys = [], i, s = 2, r = function () { s = (s * 48271) % 2147483647; return s / 2147483647 - 0.5; };
+    for (i = 0; i < 48; i++) {
+      var xv = (i + 0.5) * 10 / 48;
+      var base = modo === "tramos" ? (xv < 4 ? 2 : xv < 7 ? 5 : 1)
+               : modo === "rampa" ? 0.5 + xv * 0.45 : 3;
+      xs.push(xv); ys.push(base + r() * 1.2);
+    }
+    return { x: xs, y: ys };
+  }
+  function media(a) { var s = 0, i; for (i = 0; i < a.length; i++) s += a[i]; return a.length ? s / a.length : 0; }
+  function sc(a) { var m = media(a), s = 0, i; for (i = 0; i < a.length; i++) s += (a[i] - m) * (a[i] - m); return s; }
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var d = datos(cd.value), t = +ct.value;
+    et.textContent = t.toFixed(2);
+    var lo = -0.6, hi = 6.6;
+    var px = function (v) { return X0 + v / 10 * XW; };
+    var py = function (v) { return Y0 + (hi - v) / (hi - lo) * YH; };
+
+    var yI = [], yD = [], i;
+    for (i = 0; i < d.x.length; i++) (d.x[i] <= t ? yI : yD).push(d.y[i]);
+    var base = sc(d.y), caida = base - sc(yI) - sc(yD);
+    var peso = yI.length && yD.length ? yI.length * yD.length / d.x.length : 0;
+
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(0) + " L" + (X0 + XW) + " " + py(0),
+      stroke: C_L, "stroke-width": 1, fill: "none" }));
+    for (i = 0; i < d.x.length; i++)
+      svg.appendChild(el("circle", { cx: px(d.x[i]).toFixed(1), cy: py(d.y[i]).toFixed(1), r: 2.6,
+        fill: d.x[i] <= t ? C_A : C_B, "fill-opacity": .55 }));
+    svg.appendChild(el("path", { d: "M" + px(t).toFixed(1) + " " + Y0 + " L" + px(t).toFixed(1) + " " + (Y0 + YH),
+      stroke: C_C, "stroke-width": 1.6, "stroke-dasharray": "5 3", fill: "none" }));
+    if (yI.length) svg.appendChild(el("path", { d: "M" + X0 + " " + py(media(yI)).toFixed(1) + " L" + px(t).toFixed(1) + " " + py(media(yI)).toFixed(1),
+      stroke: C_A, "stroke-width": 2.4, fill: "none" }));
+    if (yD.length) svg.appendChild(el("path", { d: "M" + px(t).toFixed(1) + " " + py(media(yD)).toFixed(1) + " L" + (X0 + XW) + " " + py(media(yD)).toFixed(1),
+      stroke: C_B, "stroke-width": 2.4, fill: "none" }));
+
+    // abajo: la caida del RSS para todos los umbrales
+    var mx = 0, curva = [], u;
+    for (u = 0.2; u <= 9.8; u += 0.1) {
+      var a = [], b = [];
+      for (i = 0; i < d.x.length; i++) (d.x[i] <= u ? a : b).push(d.y[i]);
+      var g = base - sc(a) - sc(b);
+      curva.push([u, g]); if (g > mx) mx = g;
+    }
+    var esc = mx > 1e-9 ? H2 / mx : 0;
+    svg.appendChild(el("text", { x: X0, y: Y2 - 8, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "caída del RSS según dónde se corte"));
+    var dd = "";
+    for (i = 0; i < curva.length; i++)
+      dd += (i ? " L" : "M") + px(curva[i][0]).toFixed(1) + " " + (Y2 + H2 - curva[i][1] * esc).toFixed(1);
+    svg.appendChild(el("path", { d: dd, stroke: C_T, "stroke-width": 1.4, fill: "none", opacity: .8 }));
+    svg.appendChild(el("circle", { cx: px(t).toFixed(1), cy: (Y2 + H2 - caida * esc).toFixed(1), r: 4,
+      fill: C_C, stroke: C_C }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + (Y2 + H2) + " L" + (X0 + XW) + " " + (Y2 + H2),
+      stroke: C_L, "stroke-width": 1, fill: "none" }));
+
+    var dif = (yI.length && yD.length) ? media(yI) - media(yD) : 0;
+    lec.innerHTML = "Cortando en <strong>" + t.toFixed(2) + "</strong> quedan <strong>" + yI.length +
+      "</strong> y <strong>" + yD.length + "</strong> observaciones, con medias <strong>" +
+      (yI.length ? media(yI).toFixed(3) : "—") + "</strong> y <strong>" + (yD.length ? media(yD).toFixed(3) : "—") +
+      "</strong>. La caída del RSS vale <strong>" + caida.toFixed(3) + "</strong>, y la fórmula de la Proposición 12.2b da " +
+      peso.toFixed(2) + " × " + (dif * dif).toFixed(4) + " = <strong>" + (peso * dif * dif).toFixed(3) +
+      "</strong>. " + (cd.value === "plano"
+        ? "Sin ninguna señal, la caída más alta que se consigue es pura fluctuación del ruido: el árbol encuentra siempre algún corte, y ese es el motivo por el que hace falta podar."
+        : cd.value === "rampa"
+        ? "Con una rampa no hay ninguna frontera verdadera que encontrar: la caída es suave en todo el interior del rango y el corte ganador lo decide el ruido, no la estructura."
+        : "Con tres tramos, la curva de abajo tiene dos jorobas —una por cada frontera verdadera— y el algoritmo se queda con la más alta.");
+  }
+
+  ct.addEventListener("input", dibujar);
+  cd.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Por qué no se para a mitad de camino
+
+El algoritmo de la sección 1 es un [algoritmo voraz]{.g}: en cada nodo elige el corte de mayor caída inmediata, sin mirar qué cortes quedarán disponibles después. Lo es por necesidad: ya con un solo predictor, las particiones en $J$ intervalos contiguos son $\binom{n-1}{J-1}$, y la celda las cuenta para los $60$ puntos de la sección 1; con varios predictores y cortes en cualquier orden, encontrar la partición de menor RSS es un problema intratable en general.
+
+La tentación entonces es pararlo cuando ningún corte mejora lo suficiente. La proposición siguiente dice por qué esa regla es mala.
+
+::: {.proposicion}
+**Proposición 12.3 (la caída de un corte no anticipa lo que viene detrás).** Existen conjuntos de datos donde **todos** los cortes posibles tienen caída del RSS exactamente $0$ y, sin embargo, un árbol de dos niveles alcanza RSS $0$.
+:::
+
+::: {.demostracion}
+*Demostración.* Basta exhibir uno. Con dos predictores binarios y respuesta $y=+1$ cuando $x_1=x_2$ y $y=-1$ cuando $x_1\ne x_2$, repetida el mismo número de veces en cada una de las cuatro celdas: cualquier corte por $x_1$ deja a cada lado el mismo número de $+1$ y de $-1$, luego $\bar{y}_I=\bar{y}_D=0$ y por la Proposición 12.2b la caída es $0$; lo mismo por $x_2$. Cortando primero por $x_1$ y después por $x_2$ dentro de cada lado, las cuatro hojas son puras y el RSS es $0$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+from math import comb
+import numpy as np
+
+def rss(y):
+    return float(((y - y.mean()) ** 2).sum()) if y.size else 0.0
+
+def cortes(col):
+    v = np.unique(col)
+    return (v[:-1] + v[1:]) / 2.0
+
+def caidas(X, y):
+    """Todas las caidas del RSS de un corte, variable por variable."""
+    base, salida = rss(y), []
+    for j in range(X.shape[1]):
+        for t in cortes(X[:, j]):
+            iz = X[:, j] <= t
+            salida.append((j, float(t), base - rss(y[iz]) - rss(y[~iz])))
+    return salida
+
+# Cuatro celdas con cuatro puntos cada una. La respuesta vale +1 en la diagonal
+# y -1 fuera: cada variable por separado no dice absolutamente nada.
+celdas = [(0.0, 0.0, 1.0), (0.0, 1.0, -1.0), (1.0, 0.0, -1.0), (1.0, 1.0, 1.0)]
+X = np.array([[a, b] for a, b, _ in celdas for _ in range(4)])
+y = np.array([c for _, _, c in celdas for _ in range(4)])
+
+print("n =", len(y), "con RSS en la raiz =", rss(y))
+print("media global:", y.mean())
+print()
+print("todos los cortes posibles y lo que ganan:")
+for j, t, g in caidas(X, y):
+    print("   x%d <= %.1f  ->  caida del RSS = %.4f" % (j + 1, t, g))
+print()
+print("ninguno gana nada, porque los dos lados tienen la misma media")
+print("una regla que pare cuando ningun corte mejora se queda en la raiz,")
+print("con RSS = %.4f y una sola prediccion para todo" % rss(y))
+print()
+
+# Pero dos niveles lo explican todo.
+total = 0.0
+iz = X[:, 0] <= 0.5
+for m in (iz, ~iz):
+    sub_X, sub_y = X[m], y[m]
+    t2 = cortes(sub_X[:, 1])[0]
+    a = sub_X[:, 1] <= t2
+    total += rss(sub_y[a]) + rss(sub_y[~a])
+print("cortando por x1 y despues por x2 en cada lado, el RSS baja a", total)
+print("las cuatro hojas tienen 4 puntos cada una y son puras")
+print()
+print("moraleja: el arbol se deja crecer y se poda despues, no se para por el camino")
+print()
+
+# Y por que el algoritmo es voraz: probarlas todas no es una opcion.
+print("particiones de 60 puntos en 8 intervalos contiguos: %d" % comb(59, 7))
+print("y eso con UN solo predictor y cortes que respetan el orden")
+```
+
+De $16$ a $0$ pasando por un nodo donde nada mejoraba. La consecuencia práctica es la receta del libro: **crecer el árbol hasta un tamaño claramente excesivo y podarlo después**, en vez de decidir sobre la marcha con información que todavía no está disponible.
+
+## 3. El precio de una hoja
+
+::: {.definicion}
+**Definición 12.4 ([poda por coste-complejidad]{.g}).** Dado el árbol crecido $T_0$ y un precio $\alpha\ge 0$, se considera
+$$C_\alpha(T)=\text{RSS}(T)+\alpha\,\lvert T\rvert$$
+sobre los subárboles $T$ de $T_0$ que se obtienen colapsando nodos internos en hojas. El subárbol **podado** para ese $\alpha$ es el que minimiza $C_\alpha$.
+:::
+
+El criterio tiene la forma exacta de $C_p$ y de la Proposición 7.4: un ajuste más un precio por cada pieza del modelo. Lo que cambia es la pieza, que aquí es una hoja.
+
+::: {.proposicion}
+**Proposición 12.5 (el tamaño no crece con el precio).** Si $\alpha_1<\alpha_2$ y $T_1$, $T_2$ minimizan $C_{\alpha_1}$ y $C_{\alpha_2}$ respectivamente, entonces $\lvert T_2\rvert\le\lvert T_1\rvert$.
+
+Es la Proposición 7.5 de la lección 7 con hojas en lugar de predictores: allí se anunció que el argumento valdría para cualquier ajuste penalizado linealmente por un coste creciente, y aquí se cobra esa promesa.
+:::
+
+::: {.demostracion}
+*Demostración.* Es el argumento de intercambio de la Proposición 7.5, y se repite porque son tres líneas. Por ser $T_1$ óptimo en $\alpha_1$ y $T_2$ óptimo en $\alpha_2$,
+$$\text{RSS}(T_1)+\alpha_1\lvert T_1\rvert\le\text{RSS}(T_2)+\alpha_1\lvert T_2\rvert,\qquad
+\text{RSS}(T_2)+\alpha_2\lvert T_2\rvert\le\text{RSS}(T_1)+\alpha_2\lvert T_1\rvert.$$
+Sumando las dos y cancelando los RSS queda $\alpha_1\lvert T_1\rvert+\alpha_2\lvert T_2\rvert\le\alpha_1\lvert T_2\rvert+\alpha_2\lvert T_1\rvert$, es decir $(\alpha_2-\alpha_1)\big(\lvert T_2\rvert-\lvert T_1\rvert\big)\le 0$. Como $\alpha_2-\alpha_1>0$, se concluye $\lvert T_2\rvert\le\lvert T_1\rvert$. [∎]{.fin-demo}
+:::
+
+La demostración no usa nada del árbol —ni que $\text{RSS}$ sea un RSS, ni que las piezas sean hojas—, y es la razón de que un camino de regularización se recorra de más complejo a menos sin saltos hacia atrás. Lo que el árbol añade sobre la lección 7 es que aquí los candidatos no están ordenados por tamaño de antemano: hay $26$ subárboles y varios del mismo tamaño.
+
+```{pyodide}
+import numpy as np
+
+def rss(y):
+    return float(((y - y.mean()) ** 2).sum()) if y.size else 0.0
+
+def mejor_corte(x, y):
+    v = np.unique(x)
+    mejor, t_mejor = 0.0, None
+    base = rss(y)
+    for t in (v[:-1] + v[1:]) / 2.0:
+        iz = x <= t
+        g = base - rss(y[iz]) - rss(y[~iz])
+        if g > mejor + 1e-12:
+            mejor, t_mejor = g, float(t)
+    return t_mejor
+
+contador = [0]
+
+def crece(x, y, prof):
+    """Particion recursiva binaria: cada nodo elige el corte de mayor caida."""
+    nodo = {"id": contador[0], "media": float(y.mean()), "rss": rss(y), "n": int(y.size)}
+    contador[0] += 1
+    if prof == 0 or y.size < 6:
+        return nodo
+    t = mejor_corte(x, y)
+    if t is None:
+        return nodo
+    iz = x <= t
+    nodo["corte"] = t
+    nodo["iz"] = crece(x[iz], y[iz], prof - 1)
+    nodo["de"] = crece(x[~iz], y[~iz], prof - 1)
+    return nodo
+
+def podas(nodo):
+    """Todos los subarboles que se obtienen podando: (internos, hojas, RSS)."""
+    hoja = (frozenset(), 1, nodo["rss"])
+    if "corte" not in nodo:
+        return [hoja]
+    salida = [hoja]
+    for iI, hI, rI in podas(nodo["iz"]):
+        for iD, hD, rD in podas(nodo["de"]):
+            salida.append((iI | iD | {nodo["id"]}, hI + hD, rI + rD))
+    return salida
+
+rng = np.random.default_rng(12)
+n = 60
+x = np.sort(rng.uniform(0, 10, n))
+y = np.where(x < 4, 2.0, np.where(x < 7, 5.0, 1.0)) + rng.normal(0, 0.6, n)
+
+arbol = crece(x, y, 3)
+todas = podas(arbol)
+print("el arbol crecido tiene %d hojas" % max(h for _, h, _ in todas))
+print("subarboles obtenibles podando: %d" % len(todas))
+print()
+print("  alfa   hojas      RSS    RSS + alfa*hojas")
+elegidos = []
+for alfa in [0.0, 0.5, 1.0, 2.0, 5.0, 20.0, 50.0, 80.0]:
+    mejor = min(todas, key=lambda s: (s[2] + alfa * s[1], s[1]))
+    elegidos.append((alfa, mejor))
+    print("%6.1f %7d %9.4f %12.4f" % (alfa, mejor[1], mejor[2], mejor[2] + alfa * mejor[1]))
+print()
+tam = [m[1] for _, m in elegidos]
+print("los tamanos no crecen al crecer alfa:", bool(all(a >= b for a, b in zip(tam, tam[1:]))))
+internos = [m[0] for _, m in elegidos]
+print("y cada subarbol esta contenido en el anterior:",
+      bool(all(b <= a for a, b in zip(internos, internos[1:]))))
+print()
+
+# Que subarboles llegan a ganar, y en que alfa cambia el ganador: es la
+# frontera inferior de los puntos (hojas, RSS), y sale sin probar ningun alfa.
+porhojas = {}
+for inter, h, r in todas:
+    if h not in porhojas or r < porhojas[h]:
+        porhojas[h] = r
+puntos = sorted(porhojas.items())
+
+def giro(o, a, b):
+    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+frontera = []
+for p in puntos:
+    while len(frontera) >= 2 and giro(frontera[-2], frontera[-1], p) <= 0:
+        frontera.pop()
+    frontera.append(p)
+
+print("subarboles que llegan a ser optimos para algun alfa:",
+      [h for h, _ in reversed(frontera)], "hojas")
+
+def hojas(h):
+    return "1 hoja" if h == 1 else "%d hojas" % h
+
+for (h0, r0), (h1, r1) in reversed(list(zip(frontera, frontera[1:]))):
+    print("   a partir de alfa = %7.4f, el de %s le gana al de %s"
+          % ((r0 - r1) / (h1 - h0), hojas(h0), hojas(h1)))
+print()
+print("con alfa = 0 gana el arbol entero; con alfa grande, la raiz sola")
+print("entre medias la sucesion es encajada, y se queda en 3 hojas en un tramo")
+print("largo: las 3 regiones que de verdad tienen los datos")
+```
+
+De los $26$ subárboles posibles, solo siete llegan a ganar alguna vez, y los valores de $\alpha$ donde cambia el ganador salen de la frontera inferior de los puntos $(\lvert T\rvert,\text{RSS})$ **sin probar ningún $\alpha$**. El tramo de $3$ hojas se extiende desde $\alpha=1{,}3777$ hasta $\alpha=76{,}8005$: los datos se generaron con tres tramos, y la poda los recupera en un intervalo ancho. Qué $\alpha$ elegir dentro de ese intervalo no lo dice el ajuste, sino la validación cruzada de la lección 6.
+
+## 4. Clasificación: tres formas de medir el desorden
+
+::: {.definicion}
+**Definición 12.6 (impureza).** Para un nodo con proporciones de clase $\hat{p}_{m1},\dots,\hat{p}_{mK}$, una **impureza** es una función $\phi$ de esas proporciones que vale $0$ cuando el nodo es puro. Con dos clases y $p=\hat{p}_{m1}$, las tres usuales son el error de clasificación, el [índice de Gini]{.g} y la [entropía]{.g}:
+$$E=\min(p,1-p),\qquad G=2p(1-p),\qquad D=-p\log_2 p-(1-p)\log_2(1-p).$$
+La impureza de un corte es la media de las de sus hijos, pesada por el tamaño de cada uno.
+:::
+
+::: {.proposicion}
+**Proposición 12.7 (qué medida distingue más).** Sea $\phi$ cóncava en $[0,1]$, y un corte que produce hijos con proporciones $p_I$, $p_D$ y pesos $w$, $1-w$. Entonces:
+
+(a) la impureza ponderada de los hijos nunca supera la del padre, es decir $\phi(wp_I+(1-w)p_D)\ge w\phi(p_I)+(1-w)\phi(p_D)$;
+
+(b) si $\phi$ es **estrictamente** cóncava —como $G$ y $D$—, la desigualdad es estricta salvo cuando $p_I=p_D$;
+
+(c) $E$ es lineal en cada mitad de $[0,1]$, así que existen cortes con $p_I\ne p_D$ y ganancia **exactamente cero** para $E$ y estrictamente positiva para $G$ y para $D$;
+
+(d) existen dos cortes del mismo nodo con **la misma** ganancia para $E$ y ganancias **distintas** para $G$ y para $D$, uno de ellos con un hijo puro y el otro sin ninguno.
+:::
+
+::: {.demostracion}
+*Demostración.* La parte (a) es la desigualdad de Jensen, y la clave es que la proporción del padre es exactamente la combinación convexa $p=wp_I+(1-w)p_D$: la impureza del padre se evalúa en esa combinación y la de los hijos es la misma combinación de los dos valores, que para una función cóncava queda por debajo. La parte (b) es el caso de igualdad de Jensen, que para una función estrictamente cóncava ocurre solo si los dos puntos coinciden.
+
+Para (c), si $p_I$ y $p_D$ están los dos en $[0,\tfrac12]$ entonces $E(p)=p$ en todo el segmento y $E(wp_I+(1-w)p_D)=wE(p_I)+(1-w)E(p_D)$ exactamente: la ganancia es nula aunque los hijos tengan proporciones distintas. Como $G$ y $D$ son estrictamente cóncavas, por (b) su ganancia en ese mismo corte es estrictamente positiva.
+
+Para (d) basta exhibir el par, y la celda lo calcula con fracciones exactas: un nodo de $800$ observaciones con $400$ de cada clase, partido en $(300,100)$ y $(100,300)$ por un lado, y en $(200,400)$ y $(200,0)$ por el otro. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+from fractions import Fraction as F
+from math import log
+import numpy as np
+
+def gini(p):
+    return 2 * p * (1 - p)
+
+def entropia(p):
+    p = float(p)
+    if p in (0.0, 1.0):
+        return 0.0
+    return -(p * log(p, 2) + (1 - p) * log(1 - p, 2))
+
+def error(p):
+    return min(p, 1 - p)
+
+# El nodo padre: 400 de cada clase.
+padre = (400, 400)
+# Dos cortes distintos, los dos con 800 observaciones repartidas.
+A = [(300, 100), (100, 300)]
+B = [(200, 400), (200, 0)]
+
+def resumen(nodos):
+    total = sum(a + b for a, b in nodos)
+    salida = {}
+    for nombre, f in [("error", error), ("gini", gini)]:
+        salida[nombre] = sum(F(a + b, total) * f(F(a, a + b)) for a, b in nodos)
+    salida["entropia"] = sum((a + b) / total * entropia(F(a, a + b)) for a, b in nodos)
+    return salida
+
+p0 = F(padre[0], sum(padre))
+print("el padre tiene %d de una clase y %d de la otra, o sea p = %s" % (padre[0], padre[1], p0))
+print("   error de clasificacion: %s" % error(p0))
+print("   indice de Gini        : %s" % gini(p0))
+print("   entropia              : %.4f" % entropia(p0))
+print()
+
+for nombre, corte in [("corte A", A), ("corte B", B)]:
+    r = resumen(corte)
+    print("%s -> hijos %s" % (nombre, corte))
+    print("   error ponderado : %s" % r["error"])
+    print("   Gini ponderado  : %s" % r["gini"])
+    print("   entropia        : %.4f" % r["entropia"])
+print()
+rA, rB = resumen(A), resumen(B)
+print("los dos cortes clasifican exactamente igual de bien:", bool(rA["error"] == rB["error"]))
+print("pero en Gini no empatan, y gana B:", bool(rB["gini"] < rA["gini"]))
+print("   Gini de A = %s   Gini de B = %s   diferencia = %s"
+      % (rA["gini"], rB["gini"], rA["gini"] - rB["gini"]))
+print("y en entropia tambien gana B:", bool(rB["entropia"] < rA["entropia"]))
+print("B deja un nodo PURO de 200 observaciones; A no deja ninguno")
+print()
+
+# La razon: el error de clasificacion es lineal a trozos, y las otras dos son
+# estrictamente concavas. Se comprueba que la ganancia nunca es negativa.
+rng = np.random.default_rng(8)
+peor = {"error": 0.0, "gini": 0.0, "entropia": 0.0}
+nulas = {"error": 0, "gini": 0, "entropia": 0}
+for _ in range(20000):
+    nI, nD = int(rng.integers(1, 400)), int(rng.integers(1, 400))
+    aI, aD = int(rng.integers(0, nI + 1)), int(rng.integers(0, nD + 1))
+    pI, pD = F(aI, nI), F(aD, nD)
+    w = F(nI, nI + nD)
+    pP = w * pI + (1 - w) * pD
+    for nombre, f in [("error", error), ("gini", gini)]:
+        g = f(pP) - (w * f(pI) + (1 - w) * f(pD))
+        peor[nombre] = min(peor[nombre], float(g))
+        nulas[nombre] += int(g == 0)
+    g = entropia(pP) - (float(w) * entropia(pI) + float(1 - w) * entropia(pD))
+    peor["entropia"] = min(peor["entropia"], g)
+    nulas["entropia"] += int(abs(g) < 1e-12)
+
+print("en 20000 cortes al azar, la ganancia nunca fue negativa:")
+for nombre in ["error", "gini", "entropia"]:
+    print("   %-9s ganancia minima >= 0: %-5s | cortes con ganancia nula: %d"
+          % (nombre, bool(peor[nombre] >= -1e-12), nulas[nombre]))
+print("el error de clasificacion se queda en cero muchisimas veces: es lineal a trozos")
+print("Gini y entropia solo se quedan en cero cuando los dos hijos tienen la misma p")
+```
+
+Los dos cortes aciertan en el mismo número de observaciones —el error ponderado vale $1/4$ en los dos—, pero el corte B deja un nodo **puro** de $200$ observaciones y el A no deja ninguno. Gini los separa: $3/8$ contra $1/3$, una diferencia de $1/24$ que el error de clasificación no ve. En $20\,000$ cortes al azar, el error se queda en ganancia nula más de la mitad de las veces y Gini solo $12$, que son los cortes con $p_I=p_D$.
+
+De ahí la regla del libro: **Gini o entropía para crecer**, porque distinguen entre cortes que el error empata; **error de clasificación para podar**, porque el objetivo final es acertar.
+
+```{=html}
+<div class="viz-impureza">
+  <div class="controles">
+    <label>p del hijo izquierdo <input id="im-a" type="range" min="0" max="1" step="0.01" value="0.15"> <span id="im-a-v">0.15</span></label>
+    <label>p del hijo derecho <input id="im-b" type="range" min="0" max="1" step="0.01" value="0.45"> <span id="im-b-v">0.45</span></label>
+    <label>Peso del izquierdo <input id="im-w" type="range" min="0.05" max="0.95" step="0.01" value="0.5"> <span id="im-w-v">0.50</span></label>
+    <label>Medida
+      <select id="im-f">
+        <option value="gini" selected>índice de Gini</option>
+        <option value="entropia">entropía</option>
+        <option value="error">error de clasificación</option>
+      </select>
+    </label>
+  </div>
+  <svg id="im-svg" viewBox="0 0 660 300" role="img" aria-label="La curva de impureza sobre un eje fijo de cero a uno, los dos hijos marcados sobre ella, la cuerda que los une y el segmento vertical que mide la ganancia del corte."></svg>
+  <p class="lectura" id="im-lectura"></p>
+</div>
+<style>
+.viz-impureza { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-impureza .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-impureza label { display: flex; align-items: center; gap: .4rem; }
+.viz-impureza input[type=range] { width: 130px; padding: 0; }
+.viz-impureza select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-impureza svg { width: 100%; height: auto; display: block; }
+.viz-impureza .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_C = "#0F6E68", C_N = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("im-svg"), lec = document.getElementById("im-lectura");
+  var ca = document.getElementById("im-a"), cb = document.getElementById("im-b"), cw = document.getElementById("im-w"), cf = document.getElementById("im-f");
+  var ea = document.getElementById("im-a-v"), eb = document.getElementById("im-b-v"), ew = document.getElementById("im-w-v");
+  // Marco anclado: p de 0 a 1 en horizontal, impureza de 0 a 1 en vertical, siempre.
+  var X0 = 56, XW = 560, Y0 = 30, YH = 200;
+
+  function fi(p, modo) {
+    if (modo === "gini") return 2 * p * (1 - p);
+    if (modo === "error") return Math.min(p, 1 - p);
+    if (p <= 0 || p >= 1) return 0;
+    return -(p * Math.log2(p) + (1 - p) * Math.log2(1 - p));
+  }
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var px = function (p) { return X0 + p * XW; };
+  var py = function (v) { return Y0 + (1 - v) * YH; };
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var a = +ca.value, b = +cb.value, w = +cw.value, modo = cf.value;
+    ea.textContent = a.toFixed(2); eb.textContent = b.toFixed(2); ew.textContent = w.toFixed(2);
+    var p = w * a + (1 - w) * b;
+    var hijos = w * fi(a, modo) + (1 - w) * fi(b, modo), padre = fi(p, modo);
+
+    var t;
+    for (t = 0; t <= 1.0001; t += 0.25) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(t).toFixed(1) + " L" + (X0 + XW) + " " + py(t).toFixed(1),
+        stroke: C_L, "stroke-width": 1, fill: "none", opacity: .5 }));
+      svg.appendChild(el("text", { x: X0 - 9, y: py(t) + 4, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .65 }, t.toFixed(2)));
+      svg.appendChild(el("text", { x: px(t), y: Y0 + YH + 17, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .65 }, t.toFixed(2)));
+    }
+    var d = "", q;
+    for (q = 0; q <= 1.0001; q += 0.005) d += (d ? " L" : "M") + px(q).toFixed(1) + " " + py(fi(q, modo)).toFixed(1);
+    svg.appendChild(el("path", { d: d, stroke: C_C, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("text", { x: X0, y: 18, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "impureza de un nodo según su proporción p"));
+
+    svg.appendChild(el("path", { d: "M" + px(a).toFixed(1) + " " + py(fi(a, modo)).toFixed(1) + " L" + px(b).toFixed(1) + " " + py(fi(b, modo)).toFixed(1),
+      stroke: C_N, "stroke-width": 1.6, "stroke-dasharray": "5 3", fill: "none" }));
+    [[a, "izquierdo"], [b, "derecho"]].forEach(function (h) {
+      svg.appendChild(el("circle", { cx: px(h[0]).toFixed(1), cy: py(fi(h[0], modo)).toFixed(1), r: 4.2, fill: C_C }));
+    });
+    svg.appendChild(el("circle", { cx: px(p).toFixed(1), cy: py(padre).toFixed(1), r: 4.6, fill: "none", stroke: C_G, "stroke-width": 2 }));
+    svg.appendChild(el("circle", { cx: px(p).toFixed(1), cy: py(hijos).toFixed(1), r: 3.4, fill: C_N }));
+    svg.appendChild(el("path", { d: "M" + px(p).toFixed(1) + " " + py(padre).toFixed(1) + " L" + px(p).toFixed(1) + " " + py(hijos).toFixed(1),
+      stroke: C_G, "stroke-width": 3, fill: "none" }));
+
+    var gan = padre - hijos;
+    lec.innerHTML = "El padre hereda p = <strong>" + p.toFixed(3) + "</strong>, la combinación de los dos hijos con peso " +
+      w.toFixed(2) + ". Su impureza vale <strong>" + padre.toFixed(4) + "</strong> y la media de los hijos <strong>" +
+      hijos.toFixed(4) + "</strong>: la ganancia es el segmento vertical, <strong>" + gan.toFixed(4) + "</strong>. " +
+      (modo === "error"
+        ? (Math.abs(gan) < 1e-9
+            ? "Con los dos hijos del mismo lado de 0,5, la cuerda cae SOBRE la recta y la ganancia es exactamente cero (Proposición 12.7c), aunque los hijos sean distintos."
+            : "El error de clasificación es lineal a trozos: solo gana algo cuando los hijos quedan a lados distintos de 0,5.")
+        : "La curva es estrictamente cóncava, así que la cuerda queda por debajo y la ganancia es positiva siempre que los dos hijos difieran (Proposición 12.7b).");
+  }
+
+  [ca, cb, cw].forEach(function (c) { c.addEventListener("input", dibujar); });
+  cf.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Por qué el árbol se sale del marco de la lección 11
+
+::: {.proposicion}
+**Proposición 12.8 (el árbol no es un suavizador lineal).** Con la partición **fijada de antemano**, el ajuste de un árbol es $Hy$ con $H$ simétrica e idempotente y $\operatorname{tr}(H)=J$. Con la partición elegida por el algoritmo a partir de $y$, el ajuste **no** es lineal en $y$: existen $y_1$, $y_2$ tales que $\hat{f}(y_1+y_2)\ne\hat{f}(y_1)+\hat{f}(y_2)$. En consecuencia, la traza de cualquier matriz construida alimentando el método con los vectores unitarios no cuenta grados de libertad.
+:::
+
+::: {.demostracion}
+*Demostración.* Con la partición fija, predecir la media de cada región es promediar dentro de bloques: $H$ tiene entradas $1/\lvert R_m\rvert$ en el bloque de $R_m$ y ceros fuera. Esa matriz es simétrica, cumple $H^2=H$ —promediar dos veces es promediar una— y su traza suma $\lvert R_m\rvert\cdot(1/\lvert R_m\rvert)=1$ por región, es decir $J$. Hasta aquí es un suavizador lineal en el sentido de la Definición 11.1.
+
+Lo que rompe la linealidad es el paso previo. El umbral elegido es el que maximiza la caída de la Proposición 12.2b, y esa caída depende de $y$; dos respuestas que llevan a umbrales distintos producen particiones distintas, y la suma de los ajustes se calcula entonces sobre **tres** particiones diferentes. Basta exhibir un caso, y la celda lo hace. Como $\hat{f}$ no es lineal, no existe ninguna matriz $S$ independiente de $y$ con $\hat{f}(y)=Sy$, y en particular la matriz que se obtiene aplicando el método a los vectores unitarios no representa al método: su traza es un número sin la interpretación de la Definición 11.1. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def rss(y):
+    return float(((y - y.mean()) ** 2).sum()) if y.size else 0.0
+
+def mejor_corte(x, y):
+    v = np.unique(x)
+    mejor, t_mejor, base = 0.0, None, rss(y)
+    for t in (v[:-1] + v[1:]) / 2.0:
+        iz = x <= t
+        g = base - rss(y[iz]) - rss(y[~iz])
+        if g > mejor + 1e-12:
+            mejor, t_mejor = g, float(t)
+    return t_mejor
+
+def ajusta(x, y, prof):
+    """El vector ajustado: la media de y en la region de cada punto."""
+    salida = np.zeros(len(y))
+    def baja(idx, prof):
+        yy = y[idx]
+        if prof == 0 or yy.size < 6:
+            salida[idx] = yy.mean(); return
+        t = mejor_corte(x[idx], yy)
+        if t is None:
+            salida[idx] = yy.mean(); return
+        iz = x[idx] <= t
+        baja(idx[iz], prof - 1); baja(idx[~iz], prof - 1)
+    baja(np.arange(len(y)), prof)
+    return salida
+
+rng = np.random.default_rng(12)
+n = 60
+x = np.sort(rng.uniform(0, 10, n))
+y = np.where(x < 4, 2.0, np.where(x < 7, 5.0, 1.0)) + rng.normal(0, 0.6, n)
+
+# 1. Con la particion YA FIJADA, el ajuste si es lineal: es una proyeccion.
+region = np.digitize(x, [4.0, 7.0])
+J = len(np.unique(region))
+H = np.zeros((n, n))
+for r in np.unique(region):
+    m = region == r
+    H[np.ix_(m, m)] = 1.0 / m.sum()
+print("con la particion fijada de antemano hay %d regiones" % J)
+print("H es simetrica:", bool(np.allclose(H, H.T, atol=1e-12)))
+print("H es idempotente (es una proyeccion):", bool(np.allclose(H @ H, H, atol=1e-12)))
+print("traza(H) = %.6f, que es el numero de regiones" % float(np.trace(H)))
+otra = rng.normal(0, 1, n)
+medias = np.array([otra[region == r].mean() for r in region])
+print("y H sirve para cualquier respuesta:", bool(np.allclose(H @ otra, medias, atol=1e-12)))
+print()
+
+# 2. El arbol completo elige sus cortes MIRANDO y, y entonces deja de ser lineal.
+M = np.zeros((n, n))
+for i in range(n):
+    e = np.zeros(n); e[i] = 1.0
+    M[:, i] = ajusta(x, e, 2)
+print("se alimenta el arbol con los %d vectores unitarios y se arma su 'matriz'" % n)
+print("traza de esa 'matriz': %.6f" % float(np.trace(M)))
+pred = ajusta(x, y, 2)
+print("pero M no reproduce el ajuste del arbol sobre y:")
+print("   diferencia maxima entre M @ y y el arbol: %.4f" % float(np.abs(M @ y - pred).max()))
+print("   norma del ajuste del arbol: %.4f" % float(np.linalg.norm(pred)))
+print()
+
+# 3. La linealidad se rompe con dos respuestas y su suma.
+y1 = np.where(x < 5, 1.0, 0.0)
+y2 = np.where((x > 2) & (x < 8), 1.0, 0.0)
+f1, f2, f12 = ajusta(x, y1, 1), ajusta(x, y2, 1), ajusta(x, y1 + y2, 1)
+print("un arbol de un solo corte sobre y1, sobre y2 y sobre y1 + y2:")
+print("   corte que elige con y1     : x <= %.4f" % mejor_corte(x, y1))
+print("   corte que elige con y2     : x <= %.4f" % mejor_corte(x, y2))
+print("   corte que elige con y1 + y2: x <= %.4f" % mejor_corte(x, y1 + y2))
+print("   f(y1) + f(y2) igual a f(y1 + y2):", bool(np.allclose(f1 + f2, f12, atol=1e-10)))
+print("   diferencia maxima: %.4f" % float(np.abs(f1 + f2 - f12).max()))
+print()
+print("el ajuste del arbol es una proyeccion DESPUES de elegir la particion,")
+print("y la particion se elige con y: por eso su traza no cuenta parametros")
+```
+
+La traza de esa matriz falsa vale $54{,}566667$ para un árbol de cuatro hojas. Tomarla por grados de libertad diría que el árbol gasta $54$ parámetros sobre $60$ observaciones, y la matriz ni siquiera reproduce la predicción que dice representar: se equivoca hasta en $2{,}5745$ sobre un ajuste de norma $21{,}9145$.
+
+Esto explica también la **varianza** del método, que la lección 13 va a atacar. Un cambio pequeño en $y$ puede mover un umbral, y mover un umbral reordena todo lo que cuelga debajo: el ajuste depende de los datos de una forma discontinua que ningún suavizador lineal tiene.
+
+## Ejercicios
+
+### Ejercicio 1, La caída de un corte
+
+Un nodo con $100$ observaciones se parte en $30$ y $70$, con medias $8$ y $3$. Calcular la caída del RSS con la Proposición 12.2b.
+
+```{pyodide}
+#| exercise: ex_caida
+nI, nD = 30, 70
+mI, mD = 8.0, 3.0
+
+caida = ______
+
+print(round(caida, 4))
+round(caida, 4)
+```
+
+::: {.hint exercise="ex_caida"}
+La fórmula es $\frac{n_I n_D}{n_I+n_D}(\bar{y}_I-\bar{y}_D)^2$. El peso vale $30\cdot70/100$.
+:::
+
+::: {.solution exercise="ex_caida"}
+```{pyodide}
+nI, nD = 30, 70
+mI, mD = 8.0, 3.0
+
+caida = nI * nD / (nI + nD) * (mI - mD) ** 2
+
+print(round(caida, 4))
+round(caida, 4)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_caida
+#| check: true
+if abs(result - 525.0) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: 21 × 25 = 525. Un corte que dejara 1 y 99 con esas mismas medias ganaría solo 24,75, y por eso el algoritmo prefiere los cortes equilibrados.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 525.0 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Dos cortes que el error no distingue
+
+Un nodo de $800$ observaciones con $400$ de cada clase se parte en dos hijos de $600$ y $200$, con $200$ de la primera clase en el primero y $200$ en el segundo. Calcular el índice de Gini ponderado.
+
+```{pyodide}
+#| exercise: ex_gini
+from fractions import Fraction as F
+
+def gini(p):
+    return 2 * p * (1 - p)
+
+izquierdo = (F(200, 600), F(600, 800))
+derecho = (F(200, 200), F(200, 800))
+
+ponderado = ______
+
+print(ponderado)
+float(ponderado)
+```
+
+::: {.hint exercise="ex_gini"}
+Cada par es (proporción de la clase, peso del nodo). El segundo hijo es puro, así que su Gini vale $0$.
+:::
+
+::: {.solution exercise="ex_gini"}
+```{pyodide}
+from fractions import Fraction as F
+
+def gini(p):
+    return 2 * p * (1 - p)
+
+izquierdo = (F(200, 600), F(600, 800))
+derecho = (F(200, 200), F(200, 800))
+
+ponderado = sum(peso * gini(p) for p, peso in [izquierdo, derecho])
+
+print(ponderado)
+float(ponderado)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_gini
+#| check: true
+if abs(result - 1/3) < 1e-9:
+    feedback = {"correct": True, "message": "Correcto: 1/3, contra 3/8 del otro corte de la sección 4. Los dos tienen el mismo error de clasificación, y Gini prefiere el que deja un nodo puro.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.333333 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 12**:
+
+1. Escribir la búsqueda del mejor corte con sumas acumuladas, de modo que recorra los $n-1$ umbrales en una sola pasada después de ordenar, y comprobar que devuelve exactamente el mismo corte que la búsqueda directa de la sección 1 en cien conjuntos distintos. Anotar cuántas operaciones hace cada versión, no cuántos segundos tarda.
+2. Elegir el precio de una hoja por validación cruzada de diez pliegues sobre el camino de podas de la sección 3, en lugar de mirar el RSS de entrenamiento. Comprobar que el tamaño elegido cae dentro del tramo de tres hojas y anotar qué pasa con el tamaño elegido cuando se sube el ruido de los datos.
+3. Repetir el árbol de la sección 5 quitando una sola observación cada vez y registrar el primer umbral elegido en las sesenta versiones. Anotar en `50-Errores/` cuántos umbrales distintos aparecen, y por qué esa inestabilidad es exactamente lo que la lección 13 va a promediar.
+
+## Del libro
+
+*An Introduction to Statistical Learning with Applications in Python* trata este material en §8.1 *The Basics of Decision Trees*, con los árboles de regresión en §8.1.1 *Regression Trees*, los de clasificación en §8.1.2 *Classification Trees*, la comparación con los modelos lineales en §8.1.3 *Trees Versus Linear Models* y el balance del método en §8.1.4 *Advantages and Disadvantages of Trees*.
+
+El orden de esta página es el del libro con una inversión deliberada: el libro presenta el algoritmo y después comenta que la caída del RSS guía los cortes, y aquí la caída se calcula primero —Proposición 12.2b— porque de esa fórmula salen todas las preferencias del método, incluida la de los cortes equilibrados.
+
+**Preguntas para leer §8.1 con lápiz:**
+
+1. §8.1.1 describe el crecimiento del árbol y dice que parar cuando la caída es pequeña es «miope». Con la Proposición 12.3, ¿cuál es el ejemplo mínimo que lo demuestra, y por qué no basta con bajar el umbral de parada?
+2. §8.1.2 justifica usar Gini o entropía para crecer y el error de clasificación para podar. Con la Proposición 12.7, ¿qué propiedad exacta de las tres funciones es la que decide ese reparto de papeles?
+3. §8.1.3 compara el árbol con el modelo lineal según la forma de la frontera verdadera. Con la Proposición 12.8, ¿qué le pasa al recuento de grados de libertad cuando se intenta comparar los dos métodos con el mismo criterio de la lección 7?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/arboles-de-decision.md`, enlazada a [[suavizado-y-gams]], [[validacion-cruzada]] y [[seleccion-de-subconjuntos]]. Conviene rehacer a mano la Proposición 12.2b: sale en cuatro líneas y deja claro de una vez que el algoritmo no busca «cortes donde cambie la tendencia» sino **cortes con medias muy distintas y lados equilibrados**, que no es lo mismo.
+
+```
+¿Qué es un árbol de regresión?::Una partición en regiones y una constante en cada una
+¿Qué constante minimiza el RSS en una región?::La media de la respuesta ahí
+¿Cuánto baja el RSS al cortar?::n_I·n_D/(n_I+n_D) veces (media_I − media_D)²
+¿Qué cortes prefiere entonces?::Los de medias muy distintas y lados equilibrados
+¿Cuántos cortes hay que probar por variable?::v − 1, con v los valores distintos
+¿Por qué no se para cuando ningún corte mejora?::Porque puede haber estructura que solo aparece dos niveles más abajo
+¿Cuál es el ejemplo mínimo?::Respuesta en diagonal con dos variables binarias: toda caída es cero
+¿Qué se hace en su lugar?::Crecer de más y podar
+¿Cuál es el criterio de poda?::RSS más alfa por el número de hojas
+¿Qué pasa con el tamaño al subir alfa?::No crece nunca, y la sucesión de podas es encajada
+¿Cómo se elige alfa?::Por validación cruzada, no por el RSS de entrenamiento
+¿Cuáles son las tres impurezas?::Error de clasificación, índice de Gini y entropía
+¿Por qué se crece con Gini o entropía?::Porque son estrictamente cóncavas y distinguen cortes que el error empata
+¿Cuándo da el error ganancia cero?::Siempre que los dos hijos caen del mismo lado de 0,5
+¿Es un árbol un suavizador lineal?::No: elige su partición mirando y
+¿Y con la partición fija?::Sí, es una proyección con traza igual al número de regiones
+¿Qué mide la traza de la matriz de los vectores unitarios?::Nada: esa matriz ni siquiera reproduce la predicción
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 12.2 se demuestra completando cuadrados y sustituyendo la media global por la combinación de las dos medias; se comprueba en tres constantes, donde la descomposición coincide a $10^{-10}$, y en los $59$ cortes posibles de un conjunto de $60$ puntos, donde la caída del RSS y la fórmula coinciden a $10^{-10}$. La Proposición 12.3 se demuestra exhibiendo el conjunto de la diagonal, y se comprueba: los dos cortes posibles tienen caída $0{,}0000$ y el árbol de dos niveles baja el RSS de $16$ a $0$. La Proposición 12.5 **es la Proposición 7.5 de Machine Learning 7** trasladada a hojas, y su demostración —sumar las dos desigualdades de optimalidad— se repite aquí por ser de tres líneas; se comprueba enumerando los $26$ subárboles de un árbol de $8$ hojas, con tamaños que no crecen y subárboles encajados, y la sucesión de ganadores se obtiene de la frontera inferior de los puntos $(\lvert T\rvert,\text{RSS})$ sin probar ningún $\alpha$. La Proposición 12.7 se demuestra por la desigualdad de Jensen y su caso de igualdad, y su parte (d) exhibiendo el par de cortes; se comprueba con aritmética de fracciones exactas en el ejemplo de $800$ observaciones —error $1/4$ en los dos cortes, Gini $3/8$ contra $1/3$, diferencia $1/24$— y en $20\,000$ cortes al azar donde ninguna ganancia es negativa y el error se anula $10\,174$ veces frente a $12$ de Gini. La Proposición 12.8 se demuestra construyendo $H$ por bloques y exhibiendo un contraejemplo a la aditividad; se comprueba con $H$ simétrica e idempotente de traza $3$, y con un árbol cuya «matriz» tiene traza $54{,}566667$ y no reproduce su propia predicción. Los dos visuales recalculan estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** La Definición 11.1 de suavizador lineal y la lectura de la traza como grados de libertad efectivos son de Machine Learning 11, y esta página las usa para demostrar que el árbol queda fuera. El criterio «ajuste más precio por pieza» es el de la Definición 7.3 y la Proposición 7.4 de Machine Learning 7, con hojas en lugar de coeficientes, y la monotonía del tamaño es literalmente su Proposición 7.5. La validación cruzada para elegir $\alpha$ es de Machine Learning 6. La desigualdad de Jensen y la concavidad se toman como conocidas.
+
+**Lo que se enuncia sin demostrar.** Que la sucesión de subárboles óptimos de $T_0$ al crecer $\alpha$ está **encajada** —cada uno contenido en el anterior— se comprueba aquí por enumeración completa sobre un árbol concreto de ocho hojas, y **no se demuestra en general**: la demostración es de Breiman y compañía y excede el alcance de la página. Lo que sí se demuestra en general es que el tamaño no crece, que es la Proposición 12.5. Que el problema de encontrar el árbol de RSS mínimo con un número dado de hojas es computacionalmente intratable se menciona como razón del algoritmo voraz, sin demostrarlo.
+
+**Lo que viene de los libros.**
+
+- [*An Introduction to Statistical Learning with Applications in Python*](https://www.statlearning.com/) (James, Witten, Hastie, Tibshirani, Taylor; Springer, 2023), §8.1 *The Basics of Decision Trees* con sus cuatro subsecciones — citadas por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La Proposición 12.2b con su factor $n_In_D/(n_I+n_D)$ puesta antes que el algoritmo, que convierte «el árbol busca cortes buenos» en una preferencia calculable. El conjunto de la diagonal como demostración mínima de la Proposición 12.3, con las dos caídas nulas impresas. El cálculo de la sucesión de podas por la **frontera inferior** de los puntos $(\lvert T\rvert,\text{RSS})$, que da los $\alpha$ de cambio exactos en lugar de tantearlos. Y la continuación explícita del contraste de la lección 11: alimentar el árbol con los vectores unitarios, construir su «matriz» y mostrar que no reproduce su propia predicción, con lo que la traza de $54{,}566667$ queda como lo que es.
+
+[Índice de ISLP verificado el 13-09-2026 contra los marcadores del PDF oficial.]{.sello}
+:::
