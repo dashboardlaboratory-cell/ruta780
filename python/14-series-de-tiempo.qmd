@@ -1,0 +1,595 @@
+---
+title: "Series de tiempo en pandas"
+subtitle: "Python · Lección 14"
+nivel: L4
+modulo: python
+fase: F1
+prereqs: [python/13-visualizacion, python/12-groupby-y-agregacion]
+siguientes: []
+libro: "McKinney 3E §11.1 Date and Time Data Types and Tools · §11.2 Time Series Basics · §11.3 Date Ranges, Frequencies, and Shifting · §11.4 Time Zone Handling · §11.6 Resampling and Frequency Conversion · §11.7 Moving Window Functions"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - pandas
+---
+
+::: {.meta-leccion data-leccion="python/14-series-de-tiempo"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F1]{.item}
+[**Libro** McKinney cap. 11]{.item}
+[**Prereqs** [Visualización](13-visualizacion.qmd) · [Groupby y agregación](12-groupby-y-agregacion.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Describir el [remuestreo]{.g} como el `groupby` de la lección 12 con los intervalos de tiempo como clave, y predecir cuántas filas devuelve.
+2. Distinguir bajar de frecuencia, que agrega, de subir de frecuencia, que **no produce datos**.
+3. Calcular el retraso exacto de una [ventana móvil]{.g} que termina en el punto, y saber qué lo elimina.
+4. Reconocer que una media móvil es un suavizador lineal, y contar sus grados de libertad.
+5. Explicar por qué el [desplazamiento]{.g} deja el índice intacto, y qué falla si el índice no está ordenado.
+6. Decir por qué una [hora ambigua]{.g} no se puede convertir sin una decisión, y cuántas horas tiene un día con cambio de hora.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 12**: la partición y la agregación. Remuestrear **es** agrupar, con los intervalos de tiempo como clave, y todo lo demostrado allí se aplica sin cambios.
+- **Python 13**: el gráfico como objeto verificable, que es como se comprueba que una serie remuestreada dice lo que se cree.
+- **Python 9**: el índice y la alineación por etiqueta, que es lo que hace que desplazar valores no mueva las fechas.
+- **Machine Learning 11**: los suavizadores lineales. La media móvil es el más simple de todos, y aquí se comprueba que lo es.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 16**: la anatomía de un proyecto de datos, donde las series con marca temporal son el caso normal.
+- **Series de tiempo 1 a 11**: el módulo entero, que da por sabida esta mecánica y se ocupa de los modelos.
+- **Machine Learning 6**: la validación cruzada, que **no** se aplica tal cual aquí porque partir al azar rompe el orden temporal.
+- **Estadística 15**: los datos faltantes, que en una serie temporal casi nunca faltan al azar.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | El número de observaciones de la serie |
+| $k$ | ka | El tamaño de la ventana móvil |
+| $b$ | be | La pendiente de una recta, por unidad de tiempo |
+| $L$ | ele | La matriz del suavizador de media móvil |
+| $\text{MS}$ | eme ese | El alias de frecuencia «inicio de mes» |
+:::
+
+## 1. Remuestrear es agrupar
+
+::: {.definicion}
+**Definición 14.1 (remuestreo).** Remuestrear una serie es cambiar su [frecuencia]{.g}. **Bajar** de frecuencia reparte las observaciones en intervalos y aplica una agregación a cada uno: es exactamente el `groupby` de la lección 12, con el intervalo como clave. **Subir** de frecuencia crea posiciones nuevas en el índice, que no corresponden a ninguna observación.
+:::
+
+::: {.proposicion}
+**Proposición 14.2 (lo que se conserva y lo que no).** Al bajar de frecuencia con una agregación aditiva, la suma de los agregados es la suma de la serie, y la suma de los conteos es $n$: nada se pierde ni se duplica, porque los intervalos parten las observaciones. La etiqueta de cada grupo es **el borde del intervalo**, no un resumen de su contenido.
+
+Al subir de frecuencia, las posiciones nuevas quedan **faltantes**. Cualquier valor que aparezca en ellas es el resultado de una regla de relleno, que es una decisión de quien escribe el código y no un dato.
+:::
+
+::: {.demostracion}
+*Demostración.* Los intervalos de una frecuencia son disjuntos y cubren el recorrido, así que definen una partición del conjunto de observaciones; la suma sobre una partición es la suma total y los cardinales suman el total, que es la Proposición 12.3 con los intervalos en el papel de los grupos. La etiqueta se elige por convención como uno de los bordes, y por tanto no depende de los datos del intervalo.
+
+Al subir de frecuencia, el índice nuevo contiene instantes para los que no hay observación. Una función que asigne valores a esas posiciones lo hace a partir de las observaciones vecinas según una regla fijada de antemano; el valor resultante es función de esa regla, y con otra regla sale otro. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+import pandas as pd
+
+# Remuestrear es agrupar por intervalo: la misma particion de la leccion 12.
+idx = pd.date_range("2024-01-01", periods=90, freq="D")
+s = pd.Series(np.arange(90, dtype=float), index=idx)
+
+por_mes = s.resample("MS").sum()
+print("dias:", len(s), "| meses que salen:", len(por_mes))
+print("suma por mes:", [int(v) for v in por_mes])
+print("los conteos suman los dias:", int(s.resample("MS").count().sum()) == len(s))
+print("y las sumas suman el total:", abs(float(por_mes.sum()) - float(s.sum())) < 1e-9)
+print()
+
+# Cada etiqueta del resultado es el borde IZQUIERDO del intervalo, no su contenido.
+print("etiquetas del resultado:", [str(d.date()) for d in por_mes.index])
+print("dias de enero: %d, de febrero: %d, de marzo: %d"
+      % tuple(int(v) for v in s.resample("MS").count()))
+print()
+
+# Bajar de frecuencia agrega; subir de frecuencia NO inventa datos.
+mensual = s.resample("MS").mean()
+diario = mensual.resample("D").asfreq()
+print("al subir a diario con asfreq, valores presentes: %d de %d"
+      % (int(diario.notna().sum()), len(diario)))
+print("los huecos son faltantes, no interpolaciones:", int(diario.isna().sum()))
+relleno = mensual.resample("D").ffill()
+print("con ffill se rellenan hacia adelante: faltantes", int(relleno.isna().sum()))
+print("pero el valor repetido NO es un dato medido, es una decision:",
+      bool((relleno.iloc[1] == relleno.iloc[0])))
+```
+
+Los conteos suman los $90$ días y las sumas suman el total: la partición no pierde nada. Y febrero de $2024$ tiene $29$ días, que es lo que debe tener.
+
+La segunda mitad es la que cuesta más cara. Al subir de mensual a diario quedan $58$ faltantes de $61$ posiciones, porque solo había tres observaciones. Rellenando hacia adelante los faltantes desaparecen, y con ellos desaparece la señal de que ahí no se midió nada.
+
+**Modo de falla.** Una serie diaria construida a partir de datos mensuales, que después se promedia o se grafica como si fuera diaria. Los $58$ valores repetidos pesan igual que los tres medidos en cualquier cálculo posterior.
+
+**Diagnóstico.** Contar valores distintos por tramo, o llevar una columna con el número de observaciones que hay detrás de cada valor —que es lo que devuelve la agregación con la función que cuenta, y que la lección 12 recomendaba por la misma razón.
+
+**Remedio.** Rellenar solo cuando la regla tenga sentido en el dominio y dejarlo escrito. Si el valor mensual es un total, repartirlo entre los días cambia su significado; si es un nivel, repetirlo puede estar bien. La decisión no la puede tomar la librería.
+
+## 2. La media móvil va por detrás
+
+::: {.proposicion}
+**Proposición 14.3 (el retraso exacto de una ventana que termina en el punto).** Sea una serie que sigue una recta de pendiente $b$ por paso, y sea la media móvil de ventana $k$ que termina en cada punto. Entonces, allí donde está definida,
+$$\text{recta}(t)-\text{media móvil}(t)=b\,\frac{k-1}{2},$$
+un retraso constante que no depende de $t$. La media móvil deja $k-1$ faltantes al principio. Centrando la ventana el retraso es cero y los faltantes se reparten, $\lfloor k/2\rfloor$ a cada lado.
+:::
+
+::: {.demostracion}
+*Demostración.* La media de los valores de una recta en los instantes $t-k+1,\dots,t$ es el valor de la recta en la media de esos instantes, porque una función afín conmuta con la media. Esa media de instantes es $t-(k-1)/2$. Evaluando la recta,
+$$\text{media móvil}(t)=\text{recta}\Big(t-\tfrac{k-1}{2}\Big)=\text{recta}(t)-b\,\tfrac{k-1}{2}.$$
+Los primeros $k-1$ puntos no tienen ventana completa, de donde los faltantes. Si la ventana se centra, la media de los instantes es $t$ y la diferencia se anula. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+import pandas as pd
+
+n, k, b = 200, 11, 0.5
+t = np.arange(n, dtype=float)
+recta = pd.Series(3.0 + b * t)
+
+movil = recta.rolling(k).mean()
+print("ventana k = %d sobre una recta de pendiente %.1f" % (k, b))
+print("faltantes al principio: %d = k - 1" % int(movil.isna().sum()))
+print("el primer valor definido esta en la posicion %d" % int(movil.first_valid_index()))
+print()
+
+# El retraso es EXACTO: la media de las ultimas k alturas de una recta
+# se corresponde con el punto medio de la ventana, (k-1)/2 pasos atras.
+pos = 150
+print("valor de la recta en %d      : %.4f" % (pos, float(recta.iloc[pos])))
+print("media movil en %d            : %.4f" % (pos, float(movil.iloc[pos])))
+print("diferencia                   : %.4f" % (float(recta.iloc[pos]) - float(movil.iloc[pos])))
+print("b*(k-1)/2 = %.1f*%d/2        : %.4f" % (b, k - 1, b * (k - 1) / 2))
+print("coinciden a 1e-10:", abs((float(recta.iloc[pos]) - float(movil.iloc[pos])) - b * (k - 1) / 2) < 1e-10)
+print()
+
+# Centrar la ventana quita el retraso por completo.
+centrada = recta.rolling(k, center=True).mean()
+print("con center=True la diferencia en %d es cero:" % pos,
+      abs(float(recta.iloc[pos]) - float(centrada.iloc[pos])) < 1e-10)
+print("faltantes: %d al principio y %d al final" % (int(centrada.iloc[:k].isna().sum()),
+                                                    int(centrada.iloc[-k:].isna().sum())))
+print("centrar reparte los huecos en vez de amontonarlos delante")
+print()
+
+# La media movil es un suavizador lineal, como los de Machine Learning 11.
+y1 = pd.Series(np.sin(t / 10))
+y2 = pd.Series(np.exp(-t / 50))
+L = np.zeros((n, n))
+for j in range(n):
+    e = pd.Series(np.zeros(n)); e.iloc[j] = 1.0
+    L[:, j] = e.rolling(k, center=True).mean().fillna(0.0).values
+print("la matriz L reproduce el suavizado de y1:",
+      bool(np.allclose(L @ y1.values, y1.rolling(k, center=True).mean().fillna(0.0).values, atol=1e-12)))
+print("y la MISMA L sirve para y2:",
+      bool(np.allclose(L @ y2.values, y2.rolling(k, center=True).mean().fillna(0.0).values, atol=1e-12)))
+print("grados de libertad, traza(L): %.4f | (n - k + 1)/k = %.4f"
+      % (float(np.trace(L)), (n - k + 1) / k))
+```
+
+El retraso medido es $2{,}5$, que es $0{,}5\times 10/2$ exactamente, y centrando la ventana desaparece. La última parte enlaza con Machine Learning 11: **la media móvil centrada es un suavizador lineal**, su matriz se obtiene alimentándola con vectores unitarios, y la misma matriz sirve para dos respuestas distintas. Sus grados de libertad son $\operatorname{tr}(L)=(n-k+1)/k$, que es la misma cuenta que los $n/k$ del suavizador de $k$ vecinos, descontando los bordes sin ventana completa.
+
+**Modo de falla.** Un indicador construido con una media móvil que «detecta» un cambio de tendencia con $ (k-1)/2 $ periodos de retraso, y que se compara con el valor del mismo día como si fueran contemporáneos. Con una ventana de $11$ días, eso son cinco días de desfase sistemático.
+
+**Diagnóstico.** Aplicar la media móvil a una recta y medir la diferencia, como hace la celda. Si sale distinta de cero, la ventana no está centrada.
+
+**Remedio.** Centrar cuando se describe el pasado, y **no** centrar cuando se predice, porque una ventana centrada usa valores futuros. Las dos son correctas; lo que no es correcto es usar la segunda creyendo que es la primera.
+
+```{=html}
+<div class="viz-retraso">
+  <div class="controles">
+    <label>Ventana k <input id="re-k" type="range" min="3" max="41" step="2" value="11"> <span id="re-k-v">11</span></label>
+    <label>Centrada <input id="re-c" type="checkbox"></label>
+  </div>
+  <svg id="re-svg" viewBox="0 0 660 300" role="img" aria-label="Una serie con tendencia y su media móvil, sobre ejes fijos, con la distancia vertical entre las dos marcada donde el retraso es constante."></svg>
+  <p class="lectura" id="re-lectura"></p>
+</div>
+<style>
+.viz-retraso { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-retraso .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-retraso label { display: flex; align-items: center; gap: .4rem; }
+.viz-retraso input[type=range] { width: 160px; padding: 0; }
+.viz-retraso svg { width: 100%; height: auto; display: block; }
+.viz-retraso .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_S = "#7a7f8a", C_M = "#0F6E68", C_R = "#B4342E";
+  var svg = document.getElementById("re-svg"), lec = document.getElementById("re-lectura");
+  var ck = document.getElementById("re-k"), ek = document.getElementById("re-k-v");
+  var cc = document.getElementById("re-c");
+  var N = 120, B = 0.5, X0 = 46, XW = 578, Y0 = 26, YH = 232, VMAX = 70;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(i) { return X0 + i / (N - 1) * XW; }
+  function py(v) { return Y0 + (VMAX - v) / VMAX * YH; }
+  // la serie: recta mas una ondulacion fija, sin sorteo
+  function serie(i) { return 3 + B * i + 3 * Math.sin(i / 7); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var k = +ck.value, cen = cc.checked;
+    ek.textContent = String(k);
+
+    for (var t = 0; t <= VMAX; t += 20) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(t).toFixed(1) + " L" + (X0 + XW) + " " + py(t).toFixed(1),
+        stroke: C_L, "stroke-width": 1, fill: "none", opacity: .45 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(t) + 4, "text-anchor": "end", "font-size": 10.5,
+        fill: C_T, opacity: .65 }, String(t)));
+    }
+    svg.appendChild(el("text", { x: X0, y: 16, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "la serie (gris) y su media móvil (verde)"));
+
+    var s = "";
+    for (var i = 0; i < N; i++) s += (i ? " L" : "M") + px(i).toFixed(1) + " " + py(serie(i)).toFixed(1);
+    svg.appendChild(el("path", { d: s, stroke: C_S, "stroke-width": 1.6, fill: "none", opacity: .8 }));
+
+    var desp = cen ? (k - 1) / 2 : 0, m = "", primero = null;
+    for (var i2 = 0; i2 < N; i2++) {
+      var ini = i2 - k + 1 + desp, fin = i2 + desp;
+      if (ini < 0 || fin >= N) continue;
+      var acc = 0;
+      for (var j = ini; j <= fin; j++) acc += serie(j);
+      var v = acc / k;
+      if (primero === null) primero = i2;
+      m += (m ? " L" : "M") + px(i2).toFixed(1) + " " + py(v).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: m, stroke: C_M, "stroke-width": 2.4, fill: "none" }));
+
+    // la distancia vertical en un punto fijo del interior
+    var q = 80, accq = 0;
+    for (var j2 = q - k + 1 + desp; j2 <= q + desp; j2++) accq += serie(j2);
+    var mq = accq / k, sq = 3 + B * q;   // la parte recta, sin la ondulacion
+    svg.appendChild(el("path", { d: "M" + px(q).toFixed(1) + " " + py(sq).toFixed(1) + " L" + px(q).toFixed(1) + " " + py(mq).toFixed(1),
+      stroke: C_R, "stroke-width": 2.2, fill: "none" }));
+    svg.appendChild(el("circle", { cx: px(q).toFixed(1), cy: py(sq).toFixed(1), r: 4, fill: C_R }));
+    svg.appendChild(el("circle", { cx: px(q).toFixed(1), cy: py(mq).toFixed(1), r: 4, fill: C_M }));
+
+    lec.innerHTML = "Con ventana k = <strong>" + k + "</strong> y " + (cen ? "centrada" : "terminando en el punto") +
+      ", el retraso teórico sobre la parte recta vale b(k−1)/2 = <strong>" +
+      (cen ? "0" : (B * (k - 1) / 2).toFixed(2)) + "</strong> (Proposición 14.3). La media móvil arranca en la " +
+      "posición <strong>" + primero + "</strong>: " + (cen ? "los huecos se reparten a los dos lados" :
+      "los k−1 huecos se amontonan al principio") + ". Ensanchando la ventana, la curva verde se aplana y " +
+      (cen ? "sigue pegada a la serie" : "se aleja más por detrás") + ".";
+  }
+
+  ck.addEventListener("input", dibujar);
+  cc.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. El tiempo no es una recta de números
+
+::: {.proposicion}
+**Proposición 14.4 (tres trampas del índice temporal).**
+
+(a) Desplazar una serie mueve **los valores** y deja el índice intacto, de modo que la comparación de cada observación con la anterior es una operación entre posiciones y no entre fechas. Deja un faltante en el extremo.
+
+(b) Cortar por rango exige que el índice esté **ordenado**. Sobre un índice desordenado el resultado no está definido de forma estable.
+
+(c) Una hora local puede ser [inexistente]{.g data-t="hora inexistente"} —no corresponder a ningún instante— o ambigua —corresponder a **dos**—, según el cambio de hora. En consecuencia un día local no siempre tiene $24$ horas.
+:::
+
+::: {.demostracion}
+*Demostración.* (a) es la definición de la operación: se recolocan los valores respecto del índice, que no se toca; la primera posición se queda sin origen y recibe un faltante.
+
+(b) Cortar por rango busca las posiciones de los extremos y devuelve el bloque entre ellas, lo que solo tiene sentido si el orden del índice coincide con el orden temporal. Sobre un índice desordenado esa correspondencia se rompe.
+
+(c) El paso de hora local a instante lo define la regla horaria del lugar, que no es biyectiva alrededor de los cambios: al atrasar el reloj, una hora local se recorre dos veces, y al adelantarlo, un tramo de horas locales no se recorre. La duración de un día local es la diferencia entre dos medianoches consecutivas medida en instantes, que en los días de cambio es $23$ o $25$ horas. [∎]{.fin-demo}
+:::
+
+**Sobre (b) conviene una nota de versión.** Qué ocurre exactamente al cortar por rango un índice desordenado **ha cambiado entre versiones de pandas**: la 1.x lo permitía y devolvía algo, y la 3.0 levanta un error. Por eso la celda **no lo afirma**: ordena primero, que funciona en todas. La conclusión práctica no depende de la versión: si el índice no está ordenado, hay que ordenarlo antes de cortar.
+
+```{pyodide}
+import numpy as np
+import pandas as pd
+
+# 1. shift mueve los VALORES, no el indice.
+idx = pd.date_range("2024-03-01", periods=5, freq="D")
+s = pd.Series([10.0, 11.0, 13.0, 12.0, 15.0], index=idx)
+d = s.shift(1)
+print("indice intacto tras shift:", bool(d.index.equals(s.index)))
+print("el primer valor queda faltante:", bool(pd.isna(d.iloc[0])))
+print("rendimientos s/s.shift(1) - 1:", [None if pd.isna(v) else round(float(v), 6)
+                                          for v in (s / s.shift(1) - 1)])
+print()
+
+# 2. Un indice temporal no ordenado rompe el corte por rango.
+desordenado = s.iloc[[2, 0, 4, 1, 3]]
+print("el indice esta ordenado:", bool(desordenado.index.is_monotonic_increasing))
+# Que hace .loc por rango sobre un indice desordenado DEPENDE DE LA VERSION de
+# pandas, asi que aqui no se afirma: se ordena antes, que funciona en todas.
+ordenado = desordenado.sort_index()
+print("tras ordenar, el indice ya es monotono:", bool(ordenado.index.is_monotonic_increasing))
+print("tras ordenar, el corte devuelve %d filas" % len(ordenado.loc["2024-03-02":"2024-03-04"]))
+print()
+
+# 3. El cambio de hora: una hora local puede repetirse o no existir.
+madrid = "Europe/Madrid"
+repetida = pd.Timestamp("2024-10-27 02:30")     # el reloj atrasa: esta hora ocurre dos veces
+inexistente = pd.Timestamp("2024-03-31 02:30")  # el reloj adelanta: esta hora no ocurre
+for nombre, ts in [("repetida", repetida), ("inexistente", inexistente)]:
+    try:
+        ts.tz_localize(madrid)
+        print("%-12s -> se localizo sin problema" % nombre)
+    except Exception:
+        # La CLASE de la excepcion cambio entre versiones de pandas -de pytz a
+        # zoneinfo-, asi que no se nombra: lo que importa es que se niega.
+        print("%-12s -> se niega a localizarla y exige que se decida" % nombre)
+print()
+print("declarando cual de las dos se quiere, si funciona:")
+print("  la primera:", str(repetida.tz_localize(madrid, ambiguous=True)))
+print("  la segunda:", str(repetida.tz_localize(madrid, ambiguous=False)))
+print("  y las dos distan una hora:",
+      (repetida.tz_localize(madrid, ambiguous=False) -
+       repetida.tz_localize(madrid, ambiguous=True)) == pd.Timedelta(hours=1))
+print()
+print("un dia con cambio de hora NO tiene 24 horas:")
+inicio = pd.Timestamp("2024-10-27", tz=madrid)
+fin = pd.Timestamp("2024-10-28", tz=madrid)
+print("  horas del 27 de octubre de 2024 en Madrid:", int((fin - inicio).total_seconds() // 3600))
+```
+
+Las dos últimas partes son las que sorprenden. La librería **se niega** a convertir la hora ambigua y la inexistente, en lugar de elegir por su cuenta; y las dos lecturas posibles de la ambigua distan exactamente una hora. La última línea lo resume: el 27 de octubre de 2024 en Madrid tiene **veinticinco horas**.
+
+Que la clase concreta de la excepción cambió entre versiones —de la de `pytz` a la de `zoneinfo`— es la razón de que la celda capture sin nombrarla. Lo que no cambió, y es lo que importa, es que se niegue.
+
+**Modo de falla.** Un informe diario que agrega por hora local y da un día con una hora de más y otro con una de menos, dos veces al año. O un proceso que convierte marcas locales a instantes y revienta el último domingo de octubre.
+
+**Diagnóstico.** Comprobar la duración de los días de cambio, o contar los grupos que devuelve una agregación horaria en esas fechas.
+
+**Remedio.** Guardar los instantes en tiempo universal y convertir a local solo para mostrar. Si hay que trabajar en local, declarar explícitamente qué hacer con las horas ambiguas e inexistentes; la librería exige esa decisión precisamente para que quede escrita.
+
+```{=html}
+<div class="viz-dst">
+  <div class="controles">
+    <label>Día
+      <select id="ds-d">
+        <option value="normal" selected>un día cualquiera</option>
+        <option value="otono">el día que el reloj atrasa</option>
+        <option value="prima">el día que el reloj adelanta</option>
+      </select>
+    </label>
+  </div>
+  <svg id="ds-svg" viewBox="0 0 660 230" role="img" aria-label="Las horas locales de un día dispuestas en una fila, con la hora repetida marcada dos veces o la inexistente ausente según el día elegido."></svg>
+  <p class="lectura" id="ds-lectura"></p>
+</div>
+<style>
+.viz-dst { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-dst .controles { display: flex; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-dst label { display: flex; align-items: center; gap: .4rem; }
+.viz-dst select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-dst svg { width: 100%; height: auto; display: block; }
+.viz-dst .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_N = "#0F6E68", C_X = "#B4342E";
+  var svg = document.getElementById("ds-svg"), lec = document.getElementById("ds-lectura");
+  var cd = document.getElementById("ds-d");
+  var X0 = 30, XW = 600, Y0 = 60, H = 48;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var modo = cd.value;
+    var horas = [];
+    for (var h = 0; h < 24; h++) {
+      if (modo === "prima" && h === 2) { horas.push({t: "2", falta: true}); continue; }
+      horas.push({t: String(h), falta: false});
+      if (modo === "otono" && h === 2) horas.push({t: "2", repe: true});
+    }
+    var n = horas.length, an = XW / 25;
+    svg.appendChild(el("text", { x: X0, y: 34, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "las horas locales del día, una casilla por hora vivida"));
+    var x = X0;
+    horas.forEach(function (o) {
+      if (o.falta) {
+        svg.appendChild(el("rect", { x: x.toFixed(1), y: Y0, width: (an - 3).toFixed(1), height: H, rx: 3,
+          fill: C_X, "fill-opacity": .07, stroke: C_X, "stroke-width": 1.2, "stroke-dasharray": "3 3" }));
+        svg.appendChild(el("text", { x: (x + (an - 3) / 2).toFixed(1), y: Y0 + H / 2 + 4, "text-anchor": "middle",
+          "font-size": 11, fill: C_X }, "—"));
+      } else {
+        var col = o.repe ? C_X : C_N;
+        svg.appendChild(el("rect", { x: x.toFixed(1), y: Y0, width: (an - 3).toFixed(1), height: H, rx: 3,
+          fill: col, "fill-opacity": o.repe ? .3 : .16, stroke: col, "stroke-width": 1.2 }));
+        svg.appendChild(el("text", { x: (x + (an - 3) / 2).toFixed(1), y: Y0 + H / 2 + 4, "text-anchor": "middle",
+          "font-size": 10.5, fill: C_T }, o.t));
+      }
+      x += an;
+    });
+    svg.appendChild(el("text", { x: X0, y: Y0 + H + 26, "font-size": 12.5, fill: C_T },
+      "horas vividas: " + horas.filter(function (o) { return !o.falta; }).length));
+
+    var texto = {
+      normal: "Un día cualquiera tiene 24 horas y cada hora local corresponde a un instante y solo uno.",
+      otono: "El día que el reloj atrasa, la hora marcada en rojo se vive <strong>dos veces</strong>: el día tiene <strong>25</strong> horas y esa hora local es ambigua, así que convertirla a instante exige decir cuál de las dos (Proposición 14.4c).",
+      prima: "El día que el reloj adelanta, la hora punteada <strong>no llega a ocurrir</strong>: el día tiene <strong>23</strong> horas y esa hora local no corresponde a ningún instante."
+    };
+    lec.innerHTML = texto[modo];
+  }
+
+  cd.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## Ejercicios
+
+### Ejercicio 1, El retraso de la ventana
+
+Con la Proposición 14.3, calcular cuántas unidades va por detrás una media móvil de $21$ pasos sobre una serie que sube $0{,}8$ por paso, y cuántos faltantes deja al principio.
+
+```{pyodide}
+#| exercise: ex_retraso
+k, b = 21, 0.8
+
+retraso = ______
+faltantes = ______
+
+print(retraso, faltantes)
+float(retraso)
+```
+
+::: {.hint exercise="ex_retraso"}
+El retraso es $b(k-1)/2$ y los faltantes son $k-1$.
+:::
+
+::: {.solution exercise="ex_retraso"}
+```{pyodide}
+k, b = 21, 0.8
+
+retraso = b * (k - 1) / 2
+faltantes = k - 1
+
+print(retraso, faltantes)
+float(retraso)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_retraso
+#| check: true
+if abs(result - 8.0) < 1e-9:
+    feedback = {"correct": True, "message": "Correcto: 8 unidades de retraso y 20 faltantes. Con una ventana de tres semanas, el indicador llega diez pasos tarde.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 8.0 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Las horas de un año
+
+Calcular cuántas horas tiene un año no bisiesto en una zona con cambio de hora en primavera y en otoño, y compararlo con $365\times 24$.
+
+```{pyodide}
+#| exercise: ex_horas
+dias = 365
+
+sin_cambio = ______
+con_cambio = ______      # un dia de 23 horas y otro de 25
+
+print(sin_cambio, con_cambio)
+int(con_cambio)
+```
+
+::: {.hint exercise="ex_horas"}
+Un día pierde una hora y otro la gana, así que los dos efectos se compensan.
+:::
+
+::: {.solution exercise="ex_horas"}
+```{pyodide}
+dias = 365
+
+sin_cambio = dias * 24
+con_cambio = (dias - 2) * 24 + 23 + 25
+
+print(sin_cambio, con_cambio)
+int(con_cambio)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_horas
+#| check: true
+if result == 8760:
+    feedback = {"correct": True, "message": "Correcto: 8760 en los dos casos. El año cuadra, pero dos días concretos no, y es en esos dos donde fallan los informes.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 8760 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Python 14**:
+
+1. Construir la matriz del suavizador de media móvil centrada para varios $k$ y comprobar que $\operatorname{tr}(L)=(n-k+1)/k$. Después repetir con la ventana que termina en el punto y anotar en qué cambia la traza y por qué. Es la Proposición 11.3 de Machine Learning aplicada al suavizador más simple que existe.
+2. Tomar una serie horaria que cruce los dos cambios de hora del año, agregarla a diario en local y en tiempo universal, y comparar los dos resultados. Anotar cuántos días difieren y en cuánto, y cuál de las dos agregaciones responde a la pregunta «cuánto pasó cada día donde vive el usuario».
+3. Medir el efecto de rellenar hacia adelante: tomar una serie mensual, subirla a diaria con `ffill` y calcular la desviación típica antes y después. Anotar en `50-Errores/` por qué baja, y por qué cualquier intervalo de confianza calculado sobre la serie rellenada es demasiado estrecho.
+
+## Del libro
+
+*Python for Data Analysis, 3rd Edition* trata este material en §11.1 *Date and Time Data Types and Tools*, §11.2 *Time Series Basics*, §11.3 *Date Ranges, Frequencies, and Shifting*, §11.4 *Time Zone Handling*, §11.6 *Resampling and Frequency Conversion* y §11.7 *Moving Window Functions*.
+
+La sección §11.5 *Periods and Period Arithmetic* **no se trata aquí**: introduce un segundo tipo para representar intervalos, que resuelve con otro vocabulario lo mismo que esta lección resuelve con frecuencias, y añadirlo duplicaría el material sin añadir un resultado.
+
+**Preguntas para leer el capítulo 11 con lápiz:**
+
+1. §11.6 presenta el remuestreo con sus argumentos de cierre y etiqueta. Con la Proposición 14.2, ¿cuál de esas decisiones cambia qué observación cae en qué intervalo y cuál solo cambia cómo se llama el resultado?
+2. §11.7 describe las ventanas móviles con `min_periods`. Con la Proposición 14.3, ¿qué le pasa al retraso si se permite calcular la media con menos de $k$ observaciones al principio de la serie?
+3. §11.4 explica las zonas horarias. Con la parte (c) de la Proposición 14.4, ¿por qué guardar instantes en tiempo universal no es una preferencia de estilo sino la única representación en la que la aritmética funciona siempre?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/series-de-tiempo.md`, enlazada a [[groupby]], [[suavizado-y-gams]] y [[datos-faltantes]]. Conviene rehacer a mano la demostración de la Proposición 14.3: que una función afín conmute con la media es todo el contenido, y de ahí sale el retraso sin calcular nada. La misma idea explica por qué la media móvil de una serie sin tendencia no va retrasada.
+
+```
+¿Qué es remuestrear a menor frecuencia?::Agrupar por intervalo y agregar: el groupby de la lección 12
+¿Se pierde algo al bajar de frecuencia?::No: los intervalos parten las observaciones, y los conteos suman n
+¿Qué etiqueta lleva cada grupo?::El borde del intervalo, no un resumen de su contenido
+¿Qué pasa al subir de frecuencia?::Aparecen faltantes: no se crean datos
+¿Qué es un valor rellenado con ffill?::Una decisión de quien escribe el código, no una medición
+¿Cuánto va por detrás una media móvil de k?::Exactamente b(k−1)/2, con b la pendiente por paso
+¿Por qué?::Porque una función afín conmuta con la media, y la media de los instantes es t−(k−1)/2
+¿Cómo se elimina el retraso?::Centrando la ventana, que a cambio usa valores futuros
+¿Cuántos faltantes deja?::k−1 al principio si termina en el punto; repartidos si está centrada
+¿Es la media móvil un suavizador lineal?::Sí, y su traza vale (n−k+1)/k
+¿Qué mueve shift?::Los valores; el índice queda intacto
+¿Qué exige cortar por rango?::Que el índice esté ordenado
+¿Qué es una hora ambigua?::Una hora local que ocurre dos veces por el cambio de hora
+¿Cuántas horas tiene un día con cambio?::23 o 25, nunca 24
+¿Dónde conviene guardar los instantes?::En tiempo universal, y convertir a local solo para mostrar
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 14.2 se sigue de que los intervalos de una frecuencia parten las observaciones, que es la Proposición 12.3 con los intervalos como grupos; se comprueba con $90$ días repartidos en tres meses, donde los conteos suman $90$, las sumas suman el total, y febrero de $2024$ sale con $29$ días. La segunda parte se comprueba subiendo de mensual a diario: quedan $58$ faltantes de $61$ posiciones, y rellenarlos los hace desaparecer. La Proposición 14.3 se demuestra observando que una función afín conmuta con la media y que la media de los instantes de la ventana es $t-(k-1)/2$; se comprueba con $b=0{,}5$ y $k=11$, donde la diferencia medida es $2{,}5000$ y coincide con la fórmula a $10^{-10}$, y centrando la ventana se anula. Que la media móvil centrada es un suavizador lineal se comprueba extrayendo su matriz con vectores unitarios y verificando que la misma sirve para dos respuestas distintas, con $\operatorname{tr}(L)=17{,}2727=(n-k+1)/k$. La Proposición 14.4 se comprueba en sus tres partes, y la última da $25$ horas para el $27$ de octubre de $2024$ en Madrid.
+
+**Lo que se usa de otras lecciones sin repetir.** La partición y la agregación son de Python 12, y esta lección las aplica sin rehacerlas. La definición de suavizador lineal y la lectura de su traza como grados de libertad son de Machine Learning 11. El índice y la alineación por etiqueta son de Python 9.
+
+**Lo que se enuncia sin demostrar.** Las reglas horarias de cada lugar, incluidas las fechas de cambio: se toman de la base de datos de zonas horarias que la librería incorpora, y no se derivan de nada. Que la duración de un día local sea $23$ o $25$ horas en los días de cambio es consecuencia de esas reglas para las zonas con desplazamiento de una hora, y aquí se verifica en un caso concreto.
+
+**Una nota de versión que forma parte del contenido.** Qué hace exactamente `.loc` por rango sobre un índice temporal **desordenado** cambió entre pandas 1.x y 3.0: la primera lo permitía y la segunda levanta un error. La celda no afirma ninguna de las dos conductas —ordena antes, que funciona en todas—, y la lección lo cuenta porque la conclusión práctica no depende de la versión. Por la misma razón, la clase de la excepción que se levanta ante una hora ambigua cambió al pasar de `pytz` a `zoneinfo`, y la celda la captura sin nombrarla.
+
+**Lo que viene de los libros.**
+
+- [*Python for Data Analysis, 3rd Edition*](https://wesmckinney.com/book/) (Wes McKinney, O'Reilly, 2022), §11.1 a §11.4, §11.6 y §11.7 — citadas por número y título. El sitio declara que su contenido no se puede copiar ni reproducir, así que no se transcribe texto.
+
+**Lo que es mío, no del libro.** La lectura del remuestreo como el `groupby` de la lección 12, que evita rehacer el argumento y deja claro qué se conserva. La Proposición 14.3 con el retraso en forma cerrada y su demostración en una línea —una función afín conmuta con la media—, que convierte «la media móvil va con retraso» en una cantidad exacta que se puede corregir o declarar. Y la comprobación de que la media móvil es un suavizador lineal con la técnica de la lección 11 de Machine Learning, que enlaza el módulo de Python con el de aprendizaje sin repetir ninguna de las dos.
+
+[Índice de McKinney 3E verificado el 17-09-2026; las secciones del capítulo 11 se trajeron el 18-09-2026 de <https://wesmckinney.com/book/time-series>.]{.sello}
+:::
