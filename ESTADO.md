@@ -1,24 +1,28 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **18-09-2026**, tras publicar diez lecciones: **ML 7**
-(selección de subconjuntos, ISLP §6.1), **ML 8** (encogimiento, ISLP §6.2),
-**ML 9** (alta dimensión, ISLP §6.4), **Python 10** (carga y limpieza, McKinney
-§6.1 y §7), **Python 11** (uniones y reshape, McKinney §8) y **Python 12**
-(groupby y agregación, McKinney §10) y **ML 10** (bases, polinomios y splines,
-ISLP §7.1–7.4), **ML 11** (suavizado, regresión local y GAMs, ISLP §7.5–7.7),
-**Python 13** (visualización, McKinney §9.1–9.2) y **Python 14** (series de
-tiempo, McKinney §11). **Las 68 publicadas cumplen el molde: 68 de 68, y no queda
-ninguna en el molde viejo.**
+Última actualización: **18-09-2026**, tras una sesión larga que publicó **doce
+lecciones** y cerró **tres deudas**.
 
-**Con ML 11 queda cubierto el capítulo 7 de ISLP entero.**
+Las lecciones: **ML 7** (selección de subconjuntos, ISLP §6.1), **ML 8**
+(encogimiento, §6.2), **ML 9** (alta dimensión, §6.4), **ML 10** (bases y
+splines, §7.1–7.4), **ML 11** (suavizado y GAMs, §7.5–7.7), y **Python 10** a
+**16** (carga y limpieza, uniones y reshape, groupby, visualización, series de
+tiempo, rendimiento y anatomía de un proyecto).
 
-**Con ML 9 queda cubierto el capítulo 6 de ISLP entero salvo §6.3**, que espera a
-la lección de componentes principales.
+**Las 70 publicadas cumplen el molde: 70 de 70.**
 
-Eso es una afirmación sobre el **molde**, no sobre el plan. **Estadística queda cerrada en 25 de 25.** Del
-plan siguen faltando lecciones por escribir en los demás módulos: Python tiene
-16 planeadas y 14 publicadas, ML 11 de 90, y Series y Causal están vacíos. El
-detalle está en la tabla del punto 2.
+Tres hitos de esta sesión:
+
+- **El módulo de Python queda CERRADO en 16 de 16**, el tercero tras Estadística
+  y Álgebra.
+- **ISLP capítulos 6 y 7 quedan cubiertos enteros**, salvo §6.3, que espera a la
+  lección de componentes principales.
+- **Las tres deudas abiertas se cerraron**: las colisiones del glosario (punto 6),
+  las 33 secciones de retos y los 106 símbolos sin declarar.
+
+Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
+faltando lecciones por escribir: **ML va por 11 de 90**, y **Series de tiempo e
+Inferencia causal están vacíos**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
 
@@ -84,7 +88,7 @@ hay que empezar a hacer:
 |---|---|---|---|---|
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
-| Python | 14 | 16 | **14 de 14** | 15 y 16, la Fase 1 |
+| Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 0 | 11 | — | todas |
 | Machine Learning | 11 | 90 | **11 de 11** | 12 a 20 de la Fase 2, y el resto |
 | Inferencia causal | 0 | 14 | — | todas |
@@ -93,8 +97,9 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **68 lecciones** publicadas, **68** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 110 según el plan.
+- **70 lecciones** publicadas, **70** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 108 según el plan.
+- **Tres módulos cerrados**: Estadística 25/25, Álgebra 18/18 y **Python 16/16**.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
   logística (§4.1–4.3, publicada), **04** modelos generativos (§4.4) y **05**
@@ -125,10 +130,10 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. Los seis visuales de esta tanda no añaden ninguno.
-- **1416 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **360 celdas** que el gate ejecuta en cada build, y comprobadas **con las
+- **1468 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **371 celdas** que el gate ejecuta en cada build, y comprobadas **con las
   dos parejas de versiones** (ver el punto 5).
-- Glosario: **334 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **345 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -964,6 +969,59 @@ previo y ninguna por el CI:
 
 Ese último punto merece quedarse como criterio: **cuando una conducta depende de la
 versión, la celda no la afirma y la prosa la explica.**
+
+
+### 3.15 Python 15 y 16: el módulo queda cerrado (18-09-2026)
+
+**Python 16 de 16.** Con estas dos se cierra la Fase 1, y con ella el tercer
+módulo del plan, detrás de Estadística y Álgebra.
+
+**Python 15, «Rendimiento», tenía un problema de diseño que merece quedarse
+escrito.** El nivel L3 pide medir, y la regla 7 prohíbe citar dígitos de algo que
+dependa de la máquina —y **un cronómetro es exactamente eso**—. La salida fue
+**medir lo contable en vez de lo cronometrable**:
+
+- la **Proposición 15.2** cuenta pasos del intérprete: $200\,000$ contra **cero**,
+  con el mismo resultado. El escalar de Python ocupa $32$ bytes y el valor dentro
+  del arreglo, $8$;
+- la **Proposición 15.3** separa **reservas** de **tráfico de memoria**: la
+  expresión suelta pide dos arreglos enteros de más y la que escribe en un destino
+  ya creado pide cero, con las mismas lecturas y escrituras;
+- la **Proposición 15.4** demuestra con la suma de Gauss que crecer de uno en uno
+  cuesta $n(n-1)/2$ copias, comprobado exacto en cuatro tamaños;
+- la **Proposición 15.5** dice explícitamente **qué se puede publicar de una
+  medición de tiempo**: la propiedad —«más rápida», «por más de un factor diez»—
+  y el recuento de operaciones, nunca los segundos. Por eso la lección **no
+  contiene un solo dato en segundos**.
+
+**Python 16, «Anatomía de un proyecto», usa esta plataforma como ejemplo
+trabajado.** Sus tres resultados:
+
+- la **16.1**: fijar la semilla **no basta**. La suma en coma flotante no es
+  asociativa, así que barajar las filas cambia un total —por debajo de $10^{-9}$
+  relativo, pero no cero—. Reproducible exige datos, código, versiones, semilla
+  **y orden**;
+- la **16.2**: la huella como contrato, con la condición que se olvida: cambia
+  también al **reordenar**, aunque el conjunto de filas sea el mismo;
+- la **16.4**: el cauce es un grafo, y existe orden de ejecución **si y solo si**
+  es acíclico. Un paso que lee lo que otro posterior escribe cierra el ciclo.
+
+Las tres se leen sobre el propio repo: `afirmaciones.json` es un manifiesto de
+grano fino, `salidas.py` lo comprueba en cada construcción, y
+`grafo/build_graph.py` construye el grafo de la 16.4 con las lecciones como pasos.
+
+**Un descuido propio que conviene no repetir.** El visual de las huellas se
+escribió con resúmenes **inventados** para los casos modificados. Se detectó al
+releer, se calcularon los reales con el mismo código de la celda y se comprobó que
+son idénticos en las dos versiones de pandas. **Un visual no puede enseñar un
+número que no se haya calculado**, igual que una celda. No hay gate que lo
+compruebe: `visuales.py` mide que los controles muevan el dibujo, no que los
+números dibujados sean ciertos.
+
+**El generador de retos ya funciona solo.** Las secciones de Python 15 y 16 las
+escribió `proyectos/genera_retos.py` al publicarlas, sin intervención, y el
+auditor de símbolos cazó el único que faltaba declarar. Las dos deudas cerradas
+hoy siguen en cero sin esfuerzo.
 
 
 ---
