@@ -1,14 +1,18 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **17-09-2026**, tras publicar cuatro lecciones: **ML 7**
-(selección de subconjuntos, ISLP §6.1), **ML 8** (encogimiento, ridge y lasso,
-ISLP §6.2), **Python 10** (carga, formatos y limpieza, McKinney §6.1 y §7.1–7.4)
-y **Python 11** (wrangling, uniones y reshape, McKinney §8). **Las 62 publicadas
-cumplen el molde: 62 de 62, y no queda ninguna en el molde viejo.**
+Última actualización: **18-09-2026**, tras publicar seis lecciones: **ML 7**
+(selección de subconjuntos, ISLP §6.1), **ML 8** (encogimiento, ISLP §6.2),
+**ML 9** (alta dimensión, ISLP §6.4), **Python 10** (carga y limpieza, McKinney
+§6.1 y §7), **Python 11** (uniones y reshape, McKinney §8) y **Python 12**
+(groupby y agregación, McKinney §10). **Las 64 publicadas cumplen el molde: 64 de
+64, y no queda ninguna en el molde viejo.**
+
+**Con ML 9 queda cubierto el capítulo 6 de ISLP entero salvo §6.3**, que espera a
+la lección de componentes principales.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. **Estadística queda cerrada en 25 de 25.** Del
 plan siguen faltando lecciones por escribir en los demás módulos: Python tiene
-16 planeadas y 11 publicadas, ML 8 de 90, y Series y Causal están vacíos. El
+16 planeadas y 12 publicadas, ML 9 de 90, y Series y Causal están vacíos. El
 detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -75,17 +79,17 @@ hay que empezar a hacer:
 |---|---|---|---|---|
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
-| Python | 11 | 16 | **11 de 11** | 12 a 16, la Fase 1 |
+| Python | 12 | 16 | **12 de 12** | 13 a 16, la Fase 1 |
 | Series de tiempo | 0 | 11 | — | todas |
-| Machine Learning | 8 | 90 | **8 de 8** | 09 a 19 de la Fase 2, y el resto |
+| Machine Learning | 9 | 90 | **9 de 9** | 10 a 19 de la Fase 2, y el resto |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **62 lecciones** publicadas, **62** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 116 según el plan.
+- **64 lecciones** publicadas, **64** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 114 según el plan.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
   logística (§4.1–4.3, publicada), **04** modelos generativos (§4.4) y **05**
@@ -116,9 +120,10 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. Los seis visuales de esta tanda no añaden ninguno.
-- **1228 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **325 celdas** que el gate ejecuta en cada build.
-- Glosario: **299 términos + 43 símbolos**. Las **34 entradas** de estas dos
+- **1289 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **337 celdas** que el gate ejecuta en cada build, y comprobadas **con las
+  dos parejas de versiones** (ver el punto 5).
+- Glosario: **308 términos + 43 símbolos**. Las **34 entradas** de estas dos
   tandas —12 de ML 7, 8 de Python 10, 7 de ML 8 y 7 de Python 11— son todas de
   tipo `termino`: **cero símbolos
   globales nuevos**, por la regla aclarada en el punto 6. Los símbolos propios
@@ -126,8 +131,8 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 - Índices verificados: Think Stats 3e (75 secciones), MML (80), **Think Bayes 2e
   (20 capítulos y 193 secciones, traídas enteras el 12-09-2026; el capítulo 19
   publica las suyas sin numerar)**, McKinney 3E (capítulos + las secciones de los
-  capítulos 6, 7 y 8; las subsecciones del 6 y del 8 no llevan número en el sitio
-  publicado, así que no se registran ni se citan) e **ISLP (13 capítulos, 81 secciones N.M y 176 sub-subsecciones N.M.K —257 entradas— traídas el 13-09-2026 de los
+  capítulos 6, 7, 8 y 10; las subsecciones del 6, del 8 y del 10 no llevan número
+  en el sitio publicado, así que no se registran ni se citan) e **ISLP (13 capítulos, 81 secciones N.M y 176 sub-subsecciones N.M.K —257 entradas— traídas el 13-09-2026 de los
   marcadores del PDF oficial)**. Desde esa fecha `citas.py` admite **tres niveles**: se puede citar
   `ISLP §10.7.1 Backpropagation`. La función `rango()` se generalizó a cualquier profundidad, porque la anterior
   desempaquetaba dos valores del `split` y reventaba con el tercer nivel; se comprobó que los casos de dos niveles
@@ -703,6 +708,80 @@ cambia opacidades o rellenos, el gate lo va a marcar, y tiene razón.
 **El índice de McKinney creció otra vez.** Se trajeron las secciones del capítulo
 8 desde <https://wesmckinney.com/book/data-wrangling>: §8.1 a §8.4. Sus
 subsecciones tampoco llevan número, igual que las del 6, así que no se registran.
+
+
+### 3.11 ML 9 y Python 12 (18-09-2026)
+
+Escritas ya con la disciplina nueva del punto 5: **cada celda se corre con las
+dos parejas de versiones antes de declarar nada**, y tiene que salir byte a byte
+idéntica. Eso cazó tres fragilidades durante la escritura, ninguna de las cuales
+habría aparecido corriendo solo en local:
+
+1. En ML 9, la base del núcleo que devuelve la SVD **no es única** —cualquier
+   rotación dentro del núcleo vale— y LAPACK devuelve una distinta en cada
+   versión. Se arregló usando el **proyector** sobre el núcleo,
+   $I-X^{+}X$, que sí lo es. Es exactamente lo que avisa la regla 7.
+2. En ML 9, `np.linalg.lstsq` y `LinearRegression` **no coinciden** en scikit-learn
+   0.24 y sí en 1.9: cambió el solucionador. Se sustituyó el contraste por
+   `pinv(X) @ y`, que es la definición de la solución de norma mínima.
+3. En Python 12, un `dict(cuentas)` imprimía escalares de NumPy y un `%.12f`
+   imprimía `-0.000000000000` en una versión y `0.000000000000` en la otra. Los
+   dos se sustituyeron por enteros de Python y por un booleano.
+
+**ML 9, «Regresión en alta dimensión», ISLP §6.4.** Una definición, cuatro
+proposiciones, dos visuales.
+
+- la **Proposición 9.2** es el resultado que ordena la lección: si el diseño tiene
+  rango $n$, su espacio columna **es** $\mathbb{R}^n$ y la proyección de $y$ es
+  $y$. De ahí RSS cero y $R^2=1$, **por dimensión y no por contenido**: medido con
+  $n=30$, el ajuste pasa a ser exacto justo en $p=29$ sobre ruido puro;
+- la **Proposición 9.3** da la fórmula cerrada $E[R^2]=p/(n-1)$ para predictores
+  sin ninguna relación, demostrada por simetría esférica. Con $n=40$, doce
+  columnas de ruido explican de media el $30{,}8$ % de la varianza y veinte llegan
+  al $50$ %. Es Estadística 17 contada con dimensiones en vez de valores p;
+- la **Proposición 9.4** dice qué se pierde exactamente: el conjunto de ajustes
+  perfectos es un **trasladado del núcleo**, así que los datos determinan $X\beta$
+  y no determinan $\beta$. Medido: el mismo coeficiente vale $0{,}9276$,
+  $16{,}2702$ y $-0{,}0036$ en tres ajustes igual de perfectos, siendo $2$ el
+  verdadero. Y como $n-p-1\le 0$, **$C_p$ y BIC de ML 7 no se pueden calcular**,
+  mientras que la validación cruzada de ML 6 sí;
+- la **Proposición 9.5** trata la forma dual de ridge como resultado y no como
+  truco: $(X^\top X+\lambda I_p)^{-1}X^\top=X^\top(XX^\top+\lambda I_n)^{-1}$,
+  un sistema $40\times 40$ donde el primal es $300\times 300$.
+
+La sección 4 mide lo que sí funciona: con $n=60$, $p=200$ y solo cuatro
+predictores verdaderos, mínimos cuadrados ajusta sin error y comete $6{,}24$ de
+error de prueba; el lasso con $\alpha$ por validación cruzada comete $0{,}43$ y
+recupera los cuatro. Queda anotado que declara $23$ variables donde importan $4$:
+predice bien, no descubre la verdad.
+
+**Python 12, «groupby y agregación», McKinney §10.** Nivel L4, una definición,
+tres proposiciones, dos visuales.
+
+- la **Proposición 12.2** convierte la distancia entre la media global y la media
+  de las medias en una **covarianza exacta**:
+  $\mu-\bar{u}=\frac{1}{n}\sum_k(n_k-\bar{n})(m_k-\bar{u})$. De ahí sale sola la
+  condición de igualdad, y la paradoja de Simpson deja de ser una curiosidad.
+  Medido: $1{,}9468$ contra $4{,}7465$, y la covarianza reproduce la diferencia
+  $-2{,}7997$ a $10^{-12}$;
+- la **Proposición 12.3** separa `agg` de `transform` por la **forma** del
+  resultado —$g$ filas contra $n$ con el índice conservado—, y añade la partición
+  $\text{SC total}=\text{SC dentro}+\text{SC entre}$, que es la de Estadística 13
+  con los grupos en el papel del modelo;
+- la **Proposición 12.4** es donde un informe pierde la diferencia entre «cero» y
+  «no hay dato»: agrupar por categóricas devuelve $i\cdot j$ grupos, y en los
+  vacíos **la suma devuelve $0$ y la media devuelve faltante**. El primero no se
+  distingue de un cero medido.
+
+**Dos infracciones propias que cazó `formato.py`**, y conviene recordar que las
+caza: la construcción de golpe «no es X, es Y» de la regla 14, y la palabra
+*sucursal* de la regla 15. Las dos en Python 12, las dos en prosa que sonaba
+bien al escribirla.
+
+**Y un número escrito a ojo**, del tipo que el punto 5 ya tenía anotado: el
+ejercicio 1 de Python 12 decía $2{,}7267$ y $-3{,}6067$ cuando eran $2{,}64$ y
+$-3{,}6933$. Lo cazó `salidas.py`. La lección es la de siempre: **correr la celda
+y leer su salida es parte de escribirla**, también en los ejercicios.
 
 
 ---
