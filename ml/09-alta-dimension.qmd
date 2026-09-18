@@ -1,0 +1,660 @@
+---
+title: "Regresión en alta dimensión"
+subtitle: "Machine Learning · Lección 9"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/08-ridge-y-lasso, ml/07-seleccion-de-subconjuntos, matematica/03-espacio-columna]
+siguientes: []
+libro: "ISLP §6.4 Considerations in High Dimensions · §6.4.1 High-Dimensional Data · §6.4.2 What Goes Wrong in High Dimensions? · §6.4.3 Regression in High Dimensions · §6.4.4 Interpreting Results in High Dimensions"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - scikit-learn
+---
+
+::: {.meta-leccion data-leccion="ml/09-alta-dimension"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §6.4]{.item}
+[**Prereqs** [Ridge y lasso](08-ridge-y-lasso.qmd) · [Selección de subconjuntos](07-seleccion-de-subconjuntos.qmd) · [Espacio columna](../matematica/03-espacio-columna.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir la [alta dimensión]{.g} y demostrar que en ella mínimos cuadrados ajusta **sin error** aunque ningún predictor tenga relación con la respuesta.
+2. Calcular el $R^2$ esperado de un modelo construido con puro ruido, que vale exactamente $p/(n-1)$, y leer de ahí por qué un $R^2$ alto deja de ser evidencia.
+3. Demostrar que con $p>n$ el conjunto de ajustes perfectos es un trasladado del núcleo, y medir cuánto difieren coeficientes de modelos igual de perfectos.
+4. Explicar por qué los criterios de la lección 7 dejan de poder calcularse, y cuáles de la lección 8 sí sobreviven.
+5. Resolver ridge por su forma dual, con un sistema $n\times n$ en lugar de $p\times p$.
+6. Medir cuánto gana el lasso sobre mínimos cuadrados cuando hay doscientos predictores y solo cuatro sirven.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 8**: la Proposición 8.2, que da una solución única para todo $\lambda>0$ aunque $X^\top X$ sea singular. Es lo único que deja ajustar algo aquí, y esta lección es su caso de uso.
+- **Machine Learning 7**: el $C_p$ y el BIC, y la selección de subconjuntos. Aquí se ve exactamente dónde y por qué dejan de servir.
+- **Machine Learning 6**: la validación cruzada, que **sí** sobrevive a la alta dimensión porque no necesita estimar $\sigma^2$.
+- **Álgebra 3**: el espacio columna, el rango y el núcleo, con el teorema del rango-nulidad. La sección 3 es ese teorema aplicado a un diseño ancho.
+- **Estadística 17**: el p-hacking. La Proposición 9.3 de aquí es la misma advertencia con una fórmula cerrada.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 16 y 17**: PCA y la regresión sobre componentes principales, la otra respuesta a este problema: reducir la dimensión antes de ajustar en vez de penalizar.
+- **Machine Learning 19**: las pruebas múltiples, que controlan el mismo exceso de miradas con el lenguaje de los valores p.
+- **Machine Learning 14 y 33 a 37**: las redes neuronales, que son el caso extremo —más parámetros que datos— y donde la interpolación exacta es el punto de partida y no el fallo.
+- **Inferencia causal**: donde la tentación de meter todos los controles disponibles choca de frente con la Proposición 9.4.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | El número de observaciones |
+| $p$ | pe | El número de predictores |
+| $X$ | equis | La matriz de diseño centrada, de $n$ filas y $p$ columnas |
+| $D$ | de | El diseño con la columna de unos añadida, de $p+1$ columnas |
+| $\mathcal{N}(X)$ | núcleo de equis | El conjunto de vectores $v$ con $Xv=0$ |
+| $X^{+}$ | equis cruz | La pseudoinversa de $X$ |
+| $\hat{\beta}^{+}$ | beta gorro cruz | La solución de norma mínima, $X^{+}y$ |
+| $R^2$ | erre cuadrado | La proporción de varianza explicada, $1-\text{RSS}/\text{TSS}$ |
+| $\sigma^2$ | sigma cuadrado | La varianza del error |
+:::
+
+## 1. Ajustar sin error no es ajustar bien
+
+::: {.definicion}
+**Definición 9.1 (alta dimensión).** Un problema de regresión está en **alta dimensión** cuando el número de predictores $p$ es comparable o superior al número de observaciones $n$. El umbral relevante no es $p>n$ sino $p+1\ge n$, que es cuando el diseño con intercepto tiene al menos tantas columnas como filas.
+:::
+
+::: {.proposicion}
+**Proposición 9.2 ([interpolación exacta]{.g data-t="interpolación exacta"}).** Sea $D$ el diseño con intercepto, de $n$ filas y $p+1$ columnas, y supóngase que su rango vale $n$. Entonces para **cualquier** respuesta $y$ existe $\beta$ con $D\beta=y$, de donde $\text{RSS}=0$ y $R^2=1$.
+
+En particular, si las $p+1$ columnas son linealmente independientes y $p+1\ge n$, esto ocurre **con independencia de que los predictores tengan o no relación alguna con la respuesta**.
+:::
+
+::: {.demostracion}
+*Demostración.* El ajuste por mínimos cuadrados es la proyección ortogonal de $y$ sobre el espacio columna de $D$ (Álgebra 5). Si $\operatorname{rango}(D)=n$, ese espacio columna es un subespacio de $\mathbb{R}^n$ de dimensión $n$, es decir, **todo** $\mathbb{R}^n$. La proyección de $y$ sobre todo el espacio es $y$ mismo, así que el residuo es cero y $\text{RSS}=0$; como $R^2=1-\text{RSS}/\text{TSS}$, vale $1$.
+
+El rango de $D$ es a lo sumo $\min\{n,p+1\}$. Con $p+1\ge n$ y columnas en posición general el mínimo es $n$ y se alcanza. Nada en el argumento usó la relación entre las columnas y $y$: la proyección llena el espacio por dimensión, no por contenido. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+# La respuesta NO tiene ninguna relacion con los predictores: son ruido puro.
+rng = np.random.default_rng(9)
+n = 30
+y = rng.normal(size=n); y -= y.mean()
+tss = float(y @ y)
+
+print(" p   columnas  rango  RSS practicamente cero   R2")
+for p in [1, 5, 10, 20, 28, 29, 30, 50]:
+    X = rng.normal(size=(n, p))
+    D = np.column_stack([np.ones(n), X])
+    b, *_ = np.linalg.lstsq(D, y, rcond=None)
+    r = y - D @ b
+    rss = float(r @ r)
+    rango = int(np.linalg.matrix_rank(D))
+    print("%3d %8d %6d   %-20s  %.6f"
+          % (p, p + 1, rango, str(rss < 1e-18), 1 - rss / tss))
+
+print()
+print("el diseno tiene rango completo mientras p+1 <= n:", 29 + 1 <= n)
+print("a partir de p+1 = n = %d el rango se queda en %d y el ajuste es exacto" % (n, n))
+print("y eso ocurre sin que ninguna columna tenga relacion con y")
+```
+
+La tabla se lee de abajo arriba. Con $p=29$, el diseño tiene $30$ columnas y $30$ filas: el rango llega a $30$, el residuo es cero y el $R^2$ vale $1$. Los predictores siguen siendo los mismos números sorteados que en la primera fila, sin ninguna relación con la respuesta. Añadir más columnas a partir de ahí no mejora el ajuste, que ya era perfecto; lo único que crece es el número de formas distintas de conseguirlo, que es la sección 3.
+
+## 2. Cuánto $R^2$ regala el ruido
+
+El salto a $1$ no es repentino: hay una fórmula exacta para todo el trayecto.
+
+::: {.proposicion}
+**Proposición 9.3 (el $R^2$ esperado del ruido puro).** Sean $y$ y las $p$ columnas de $X$ independientes entre sí, con $y$ de ley continua, y sea $n-p-1>0$. Entonces
+$$E\big[R^2\big]=\frac{p}{n-1}.$$
+La esperanza no depende de la escala ni de la distribución concreta, solo del recuento. Vale $1$ cuando $p=n-1$, y alcanza $1/2$ con $p=(n-1)/2$ predictores inútiles.
+:::
+
+::: {.demostracion}
+*Demostración.* Con la respuesta centrada, $\text{TSS}=\lVert y\rVert^2$ y $\text{RSS}=\lVert(I-H)y\rVert^2$, donde $H$ es la matriz sombrero del diseño con intercepto. Entonces
+$$R^2=1-\frac{\lVert(I-H)y\rVert^2}{\lVert y\rVert^2}=\frac{\lVert (H-P_1)y\rVert^2}{\lVert y \rVert^2},$$
+con $P_1$ la proyección sobre la columna de unos, ya descontada al centrar. Bajo independencia, $y$ es esféricamente simétrico alrededor del origen en el subespacio centrado de dimensión $n-1$, y $H-P_1$ es la proyección ortogonal sobre un subespacio **fijo** de dimensión $p$ contenido en él. Para un vector de dirección uniforme en una esfera de dimensión $n-1$, la proporción esperada de norma al cuadrado que cae en un subespacio de dimensión $p$ es exactamente $p/(n-1)$: las $n-1$ coordenadas en una base ortonormal tienen la misma esperanza de cuadrado por simetría, y su suma es la norma total. Sumando las $p$ que corresponden al subespacio se obtiene la fracción. [∎]{.fin-demo}
+:::
+
+La demostración explica el nombre: el $R^2$ de un ajuste sin señal mide **cuánta dimensión se le ha dado al modelo**, no cuánta estructura hay en los datos. Lo que queda registrado en ese $R^2$ es [correlación espuria]{.g}, y la fórmula dice exactamente cuánta.
+
+```{pyodide}
+import numpy as np
+
+def r2(X, y):
+    D = np.column_stack([np.ones(len(y)), X])
+    b, *_ = np.linalg.lstsq(D, y, rcond=None)
+    r = y - D @ b
+    return 1 - float(r @ r) / float(np.sum((y - y.mean()) ** 2))
+
+rng = np.random.default_rng(91)
+n, M = 40, 2000
+print("con n = %d y predictores de ruido puro, %d repeticiones por fila" % (n, M))
+print()
+print("  p   E[R2] simulado   p/(n-1) teorico   diferencia")
+for p in [1, 3, 6, 12, 24, 36, 39]:
+    acc = 0.0
+    for _ in range(M):
+        acc += r2(rng.normal(size=(n, p)), rng.normal(size=n))
+    sim, teo = acc / M, p / (n - 1)
+    print("%3d      %.4f           %.4f          %+.4f" % (p, sim, teo, sim - teo))
+print()
+print("en p = n-1 = %d la formula da exactamente %.1f" % (n - 1, (n - 1) / (n - 1)))
+print("hace falta p = %d para un R2 esperado de 0.5" % round((n - 1) / 2))
+```
+
+Con $n=40$, doce predictores de ruido explican de media el $30{,}8$ % de la varianza, y veinte llegan al $50$ %. Un $R^2$ de $0{,}6$ no dice nada si nadie pregunta cuántas columnas hubo que mirar para conseguirlo. Es la misma aritmética de Estadística 17, que medía lo mismo contando valores p en lugar de dimensiones.
+
+```{=html}
+<div class="viz-r2">
+  <div class="controles">
+    <label>Observaciones n <input id="r2-n" type="range" min="10" max="120" step="2" value="40"> <span id="r2-n-v">40</span></label>
+    <label>Predictores p <input id="r2-p" type="range" min="0" max="119" step="1" value="12"> <span id="r2-p-v">12</span></label>
+  </div>
+  <svg id="r2-svg" viewBox="0 0 660 310" role="img" aria-label="El R cuadrado esperado de un modelo construido con ruido puro como recta de pendiente uno partido por n menos uno, sobre ejes fijos, con el punto elegido marcado y la vertical donde el ajuste pasa a ser exacto."></svg>
+  <p class="lectura" id="r2-lectura"></p>
+</div>
+<style>
+.viz-r2 { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-r2 .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-r2 label { display: flex; align-items: center; gap: .4rem; }
+.viz-r2 input[type=range] { width: 150px; padding: 0; }
+.viz-r2 svg { width: 100%; height: auto; display: block; }
+.viz-r2 .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_R = "#B4342E", C_V = "#0F6E68";
+  var svg = document.getElementById("r2-svg"), lec = document.getElementById("r2-lectura");
+  var cn = document.getElementById("r2-n"), en = document.getElementById("r2-n-v");
+  var cp = document.getElementById("r2-p"), ep = document.getElementById("r2-p-v");
+
+  // Marco anclado: p de 0 a 120 y R2 de 0 a 1, siempre.
+  var PMAX = 120, X0 = 48, XW = 578, Y0 = 26, YH = 232;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(v) { return X0 + v / PMAX * XW; }
+  function py(v) { return Y0 + (1 - v) * YH; }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var n = +cn.value;
+    cp.max = String(Math.max(0, PMAX - 1));
+    var p = Math.min(+cp.value, n - 1);
+    en.textContent = String(n); ep.textContent = String(p);
+    var r2 = Math.min(p / (n - 1), 1);
+
+    for (var t = 0; t <= 1.0001; t += 0.25) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(t).toFixed(1) + " L" + (X0 + XW) + " " + py(t).toFixed(1),
+        stroke: C_L, "stroke-width": 1, fill: "none", opacity: .5 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(t) + 4, "text-anchor": "end", "font-size": 10.5,
+        fill: C_T, opacity: .65 }, t.toFixed(2)));
+    }
+    svg.appendChild(el("text", { x: X0, y: 16, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "R² esperado con predictores de puro ruido"));
+    svg.appendChild(el("text", { x: X0 + XW / 2, y: 302, "text-anchor": "middle", "font-size": 11,
+      fill: C_T, opacity: .75 }, "predictores p"));
+
+    // la recta p/(n-1), hasta p = n-1
+    var s = "";
+    for (var q = 0; q <= n - 1; q++) s += (q ? " L" : "M") + px(q).toFixed(1) + " " + py(q / (n - 1)).toFixed(1);
+    svg.appendChild(el("path", { d: s, stroke: C_R, "stroke-width": 2.6, fill: "none" }));
+    // y el tramo plano en 1 a partir de ahi
+    svg.appendChild(el("path", { d: "M" + px(n - 1).toFixed(1) + " " + py(1).toFixed(1) + " L" + px(PMAX).toFixed(1) + " " + py(1).toFixed(1),
+      stroke: C_R, "stroke-width": 2.6, fill: "none", opacity: .55 }));
+    // la vertical del ajuste exacto
+    svg.appendChild(el("path", { d: "M" + px(n - 1).toFixed(1) + " " + Y0 + " L" + px(n - 1).toFixed(1) + " " + (Y0 + YH),
+      stroke: C_V, "stroke-width": 1.6, fill: "none", "stroke-dasharray": "4 4", opacity: .85 }));
+    svg.appendChild(el("text", { x: px(n - 1) + 7, y: Y0 + 14, "font-size": 11, fill: C_V }, "p = n−1: ajuste exacto"));
+    // la mitad
+    var mitad = (n - 1) / 2;
+    svg.appendChild(el("circle", { cx: px(mitad).toFixed(1), cy: py(0.5).toFixed(1), r: 3.6, fill: C_R, "fill-opacity": .5 }));
+    // el punto elegido
+    svg.appendChild(el("circle", { cx: px(p).toFixed(1), cy: py(r2).toFixed(1), r: 5.4, fill: C_R }));
+
+    lec.innerHTML = "Con n = <strong>" + n + "</strong> y p = <strong>" + p + "</strong> predictores que no " +
+      "guardan ninguna relación con la respuesta, el R² esperado vale p/(n−1) = <strong>" + r2.toFixed(4) +
+      "</strong> (Proposición 9.3). Con <strong>" + Math.round(mitad) + "</strong> predictores inútiles ya se " +
+      "espera la mitad de la varianza explicada, y en p = n−1 = <strong>" + (n - 1) + "</strong> el ajuste es " +
+      "exacto y el R² vale 1 (Proposición 9.2). La recta no mide estructura: mide cuánta dimensión se le dio al modelo.";
+  }
+
+  cn.addEventListener("input", dibujar);
+  cp.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Infinitos modelos igual de perfectos
+
+::: {.proposicion}
+**Proposición 9.4 (el ajuste perfecto no identifica los coeficientes).** Sea $p>\operatorname{rango}(X)$ y sea $\hat\beta$ cualquier vector con $X\hat\beta=y$. Entonces el conjunto de todas las soluciones exactas es
+$$\{\hat\beta+v\;:\;v\in\mathcal{N}(X)\},$$
+un trasladado del núcleo, de dimensión $p-\operatorname{rango}(X)\ge p-n$. Todas producen **el mismo ajuste** sobre los datos de entrenamiento y coeficientes arbitrariamente distintos entre sí.
+
+Además, con $p+1\ge n$ se tiene $n-p-1\le 0$, así que $\hat\sigma^2=\text{RSS}/(n-p-1)$ no está definida y los criterios $C_p$, AIC y BIC de la Definición 7.3 **no se pueden calcular**. La validación cruzada de la lección 6 sí, porque mide sobre datos apartados y no estima $\sigma^2$.
+:::
+
+::: {.demostracion}
+*Demostración.* Si $X\hat\beta=y$ y $v\in\mathcal{N}(X)$, entonces $X(\hat\beta+v)=X\hat\beta+Xv=y+0=y$, así que todo elemento del trasladado es solución. Recíprocamente, si $X\beta_1=X\beta_2=y$ entonces $X(\beta_1-\beta_2)=0$, luego $\beta_1-\beta_2\in\mathcal{N}(X)$ y $\beta_1$ está en el trasladado de $\beta_2$. El conjunto de soluciones es por tanto exactamente ese trasladado, y no es un subespacio salvo que $y=0$ (Álgebra 3).
+
+Por el teorema del rango-nulidad, $\dim\mathcal{N}(X)=p-\operatorname{rango}(X)$, y como $\operatorname{rango}(X)\le n$, esa dimensión es al menos $p-n$. Si es positiva, el núcleo contiene vectores de norma arbitrariamente grande, y sumarlos cambia los coeficientes tanto como se quiera sin tocar $X\beta$.
+
+La segunda parte es aritmética: $\hat\sigma^2$ divide entre $n-p-1$, que es cero o negativo en cuanto $p+1\ge n$. [∎]{.fin-demo}
+:::
+
+La demostración deja claro qué se pierde y qué no: **el ajuste está determinado y los coeficientes no**. Por eso en alta dimensión una frase como «el coeficiente de esta variable es $6{,}1$» no significa nada por sí sola; hay otro ajuste, igual de perfecto sobre los mismos datos, donde vale $-0{,}004$.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(93)
+n, p = 25, 60
+X = rng.normal(size=(n, p)); X -= X.mean(0)
+beta = np.zeros(p); beta[[0, 1, 2]] = [2.0, -1.5, 1.0]
+y = X @ beta + rng.normal(scale=0.4, size=n); y -= y.mean()
+
+b0, *_ = np.linalg.lstsq(X, y, rcond=None)      # la solucion de norma minima
+rango = int(np.linalg.matrix_rank(X))
+print("n = %d, p = %d, rango de X = %d" % (n, p, rango))
+print("dimension del nucleo de X: %d = p - rango" % (p - rango))
+print("la solucion de norma minima ajusta sin error:", float(np.sum((y - X @ b0) ** 2)) < 1e-18)
+print()
+
+# El PROYECTOR sobre el nucleo es unico, a diferencia de una base suya.
+P = np.eye(p) - np.linalg.pinv(X) @ X
+w1 = np.zeros(p); w1[0] = 1.0                    # dos direcciones fijas, no sorteadas
+w2 = np.zeros(p); w2[7] = 1.0
+soluciones = {"norma minima": b0}
+for nombre, w in [("b0 + 20*P e0", w1), ("b0 + 20*P e7", w2)]:
+    v = P @ w
+    soluciones[nombre] = b0 + 20.0 * v / np.linalg.norm(v)
+
+for nombre, b in soluciones.items():
+    print("%-14s : ajusta sin error %-5s | norma %7.4f | mismo ajuste que b0 %s"
+          % (nombre, str(float(np.sum((y - X @ b) ** 2)) < 1e-16),
+             float(np.linalg.norm(b)), bool(np.allclose(X @ b, X @ b0, atol=1e-10))))
+print()
+print("el coeficiente 0 vale, en los tres ajustes perfectos: %s"
+      % ", ".join("%.4f" % b[0] for b in soluciones.values()))
+print("y el verdadero vale %.4f" % beta[0])
+print()
+print("grados de libertad para estimar sigma^2: n - p - 1 = %d" % (n - p - 1))
+print("se puede estimar sigma^2 con el modelo completo:", (n - p - 1) > 0)
+print("luego Cp, AIC y BIC de la leccion 7 no se pueden calcular aqui")
+```
+
+Los tres vectores de coeficientes ajustan los $25$ puntos sin ningún error y dan predicciones idénticas sobre ellos. El coeficiente de la primera variable vale $0{,}9276$, $16{,}2702$ y $-0{,}0036$ en los tres, mientras el verdadero es $2$. Ninguno de los tres está más justificado que los otros **por los datos**; lo único que separa al primero es que es el de menor norma, que es una elección del método y no una conclusión.
+
+La última línea cierra el enlace con la lección 7: con $n-p-1=-36$ no hay forma de estimar $\sigma^2$, y sin $\hat\sigma^2$ no hay $C_p$ ni BIC. Lo que sobrevive es lo que no necesita esa estimación: la validación cruzada de la lección 6 y la penalización de la lección 8.
+
+```{=html}
+<div class="viz-equivalentes">
+  <div class="controles">
+    <label>Cuánto núcleo se añade <input id="eq-t" type="range" min="0" max="20" step="0.5" value="6"> <span id="eq-t-v">6.0</span></label>
+    <label>Dirección del núcleo
+      <select id="eq-d">
+        <option value="0" selected>la primera</option>
+        <option value="1">la segunda</option>
+        <option value="2">la tercera</option>
+      </select>
+    </label>
+  </div>
+  <svg id="eq-svg" viewBox="0 0 660 300" role="img" aria-label="Arriba, los primeros coeficientes del modelo, que se mueven muchísimo al desplazarse por el núcleo; abajo, los valores ajustados sobre los datos, que no se mueven en absoluto."></svg>
+  <p class="lectura" id="eq-lectura"></p>
+</div>
+<style>
+.viz-equivalentes { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-equivalentes .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-equivalentes label { display: flex; align-items: center; gap: .4rem; }
+.viz-equivalentes input[type=range] { width: 150px; padding: 0; }
+.viz-equivalentes select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-equivalentes svg { width: 100%; height: auto; display: block; }
+.viz-equivalentes .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_B = "#B4342E", C_A = "#0F6E68";
+  var svg = document.getElementById("eq-svg"), lec = document.getElementById("eq-lectura");
+  var ct = document.getElementById("eq-t"), et = document.getElementById("eq-t-v");
+  var cd = document.getElementById("eq-d");
+
+  // Coeficientes de la solucion de norma minima y tres direcciones del nucleo,
+  // fijos y elegidos para que el dibujo reproduzca el de la celda.
+  var B0 = [0.93, -0.71, 0.44, 0.12, -0.28, 0.05, 0.19, -0.09];
+  var NUC = [[0.77, 0.12, -0.31, 0.44, 0.08, -0.22, 0.15, 0.06],
+             [-0.18, 0.69, 0.25, -0.12, 0.41, 0.09, -0.33, 0.21],
+             [0.31, -0.24, 0.62, 0.17, -0.19, 0.48, 0.11, -0.27]];
+  var AJUSTE = [0.8, -1.4, 0.3, 1.9, -0.6, 1.1, -1.8, 0.5];
+  // Marco anclado: dos paneles fijos, ejes constantes.
+  var X0 = 56, XW = 570, YA = 40, HA = 92, YB = 186, HB = 72, CMAX = 20;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var t = +ct.value, d = +cd.value;
+    et.textContent = t.toFixed(1);
+    var v = NUC[d];
+    var b = B0.map(function (x, i) { return x + t * v[i]; });
+
+    var an = XW / B0.length;
+    var c0 = YA + HA / 2, c1 = YB + HB / 2;
+    [[c0, "coeficientes del modelo"], [c1, "valores ajustados sobre los datos"]].forEach(function (r) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + r[0] + " L" + (X0 + XW) + " " + r[0],
+        stroke: C_L, "stroke-width": 1, fill: "none" }));
+      svg.appendChild(el("text", { x: X0, y: r[0] - HA / 2 - 10, "font-size": 11.5, fill: C_T, opacity: .75 }, r[1]));
+    });
+
+    b.forEach(function (x, i) {
+      var h = Math.max(-HA / 2, Math.min(HA / 2, x / CMAX * (HA / 2)));
+      svg.appendChild(el("rect", { x: (X0 + i * an + an * 0.25).toFixed(1),
+        y: (h >= 0 ? c0 - h : c0).toFixed(1), width: (an * 0.5).toFixed(1),
+        height: Math.abs(h).toFixed(1), fill: C_B, "fill-opacity": .35, stroke: C_B, "stroke-width": 1.2 }));
+    });
+    AJUSTE.forEach(function (x, i) {
+      var h = x / 2.5 * (HB / 2);
+      svg.appendChild(el("rect", { x: (X0 + i * an + an * 0.25).toFixed(1),
+        y: (h >= 0 ? c1 - h : c1).toFixed(1), width: (an * 0.5).toFixed(1),
+        height: Math.abs(h).toFixed(1), fill: C_A, "fill-opacity": .35, stroke: C_A, "stroke-width": 1.2 }));
+    });
+
+    lec.innerHTML = "Desplazándose <strong>" + t.toFixed(1) + "</strong> por el núcleo, el primer coeficiente " +
+      "pasa de <strong>" + B0[0].toFixed(2) + "</strong> a <strong>" + b[0].toFixed(2) +
+      "</strong> y el segundo de <strong>" + B0[1].toFixed(2) + "</strong> a <strong>" + b[1].toFixed(2) +
+      "</strong>. El panel de abajo <strong>no se mueve en absoluto</strong>, y no puede moverse: sumar un " +
+      "vector del núcleo no cambia Xβ (Proposición 9.4). Los datos determinan el ajuste y no determinan " +
+      "los coeficientes.";
+  }
+
+  ct.addEventListener("input", dibujar);
+  cd.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Lo que sí funciona
+
+Encoger resuelve las dos cosas a la vez: devuelve una solución única y devuelve una que generaliza.
+
+```{pyodide}
+import numpy as np
+from sklearn.linear_model import Lasso
+from sklearn.model_selection import KFold
+
+rng = np.random.default_rng(94)
+n, p, s = 60, 200, 0.5
+beta = np.zeros(p); beta[[0, 1, 2, 3]] = [2.0, -1.5, 1.0, 0.8]
+
+def datos(m):
+    Z = rng.normal(size=(m, p))
+    return Z, Z @ beta + rng.normal(scale=s, size=m)
+
+X, y = datos(n)
+Xp, yp = datos(5000)
+mx, my = X.mean(0), y.mean()
+print("n = %d, p = %d, y solo 4 predictores verdaderos" % (n, p))
+print()
+
+# 1. minimos cuadrados, en su version de norma minima
+b0, *_ = np.linalg.lstsq(X - mx, y - my, rcond=None)
+e0 = float(np.mean((yp - ((Xp - mx) @ b0 + my)) ** 2))
+print("minimos cuadrados de norma minima")
+print("   ajusta el entrenamiento sin error:", float(np.sum(((y - my) - (X - mx) @ b0) ** 2)) < 1e-18)
+print("   error de PRUEBA        : %.4f" % e0)
+print("   coeficientes no nulos  : %d de %d" % (int((np.abs(b0) > 1e-8).sum()), p))
+print()
+
+# 2. lasso, con el parametro elegido por validacion cruzada (leccion 6)
+kf = KFold(n_splits=5, shuffle=True, random_state=0)
+rejilla = np.logspace(-2, 0, 20)
+cv = []
+for a in rejilla:
+    err = []
+    for tr, te in kf.split(X):
+        m_ = Lasso(alpha=a, max_iter=50000).fit(X[tr], y[tr])
+        err.append(float(np.mean((y[te] - m_.predict(X[te])) ** 2)))
+    cv.append(float(np.mean(err)))
+mejor = float(rejilla[int(np.argmin(cv))])
+lm = Lasso(alpha=mejor, max_iter=50000).fit(X, y)
+el = float(np.mean((yp - lm.predict(Xp)) ** 2))
+print("lasso con alpha elegido por validacion cruzada de 5 pliegues")
+print("   alpha elegido          : %.5f" % mejor)
+print("   error de PRUEBA        : %.4f" % el)
+print("   coeficientes no nulos  : %d de %d" % (int((lm.coef_ != 0).sum()), p))
+print("   de los 4 verdaderos recupera: %d" % int((lm.coef_[:4] != 0).sum()))
+print()
+print("error irreducible, sigma^2 = %.4f" % s ** 2)
+print("el lasso queda en %.2f veces el error de la solucion de norma minima" % (el / e0))
+```
+
+Mínimos cuadrados, en su [solución de norma mínima]{.g}, ajusta el entrenamiento sin error y comete $6{,}24$ de error sobre datos nuevos, con los $200$ coeficientes distintos de cero. El lasso, con el parámetro elegido por validación cruzada, comete $0{,}43$ —el $7$ % de aquel— con $23$ coeficientes no nulos, y entre ellos están los cuatro verdaderos. El error irreducible es $\sigma^2=0{,}25$, así que el lasso queda cerca del suelo y mínimos cuadrados a veinticinco veces de él.
+
+Conviene no leer esto como que el lasso sea bueno encontrando la verdad: declara $23$ variables cuando solo $4$ importan. Lo que hace bien es **predecir**, y lo hace precisamente porque renuncia a ajustar el entrenamiento sin error.
+
+## 5. Contraste con la librería
+
+Esta lección es de nivel **L3**. El contraste aprovecha una identidad que en alta dimensión deja de ser cosmética.
+
+::: {.proposicion}
+**Proposición 9.5 (ridge en forma dual).** Para todo $\lambda>0$,
+$$(X^\top X+\lambda I_p)^{-1}X^\top \;=\; X^\top (XX^\top+\lambda I_n)^{-1},$$
+de modo que la estimación ridge se puede calcular resolviendo un sistema $n\times n$ en lugar de uno $p\times p$. Con $p\gg n$ la diferencia es la que hay entre ser posible y no serlo.
+
+Además, la solución que devuelven `lstsq` y la pseudoinversa es la **de norma mínima** entre todas las que ajustan igual.
+:::
+
+::: {.demostracion}
+*Demostración.* Basta multiplicar. Partiendo de la identidad evidente
+$$X^\top(XX^\top+\lambda I_n)=(X^\top X+\lambda I_p)X^\top,$$
+—los dos lados valen $X^\top XX^\top+\lambda X^\top$— y multiplicando por la izquierda por $(X^\top X+\lambda I_p)^{-1}$ y por la derecha por $(XX^\top+\lambda I_n)^{-1}$, que existen las dos por la Proposición 8.2 aplicada a $X$ y a $X^\top$, se obtiene
+$$(X^\top X+\lambda I_p)^{-1}X^\top=X^\top(XX^\top+\lambda I_n)^{-1}.$$
+
+Para la segunda parte, sea $\hat\beta^{+}=X^{+}y$ y sea $\beta$ cualquier otra solución exacta. Por la Proposición 9.4, $\beta=\hat\beta^{+}+v$ con $v\in\mathcal{N}(X)$. La pseudoinversa devuelve un vector del espacio fila de $X$, que es el complemento ortogonal del núcleo, así que $\hat\beta^{+}\perp v$ y por Pitágoras
+$$\lVert\beta\rVert^2=\lVert\hat\beta^{+}\rVert^2+\lVert v\rVert^2\ \ge\ \lVert\hat\beta^{+}\rVert^2,$$
+con igualdad solo si $v=0$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+from sklearn.linear_model import Ridge
+
+rng = np.random.default_rng(95)
+n, p, lam = 40, 300, 3.0
+X = rng.normal(size=(n, p)); X -= X.mean(0)
+y = X @ np.concatenate([[1.5, -1.0, 0.7], np.zeros(p - 3)]) + rng.normal(scale=0.4, size=n)
+y -= y.mean()
+
+# ridge en su forma primal: un sistema p x p
+primal = np.linalg.solve(X.T @ X + lam * np.eye(p), X.T @ y)
+# ridge en su forma dual: un sistema n x n, que aqui es 40 en vez de 300
+dual = X.T @ np.linalg.solve(X @ X.T + lam * np.eye(n), y)
+suyo = Ridge(alpha=lam, fit_intercept=False).fit(X, y).coef_
+
+print("sistema primal: %d x %d | sistema dual: %d x %d" % (p, p, n, n))
+print("primal == dual a 1e-10   :", bool(np.allclose(primal, dual, atol=1e-10)))
+print("primal == sklearn a 1e-10:", bool(np.allclose(primal, suyo, atol=1e-10)))
+print("los tres primeros coeficientes:", np.round(primal[:3], 6))
+print()
+
+# minimos cuadrados con p > n: lstsq devuelve la solucion de NORMA MINIMA,
+# que es por definicion la pseudoinversa aplicada a y.
+mio, *_ = np.linalg.lstsq(X, y, rcond=None)
+pinv = np.linalg.pinv(X) @ y
+print("lstsq == pinv(X) @ y a 1e-10:", bool(np.allclose(mio, pinv, atol=1e-10)))
+print("norma de esa solucion: %.6f" % float(np.linalg.norm(mio)))
+
+P = np.eye(p) - np.linalg.pinv(X) @ X       # el proyector sobre el nucleo
+v = P @ np.eye(p)[0]
+otra = mio + 5.0 * v / np.linalg.norm(v)
+print("otra solucion, igual de perfecta, con norma: %.6f" % float(np.linalg.norm(otra)))
+print("las dos ajustan exactamente igual:", bool(np.allclose(X @ mio, X @ otra, atol=1e-10)))
+print("pero lstsq siempre devuelve la de menor norma:", float(np.linalg.norm(mio)) < float(np.linalg.norm(otra)))
+```
+
+El sistema dual es de $40\times 40$ donde el primal es de $300\times 300$, y los dos dan el mismo vector a $10^{-10}$, igual que `Ridge`. La segunda mitad confirma que `lstsq` devuelve la de norma mínima: la otra solución exhibida ajusta exactamente igual y tiene norma $5{,}06$ frente a $0{,}77$.
+
+## Ejercicios
+
+### Ejercicio 1, El R² que regala el ruido
+
+Con la Proposición 9.3, calcular cuántos predictores de puro ruido hacen falta para esperar un $R^2$ de $0{,}80$ con $n=51$ observaciones.
+
+```{pyodide}
+#| exercise: ex_r2
+n, objetivo = 51, 0.80
+
+p = ______
+
+print(p)
+int(p)
+```
+
+::: {.hint exercise="ex_r2"}
+$E[R^2]=p/(n-1)$, así que $p=\text{objetivo}\cdot(n-1)$.
+:::
+
+::: {.solution exercise="ex_r2"}
+```{pyodide}
+n, objetivo = 51, 0.80
+
+p = int(round(objetivo * (n - 1)))
+
+print(p)
+int(p)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_r2
+#| check: true
+if result == 40:
+    feedback = {"correct": True, "message": "Correcto: 40 columnas de ruido puro bastan para un R² esperado de 0.80 con 51 observaciones.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 40 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuántos modelos perfectos hay
+
+Con $n=40$ observaciones y $p=150$ predictores en posición general, calcular la dimensión del conjunto de vectores de coeficientes que ajustan sin error.
+
+```{pyodide}
+#| exercise: ex_nucleo
+n, p = 40, 150
+
+dimension = ______
+
+print(dimension)
+int(dimension)
+```
+
+::: {.hint exercise="ex_nucleo"}
+Por la Proposición 9.4 es $p-\operatorname{rango}(X)$, y con columnas en posición general el rango vale $\min\{n,p\}$.
+:::
+
+::: {.solution exercise="ex_nucleo"}
+```{pyodide}
+n, p = 40, 150
+
+dimension = p - min(n, p)
+
+print(dimension)
+int(dimension)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_nucleo
+#| check: true
+if result == 110:
+    feedback = {"correct": True, "message": "Correcto: 110. No hay un modelo perfecto, hay un espacio de dimensión 110 lleno de ellos.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 110 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 9**:
+
+1. Comprobar la Proposición 9.3 fuera de la normal: repetir la simulación con respuestas y predictores de ley uniforme, exponencial y $t$ de Student con tres grados de libertad. Anotar que $E[R^2]=p/(n-1)$ sigue saliendo y explicar qué paso de la demostración lo garantiza.
+2. Dibujar la tijera: para $n=50$ fijo, graficar el $R^2$ de entrenamiento y el error de prueba contra $p$, de $1$ a $80$, con cuatro predictores verdaderos entre el ruido. Anotar dónde se cruzan y a partir de qué $p$ el error de prueba de mínimos cuadrados supera al de predecir siempre la media.
+3. Medir el coste de la forma dual: cronometrar ridge por el sistema $p\times p$ y por el $n\times n$ para $n=100$ y $p$ de $100$ a $20\,000$. Anotar en `50-Errores/` a partir de qué $p$ la forma primal deja de caber en memoria y la dual sigue funcionando.
+
+## Del libro
+
+*An Introduction to Statistical Learning with Applications in Python* trata este material en §6.4 *Considerations in High Dimensions*, con la descripción del problema en §6.4.1 *High-Dimensional Data*, lo que falla en §6.4.2 *What Goes Wrong in High Dimensions?*, qué hacer en §6.4.3 *Regression in High Dimensions* y la lectura de los resultados en §6.4.4 *Interpreting Results in High Dimensions*.
+
+Con esta lección queda cubierto el capítulo 6 salvo §6.3 *Dimension Reduction Methods*, que espera a la lección de componentes principales porque la regresión sobre componentes es esa descomposición seguida de unos mínimos cuadrados.
+
+**Preguntas para leer §6.4 con lápiz:**
+
+1. §6.4.2 ilustra el problema con un ejemplo donde el $R^2$ sube al añadir predictores inútiles. Con la Proposición 9.3, ¿cuánto sube de media cada predictor añadido, y por qué esa cantidad no depende de la escala de los datos?
+2. §6.4.3 recomienda ridge, lasso y componentes principales. Con la Proposición 9.4, ¿cuál es la propiedad concreta que los tres tienen y mínimos cuadrados no, y en qué se diferencia de ser «más robustos»?
+3. §6.4.4 advierte contra interpretar los coeficientes. Con el trasladado del núcleo de la Proposición 9.4, ¿qué afirmación sobre un coeficiente concreto sigue siendo legítima en alta dimensión, si es que queda alguna?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/alta-dimension.md`, enlazada a [[ridge-y-lasso]], [[espacio-columna]] y [[p-hacking]]. Conviene rehacer a mano la Proposición 9.2: que la proyección llene todo el espacio **por dimensión y no por contenido** es la frase que resume la lección, y una vez vista ya no se vuelve a leer un $R^2$ sin preguntar cuántas columnas hubo.
+
+```
+¿Cuándo está un problema en alta dimensión?::Cuando p+1 ≥ n, con el diseño con intercepto
+¿Qué pasa con mínimos cuadrados ahí?::Ajusta sin error: RSS = 0 y R² = 1
+¿Depende eso de que los predictores sirvan?::No: la proyección llena el espacio por dimensión, no por contenido
+¿Cuánto R² regala el ruido puro?::Exactamente p/(n−1) de media
+¿Cuántos predictores inútiles dan R² esperado de 0,5?::(n−1)/2
+¿Cuántos modelos ajustan sin error con p > n?::Todo un trasladado del núcleo, de dimensión p − rango(X)
+¿Qué determinan los datos en ese caso?::El ajuste Xβ, no los coeficientes β
+¿Por qué no sirve Cp ni BIC?::Porque σ̂² divide entre n−p−1, que es cero o negativo
+¿Qué sí sobrevive?::La validación cruzada, que no estima σ², y la penalización de la lección 8
+¿Qué devuelve lstsq cuando hay infinitas soluciones?::La de norma mínima, que es la pseudoinversa aplicada a y
+¿Por qué es la de norma mínima?::Porque es ortogonal al núcleo, y Pitágoras hace el resto
+¿Cómo se resuelve ridge con p ≫ n?::Por la forma dual, un sistema n×n en vez de p×p
+¿Cuál es la identidad?::(XᵀX+λI_p)⁻¹Xᵀ = Xᵀ(XXᵀ+λI_n)⁻¹
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 9.2 se demuestra observando que un espacio columna de dimensión $n$ dentro de $\mathbb{R}^n$ es todo el espacio, de modo que la proyección es la identidad; se comprueba con $n=30$ y una respuesta sin ninguna relación con los predictores, donde el ajuste pasa a ser exacto justo en $p=29$, o sea $p+1=n$. La Proposición 9.3 se demuestra por simetría esférica: el $R^2$ es la fracción de norma al cuadrado que cae en un subespacio fijo de dimensión $p$ dentro de uno de dimensión $n-1$; se comprueba con $2000$ repeticiones por fila y siete valores de $p$, con diferencias por debajo de $0{,}006$ en todos. La Proposición 9.4 se demuestra con el teorema del rango-nulidad y la caracterización del conjunto solución como trasladado del núcleo; se comprueba exhibiendo tres vectores de coeficientes que ajustan los $25$ puntos sin error y dan predicciones idénticas, con el primer coeficiente valiendo $0{,}9276$, $16{,}2702$ y $-0{,}0036$ frente a un valor verdadero de $2$. La Proposición 9.5 se demuestra por manipulación directa de la identidad $X^\top(XX^\top+\lambda I)=(X^\top X+\lambda I)X^\top$ y, para la norma mínima, por ortogonalidad y Pitágoras; se comprueba contra `Ridge` a $10^{-10}$ con un sistema dual de $40\times 40$ frente a uno primal de $300\times 300$. La comparación de la sección 4 está medida sobre $5000$ observaciones de prueba. Los dos visuales se contrastaron contra estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** La existencia y unicidad de la solución de ridge para todo $\lambda>0$ es la Proposición 8.2 de Machine Learning 8, y aquí se usa sin rehacerla. El teorema del rango-nulidad y la caracterización del conjunto de soluciones como trasladado del núcleo son de Álgebra 3. La proyección ortogonal sobre el espacio columna es de Álgebra 5. El $C_p$ y el BIC, con su dependencia de $\hat\sigma^2$, son de Machine Learning 7. La validación cruzada es de Machine Learning 6.
+
+**Lo que se enuncia sin demostrar.** Que un diseño con columnas sorteadas de una ley continua tiene rango máximo con probabilidad uno: se usa al decir «en posición general» y se comprueba en los casos concretos, pero no se demuestra. Que el lasso recupera el soporte verdadero bajo condiciones de incoherencia entre columnas se menciona solo de pasada; la sección 4 mide su error de predicción, que es lo que sí se afirma, y anota explícitamente que declara $23$ variables donde solo $4$ importan.
+
+**Lo que viene de los libros.**
+
+- [*An Introduction to Statistical Learning with Applications in Python*](https://www.statlearning.com/) (James, Witten, Hastie, Tibshirani, Taylor; Springer, 2023), §6.4 *Considerations in High Dimensions* con sus cuatro subsecciones — citado por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La Proposición 9.3 con la fórmula cerrada $E[R^2]=p/(n-1)$ y su demostración por simetría esférica, que convierte «el $R^2$ sube al añadir predictores» en una cantidad exacta que se puede calcular antes de ver ningún dato, y que enlaza esta lección con Estadística 17. La Proposición 9.4 enunciada como una afirmación sobre el **conjunto** de soluciones y no como una advertencia, con la distinción explícita entre lo que los datos determinan —el ajuste— y lo que no —los coeficientes—. Y la Proposición 9.5, que trata la forma dual como resultado y no como truco de implementación, junto con la caracterización de `lstsq` como la solución de norma mínima por Pitágoras.
+
+[Índice de ISLP verificado el 13-09-2026 contra los marcadores del PDF oficial.]{.sello}
+:::
