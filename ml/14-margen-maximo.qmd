@@ -1,0 +1,876 @@
+---
+title: "Margen máximo y clasificador de soporte vectorial"
+subtitle: "Machine Learning · Lección 14"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/03-regresion-logistica, matematica/04-producto-interno, ml/01-aprendizaje-estadistico]
+siguientes: []
+libro: "ISLP §9.1 Maximal Margin Classifier · §9.1.1 What Is a Hyperplane? · §9.1.2 Classification Using a Separating Hyperplane · §9.1.3 The Maximal Margin Classifier · §9.1.4 Construction of the Maximal Margin Classifier · §9.1.5 The Non-separable Case · §9.2 Support Vector Classifiers · §9.2.1 Overview of the Support Vector Classifier · §9.2.2 Details of the Support Vector Classifier"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="ml/14-margen-maximo"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §9.1–9.2]{.item}
+[**Prereqs** [Regresión logística](03-regresion-logistica.qmd) · [Producto interno](../matematica/04-producto-interno.qmd) · [Aprendizaje estadístico](01-aprendizaje-estadistico.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir un [hiperplano]{.g} y demostrar que la distancia con signo de un punto a él vale $(\beta_0+\beta^\top x)/\lVert\beta\rVert$.
+2. Explicar por qué el problema del [margen]{.g} necesita fijar la escala de $\beta$, y qué normalización se elige.
+3. **Demostrar que el margen máximo es la mitad de la distancia entre las [envolventes convexas]{.g data-t="envolvente convexa"} de las dos clases**, y calcularlo sin ningún optimizador.
+4. Demostrar que la solución solo depende de los [vectores de soporte]{.g data-t="vector de soporte"}, y comprobar que mover cualquier otro punto no la cambia.
+5. Definir el [clasificador de soporte vectorial]{.g} con su presupuesto de holgura.
+6. Demostrar que al subir el presupuesto el margen no crece y la holgura total no sube.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Álgebra 4**: el producto interno y la proyección ortogonal, que es de donde sale la fórmula de la distancia.
+- **Machine Learning 3**: la regresión logística, que también traza una frontera lineal pero eligiéndola por verosimilitud en lugar de por geometría.
+- **Machine Learning 1**: el compromiso entre sesgo y varianza, que aquí toma la forma del presupuesto de holgura.
+- **Álgebra 6**: los mínimos cuadrados, cuyo criterio mira **todos** los puntos, al revés que este.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 15**: el truco del núcleo, que aplica todo esto en un espacio de más dimensiones sin visitarlo, y la pérdida bisagra.
+- **Machine Learning 16**: las redes neuronales, cuya primera capa es una colección de hiperplanos como estos.
+- **Machine Learning 25**: los métodos lineales de clasificación de ESL, donde el perceptrón resuelve el mismo problema sin pedir el mejor margen.
+- **Machine Learning 22**: la geometría de mínimos cuadrados, para contrastar dos criterios que usan la misma frontera.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $\beta$ | beta | El vector normal al hiperplano, sin el término independiente |
+| $\beta_0$ | beta sub cero | El término independiente del hiperplano |
+| $f(x)$ | efe de equis | La función $\beta_0+\beta^\top x$, cuyo signo clasifica |
+| $y_i$ | y sub i | La etiqueta de la observación $i$, que vale $-1$ o $+1$ |
+| $M$ | eme | El margen: la distancia del hiperplano al punto más cercano |
+| $\lVert\beta\rVert$ | norma de beta | La longitud euclídea de $\beta$ |
+| $\operatorname{conv}(A)$ | envolvente convexa de A | El menor conjunto convexo que contiene a $A$ |
+| $\xi_i$ | xi sub i | La holgura de la observación $i$: cuánto incumple su margen |
+| $C$ | ce | El presupuesto: cuánto se paga por cada unidad de holgura |
+| $n$ | ene | El número de observaciones |
+| $z$ | zeta | Un punto cualquiera del hiperplano, usado en la demostración de 14.2 |
+| $\mathcal{F}$ | efe caligráfica | Una familia de hiperplanos entre los que se elige |
+:::
+
+## 1. Un hiperplano, y a qué distancia queda cada punto
+
+::: {.definicion}
+**Definición 14.1 (hiperplano).** Dado $\beta\ne 0$ y $\beta_0$, el **hiperplano** asociado es
+$$\{x:\ \beta_0+\beta^\top x=0\}.$$
+Divide el espacio en dos lados según el signo de $f(x)=\beta_0+\beta^\top x$, y un clasificador lineal predice ese signo.
+:::
+
+::: {.proposicion}
+**Proposición 14.2 (la distancia con signo).** Para cualquier punto $x$,
+$$\text{distancia con signo al hiperplano}=\frac{\beta_0+\beta^\top x}{\lVert\beta\rVert},$$
+y el punto del hiperplano más cercano a $x$ es $x-\frac{f(x)}{\lVert\beta\rVert}\cdot\frac{\beta}{\lVert\beta\rVert}$. En particular, **multiplicar $\beta$ y $\beta_0$ por una constante positiva no mueve el hiperplano ni la distancia**, aunque multiplique el valor de $f$.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $u=\beta/\lVert\beta\rVert$ y sea $z$ cualquier punto del hiperplano, de modo que $\beta^\top z=-\beta_0$. Para un punto $x$, su desplazamiento respecto de $z$ se descompone en la parte paralela a $u$ y la perpendicular; solo la paralela cuenta para la distancia al hiperplano, y vale
+$$u^\top(x-z)=\frac{\beta^\top x-\beta^\top z}{\lVert\beta\rVert}=\frac{\beta^\top x+\beta_0}{\lVert\beta\rVert}=\frac{f(x)}{\lVert\beta\rVert}.$$
+Ese número no depende de qué $z$ se tome, porque $\beta^\top z=-\beta_0$ para todos. Restando esa componente se obtiene el punto más cercano, que está en el hiperplano por construcción. Para la última afirmación, sustituir $(\beta,\beta_0)$ por $(c\beta,c\beta_0)$ con $c>0$ deja el conjunto $\{x: c\beta_0+c\beta^\top x=0\}$ igual y multiplica numerador y denominador por $c$. [∎]{.fin-demo}
+:::
+
+La última frase es la que obliga a lo que viene después. Como $f$ se puede inflar tanto como se quiera sin mover nada, **pedir «que $f$ sea grande en los datos» no significa nada** hasta que se fija la escala.
+
+```{pyodide}
+import numpy as np
+
+# Un hiperplano en el plano es una recta: los x con beta0 + beta . x = 0.
+beta = np.array([2.0, -1.0])
+beta0 = 1.5
+punto = np.array([3.0, 0.5])
+
+valor = float(beta @ punto + beta0)
+distancia = valor / float(np.linalg.norm(beta))
+print("beta = %s, beta0 = %.1f" % (beta.tolist(), beta0))
+print("en el punto %s la funcion vale %.6f" % (punto.tolist(), valor))
+print("y la distancia con signo es %.6f" % distancia)
+print()
+
+# La misma distancia, por fuerza bruta: el punto mas cercano del hiperplano.
+# Se parametriza la recta y se minimiza sobre una malla muy fina, dos veces.
+def mas_cercano(beta, beta0, punto, centro, radio, pasos=200001):
+    d = np.array([-beta[1], beta[0]], dtype=float)
+    d /= np.linalg.norm(d)
+    base = -beta0 * beta / float(beta @ beta)
+    t = np.linspace(centro - radio, centro + radio, pasos)
+    puntos = base + t[:, None] * d
+    dist = np.linalg.norm(puntos - punto, axis=1)
+    i = int(np.argmin(dist))
+    return float(t[i]), float(dist[i]), puntos[i]
+
+t, bruto, p = mas_cercano(beta, beta0, punto, 0.0, 20.0)
+t, bruto, p = mas_cercano(beta, beta0, punto, t, 1e-3)
+print("por fuerza bruta sobre la recta, el punto mas cercano esta a %.6f" % bruto)
+print("la formula da el valor absoluto %.6f" % abs(distancia))
+print("coinciden a 1e-6:", bool(abs(bruto - abs(distancia)) < 1e-6))
+print("el punto mas cercano hallado: (%.4f, %.4f)" % (p[0], p[1]))
+print("y el que da la formula     : (%.4f, %.4f)"
+      % tuple(punto - distancia * beta / np.linalg.norm(beta)))
+print()
+
+# Escalar beta y beta0 no mueve el hiperplano, pero si el valor de la funcion.
+print("   escala   beta0 + beta.x   distancia con signo   ¿mismo hiperplano?")
+for c in [0.5, 1.0, 3.0, 10.0]:
+    v = float(c * beta @ punto + c * beta0)
+    dd = v / float(np.linalg.norm(c * beta))
+    # el hiperplano es el mismo si los puntos que lo cumplen son los mismos
+    mismo = bool(abs(dd - distancia) < 1e-12)
+    print("%9.1f %16.6f %21.6f %18s" % (c, v, dd, mismo))
+print()
+print("por eso el problema del margen necesita fijar la escala: sin fijarla,")
+print("el valor de la funcion se puede hacer tan grande como se quiera sin")
+print("mover la frontera ni un milimetro")
+```
+
+## 2. El margen máximo, sin optimizador
+
+::: {.proposicion}
+**Proposición 14.3 (la normalización).** Sea un conjunto separable, es decir tal que existe $(\beta,\beta_0)$ con $y_i f(x_i)>0$ para todo $i$. Entonces
+$$\max_{\beta,\beta_0}\ M\quad\text{sujeto a}\quad \frac{y_i\,f(x_i)}{\lVert\beta\rVert}\ge M\ \ \forall i$$
+tiene el mismo conjunto de hiperplanos óptimos que
+$$\min_{\beta,\beta_0}\ \tfrac12\lVert\beta\rVert^2\quad\text{sujeto a}\quad y_i\,f(x_i)\ge 1\ \ \forall i,$$
+y en el óptimo $M=1/\lVert\beta\rVert$.
+:::
+
+::: {.demostracion}
+*Demostración.* Dado un hiperplano con margen $M>0$, escalando $(\beta,\beta_0)$ por $1/(M\lVert\beta\rVert)$ —que es positivo y por la Proposición 14.2 no mueve nada— las restricciones pasan a ser $y_i f(x_i)\ge 1$ y la nueva norma vale $\lVert\beta\rVert/(M\lVert\beta\rVert)=1/M$. Al revés, si $y_i f(x_i)\ge 1$ para todo $i$, la distancia mínima es al menos $1/\lVert\beta\rVert$. La correspondencia es biyectiva sobre los hiperplanos y manda $M$ grande a $\lVert\beta\rVert$ pequeña, así que maximizar uno es minimizar la otra. [∎]{.fin-demo}
+:::
+
+La forma normalizada tiene una ventaja que se ve enseguida: es un problema **convexo con restricciones lineales**. Pero antes de resolverlo conviene saber cuánto vale la respuesta, y eso se puede decir con geometría elemental.
+
+::: {.proposicion}
+**Proposición 14.4 (el margen es media distancia entre envolventes).** Sean $A$ y $B$ los puntos de las dos clases y supóngase $\operatorname{conv}(A)\cap\operatorname{conv}(B)=\varnothing$. Entonces el margen máximo vale
+$$M^{*}=\tfrac12\,d\big(\operatorname{conv}(A),\operatorname{conv}(B)\big),$$
+y el hiperplano que lo alcanza es la **mediatriz** del segmento más corto entre las dos envolventes.
+:::
+
+::: {.demostracion}
+*Demostración.* *(Cota superior.)* Sea un hiperplano separador con margen $M$, con $A$ del lado negativo y $B$ del positivo. Para $a\in A$ y $b\in B$, la Proposición 14.2 da $-f(a)/\lVert\beta\rVert\ge M$ y $f(b)/\lVert\beta\rVert\ge M$, luego
+$$\lVert b-a\rVert\ \ge\ u^\top(b-a)=\frac{f(b)-f(a)}{\lVert\beta\rVert}\ \ge\ 2M,$$
+donde la primera desigualdad es Cauchy-Schwarz con $u$ unitario. Como $f$ es afín, la misma cuenta vale para combinaciones convexas de puntos de cada clase, así que $2M\le\lVert b-a\rVert$ para todo $a\in\operatorname{conv}(A)$ y $b\in\operatorname{conv}(B)$, y por tanto $2M\le d(\operatorname{conv}(A),\operatorname{conv}(B))$.
+
+*(Se alcanza.)* Sean $a^{*}$, $b^{*}$ los puntos de las envolventes que realizan la distancia $d$ —existen porque las envolventes son compactas—. Tómese $\beta=b^{*}-a^{*}$ y $\beta_0=-\beta^\top(a^{*}+b^{*})/2$, que es la mediatriz del segmento. Todo punto de $\operatorname{conv}(A)$ cumple $f\le 0$: si algún $a$ tuviera $f(a)>0$, un paso pequeño desde $a^{*}$ hacia $a$ —que sigue en la envolvente, por convexidad— acortaría la distancia a $b^{*}$, contra la minimalidad. Lo mismo del otro lado. Y $a^{*}$, $b^{*}$ quedan a distancia $d/2$ del hiperplano por construcción, así que el margen es exactamente $d/2$. [∎]{.fin-demo}
+:::
+
+De ahí sale un método de cálculo que no necesita resolver ningún programa cuadrático: **construir las dos envolventes convexas, buscar el segmento más corto entre ellas y trazar su mediatriz**.
+
+```{pyodide}
+import numpy as np
+
+def envolvente(P):
+    """Envolvente convexa por cadena monotona: devuelve los vertices en orden."""
+    Q = sorted(map(tuple, P))
+    def media(pts):
+        salida = []
+        for p in pts:
+            while len(salida) >= 2:
+                (x1, y1), (x2, y2) = salida[-2], salida[-1]
+                if (x2 - x1) * (p[1] - y1) - (y2 - y1) * (p[0] - x1) <= 0:
+                    salida.pop()
+                else:
+                    break
+            salida.append(p)
+        return salida
+    return np.array(media(Q)[:-1] + media(Q[::-1])[:-1], dtype=float)
+
+def dist_punto_segmento(p, a, b):
+    ab = b - a
+    largo = float(ab @ ab)
+    t = 0.0 if largo == 0 else float((p - a) @ ab) / largo
+    t = min(1.0, max(0.0, t))
+    proyeccion = a + t * ab
+    return float(np.linalg.norm(p - proyeccion)), proyeccion
+
+def distancia_envolventes(A, B):
+    """La distancia minima entre dos envolventes convexas, y el par que la alcanza."""
+    EA, EB = envolvente(A), envolvente(B)
+    mejor = (np.inf, None, None)
+    for E, F, invertir in [(EA, EB, False), (EB, EA, True)]:
+        for p in E:
+            for i in range(len(F)):
+                d, q = dist_punto_segmento(p, F[i], F[(i + 1) % len(F)])
+                if d < mejor[0]:
+                    mejor = (d, (q, p) if invertir else (p, q))
+    return mejor[0], mejor[1]
+
+rng = np.random.default_rng(4)
+A = rng.normal([-2.2, 0.4], 0.75, size=(14, 2))   # clase -1
+B = rng.normal([2.0, -0.3], 0.75, size=(14, 2))   # clase +1
+X = np.vstack([A, B])
+y = np.r_[-np.ones(len(A)), np.ones(len(B))]
+
+d, (a, b) = distancia_envolventes(A, B)
+print("distancia entre las dos envolventes convexas: %.6f" % d)
+print("el par que la alcanza: (%.4f, %.4f) y (%.4f, %.4f)" % (a[0], a[1], b[0], b[1]))
+print()
+
+# El hiperplano de margen maximo es la mediatriz de ese segmento.
+beta = b - a
+beta0 = -float(beta @ (a + b)) / 2.0
+margen = d / 2.0
+print("beta  = (%.6f, %.6f)" % (beta[0], beta[1]))
+print("beta0 = %.6f" % beta0)
+print()
+
+f = X @ beta + beta0
+print("todos los puntos quedan bien clasificados:", bool((y * f > 0).all()))
+distancias = y * f / np.linalg.norm(beta)
+print("la menor distancia con signo al hiperplano: %.6f" % float(distancias.min()))
+print("y la mitad de la distancia entre envolventes: %.6f" % margen)
+print("coinciden a 1e-10:", bool(abs(distancias.min() - margen) < 1e-10))
+print()
+
+# La normalizacion de la Proposicion 14.3: al escalar para que el margen valga 1,
+# la norma de beta es el inverso del margen.
+escala = 1.0 / (margen * np.linalg.norm(beta))
+bn, b0n = beta * escala, beta0 * escala
+holgura = y * (X @ bn + b0n)
+print("tras escalar para que y*f valga al menos 1:")
+print("   el minimo de y*f es exactamente 1:", bool(abs(holgura.min() - 1.0) < 1e-10))
+print("   ||beta|| = %.6f  y  1/||beta|| = %.6f" % (np.linalg.norm(bn), 1 / np.linalg.norm(bn)))
+print("   que es el margen:", bool(abs(1 / np.linalg.norm(bn) - margen) < 1e-10))
+print()
+
+# Ningun hiperplano separador puede tener mas margen: se prueba contra muchos.
+peor = 0.0
+sem = np.random.default_rng(17)
+for _ in range(4000):
+    v = sem.normal(size=2)
+    v /= np.linalg.norm(v)
+    proy = X @ v
+    lo, hi = proy[y > 0].min(), proy[y < 0].max()
+    if lo > hi:                      # separa en esa direccion
+        peor = max(peor, (lo - hi) / 2.0)
+print("mejor margen hallado probando 4000 direcciones al azar: %.6f" % peor)
+print("nunca supera al de la mediatriz:", bool(peor <= margen + 1e-12))
+print("y se le acerca por debajo, como debe")
+```
+
+El margen exacto vale $0{,}933609$, y probando $4000$ direcciones al azar el mejor margen encontrado es $0{,}933589$: se acerca por debajo y nunca lo pasa, que es lo que la cota superior de la demostración garantiza.
+
+```{=html}
+<div class="viz-margen">
+  <div class="controles">
+    <label>Acercar un punto azul <input id="mg-d" type="range" min="0" max="4.6" step="0.05" value="0"> <span id="mg-d-v">0.00</span></label>
+    <label>Dispersión <input id="mg-s" type="range" min="0.3" max="1.3" step="0.05" value="0.7"> <span id="mg-s-v">0.70</span></label>
+  </div>
+  <svg id="mg-svg" viewBox="0 0 660 340" role="img" aria-label="Los puntos de las dos clases con sus envolventes convexas, el segmento más corto entre ellas, la mediatriz de ese segmento y la franja del margen."></svg>
+  <p class="lectura" id="mg-lectura"></p>
+</div>
+<style>
+.viz-margen { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-margen .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-margen label { display: flex; align-items: center; gap: .4rem; }
+.viz-margen input[type=range] { width: 170px; padding: 0; }
+.viz-margen svg { width: 100%; height: auto; display: block; }
+.viz-margen .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("mg-svg"), lec = document.getElementById("mg-lectura");
+  var cd = document.getElementById("mg-d"), cs = document.getElementById("mg-s");
+  var ed = document.getElementById("mg-d-v"), es = document.getElementById("mg-s-v");
+  var X0 = 40, XW = 580, Y0 = 20, YH = 260;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // Nubes deterministas: siempre los mismos puntos para una dispersión dada.
+  function nubes(disp, empuje) {
+    var s = 11, r = function () { s = (s * 48271) % 2147483647; return s / 2147483647 - 0.5; };
+    var A = [], B = [], i;
+    for (i = 0; i < 9; i++) A.push([-2.3 + r() * 2 * disp, 0.3 + r() * 2 * disp]);
+    for (i = 0; i < 9; i++) B.push([2.1 + r() * 2 * disp, -0.2 + r() * 2 * disp]);
+    A[0] = [A[0][0] + empuje, A[0][1]];
+    return { A: A, B: B };
+  }
+  function hull(P) {
+    var Q = P.slice().sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; });
+    if (Q.length <= 2) return Q;
+    function cadena(pts) {
+      var out = [];
+      pts.forEach(function (p) {
+        while (out.length >= 2) {
+          var o = out[out.length - 2], a = out[out.length - 1];
+          if ((a[0] - o[0]) * (p[1] - o[1]) - (a[1] - o[1]) * (p[0] - o[0]) <= 0) out.pop(); else break;
+        }
+        out.push(p);
+      });
+      return out;
+    }
+    var lo = cadena(Q), hi = cadena(Q.slice().reverse());
+    return lo.slice(0, -1).concat(hi.slice(0, -1));
+  }
+  function distSeg(p, a, b) {
+    var vx = b[0] - a[0], vy = b[1] - a[1], L = vx * vx + vy * vy;
+    var t = L === 0 ? 0 : ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / L;
+    t = Math.max(0, Math.min(1, t));
+    var q = [a[0] + t * vx, a[1] + t * vy];
+    return { d: Math.hypot(p[0] - q[0], p[1] - q[1]), q: q };
+  }
+  function cruzan(HA, HB) {
+    // dos poligonos convexos se cortan si ningun eje los separa (SAT)
+    var pol = [HA, HB], i, j, k;
+    for (i = 0; i < 2; i++) {
+      var H = pol[i];
+      for (j = 0; j < H.length; j++) {
+        var a = H[j], b = H[(j + 1) % H.length];
+        var nx = -(b[1] - a[1]), ny = b[0] - a[0];
+        var loA = Infinity, hiA = -Infinity, loB = Infinity, hiB = -Infinity;
+        for (k = 0; k < HA.length; k++) { var v = HA[k][0] * nx + HA[k][1] * ny; loA = Math.min(loA, v); hiA = Math.max(hiA, v); }
+        for (k = 0; k < HB.length; k++) { var w = HB[k][0] * nx + HB[k][1] * ny; loB = Math.min(loB, w); hiB = Math.max(hiB, w); }
+        if (hiA < loB || hiB < loA) return false;
+      }
+    }
+    return true;
+  }
+  function masCorto(HA, HB) {
+    var mejor = { d: Infinity }, pares = [[HA, HB, false], [HB, HA, true]], t, i, j;
+    for (t = 0; t < 2; t++) {
+      var E = pares[t][0], F = pares[t][1], inv = pares[t][2];
+      for (i = 0; i < E.length; i++) for (j = 0; j < F.length; j++) {
+        var r = distSeg(E[i], F[j], F[(j + 1) % F.length]);
+        if (r.d < mejor.d) mejor = { d: r.d, a: inv ? r.q : E[i], b: inv ? E[i] : r.q };
+      }
+    }
+    return mejor;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var empuje = +cd.value, disp = +cs.value;
+    ed.textContent = empuje.toFixed(2); es.textContent = disp.toFixed(2);
+    var N = nubes(disp, empuje), HA = hull(N.A), HB = hull(N.B);
+    var px = function (v) { return X0 + (v + 5) / 10 * XW; };
+    var py = function (v) { return Y0 + (2.6 - v) / 5.2 * YH; };
+
+    function poligono(H, color) {
+      var d = "", i;
+      for (i = 0; i < H.length; i++) d += (i ? " L" : "M") + px(H[i][0]).toFixed(1) + " " + py(H[i][1]).toFixed(1);
+      svg.appendChild(el("path", { d: d + " Z", fill: color, "fill-opacity": .1, stroke: color, "stroke-width": 1.3, "stroke-dasharray": "4 3" }));
+    }
+    poligono(HA, C_A); poligono(HB, C_B);
+
+    var tocan = cruzan(HA, HB), m = masCorto(HA, HB);
+    if (!tocan) {
+      var bx = m.b[0] - m.a[0], by = m.b[1] - m.a[1];
+      var nb = Math.hypot(bx, by), ux = bx / nb, uy = by / nb;
+      var cx = (m.a[0] + m.b[0]) / 2, cy = (m.a[1] + m.b[1]) / 2;
+      // la mediatriz, dibujada larga
+      var tx = -uy, ty = ux;
+      svg.appendChild(el("path", { d: "M" + px(cx - tx * 9).toFixed(1) + " " + py(cy - ty * 9).toFixed(1) +
+        " L" + px(cx + tx * 9).toFixed(1) + " " + py(cy + ty * 9).toFixed(1),
+        stroke: C_T, "stroke-width": 2.2, fill: "none" }));
+      [-1, 1].forEach(function (sgn) {
+        var ox = ux * nb / 2 * sgn, oy = uy * nb / 2 * sgn;
+        svg.appendChild(el("path", { d: "M" + px(cx + ox - tx * 9).toFixed(1) + " " + py(cy + oy - ty * 9).toFixed(1) +
+          " L" + px(cx + ox + tx * 9).toFixed(1) + " " + py(cy + oy + ty * 9).toFixed(1),
+          stroke: C_G, "stroke-width": 1.4, "stroke-dasharray": "5 4", fill: "none" }));
+      });
+      svg.appendChild(el("path", { d: "M" + px(m.a[0]).toFixed(1) + " " + py(m.a[1]).toFixed(1) +
+        " L" + px(m.b[0]).toFixed(1) + " " + py(m.b[1]).toFixed(1),
+        stroke: C_G, "stroke-width": 3 }));
+    }
+    N.A.forEach(function (p, i) {
+      svg.appendChild(el("circle", { cx: px(p[0]).toFixed(1), cy: py(p[1]).toFixed(1), r: i === 0 ? 6 : 4,
+        fill: C_A, "fill-opacity": i === 0 ? .95 : .55 }));
+    });
+    N.B.forEach(function (p) {
+      svg.appendChild(el("rect", { x: (px(p[0]) - 4).toFixed(1), y: (py(p[1]) - 4).toFixed(1), width: 8, height: 8,
+        fill: C_B, "fill-opacity": .55 }));
+    });
+
+    lec.innerHTML = tocan
+      ? "Las dos envolventes convexas <strong>se tocan</strong>: no existe ningún hiperplano que separe las clases, " +
+        "y el problema de la Proposición 14.3 se queda sin soluciones factibles. Ese es el caso que obliga a la " +
+        "Definición 14.7 y su presupuesto."
+      : "El segmento más corto entre las envolventes mide <strong>" + m.d.toFixed(4) + "</strong>, " +
+        "así que el margen máximo vale <strong>" + (m.d / 2).toFixed(4) + "</strong> (Proposición 14.4). " +
+        "La recta gruesa es su mediatriz y las dos punteadas son los bordes del margen. " +
+        "Acercando el punto azul grande, el segmento se acorta y la franja se estrecha; " +
+        "mientras ese punto no toque el segmento más corto, la frontera <strong>no se mueve en absoluto</strong>.";
+  }
+
+  cd.addEventListener("input", dibujar);
+  cs.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Solo unos pocos puntos deciden
+
+::: {.definicion}
+**Definición 14.5 (vector de soporte).** En la forma normalizada de la Proposición 14.3, un **vector de soporte** es una observación con $y_i f(x_i)=1$, es decir una que toca el borde del margen.
+:::
+
+::: {.proposicion}
+**Proposición 14.6 (el ajuste solo depende de ellos).** El hiperplano de margen máximo no cambia si se eliminan todas las observaciones que no son vectores de soporte, ni si cualquiera de ellas se mueve sin llegar a entrar en el margen. En cambio, mover un vector de soporte lo cambia.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Proposición 14.4 el hiperplano depende únicamente del segmento más corto entre las envolventes, y por tanto solo de los puntos que participan en él. Un punto $x_i$ con $y_i f(x_i)>1$ está estrictamente más lejos del hiperplano que $M$; moverlo mientras siga cumpliendo $y_i f(x_i)>1$ no puede acortar el segmento mínimo —seguiría dando una distancia mayor que $d$— ni alargarlo, porque el par $(a^{*},b^{*})$ sigue disponible. Quitarlo tampoco: las envolventes solo pueden encogerse, y el segmento mínimo ya estaba en la parte que queda. Para la última afirmación basta el contraejemplo de la celda. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def envolvente(P):
+    Q = sorted(set(map(tuple, P)))
+    if len(Q) <= 2:
+        return np.array(Q, dtype=float)
+    def media(pts):
+        salida = []
+        for p in pts:
+            while len(salida) >= 2:
+                (x1, y1), (x2, y2) = salida[-2], salida[-1]
+                if (x2 - x1) * (p[1] - y1) - (y2 - y1) * (p[0] - x1) <= 0:
+                    salida.pop()
+                else:
+                    break
+            salida.append(p)
+        return salida
+    return np.array(media(Q)[:-1] + media(Q[::-1])[:-1], dtype=float)
+
+def dist_punto_segmento(p, a, b):
+    ab = b - a
+    largo = float(ab @ ab)
+    t = 0.0 if largo == 0 else min(1.0, max(0.0, float((p - a) @ ab) / largo))
+    q = a + t * ab
+    return float(np.linalg.norm(p - q)), q
+
+def hiperplano(A, B):
+    """El de margen maximo: mediatriz del segmento mas corto entre envolventes."""
+    EA, EB = envolvente(A), envolvente(B)
+    mejor = (np.inf, None, None)
+    for E, F, invertir in [(EA, EB, False), (EB, EA, True)]:
+        for p in E:
+            for i in range(len(F)):
+                d, q = dist_punto_segmento(p, F[i], F[(i + 1) % len(F)])
+                if d < mejor[0]:
+                    mejor = (d, (q, p) if invertir else (p, q))
+    d, (a, b) = mejor[0], mejor[1]
+    beta = b - a
+    beta0 = -float(beta @ (a + b)) / 2.0
+    escala = 2.0 / (d * float(np.linalg.norm(beta)))
+    return beta * escala, beta0 * escala, d / 2.0
+
+rng = np.random.default_rng(4)
+A = rng.normal([-2.2, 0.4], 0.75, size=(14, 2))
+B = rng.normal([2.0, -0.3], 0.75, size=(14, 2))
+X = np.vstack([A, B]); y = np.r_[-np.ones(14), np.ones(14)]
+
+beta, beta0, margen = hiperplano(A, B)
+holgura = y * (X @ beta + beta0)
+soporte = holgura < 1 + 1e-9
+print("margen: %.6f  |  puntos: %d  |  que tocan el margen: %d"
+      % (margen, len(y), int(soporte.sum())))
+print("indices de los vectores de soporte:", np.flatnonzero(soporte).tolist())
+print("y sus y*f, todos iguales a 1:", [round(float(v), 10) for v in holgura[soporte]])
+print()
+
+# Quitar TODO lo que no toca el margen no cambia el hiperplano.
+A2, B2 = A[soporte[:14]], B[soporte[14:]]
+beta2, beta02, margen2 = hiperplano(A2, B2)
+print("se rehace usando solo los %d vectores de soporte:" % int(soporte.sum()))
+print("   beta  antes (%.6f, %.6f)  despues (%.6f, %.6f)" % (beta[0], beta[1], beta2[0], beta2[1]))
+print("   beta0 antes %.6f  despues %.6f" % (beta0, beta02))
+print("   identicos a 1e-10:", bool(np.allclose([*beta, beta0], [*beta2, beta02], atol=1e-10)))
+print()
+
+# Mover un punto que no toca el margen, sin cruzarlo, tampoco lo cambia.
+lejos = int(np.flatnonzero(~soporte)[0])
+Xm = X.copy()
+direccion = -beta / np.linalg.norm(beta) * np.sign(y[lejos])
+Xm[lejos] = Xm[lejos] + direccion * 1.5
+b3, b03, m3 = hiperplano(Xm[:14], Xm[14:])
+print("se acerca el punto %d una distancia 1.5 hacia la frontera, sin cruzar:" % lejos)
+print("   su y*f pasa de %.4f a %.4f" % (holgura[lejos], y[lejos] * (Xm[lejos] @ beta + beta0)))
+print("   el hiperplano no se mueve:", bool(np.allclose([*beta, beta0], [*b3, b03], atol=1e-10)))
+print()
+
+# Mover un vector de soporte SI lo cambia.
+cerca = int(np.flatnonzero(soporte)[0])
+Xs = X.copy()
+Xs[cerca] = Xs[cerca] + direccion * 0.5
+b4, b04, m4 = hiperplano(Xs[:14], Xs[14:])
+print("se mueve en cambio un vector de soporte, el %d, y solo un tercio:" % cerca)
+print("   el margen pasa de %.6f a %.6f" % (margen, m4))
+print("   el hiperplano cambia:", bool(not np.allclose([*beta, beta0], [*b4, b04], atol=1e-6)))
+print()
+print("de 28 puntos, el ajuste depende de %d. Los demas pueden moverse a su antojo"
+      % int(soporte.sum()))
+print("mientras no crucen su franja, y el resultado es el mismo")
+```
+
+De $28$ puntos, el ajuste depende de $3$. Esa es la propiedad que da nombre al método, y tiene dos caras: hace al clasificador **inmune a los datos lejanos** —al revés que mínimos cuadrados, que los promedia todos— y lo hace **frágil ante los cercanos**, porque mover uno solo de los tres cambia la frontera.
+
+## 4. Cuando no hay separación, y cuánto se paga por cruzarla
+
+Si las envolventes convexas se tocan, la Proposición 14.4 no tiene nada que devolver: no existe ningún hiperplano separador y el problema de la Proposición 14.3 no tiene solución factible. La salida del libro es dejar que algunos puntos incumplan su margen, y cobrar por ello.
+
+::: {.definicion}
+**Definición 14.7 (clasificador de soporte vectorial).** Dado $C>0$, se busca
+$$\min_{\beta,\beta_0}\ \tfrac12\lVert\beta\rVert^2+C\sum_{i=1}^{n}\xi_i\quad\text{sujeto a}\quad y_i f(x_i)\ge 1-\xi_i,\ \ \xi_i\ge 0.$$
+En el óptimo cada holgura vale $\xi_i=\max(0,\,1-y_i f(x_i))$: cero para los puntos que cumplen su margen, entre $0$ y $1$ para los que entran en él sin cruzar la frontera, y mayor que $1$ para los mal clasificados.
+:::
+
+::: {.proposicion}
+**Proposición 14.8 (qué hace el presupuesto).** Sea $\mathcal{F}$ **cualquier** familia de hiperplanos y, para cada $C>0$, sea $(\beta_C,\beta_{0C})$ un minimizador dentro de $\mathcal{F}$ del criterio de la Definición 14.7. Si $C_1<C_2$, entonces
+$$\sum_i\xi_i(C_2)\ \le\ \sum_i\xi_i(C_1)\qquad\text{y}\qquad \lVert\beta_{C_2}\rVert\ \ge\ \lVert\beta_{C_1}\rVert.$$
+En particular el margen $1/\lVert\beta\rVert$ **no crece** al subir el presupuesto.
+:::
+
+::: {.demostracion}
+*Demostración.* Escríbase $g=\tfrac12\lVert\beta\rVert^2$ y $s=\sum_i\xi_i$ para cada candidato. Que cada uno sea óptimo en su $C$ da
+$$g_1+C_1 s_1\le g_2+C_1 s_2,\qquad g_2+C_2 s_2\le g_1+C_2 s_1.$$
+Sumando, los $g$ se cancelan y queda $(C_2-C_1)(s_2-s_1)\le 0$; como $C_2>C_1$, se concluye $s_2\le s_1$. Volviendo entonces a la primera desigualdad, $g_1-g_2\le C_1(s_2-s_1)$, y el lado derecho es menor o igual que cero porque $s_2\le s_1$. Luego $g_1\le g_2$, es decir $\lVert\beta_{C_1}\rVert\le\lVert\beta_{C_2}\rVert$. [∎]{.fin-demo}
+:::
+
+La demostración **no usa en ningún paso que la familia sea el conjunto de todos los hiperplanos**: vale igual para una lista finita. Eso permite comprobarla exactamente, minimizando sobre una familia fijada de antemano en lugar de resolver el programa cuadrático.
+
+```{pyodide}
+import numpy as np
+
+def mejor_de_la_familia(X, y, C, thetas, erres, ceros):
+    """El minimo de 1/2||beta||^2 + C sum(xi) sobre una familia FINITA.
+
+    No es la solucion del problema continuo: es el mejor de una lista de
+    hiperplanos fijada de antemano, la misma para todos los C. Eso basta para
+    la Proposicion 14.7, cuyo argumento no usa el continuo en ningun paso.
+    """
+    R, B0 = np.meshgrid(erres, ceros, indexing="ij")
+    r = R.ravel(); b0 = B0.ravel()
+    mejor = (np.inf, None, None, None)
+    for th in thetas:
+        u = np.array([np.cos(th), np.sin(th)])
+        s = X @ u
+        margenes = y * (r[:, None] * s[None, :] + b0[:, None])
+        holguras = np.maximum(0.0, 1.0 - margenes).sum(axis=1)
+        valores = 0.5 * r ** 2 + C * holguras
+        k = int(np.argmin(valores))
+        if valores[k] < mejor[0]:
+            mejor = (float(valores[k]), float(th), float(r[k]), float(b0[k]))
+    val, th, rr, bb0 = mejor
+    beta = rr * np.array([np.cos(th), np.sin(th)])
+    h = np.maximum(0.0, 1.0 - y * (X @ beta + bb0))
+    return val, beta, bb0, float(h.sum()), h
+
+rng = np.random.default_rng(11)
+A = rng.normal([-1.4, 0.3], 0.8, size=(12, 2))
+B = rng.normal([1.5, -0.2], 0.8, size=(12, 2))
+X = np.vstack([A, B]); y = np.r_[-np.ones(12), np.ones(12)]
+
+thetas = np.linspace(0.0, np.pi, 91)[:-1]
+erres = np.linspace(0.05, 6.0, 100)
+ceros = np.linspace(-5.0, 5.0, 161)
+print("familia: %d direcciones x %d normas x %d desplazamientos = %d hiperplanos"
+      % (len(thetas), len(erres), len(ceros), len(thetas) * len(erres) * len(ceros)))
+print()
+print("     C   ||beta||   margen 1/||beta||   suma holguras   con holgura>0   objetivo")
+filas = []
+for C in [0.02, 0.1, 0.5, 2.0, 10.0]:
+    val, beta, b0, sx, h = mejor_de_la_familia(X, y, C, thetas, erres, ceros)
+    filas.append((C, float(np.linalg.norm(beta)), sx, val, int((h > 1e-9).sum())))
+    print("%6.2f %10.4f %19.4f %15.4f %15d %10.4f"
+          % (C, np.linalg.norm(beta), 1 / np.linalg.norm(beta), sx, int((h > 1e-9).sum()), val))
+print()
+normas = [f[1] for f in filas]; holg = [f[2] for f in filas]
+print("al subir C, la norma de beta no baja:", bool(all(a <= b + 1e-12 for a, b in zip(normas, normas[1:]))))
+print("y la suma de holguras no sube       :", bool(all(a >= b - 1e-12 for a, b in zip(holg, holg[1:]))))
+```
+
+Con $C=0{,}02$ el margen vale $2{,}12$ y veintidós de las veinticuatro observaciones tienen holgura positiva; con $C=10$ el margen baja a $0{,}27$ y solo cuatro la tienen. El presupuesto no elige entre «ajustar bien» y «ajustar mal», sino entre **una franja ancha con muchos inquilinos** y una estrecha con pocos.
+
+```{=html}
+<div class="viz-holgura">
+  <div class="controles">
+    <label>Ángulo <input id="hg-a" type="range" min="0" max="180" step="1" value="90"> <span id="hg-a-v">90°</span></label>
+    <label>Desplazamiento <input id="hg-b" type="range" min="-3" max="3" step="0.05" value="0"> <span id="hg-b-v">0.00</span></label>
+    <label>Anchura del margen <input id="hg-r" type="range" min="0.2" max="3" step="0.05" value="1"> <span id="hg-r-v">1.00</span></label>
+    <label>Presupuesto C <input id="hg-c" type="range" min="0.05" max="4" step="0.05" value="1"> <span id="hg-c-v">1.00</span></label>
+  </div>
+  <svg id="hg-svg" viewBox="0 0 660 360" role="img" aria-label="Los puntos de las dos clases con un hiperplano ajustable y su franja de margen, cada punto con holgura unido al borde por un segmento, y debajo dos barras con el reparto del criterio entre la norma y la holgura."></svg>
+  <p class="lectura" id="hg-lectura"></p>
+</div>
+<style>
+.viz-holgura { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-holgura .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-holgura label { display: flex; align-items: center; gap: .4rem; }
+.viz-holgura input[type=range] { width: 130px; padding: 0; }
+.viz-holgura svg { width: 100%; height: auto; display: block; }
+.viz-holgura .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("hg-svg"), lec = document.getElementById("hg-lectura");
+  var ca = document.getElementById("hg-a"), cb = document.getElementById("hg-b"),
+      cr = document.getElementById("hg-r"), cc = document.getElementById("hg-c");
+  var ea = document.getElementById("hg-a-v"), eb = document.getElementById("hg-b-v"),
+      er = document.getElementById("hg-r-v"), ec = document.getElementById("hg-c-v");
+  var X0 = 40, XW = 580, Y0 = 18, YH = 246, Y2 = 296, H2 = 26;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // Dos nubes que se solapan: aquí no hay separación posible.
+  var s = 23, pts = [], i;
+  function r() { s = (s * 48271) % 2147483647; return s / 2147483647 - 0.5; }
+  for (i = 0; i < 11; i++) pts.push({ x: -1.1 + r() * 2.6, y: 0.3 + r() * 2.6, c: -1 });
+  for (i = 0; i < 11; i++) pts.push({ x: 1.2 + r() * 2.6, y: -0.2 + r() * 2.6, c: 1 });
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var ang = +ca.value * Math.PI / 180, desp = +cb.value, anch = +cr.value, C = +cc.value;
+    ea.textContent = (+ca.value) + "°"; eb.textContent = desp.toFixed(2);
+    er.textContent = anch.toFixed(2); ec.textContent = C.toFixed(2);
+    // beta unitario por el angulo, escalado para que el margen sea "anch"
+    var ux = Math.cos(ang), uy = Math.sin(ang), norma = 1 / anch;
+    var bx = ux * norma, by = uy * norma, b0 = -desp * norma;
+
+    var px = function (v) { return X0 + (v + 5) / 10 * XW; };
+    var py = function (v) { return Y0 + (2.6 - v) / 5.2 * YH; };
+    // la frontera y los dos bordes, dibujados como rectas largas
+    function recta(off, ancho, guion) {
+      var cx = (desp + off * anch) * ux, cy = (desp + off * anch) * uy;
+      var tx = -uy, ty = ux;
+      svg.appendChild(el("path", { d: "M" + px(cx - tx * 9).toFixed(1) + " " + py(cy - ty * 9).toFixed(1) +
+        " L" + px(cx + tx * 9).toFixed(1) + " " + py(cy + ty * 9).toFixed(1),
+        stroke: off === 0 ? C_T : C_G, "stroke-width": ancho, fill: "none",
+        "stroke-dasharray": guion || "none" }));
+    }
+    recta(-1, 1.4, "5 4"); recta(1, 1.4, "5 4"); recta(0, 2.2);
+
+    var suma = 0, conHolgura = 0;
+    pts.forEach(function (p) {
+      var f = bx * p.x + by * p.y + b0;
+      var xi = Math.max(0, 1 - p.c * f);
+      suma += xi;
+      if (xi > 1e-9) {
+        conHolgura++;
+        // segmento desde el punto hasta su borde del margen
+        var falta = xi / norma * p.c;
+        svg.appendChild(el("path", { d: "M" + px(p.x).toFixed(1) + " " + py(p.y).toFixed(1) +
+          " L" + px(p.x + ux * falta).toFixed(1) + " " + py(p.y + uy * falta).toFixed(1),
+          stroke: C_G, "stroke-width": 1.6, opacity: .85 }));
+      }
+      if (p.c < 0)
+        svg.appendChild(el("circle", { cx: px(p.x).toFixed(1), cy: py(p.y).toFixed(1), r: 4.2,
+          fill: C_A, "fill-opacity": xi > 1e-9 ? .9 : .45 }));
+      else
+        svg.appendChild(el("rect", { x: (px(p.x) - 4).toFixed(1), y: (py(p.y) - 4).toFixed(1), width: 8, height: 8,
+          fill: C_B, "fill-opacity": xi > 1e-9 ? .9 : .45 }));
+    });
+
+    // las dos barras del criterio, sobre una escala fija
+    var g = 0.5 * norma * norma, coste = C * suma, ESC = 28;
+    svg.appendChild(el("text", { x: X0, y: Y2 - 6, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "el criterio, repartido: ½‖β‖² en tinta y C·Σξ en ámbar"));
+    svg.appendChild(el("rect", { x: X0, y: Y2, width: Math.min(XW, g * ESC).toFixed(1), height: H2,
+      fill: C_T, "fill-opacity": .35 }));
+    svg.appendChild(el("rect", { x: (X0 + Math.min(XW, g * ESC)).toFixed(1), y: Y2,
+      width: Math.max(0, Math.min(XW - g * ESC, coste * ESC)).toFixed(1), height: H2,
+      fill: C_G, "fill-opacity": .5 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + (Y2 + H2 + 3) + " L" + (X0 + XW) + " " + (Y2 + H2 + 3),
+      stroke: C_L, "stroke-width": 1 }));
+
+    lec.innerHTML = "Con un margen de anchura <strong>" + anch.toFixed(2) + "</strong>, hay <strong>" +
+      conHolgura + "</strong> de 22 puntos con holgura y la suma vale <strong>" + suma.toFixed(3) +
+      "</strong>. El criterio de la Definición 14.7 reparte <strong>" + g.toFixed(3) + "</strong> en ½‖β‖² y <strong>" +
+      coste.toFixed(3) + "</strong> en C·Σξ, o sea <strong>" + (g + coste).toFixed(3) + "</strong> en total. " +
+      "Ensanchar el margen baja la primera barra y sube la segunda; subir C alarga la ámbar sin tocar el dibujo de arriba, " +
+      "y por eso empuja la solución hacia franjas más estrechas (Proposición 14.8).";
+  }
+
+  [ca, cb, cr, cc].forEach(function (c) { c.addEventListener("input", dibujar); });
+  dibujar();
+})();
+</script>
+```
+
+Esa es también la conexión con la lección 6: $C$ es un parámetro que el ajuste no puede elegir, porque bajarlo siempre empeora el criterio de entrenamiento. Se elige midiendo fuera de la muestra.
+
+## Ejercicios
+
+### Ejercicio 1, La distancia a un hiperplano
+
+Para el hiperplano con $\beta=(3,4)$ y $\beta_0=-10$, calcular la distancia con signo del punto $(4,3)$.
+
+```{pyodide}
+#| exercise: ex_dist
+import numpy as np
+
+beta = np.array([3.0, 4.0])
+beta0 = -10.0
+x = np.array([4.0, 3.0])
+
+distancia = ______
+
+print(round(distancia, 4))
+round(distancia, 4)
+```
+
+::: {.hint exercise="ex_dist"}
+La Proposición 14.2 da $(\beta_0+\beta^\top x)/\lVert\beta\rVert$, y aquí $\lVert\beta\rVert$ vale $5$.
+:::
+
+::: {.solution exercise="ex_dist"}
+```{pyodide}
+import numpy as np
+
+beta = np.array([3.0, 4.0])
+beta0 = -10.0
+x = np.array([4.0, 3.0])
+
+distancia = float(beta @ x + beta0) / float(np.linalg.norm(beta))
+
+print(round(distancia, 4))
+round(distancia, 4)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_dist
+#| check: true
+if abs(result - 2.8) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: 2,8. Multiplicar beta y beta0 por diez daría f = 140 en vez de 14, y la distancia seguiría siendo 2,8: es justo lo que obliga a normalizar.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 2.8 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Del margen a la norma
+
+Dos clases separables tienen sus envolventes convexas a distancia $0{,}8$. Calcular el margen máximo y la norma de $\beta$ en la forma normalizada de la Proposición 14.3.
+
+```{pyodide}
+#| exercise: ex_margen
+distancia_envolventes = 0.8
+
+margen = ______
+norma_beta = ______
+
+print(round(margen, 4), round(norma_beta, 4))
+round(norma_beta, 4)
+```
+
+::: {.hint exercise="ex_margen"}
+La Proposición 14.4 da el margen como la mitad de esa distancia, y la 14.3 dice que $M=1/\lVert\beta\rVert$.
+:::
+
+::: {.solution exercise="ex_margen"}
+```{pyodide}
+distancia_envolventes = 0.8
+
+margen = distancia_envolventes / 2
+norma_beta = 1 / margen
+
+print(round(margen, 4), round(norma_beta, 4))
+round(norma_beta, 4)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_margen
+#| check: true
+if abs(result - 2.5) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: margen 0,4 y norma 2,5. Acercar las nubes hasta que las envolventes se toquen manda la norma a infinito, que es la forma analítica de decir que ya no hay separación.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 2.5 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 14**:
+
+1. Comprobar la Proposición 14.4 en dimensión tres: generar dos nubes separables, calcular el margen máximo por la construcción de las envolventes y contrastarlo contra el mejor margen que se consiga probando diez mil direcciones al azar. Anotar cuántas direcciones hacen falta para acercarse al valor exacto a tres decimales, y por qué ese número crece con la dimensión.
+2. Medir la fragilidad de la Proposición 14.6: repetir el ajuste quitando una observación cada vez y registrar cuánto se mueve la frontera, medido como el ángulo entre las dos normales. Anotar que solo cambian los casos en que la quitada era vector de soporte, y comparar esa inestabilidad con la del árbol de la lección 12.
+3. Ampliar la familia finita de la sección 4 hasta que el mínimo deje de bajar al refinarla, y anotar en `50-Errores/` cuántos hiperplanos hicieron falta y qué error se comete al confundir «el mínimo sobre una familia» con «la solución del problema».
+
+## Del libro
+
+*An Introduction to Statistical Learning with Applications in Python* trata este material en §9.1 *Maximal Margin Classifier*, con la definición en §9.1.1 *What Is a Hyperplane?*, la regla de clasificación en §9.1.2 *Classification Using a Separating Hyperplane*, el criterio en §9.1.3 *The Maximal Margin Classifier*, su planteamiento en §9.1.4 *Construction of the Maximal Margin Classifier* y el caso sin separación en §9.1.5 *The Non-separable Case*; y en §9.2 *Support Vector Classifiers*, con la idea en §9.2.1 *Overview of the Support Vector Classifier* y el criterio en §9.2.2 *Details of the Support Vector Classifier*.
+
+El capítulo 9 se reparte en dos lecciones: esta cubre §9.1–9.2, y la **lección 15** cubre §9.3–9.5, donde aparecen los núcleos, las más de dos clases y la comparación con la regresión logística.
+
+**Una diferencia con el libro que conviene tener presente.** El libro plantea el problema del margen máximo y dice que se resuelve con herramientas de optimización convexa, sin dar la solución. Esta página añade la Proposición 14.4, que lo resuelve en forma cerrada: el margen es media distancia entre envolventes convexas y el hiperplano es la mediatriz del segmento más corto. Eso convierte el capítulo en algo calculable con geometría de instituto, y de paso explica por qué los vectores de soporte son los que son.
+
+En la sección 4, en cambio, esta página **no resuelve** el programa cuadrático del clasificador de soporte vectorial: minimiza sobre una familia finita de hiperplanos fijada de antemano. Se dice así en el texto y en la celda, porque el enunciado de la Proposición 14.8 vale para cualquier familia y no hace falta más para comprobarlo.
+
+**Preguntas para leer §9.1–9.2 con lápiz:**
+
+1. §9.1.4 plantea el problema con la restricción $\sum_j\beta_j^2=1$ en lugar de normalizar el margen a uno. Con la Proposición 14.3, ¿por qué las dos formas dan el mismo hiperplano, y cuál de las dos es convexa?
+2. §9.1.5 dice que cuando no hay separación «no hay margen máximo». Con la Proposición 14.4, ¿qué le pasa exactamente a la construcción de las envolventes en ese caso?
+3. §9.2.2 introduce el presupuesto como una cota $\sum_i\xi_i\le C$ en vez de un término en el criterio. Con la Proposición 14.8, ¿qué tienen en común las dos formulaciones y qué cambia al pasar de una a otra?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/margen-maximo.md`, enlazada a [[producto-interno]], [[regresion-logistica]] y [[arboles-de-decision]]. Conviene rehacer a mano la Proposición 14.2: la distancia sale de una proyección de dos líneas, y deja claro de una vez por qué el problema del margen tiene que fijar la escala antes de poder pedir nada.
+
+```
+¿Qué es un hiperplano?::El conjunto de x con β₀ + βᵀx = 0
+¿Cuál es la distancia con signo de un punto?::(β₀ + βᵀx) / ‖β‖
+¿Qué pasa al multiplicar β y β₀ por c > 0?::El hiperplano y la distancia no cambian; f sí
+¿Por qué hay que normalizar?::Porque sin fijar la escala, pedir que f sea grande no significa nada
+¿Cuál es la normalización que se usa?::y·f(x) ≥ 1 para todos, y entonces M = 1/‖β‖
+¿Cuánto vale el margen máximo?::La mitad de la distancia entre las envolventes convexas
+¿Cuál es el hiperplano óptimo?::La mediatriz del segmento más corto entre ellas
+¿Por qué ningún otro puede ganarle?::Por Cauchy-Schwarz: 2M ≤ ‖b − a‖ para todo par
+¿Qué es un vector de soporte?::Una observación con y·f(x) = 1
+¿De cuántos puntos depende el ajuste?::Solo de los vectores de soporte
+¿Qué pasa si se mueve otro punto?::Nada, mientras no entre en el margen
+¿Y si las clases no se separan?::No hay hiperplano separador y el problema no tiene solución factible
+¿Qué es la holgura de una observación?::ξ = max(0, 1 − y·f(x))
+¿Qué criterio usa el clasificador de soporte vectorial?::½‖β‖² + C·Σξ
+¿Qué le pasa al margen al subir C?::No crece
+¿Y a la suma de holguras?::No sube
+¿Cómo se elige C?::Midiendo fuera de la muestra, nunca con el criterio de entrenamiento
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 14.2 se demuestra descomponiendo el desplazamiento en su parte paralela a $\beta$; se comprueba contra una minimización por fuerza bruta sobre la recta, que coincide a $10^{-6}$ y da el mismo punto más cercano, y con cuatro escalas de $\beta$ que cambian $f$ de $3{,}5$ a $70$ dejando la distancia en $3{,}130495$. La Proposición 14.3 se demuestra reescalando, y se comprueba viendo que tras la normalización el mínimo de $y\,f$ es exactamente $1$ y que $1/\lVert\beta\rVert$ coincide con el margen a $10^{-10}$. La Proposición 14.4 se demuestra con Cauchy-Schwarz para la cota y con un argumento de convexidad para la construcción; se comprueba calculando el margen exacto $0{,}933609$ y contrastándolo contra $4000$ direcciones al azar, cuyo mejor valor es $0{,}933589$ y nunca lo supera. La Proposición 14.6 se demuestra a partir de la 14.4, y se comprueba de tres maneras: rehaciendo el ajuste con solo los $3$ vectores de soporte de $28$ puntos —$\beta$ y $\beta_0$ idénticos a $10^{-10}$—, acercando un punto no soporte $1{,}5$ hacia la frontera sin que nada se mueva, y moviendo un vector de soporte, que baja el margen de $0{,}933609$ a $0{,}702168$. La Proposición 14.8 se demuestra sumando las dos desigualdades de optimalidad, y se comprueba sobre una familia de $1\,449\,000$ hiperplanos donde la norma no baja y la holgura total no sube en cinco presupuestos. Los dos visuales recalculan estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** La proyección ortogonal y la desigualdad de Cauchy-Schwarz son de Álgebra 4. La idea de un parámetro que el entrenamiento no puede elegir, y que se fija midiendo fuera de la muestra, es de Machine Learning 6. El argumento de intercambio de la Proposición 14.8 es el mismo de la Proposición 7.5 de Machine Learning 7 y de la 12.5 de Machine Learning 12, aplicado ahora a la holgura en lugar de al tamaño del modelo.
+
+**Lo que se enuncia sin demostrar.** Que las envolventes convexas de conjuntos finitos son compactas, y que por tanto el segmento más corto entre dos disjuntas existe, se toma como conocido. Que el problema de la Definición 14.7 tiene solución única en $\beta$ **no se demuestra** aquí. Y, sobre todo: la sección 4 **no resuelve** ese problema, sino que minimiza sobre una familia finita de hiperplanos; el texto y la celda lo dicen, y el reto 3 pide medir cuánto se pierde con esa sustitución.
+
+**Lo que viene de los libros.**
+
+- [*An Introduction to Statistical Learning with Applications in Python*](https://www.statlearning.com/) (James, Witten, Hastie, Tibshirani, Taylor; Springer, 2023), §9.1 *Maximal Margin Classifier* con sus cinco subsecciones y §9.2 *Support Vector Classifiers* con las suyas — citadas por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La Proposición 14.4 puesta en el centro de la lección: el libro plantea el problema de optimización y lo deja en manos de un solucionador, y aquí se resuelve en forma cerrada con envolventes convexas, lo que permite calcular el margen exacto sin ninguna biblioteca y hace evidente de dónde salen los vectores de soporte. La demostración de la cota superior por Cauchy-Schwarz, que es de tres líneas. La Proposición 14.6 demostrada como corolario geométrico en lugar de por las condiciones de complementariedad. Y el tratamiento de la Proposición 14.8 **sobre una familia arbitraria**, que permite comprobarla exactamente sin resolver ningún programa cuadrático y deja dicho, sin trampa, qué se está calculando y qué no.
+
+[Índice de ISLP verificado el 13-09-2026 contra los marcadores del PDF oficial.]{.sello}
+:::
