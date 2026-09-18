@@ -746,6 +746,47 @@ python3 verificar/visuales.py --estricto
 
 No repetirlos sale más barato que volver a encontrarlos.
 
+**El CI se rompió por una representación, no por un cálculo (17-09-2026).** Al
+subir las seis lecciones, `salidas.py` falló en el runner con **5 fallos** en
+Python 9 y Python 10, después de haber pasado en local. Ninguna proposición era
+falsa: lo que cambió fue **cómo se imprimen las cosas** en versiones nuevas.
+
+- **NumPy 2.0 cambió el `repr` de los escalares**: `repr(np.int64(1))` ya no es
+  `1` sino `np.int64(1)`. Eso rompe cualquier `print` de una **lista** de
+  escalares de NumPy, porque la lista usa el `repr` de sus elementos. El remedio
+  es `.tolist()`, que devuelve enteros de Python.
+- **pandas 3.0 renombró el dtype del texto**, de `object` a `str`. Eso rompe
+  todo `print(str(serie.dtype))` sobre una columna de texto.
+
+**La regla que ya existía era buena y la leí mal.** Decía «imprimen escalares y
+booleanos, **nunca la representación** de un DataFrame». Entendí «representación»
+como el `repr` de una tabla entera, cuando **el nombre de un dtype y el `repr` de
+un escalar de NumPy son igual de frágiles**. La regla, dicha bien: *lo único que
+una celda puede imprimir con seguridad son valores nativos de Python —int, float,
+bool, str— y cadenas que la propia celda construya*. Todo lo demás lo decide la
+librería y puede cambiar de versión.
+
+**El arreglo fue de raíz, no de parche.** Las celdas ahora imprimen la **familia**
+de cada columna —texto, entero, flotante, booleano— calculada con
+`pandas.api.types`, que es la propiedad de la que hablan las proposiciones, y no
+el nombre que la librería le dé. Es además mejor contenido: Python 10 explica
+ahora que pandas renombró el dtype en la 3.0 y que un programa que compare contra
+`"object"` deja de funcionar al actualizar.
+
+**Y sobre todo: hay que correr el gate con las versiones del runner antes de
+subir.** La máquina tiene pandas 1.2.4 y numpy 1.24; el runner instala las
+últimas. Pasar en local no dice nada sobre el CI. Con esto basta:
+
+```sh
+python3.14 -m venv /tmp/ci-venv
+/tmp/ci-venv/bin/python -m pip install --quiet numpy scipy scikit-learn pandas
+/tmp/ci-venv/bin/python verificar/salidas.py     # el gate, con las versiones del CI
+python3 verificar/salidas.py                     # y con las de la maquina
+```
+
+Las dos tienen que pasar. Si una celda solo pasa en una, lo que imprime depende
+de la versión y hay que reescribirla, no declarar otra afirmación.
+
 **Citas inventadas (5).** Los mapeos a *Think Stats* salieron de memoria de la
 2ª edición y la 3ª había reorganizado los capítulos. De ahí `citas.py`.
 

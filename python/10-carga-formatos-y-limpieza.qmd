@@ -89,12 +89,21 @@ De ahí que leer un archivo delimitado exija adivinar. La [inferencia de tipo]{.
 
 Sea $T$ el conjunto de marcos cuyos dtypes son **estables**, esto es, tales que $\iota(\rho(D))=D$. La inferencia elige, por construcción, un dtype al que pertenecen todos los valores leídos, y volver a escribir esos valores produce las mismas cadenas: un entero leído como `int64` se escribe como el mismo dígito y se vuelve a inferir `int64`. Luego $\varphi(D)\in T$ para todo $D$, y sobre $T$ la operación es la identidad. Componiendo, $\varphi(\varphi(D))=\varphi(D)$.
 
-Que $\varphi\neq\mathrm{id}$ se ve con un solo contraejemplo: la columna de cadenas `"01"`, `"02"`, `"03"` se escribe tal cual y la inferencia la lee como los enteros $1,2,3$, así que el cero a la izquierda desaparece y el dtype pasa de `object` a `int64`. [∎]{.fin-demo}
+Que $\varphi\neq\mathrm{id}$ se ve con un solo contraejemplo: la columna de cadenas `"01"`, `"02"`, `"03"` se escribe tal cual y la inferencia la lee como los enteros $1,2,3$, así que el cero a la izquierda desaparece y la columna pasa de la familia del texto a la de los enteros. [∎]{.fin-demo}
 :::
 
 ```{pyodide}
 import io
 import pandas as pd
+from pandas.api import types as tipos
+
+def familia(dtype):
+    """El tipo de una columna por lo que ADMITE, no por como pandas lo llame:
+    el nombre del dtype de texto paso de 'object' a 'str' en pandas 3.0."""
+    if tipos.is_bool_dtype(dtype):    return "booleano"
+    if tipos.is_integer_dtype(dtype): return "entero"
+    if tipos.is_float_dtype(dtype):   return "flotante"
+    return "texto"
 
 def vuelta(df):
     """Escribe el marco como CSV y lo vuelve a leer: la funcion phi de la proposicion."""
@@ -108,12 +117,14 @@ df = pd.DataFrame({
 })
 
 a = vuelta(df)
-print("tipos de ida   :", [str(t) for t in df.dtypes])
-print("tipos de vuelta:", [str(t) for t in a.dtypes])
+print("familias de ida   :", [familia(t) for t in df.dtypes])
+print("familias de vuelta:", [familia(t) for t in a.dtypes])
+print("se conservan       :", [familia(t) for t in df.dtypes] == [familia(t) for t in a.dtypes])
 print()
 print("los float vuelven exactos:", bool((a["x"].values == df["x"].values).all()))
-print("la clave '01' vuelve como:", repr(a["clave"].iloc[0]))
-print("se conservan los tipos   :", bool((df.dtypes.values == a.dtypes.values).all()))
+print("la clave de ida  :", df["clave"].iloc[0], "| familia", familia(df["clave"].dtype))
+print("la clave de vuelta:", a["clave"].iloc[0], "| familia", familia(a["clave"].dtype))
+print("el cero a la izquierda se perdio:", str(a["clave"].iloc[0]) != df["clave"].iloc[0])
 print()
 b, c = vuelta(a), vuelta(vuelta(a))
 print("phi(df)  == df      :", a.equals(df))
@@ -121,12 +132,15 @@ print("phi2(df) == phi(df) :", b.equals(a))
 print("phi3(df) == phi2(df):", c.equals(b))
 print()
 d = pd.read_csv(io.StringIO(df.to_csv(index=False)), dtype={"clave": "string"})
-print("declarando el tipo, la clave vuelve como:", repr(d["clave"].iloc[0]))
+print("declarando el tipo, la clave vuelve como:", d["clave"].iloc[0],
+      "| familia", familia(d["clave"].dtype))
 ```
+
+La celda clasifica cada columna por la **familia** a la que pertenece —texto, entero, flotante, booleano— y no por el nombre de su dtype. La razón es parte del contenido: **pandas cambió ese nombre en la versión 3.0**, donde el dtype del texto pasó de llamarse `object` a llamarse `str`. El comportamiento es el mismo, la clasificación es la misma y la proposición vale igual; lo que cambió es cómo se escribe. Un programa que compare `df.dtypes.astype(str) == "object"` deja de funcionar al actualizar, y uno que pregunte por la familia no.
 
 **Modo de falla.** Una columna de identificadores con ceros a la izquierda —códigos postales, números de documento, claves de producto— pierde el cero en la primera lectura. El daño no se ve: la columna existe, tiene el mismo número de filas y se puede sumar. Se descubre al cruzarla con otra tabla, donde `"01"` y `1` no coinciden y la unión devuelve menos filas de las que debía.
 
-**Diagnóstico.** Comparar `df.dtypes` antes y después. Si una columna que se esperaba de texto aparece como `int64` o `float64`, la inferencia la convirtió.
+**Diagnóstico.** Comparar la familia de cada columna antes y después. Si una que se esperaba de texto vuelve como entero o flotante, la inferencia la convirtió.
 
 **Remedio.** Declarar el tipo al leer con `dtype={"clave": "string"}`, que es la misma familia de [tipos de extensión]{.g data-t="tipo de extensión"} que la Proposición 9.6 recomendaba para los enteros con faltantes. Declarar el tipo al leer siempre gana a arreglar el dato después, porque después el cero ya no está.
 
@@ -146,7 +160,7 @@ print("declarando el tipo, la clave vuelve como:", repr(d["clave"].iloc[0]))
     </label>
     <label><input id="vv-d" type="checkbox"> declarar dtype al leer</label>
   </div>
-  <svg id="vv-svg" viewBox="0 0 660 250" role="img" aria-label="Tres cajas en fila que muestran el valor en el marco original, el texto que se escribe en el archivo y el valor que vuelve al leerlo, con el tipo de cada uno y una marca de si la ida y vuelta lo conservó."></svg>
+  <svg id="vv-svg" viewBox="0 0 660 250" role="img" aria-label="Tres cajas en fila que muestran el valor en el marco original, el texto que se escribe en el archivo y el valor que vuelve al leerlo, con la familia de cada uno y una marca de si la ida y vuelta lo conservó."></svg>
   <p class="lectura" id="vv-lectura"></p>
 </div>
 <style>
@@ -167,13 +181,13 @@ print("declarando el tipo, la clave vuelve como:", repr(d["clave"].iloc[0]))
   // Cada caso: [valor tal como se escribe en Python, dtype de ida, texto en el archivo,
   //             valor de vuelta, dtype de vuelta, valor de vuelta si se declara el dtype]
   var CASOS = {
-    "01":         ['"01"', "object",         "01",         "1",            "int64",   '"01"'],
-    "7":          ['"7"', "object",          "7",          "7",            "int64",   '"7"'],
-    "0.1":        ["0.1", "float64",         "0.1",        "0.1",          "float64", "0.1"],
-    "1/3":        ["0.3333333333333333", "float64", "0.3333333333333333", "0.3333333333333333", "float64", "0.3333333333333333"],
-    "True":       ["True", "bool",           "True",       "True",         "bool",    "True"],
-    "2024-01-05": ['"2024-01-05"', "datetime64", "2024-01-05", '"2024-01-05"', "object", "2024-01-05"],
-    "NA":         ['"NA"', "object",         "NA",         "NaN",          "float64", '"NA"']
+    "01":         ['"01"', "texto",          "01",         "1",            "entero",  '"01"'],
+    "7":          ['"7"', "texto",           "7",          "7",            "entero",  '"7"'],
+    "0.1":        ["0.1", "flotante",       "0.1",        "0.1",          "flotante", "0.1"],
+    "1/3":        ["0.3333333333333333", "flotante", "0.3333333333333333", "0.3333333333333333", "flotante", "0.3333333333333333"],
+    "True":       ["True", "booleano",       "True",       "True",         "booleano", "True"],
+    "2024-01-05": ['"2024-01-05"', "fecha",   "2024-01-05", '"2024-01-05"', "texto",   "2024-01-05"],
+    "NA":         ['"NA"', "texto",          "NA",         "NaN",          "flotante", '"NA"']
   };
   // Marco anclado a constantes: tres cajas siempre en el mismo sitio.
   var CX = [40, 250, 460], CY = 58, CW = 160, CH = 96;
@@ -207,7 +221,7 @@ print("declarando el tipo, la clave vuelve como:", repr(d["clave"].iloc[0]))
     while (svg.firstChild) svg.removeChild(svg.firstChild);
     var c = CASOS[cv.value], declarar = cd.checked;
     var salida = declarar ? c[5] : c[3];
-    var tipoSalida = declarar ? (c[1] === "object" ? "string" : c[1]) : c[4];
+    var tipoSalida = declarar ? (c[1] === "texto" ? "texto declarado" : c[1]) : c[4];
     var igual = (salida === c[0]) || (salida === c[0].replace(/"/g, ""));
     var color = igual ? C_OK : C_NO;
 
@@ -224,10 +238,10 @@ print("declarando el tipo, la clave vuelve como:", repr(d["clave"].iloc[0]))
     svg.appendChild(el("text", { x: CX[2] + CW / 2, y: CY + CH + 52, "text-anchor": "middle",
       "font-size": 11.5, fill: color }, igual ? "la vuelta conserva el valor" : "la vuelta lo cambia"));
 
-    lec.innerHTML = "El archivo guarda <strong>" + c[2] + "</strong> y nada más: el dtype <strong>" + c[1] +
+    lec.innerHTML = "El archivo guarda <strong>" + c[2] + "</strong> y nada más: la familia <strong>" + c[1] +
       "</strong> no viaja con él (Definición 10.1). " + (declarar
-        ? "Declarando el dtype al leer, el valor vuelve como <strong>" + salida + "</strong>, del tipo <strong>" + tipoSalida + "</strong>."
-        : "Dejando que pandas lo adivine, vuelve como <strong>" + salida + "</strong>, del tipo <strong>" + tipoSalida + "</strong>.") +
+        ? "Declarando el dtype al leer, el valor vuelve como <strong>" + salida + "</strong>, de familia <strong>" + tipoSalida + "</strong>."
+        : "Dejando que pandas lo adivine, vuelve como <strong>" + salida + "</strong>, de familia <strong>" + tipoSalida + "</strong>.") +
       (igual ? " La ida y vuelta conserva este valor." : " La ida y vuelta lo cambia, y a partir de aquí ya es idempotente: volver a escribirlo y leerlo da lo mismo (Proposición 10.2c).");
   }
 
@@ -243,18 +257,26 @@ print("declarando el tipo, la clave vuelve como:", repr(d["clave"].iloc[0]))
 Un archivo que no cabe en memoria se lee por partes. Esa decisión, que parece solo de memoria, cambia los tipos.
 
 ::: {.proposicion}
-**Proposición 10.3 (el tipo depende del bloque).** La inferencia de tipo se aplica a los valores que el lector tiene delante. Al leer con `chunksize`, cada [bloque de lectura]{.g} se infiere por separado, así que dos bloques de la **misma** columna pueden salir con dtypes distintos. En consecuencia, un programa que procese los bloques de uno en uno puede funcionar sobre los primeros y fallar sobre uno posterior, y concatenarlos produce el dtype común más ancho, que es `object` en cuanto uno de ellos lo sea.
+**Proposición 10.3 (el tipo depende del bloque).** La inferencia de tipo se aplica a los valores que el lector tiene delante. Al leer con `chunksize`, cada [bloque de lectura]{.g} se infiere por separado, así que dos bloques de la **misma** columna pueden salir con dtypes distintos. En consecuencia, un programa que procese los bloques de uno en uno puede funcionar sobre los primeros y fallar sobre uno posterior, y concatenarlos produce el tipo común más ancho, que es el del texto en cuanto uno de ellos lo sea.
 :::
 
 ::: {.demostracion}
-*Demostración.* Sea una columna cuyos primeros $n-1$ valores son dígitos y el último es la cadena `"no disponible"`. Leída entera, la inferencia debe admitir a todos los valores y elige `object`. Leída en bloques de tamaño $b<n-1$, los bloques que no contienen la última fila solo ven dígitos, y la inferencia elige para ellos el tipo más estrecho que los admite, `int64`; el bloque que contiene la última fila elige `object`.
+*Demostración.* Sea una columna cuyos primeros $n-1$ valores son dígitos y el último es la cadena `"no disponible"`. Leída entera, la inferencia debe admitir a todos los valores y elige texto. Leída en bloques de tamaño $b<n-1$, los bloques que no contienen la última fila solo ven dígitos, y la inferencia elige para ellos el tipo más estrecho que los admite, el entero; el bloque que contiene la última fila elige texto.
 
-Como `pd.concat` toma el tipo común más ancho de las partes, y ese tipo entre `int64` y `object` es `object`, el resultado de concatenar coincide con el de leer entero. La diferencia sobrevive solo mientras los bloques se traten por separado, que es justamente el modo en que se usa `chunksize`. [∎]{.fin-demo}
+Como `pd.concat` toma el tipo común más ancho de las partes, y ese tipo entre el entero y el texto es el texto, el resultado de concatenar coincide con el de leer entero. La diferencia sobrevive solo mientras los bloques se traten por separado, que es justamente el modo en que se usa `chunksize`. [∎]{.fin-demo}
 :::
 
 ```{pyodide}
 import io
 import pandas as pd
+from pandas.api import types as tipos
+
+def familia(dtype):
+    """La misma clasificacion de la seccion 1."""
+    if tipos.is_bool_dtype(dtype):    return "booleano"
+    if tipos.is_integer_dtype(dtype): return "entero"
+    if tipos.is_float_dtype(dtype):   return "flotante"
+    return "texto"
 
 # Una columna de 30000 valores donde el ultimo no es un numero.
 n = 30000
@@ -262,19 +284,20 @@ columna = ["7"] * (n - 1) + ["no disponible"]
 bruto = pd.DataFrame({"v": columna}).to_csv(index=False)
 
 entero = pd.read_csv(io.StringIO(bruto))
-print("leido de una sola vez, dtype:", str(entero["v"].dtype))
+print("leido de una sola vez, familia:", familia(entero["v"].dtype))
 
 trozos = list(pd.read_csv(io.StringIO(bruto), chunksize=10000))
-print("leido en bloques de 10000  :", [str(t["v"].dtype) for t in trozos])
-print("filas por bloque           :", [len(t) for t in trozos])
+print("leido en bloques de 10000    :", [familia(t["v"].dtype) for t in trozos])
+print("filas por bloque             :", [len(t) for t in trozos])
 print()
-print("el bloque 0 es numerico:", bool(pd.api.types.is_numeric_dtype(trozos[0]["v"])))
-print("el bloque 2 es numerico:", bool(pd.api.types.is_numeric_dtype(trozos[2]["v"])))
-print("al concatenar, dtype   :", str(pd.concat(trozos, ignore_index=True)["v"].dtype))
+print("el bloque 0 es numerico:", bool(tipos.is_numeric_dtype(trozos[0]["v"])))
+print("el bloque 2 es numerico:", bool(tipos.is_numeric_dtype(trozos[2]["v"])))
+print("los tres bloques coinciden:", len({familia(t["v"].dtype) for t in trozos}) == 1)
+print("al concatenar, familia :", familia(pd.concat(trozos, ignore_index=True)["v"].dtype))
 print()
 # el diagnostico: declarar el tipo hace que los tres bloques coincidan
 fijos = list(pd.read_csv(io.StringIO(bruto), chunksize=10000, dtype={"v": "string"}))
-print("declarando dtype='string' :", [str(t["v"].dtype) for t in fijos])
+print("declarando dtype='string':", [str(t["v"].dtype) for t in fijos])
 print("todos iguales:", len({str(t["v"].dtype) for t in fijos}) == 1)
 ```
 
@@ -330,7 +353,7 @@ print("todos iguales:", len({str(t["v"].dtype) for t in fijos}) == 1)
       var ini = i * b, fin = Math.min((i + 1) * b, TOTAL);
       var tiene = (f > ini && f <= fin);
       if (tiene) malo = i;
-      tipos.push(tiene ? "object" : "int64");
+      tipos.push(tiene ? "texto" : "entero");
       svg.appendChild(el("rect", { x: px(ini).toFixed(1), y: Y0, width: (px(fin) - px(ini)).toFixed(1), height: YH,
         fill: tiene ? C_OBJ : C_NUM, "fill-opacity": .16, stroke: tiene ? C_OBJ : C_NUM, "stroke-width": 1.5 }));
       if (fin - ini > 3)
@@ -349,9 +372,9 @@ print("todos iguales:", len({str(t["v"].dtype) for t in fijos}) == 1)
 
     lec.innerHTML = "Con bloques de <strong>" + b + " mil</strong> filas salen <strong>" + nb +
       "</strong> bloques, y el valor no numérico cae en el bloque <strong>" + (malo + 1) + "</strong>. " +
-      "Ese bloque se infiere <strong>object</strong> y los otros <strong>" + (nb - 1) + "</strong> se infieren " +
-      "<strong>int64</strong> (Proposición 10.3): la misma columna, dos tipos. Leído de una sola vez el archivo " +
-      "entero daría <strong>object</strong>, porque la inferencia vería el valor raro desde el principio.";
+      "Ese bloque se infiere <strong>texto</strong> y los otros <strong>" + (nb - 1) + "</strong> se infieren " +
+      "<strong>entero</strong> (Proposición 10.3): la misma columna, dos tipos. Leído de una sola vez el archivo " +
+      "entero daría <strong>texto</strong>, porque la inferencia vería el valor raro desde el principio.";
   }
 
   cb.addEventListener("input", dibujar);
@@ -682,7 +705,7 @@ Nota nueva en `10-Conceptos/carga-y-limpieza.md`, enlazada a [[series-y-datafram
 ¿Y las claves con cero a la izquierda?::No: "01" vuelve como el entero 1
 ¿Qué propiedad tiene la ida y vuelta?::No es la identidad, pero es idempotente: phi(phi(D)) = phi(D)
 ¿Por qué chunksize cambia los tipos?::Porque la inferencia se aplica a lo que el lector ve, y cada bloque ve filas distintas
-¿Qué dtype sale al concatenar int64 con object?::object, el común más ancho
+¿Qué familia sale al concatenar entero con texto?::Texto, el tipo común más ancho
 ¿Cuánto vale (columna == np.nan).sum()?::Cero siempre, porque NaN no es igual a nada, ni a sí mismo
 ¿Cómo se cuentan los faltantes sin isna?::Con (s != s).sum(), que es verdadero solo en las posiciones faltantes
 ¿Qué le pasa a una fila con clave faltante al agrupar?::Desaparece: la suma de los conteos vale n − f, no n
@@ -695,7 +718,7 @@ Nota nueva en `10-Conceptos/carga-y-limpieza.md`, enlazada a [[series-y-datafram
 ::: {#fuentes .fuentes}
 ### Fuentes
 
-**Lo que esta página demuestra sola.** La Proposición 10.2 se demuestra separando la escritura, que actúa celda a celda, de la inferencia, que actúa columna a columna, y observando que la imagen de la inferencia son marcos de dtype estable; se comprueba en las tres partes: los `float64` vuelven exactos, la clave `"01"` vuelve como el entero $1$, y las igualdades $\varphi^2=\varphi$ y $\varphi^3=\varphi^2$ salen verdaderas mientras $\varphi=\mathrm{id}$ sale falsa. La Proposición 10.3 se demuestra con una columna de $30\,000$ valores cuyo último elemento no es numérico: leída entera da `object`, leída en bloques de $10\,000$ da `int64`, `int64` y `object`, y concatenada vuelve a dar `object`. La Proposición 10.5 se demuestra desde la regla de comparación del estándar IEEE 754 y desde que agrupar es partir por igualdad; se comprueba con $1000$ filas y $137$ claves faltantes, donde la suma de los conteos da $863$ y la media se mueve $0{,}0095$ pese a que la columna resumida no tiene ningún faltante. La Proposición 10.6 se demuestra contando pares en el producto cartesiano de cada clave y desarrollando el producto de las sumas en la parte diagonal más los términos cruzados; se comprueba con una unión que pasa de $4$ filas a $10$, desglosadas en $3\times3$ y $1\times1$. Los tres visuales se contrastaron contra estas mismas reglas en todo el rango de sus controles.
+**Lo que esta página demuestra sola.** La Proposición 10.2 se demuestra separando la escritura, que actúa celda a celda, de la inferencia, que actúa columna a columna, y observando que la imagen de la inferencia son marcos de dtype estable; se comprueba en las tres partes: los flotantes vuelven exactos, la clave `"01"` vuelve como el entero $1$, y las igualdades $\varphi^2=\varphi$ y $\varphi^3=\varphi^2$ salen verdaderas mientras $\varphi=\mathrm{id}$ sale falsa. La Proposición 10.3 se demuestra con una columna de $30\,000$ valores cuyo último elemento no es numérico: leída entera da texto, leída en bloques de $10\,000$ da entero, entero y texto, y concatenada vuelve a dar texto. La Proposición 10.5 se demuestra desde la regla de comparación del estándar IEEE 754 y desde que agrupar es partir por igualdad; se comprueba con $1000$ filas y $137$ claves faltantes, donde la suma de los conteos da $863$ y la media se mueve $0{,}0095$ pese a que la columna resumida no tiene ningún faltante. La Proposición 10.6 se demuestra contando pares en el producto cartesiano de cada clave y desarrollando el producto de las sumas en la parte diagonal más los términos cruzados; se comprueba con una unión que pasa de $4$ filas a $10$, desglosadas en $3\times3$ y $1\times1$. Los tres visuales se contrastaron contra estas mismas reglas en todo el rango de sus controles.
 
 **Lo que se usa de otras lecciones sin repetir.** La Series, el índice y la promoción de dtype al entrar un faltante son de Python 9, y la Proposición 9.6 de aquella lección —un solo faltante convierte `int64` en `float64`— es la que justifica aquí el uso de los tipos de extensión, sin volver a demostrarla. La estadística del dato faltante, con MCAR, MAR y MNAR, es de Estadística 15 y no se repite: esta lección trata la mecánica de la marca, no el mecanismo que la produce.
 
