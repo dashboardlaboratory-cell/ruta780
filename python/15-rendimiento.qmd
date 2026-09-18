@@ -179,7 +179,7 @@ Conviene retener la frase de la definición: **el bucle no es más lento porque 
 
     // los arreglos reservados, abajo
     svg.appendChild(el("text", { x: X0, y: Y2 - 8, "font-size": 11.5, fill: C_T, opacity: .75 },
-      "arreglos enteros que reserva una expresión de " + k + " operaciones"));
+      "arreglos que crea una expresión de " + k + " operaciones: el resultado y " + (k - 1) + " temporales"));
     var an = 42;
     for (var j = 0; j < k; j++) {
       svg.appendChild(el("rect", { x: (X0 + j * (an + 8)).toFixed(1), y: Y2, width: an, height: H2, rx: 4,
@@ -195,9 +195,9 @@ Conviene retener la frase de la definición: **el bucle no es más lento porque 
     lec.innerHTML = "Con n = <strong>" + n + "</strong>, el bucle ejecuta <strong>" + n +
       "</strong> pasos del intérprete y la versión vectorizada <strong>cero</strong> (Proposición 15.2). " +
       "Las dos hacen las mismas <strong>" + n + "</strong> sumas: lo que cambia es quién las ordena. " +
-      "Abajo, una expresión de <strong>" + k + "</strong> operaciones encadenadas reserva <strong>" + k +
-      "</strong> arreglos enteros si se escribe suelta y <strong>ninguno</strong> escribiendo en un destino " +
-      "ya creado (Proposición 15.3).";
+      "Abajo, una expresión de <strong>" + k + "</strong> operaciones encadenadas crea <strong>" + k +
+      "</strong> arreglos si se escribe suelta —el resultado y <strong>" + (k - 1) + "</strong> temporales— y " +
+      "<strong>ninguno</strong> escribiendo en un destino ya creado (Proposición 15.3).";
   }
 
   cn.addEventListener("input", dibujar);
@@ -222,47 +222,68 @@ El tráfico de memoria es el mismo en las dos formas: cada operación lee sus do
 :::
 
 ```{pyodide}
-import tracemalloc
 import numpy as np
 
-n = 500_000
-a = np.ones(n); b = np.ones(n) * 2; c = np.ones(n) * 3; d = np.ones(n) * 4
-tam = a.nbytes
 
-def arreglos_reservados(f):
-    """Cuantos arreglos enteros llega a pedir una expresion mientras se evalua.
+class Vigilada(np.ndarray):
+    """Un arreglo que cuenta cuantos arreglos NUEVOS pide cada operacion.
 
-    Se mide el PICO, no el total: los bytes exactos dependen de la sobrecarga
-    interna de cada version, asi que se cita el numero de arreglos y no los bytes.
+    Aqui no se mide memoria: se intercepta la operacion antes de que ocurra.
+    Una operacion sin destino crea un arreglo; con out= no crea ninguno. El
+    conteo es exacto y no depende de la version ni de la maquina.
     """
-    tracemalloc.start()
-    base = tracemalloc.get_traced_memory()[0]
+    nuevos = 0
+
+    def __array_ufunc__(self, operacion, metodo, *entradas, **opciones):
+        destino = opciones.get("out")
+        if destino is None:
+            Vigilada.nuevos += 1
+        else:
+            opciones["out"] = tuple(np.asarray(o).view(np.ndarray) for o in destino)
+        crudas = [np.asarray(e).view(np.ndarray) if isinstance(e, np.ndarray) else e
+                  for e in entradas]
+        r = getattr(operacion, metodo)(*crudas, **opciones)
+        return r.view(Vigilada) if isinstance(r, np.ndarray) else r
+
+
+def arreglos_nuevos(f):
+    Vigilada.nuevos = 0
     r = f()
-    pico = tracemalloc.get_traced_memory()[1]
-    tracemalloc.stop()
-    return round((pico - base) / tam), r
+    return Vigilada.nuevos, r
+
+
+n = 500_000
+a = np.ones(n).view(Vigilada)
+b = (np.ones(n) * 2).view(Vigilada)
+c = (np.ones(n) * 3).view(Vigilada)
+d = (np.ones(n) * 4).view(Vigilada)
+tam = a.nbytes
 
 print("un arreglo de %d valores ocupa %d bytes" % (n, tam))
 print()
 
-suelta, r1 = arreglos_reservados(lambda: (a * b) + (c * d))
-print("la expresion (a*b) + (c*d) reserva %d arreglos enteros de mas" % suelta)
+creados, r1 = arreglos_nuevos(lambda: (a * b) + (c * d))
+print("la expresion (a*b) + (c*d) crea %d arreglos: 1 resultado y %d temporales"
+      % (creados, creados - 1))
 
-dest = np.empty(n); tmp = np.empty(n)
+dest = np.empty(n).view(Vigilada)
+tmp = np.empty(n).view(Vigilada)
+
 def fusionada():
     np.multiply(a, b, out=dest)
     np.multiply(c, d, out=tmp)
     np.add(dest, tmp, out=dest)
     return dest
-fus, r2 = arreglos_reservados(fusionada)
-print("la misma cuenta escribiendo en destinos ya creados reserva %d" % fus)
-print("y da exactamente el mismo resultado:", bool(np.array_equal(r1, r2)))
+
+creados2, r2 = arreglos_nuevos(fusionada)
+print("las mismas 3 operaciones escribiendo en destinos ya creados crean %d" % creados2)
+print("y dan el mismo resultado:", bool(np.array_equal(np.asarray(r1), np.asarray(r2))))
 print()
 print("cada operacion binaria suelta pide memoria; con out= no pide ninguna")
 print("con n grande, esa memoria es lo que decide si el calculo cabe")
 print()
 
-# El numero de PASADAS por la memoria si se puede contar a mano, y no cambia.
+# El numero de PASADAS por la memoria tambien se cuenta a mano, y no cambia.
 print("lecturas y escrituras de la expresion, contadas a mano:")
 print("   a*b   : lee 2n, escribe n")
 print("   c*d   : lee 2n, escribe n")
@@ -272,7 +293,7 @@ print("   o sea %d lecturas y %d escrituras" % (6 * n, 3 * n))
 print("eso es igual en las dos versiones: lo que cambia es de donde sale el espacio")
 ```
 
-Dos arreglos enteros de más frente a cero, con el mismo resultado. La celda cita **el número de arreglos y no los bytes**, y eso es deliberado: los bytes exactos incluyen una sobrecarga interna que cambia entre versiones de la biblioteca, así que citarlos sería declarar un número que el gate de salidas rompería en la siguiente actualización.
+Tres arreglos creados frente a ninguno, con el mismo resultado. La celda **no mide memoria: cuenta operaciones**. Un arreglo que registra cada operación antes de que ocurra sabe cuántos destinos nuevos se piden, y ese número es el mismo en cualquier versión y en cualquier máquina. Medir el pico de memoria habría dado un número distinto en cada una, porque los bytes incluyen una sobrecarga interna que cambia entre versiones: es exactamente el error que la Proposición 15.5 prohíbe.
 
 **Cuándo importa.** Con arreglos de unos megabytes, nada. Con arreglos que ocupan una fracción apreciable de la memoria disponible, la versión suelta falla y la de destino explícito termina. El umbral se calcula, y vale el tamaño del arreglo multiplicado por el número de operaciones intermedias.
 
@@ -557,7 +578,7 @@ feedback
 
 ### Ejercicio 2, Lo que cuesta una expresión encadenada
 
-Una expresión encadena $4$ operaciones sobre arreglos de $10^{7}$ valores de ocho bytes. Calcular cuántos bytes de temporales reserva si se escribe suelta.
+Una expresión encadena $4$ operaciones sobre arreglos de $10^{7}$ valores de ocho bytes. Calcular cuántos bytes de **temporales** reserva si se escribe suelta, sin contar el arreglo del resultado.
 
 ```{pyodide}
 #| exercise: ex_temp
@@ -571,14 +592,14 @@ int(reservados)
 ```
 
 ::: {.hint exercise="ex_temp"}
-Cada operación intermedia reserva un arreglo entero: $n$ valores por los bytes de cada uno. Un gigabyte son $10^9$ bytes.
+De los $4$ arreglos que se crean, el último es el resultado: temporales son los otros. Cada uno ocupa $n$ valores por los bytes de cada uno, y un gigabyte son $10^9$ bytes.
 :::
 
 ::: {.solution exercise="ex_temp"}
 ```{pyodide}
 n, operaciones, bytes_por_valor = 10_000_000, 4, 8
 
-reservados = operaciones * n * bytes_por_valor
+reservados = (operaciones - 1) * n * bytes_por_valor
 en_gigabytes = reservados / 1e9
 
 print(reservados, round(en_gigabytes, 3))
@@ -589,10 +610,10 @@ int(reservados)
 ```{pyodide}
 #| exercise: ex_temp
 #| check: true
-if result == 320000000:
-    feedback = {"correct": True, "message": "Correcto: 320 MB de temporales para un cálculo cuyo resultado ocupa 80. Con arreglos diez veces mayores, eso es lo que decide si cabe.", "type": "success"}
+if result == 240000000:
+    feedback = {"correct": True, "message": "Correcto: 240 MB de temporales para un cálculo cuyo resultado ocupa 80. Con arreglos diez veces mayores, eso es lo que decide si cabe.", "type": "success"}
 else:
-    feedback = {"correct": False, "message": f"Esperaba 320000000 y obtuve {result}.", "type": "error"}
+    feedback = {"correct": False, "message": f"Esperaba 240000000 y obtuve {result}.", "type": "error"}
 feedback
 ```
 
@@ -600,7 +621,7 @@ feedback
 
 En `proyectos/notebooks/F1-retos.ipynb`, sección **Python 15**:
 
-1. Tomar un cálculo de tres operaciones encadenadas sobre arreglos grandes y escribirlo de tres formas: suelto, con `out=`, y con un bucle sobre bloques que quepan en memoria. Medir el pico de reserva de las tres con `tracemalloc` y anotar cuál es el tamaño de bloque a partir del cual la tercera deja de compensar. **Anotar el número de arreglos, no los bytes**, por la razón que explica la sección 2.
+1. Tomar un cálculo de tres operaciones encadenadas sobre arreglos grandes y escribirlo de tres formas: suelto, con `out=`, y con un bucle sobre bloques que quepan en memoria. Contar los arreglos que crea cada una con la clase `Vigilada` de la sección 2 y anotar cuál es el tamaño de bloque a partir del cual la tercera deja de compensar. **Anotar el número de arreglos, no los bytes**, por la razón que explica la sección 2.
 2. Construir un arreglo de un millón de elementos de las tres maneras de la sección 3 y contar operaciones, no segundos: copias totales en cada una. Después cronometrarlas y comprobar que el orden de los tiempos coincide con el de las copias. Anotar en qué tamaño empieza a notarse.
 3. Encontrar un caso donde vectorizar **no** ayude: un bucle cuyo cuerpo dependa del resultado de la vuelta anterior. Explicar por qué la definición 15.1 no se puede aplicar ahí, y buscar si existe una formulación equivalente que sí se deje vectorizar. Anotar en `50-Errores/` la diferencia entre «no vectorizable» y «no vectorizable tal como está escrito».
 
@@ -633,7 +654,7 @@ Nota nueva en `10-Conceptos/rendimiento.md`, enlazada a [[vistas-y-difusion]], [
 ::: {#fuentes .fuentes}
 ### Fuentes
 
-**Lo que esta página demuestra sola.** La Proposición 15.2 se comprueba contando: con $n=200\,000$, el bucle ejecuta $200\,000$ pasos y la versión vectorizada **cero**, con resultados idénticos; el escalar de Python ocupa $32$ bytes frente a los $8$ del valor en el arreglo. La Proposición 15.3 se demuestra observando que cada operación binaria necesita un destino, y se comprueba midiendo el pico de reserva: la expresión suelta pide **dos arreglos enteros** de más y la versión con destino explícito pide **cero**, con el mismo resultado. La Proposición 15.4 se demuestra con la suma de Gauss y se comprueba en cuatro tamaños, donde las copias coinciden exactamente con $n(n-1)/2$; la parte de las listas se verifica midiendo cuándo cambia el espacio reservado, y se afirma solo la cota logarítmica. La Proposición 15.5 se comprueba contra la multiplicación de la biblioteca: los dos resultados coinciden a $10^{-10}$ y el trabajo se multiplica por ocho al doblar el lado.
+**Lo que esta página demuestra sola.** La Proposición 15.2 se comprueba contando: con $n=200\,000$, el bucle ejecuta $200\,000$ pasos y la versión vectorizada **cero**, con resultados idénticos; el escalar de Python ocupa $32$ bytes frente a los $8$ del valor en el arreglo. La Proposición 15.3 se demuestra observando que cada operación binaria necesita un destino, y se comprueba **interceptando cada operación** con un arreglo que las registra: la expresión suelta crea **tres arreglos** —el resultado y dos temporales— y la versión con destino explícito crea **cero**, con el mismo resultado. La Proposición 15.4 se demuestra con la suma de Gauss y se comprueba en cuatro tamaños, donde las copias coinciden exactamente con $n(n-1)/2$; la parte de las listas se verifica midiendo cuándo cambia el espacio reservado, y se afirma solo la cota logarítmica. La Proposición 15.5 se comprueba contra la multiplicación de la biblioteca: los dos resultados coinciden a $10^{-10}$ y el trabajo se multiplica por ocho al doblar el lado.
 
 **Lo que se usa de otras lecciones sin repetir.** La estructura de un arreglo, las vistas y la difusión son de Python 6. Las reducciones por eje son de Python 7. La multiplicación de matrices y su recuento de operaciones son de Álgebra 6.
 
