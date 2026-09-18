@@ -1,0 +1,595 @@
+---
+title: "pandas: groupby y agregación"
+subtitle: "Python · Lección 12"
+nivel: L4
+modulo: python
+fase: F1
+prereqs: [python/11-wrangling-joins-y-reshape, python/10-carga-formatos-y-limpieza]
+siguientes: []
+libro: "McKinney 3E §10.1 How to Think About Group Operations · §10.2 Data Aggregation · §10.3 Apply: General split-apply-combine · §10.4 Group Transforms and \"Unwrapped\" GroupBys · §10.5 Pivot Tables and Cross-Tabulation"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - pandas
+---
+
+::: {.meta-leccion data-leccion="python/12-groupby-y-agregacion"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F1]{.item}
+[**Libro** McKinney cap. 10]{.item}
+[**Prereqs** [Wrangling, joins y reshape](11-wrangling-joins-y-reshape.qmd) · [Carga, formatos y limpieza](10-carga-formatos-y-limpieza.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Describir el patrón [partir-aplicar-combinar]{.g} y distinguir una [agregación]{.g} de una [transformación por grupo]{.g} por la forma de su resultado.
+2. Demostrar que la media de las medias de grupo difiere de la media global exactamente en la covarianza entre tamaño y media, y decir cuándo coinciden.
+3. Demostrar que la suma de cuadrados se parte en la parte de dentro de los grupos y la de entre ellos, y comprobarlo.
+4. Predecir cuántas filas devuelve una agrupación por claves categóricas antes de ejecutarla.
+5. Distinguir el cero que devuelve una suma sobre un grupo vacío del cero que alguien midió.
+6. Declarar siempre los argumentos cuyo valor por omisión ha cambiado entre versiones de pandas.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 11**: el índice jerárquico y el producto de niveles. Una agrupación por dos claves devuelve exactamente el índice jerárquico de aquella lección, y la Proposición 12.4 es su Proposición 11.3 con otra puerta de entrada.
+- **Python 10**: la Proposición 10.5, que muestra cómo agrupar descarta las filas de clave faltante. Aquí se supone conocida y no se repite.
+- **Estadística 5**: la covarianza, que es la que aparece en la Proposición 12.2 midiendo la distancia entre las dos medias.
+- **Estadística 13**: la descomposición de la suma de cuadrados, que aquí reaparece como identidad de `groupby`.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 13**: la visualización, que casi siempre se alimenta de una tabla agregada.
+- **Python 14**: las series de tiempo, donde remuestrear es agrupar por intervalos de fecha y toda esta lección se aplica igual.
+- **Machine Learning 6**: la validación cruzada, cuyos pliegues son una partición y cuyo error medio es una media de medias, con el mismo riesgo de la Proposición 12.2 si los pliegues tienen tamaños distintos.
+- **Estadística 25**: los casos de síntesis, donde la paradoja de Simpson es la Proposición 12.2 llevada a su extremo.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | El número de filas de la tabla |
+| $g$ | ge | El número de grupos |
+| $n_k$ | ene sub ka | El número de filas del grupo $k$ |
+| $\bar{n}$ | ene barra | El tamaño medio de grupo, $n/g$ |
+| $m_k$ | eme sub ka | La media de la variable dentro del grupo $k$ |
+| $\mu$ | mu | La media global, sobre las $n$ filas |
+| $\bar{u}$ | u barra | La media de las $g$ medias de grupo, sin ponderar |
+| $\text{SC}$ | ese ce | Una suma de cuadrados |
+:::
+
+## 1. Dos medias que casi nadie distingue
+
+::: {.definicion}
+**Definición 12.1 (partir, aplicar, combinar).** Agrupar por una clave parte las $n$ filas en $g$ bloques disjuntos según su valor. Sobre cada bloque se aplica una función, y los resultados se recomponen. Si la función devuelve **un valor por bloque**, la recomposición tiene $g$ filas y se llama agregación; si devuelve **un valor por fila**, tiene $n$ filas, conserva el índice de partida y se llama transformación.
+:::
+
+::: {.proposicion}
+**Proposición 12.2 (la media de las medias).** Sean $g$ grupos de tamaños $n_k$ y medias $m_k$, con $n=\sum_k n_k$ y $\bar{n}=n/g$. Sean $\mu$ la media global y $\bar{u}=\frac{1}{g}\sum_k m_k$ la media sin ponderar de las medias de grupo. Entonces
+$$\mu-\bar{u}\;=\;\frac{1}{n}\sum_{k=1}^{g}\big(n_k-\bar{n}\big)\big(m_k-\bar{u}\big),$$
+que es la covarianza entre el tamaño y la media del grupo, reescalada. En consecuencia $\mu=\bar{u}$ **si y solo si** esa covarianza es nula; en particular siempre que todos los grupos tengan el mismo tamaño, y siempre que todas las medias de grupo coincidan.
+:::
+
+::: {.demostracion}
+*Demostración.* La media global es la [media ponderada]{.g} por tamaño, $\mu=\frac{1}{n}\sum_k n_k m_k$, porque la suma total se parte en la suma de cada bloque. Desarrollando el producto del enunciado,
+$$\sum_k (n_k-\bar{n})(m_k-\bar{u})=\sum_k n_k m_k-\bar{u}\sum_k n_k-\bar{n}\sum_k m_k+g\,\bar{n}\,\bar{u}.$$
+Ahora $\sum_k n_k m_k=n\mu$, $\sum_k n_k=n$, $\sum_k m_k=g\bar{u}$ y $g\bar{n}=n$. Sustituyendo,
+$$\sum_k (n_k-\bar{n})(m_k-\bar{u})=n\mu-n\bar{u}-n\bar{u}+n\bar{u}=n\,(\mu-\bar{u}),$$
+y dividiendo entre $n$ se obtiene la identidad. La condición de igualdad es inmediata: la expresión se anula exactamente cuando la suma de productos cruzados es cero, lo cual ocurre en particular si todos los $n_k$ valen $\bar{n}$ o si todos los $m_k$ valen $\bar{u}$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(12)
+# Cuatro grupos de tamanos muy distintos, con medias distintas.
+tam    = {"a": 400, "b": 50, "c": 30, "d": 20}
+centro = {"a": 1.0, "b": 5.0, "c": 6.0, "d": 7.0}
+filas = []
+for k, m in tam.items():
+    filas.append(pd.DataFrame({"g": k, "v": rng.normal(loc=centro[k], scale=0.5, size=m)}))
+t = pd.concat(filas, ignore_index=True)
+n = len(t)
+
+medias = t.groupby("g")["v"].mean()
+cuentas = t.groupby("g")["v"].count()
+glob = float(t["v"].mean())
+sinpeso = float(medias.mean())
+
+print("tamanos por grupo:", {k: int(v) for k, v in cuentas.items()})
+print("medias por grupo :", {k: round(float(v), 4) for k, v in medias.items()})
+print()
+print("media global (ponderada por tamano): %.6f" % glob)
+print("media de las medias (sin ponderar) : %.6f" % sinpeso)
+print("diferencia                          : %.6f" % (glob - sinpeso))
+print()
+# La Proposicion: la diferencia es la covarianza entre tamano y media del grupo.
+nk = cuentas.values.astype(float)
+mk = medias.values.astype(float)
+cov = float(np.sum((nk - nk.mean()) * (mk - sinpeso)) / n)
+print("covarianza entre tamano y media, dividida entre n: %.6f" % cov)
+print("coincide con la diferencia a 1e-12:", abs(cov - (glob - sinpeso)) < 1e-12)
+print()
+print("los grupos tienen todos el mismo tamano:", bool(len(set(cuentas)) == 1))
+iguales = t.assign(g=np.repeat(list(tam), [125, 125, 125, 125]))
+mg = iguales.groupby("g")["v"].mean()
+print("con grupos del mismo tamano, la diferencia es cero:",
+      abs(float(iguales["v"].mean()) - float(mg.mean())) < 1e-12)
+```
+
+La diferencia es de $2{,}80$ sobre una escala en la que los grupos están entre $1$ y $7$: la media global dice $1{,}95$ y la media de las medias dice $4{,}75$. Ninguna de las dos está mal; responden a preguntas distintas. La global responde «cuánto vale una observación cualquiera» y la otra «cuánto vale un grupo cualquiera». Elegir una de las dos es legítimo; lo que cuesta caro es no advertir que hay dos.
+
+**Modo de falla.** Un informe que promedia por región, por lote o por centro y publica ese número como si fuera el promedio general. Con grupos de tamaños desiguales las dos cifras difieren, y la diferencia es tanto mayor cuanto más covaríen tamaño y media, que es justamente lo que pasa cuando los grupos grandes son sistemáticamente distintos de los pequeños.
+
+**Diagnóstico.** Calcular las dos y restarlas. Si la diferencia es apreciable, la covarianza de la proposición dice de dónde viene, y `groupby(...).size()` dice si los grupos son comparables.
+
+**Remedio.** Decidir cuál de las dos preguntas se está respondiendo y decirlo en el título de la tabla. Si la respuesta es «una observación cualquiera», ponderar por tamaño; si es «un grupo cualquiera», no ponderar y decir cuántos grupos hay.
+
+```{=html}
+<div class="viz-medias">
+  <div class="controles">
+    <label>Tamaño del grupo grande <input id="me-n" type="range" min="20" max="600" step="20" value="400"> <span id="me-n-v">400</span></label>
+    <label>Media del grupo grande <input id="me-m" type="range" min="0" max="8" step="0.25" value="1"> <span id="me-m-v">1.00</span></label>
+  </div>
+  <svg id="me-svg" viewBox="0 0 660 300" role="img" aria-label="Cuatro barras cuyo ancho es el tamaño de cada grupo y cuya altura es su media, con dos líneas horizontales: la media global ponderada y la media sin ponderar de las medias de grupo."></svg>
+  <p class="lectura" id="me-lectura"></p>
+</div>
+<style>
+.viz-medias { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-medias .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-medias label { display: flex; align-items: center; gap: .4rem; }
+.viz-medias input[type=range] { width: 150px; padding: 0; }
+.viz-medias svg { width: 100%; height: auto; display: block; }
+.viz-medias .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_G = "#0F6E68", C_S = "#B4342E";
+  var svg = document.getElementById("me-svg"), lec = document.getElementById("me-lectura");
+  var cn = document.getElementById("me-n"), en = document.getElementById("me-n-v");
+  var cm = document.getElementById("me-m"), em = document.getElementById("me-m-v");
+
+  var FIJOS = [{n: 50, m: 5.0}, {n: 30, m: 6.0}, {n: 20, m: 7.0}];
+  // Marco anclado: el ancho total representa siempre 700 filas, y el eje va de 0 a 8.
+  var NTOT = 700, VMAX = 8, X0 = 46, XW = 578, Y0 = 26, YH = 228;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function py(v) { return Y0 + (VMAX - v) / VMAX * YH; }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var ng = +cn.value, mg = +cm.value;
+    en.textContent = String(ng); em.textContent = mg.toFixed(2);
+    var grupos = [{n: ng, m: mg}].concat(FIJOS);
+
+    var n = grupos.reduce(function (a, g) { return a + g.n; }, 0);
+    var mu = grupos.reduce(function (a, g) { return a + g.n * g.m; }, 0) / n;
+    var ub = grupos.reduce(function (a, g) { return a + g.m; }, 0) / grupos.length;
+
+    for (var t = 0; t <= VMAX; t += 2) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(t).toFixed(1) + " L" + (X0 + XW) + " " + py(t).toFixed(1),
+        stroke: C_L, "stroke-width": 1, fill: "none", opacity: .45 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(t) + 4, "text-anchor": "end", "font-size": 10.5,
+        fill: C_T, opacity: .65 }, String(t)));
+    }
+    svg.appendChild(el("text", { x: X0, y: 16, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "altura = media del grupo · ancho = tamaño del grupo"));
+
+    var x = X0;
+    grupos.forEach(function (g, k) {
+      var w = g.n / NTOT * XW;
+      svg.appendChild(el("rect", { x: x.toFixed(1), y: py(g.m).toFixed(1), width: Math.max(w, 2).toFixed(1),
+        height: (Y0 + YH - py(g.m)).toFixed(1), fill: C_T, "fill-opacity": .12,
+        stroke: C_T, "stroke-width": 1.1 }));
+      if (w > 26) svg.appendChild(el("text", { x: (x + w / 2).toFixed(1), y: (py(g.m) - 6).toFixed(1),
+        "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .8 }, "n=" + g.n));
+      x += w;
+    });
+
+    [[mu, C_G, "media global, ponderada"], [ub, C_S, "media de las medias"]].forEach(function (r) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(r[0]).toFixed(1) + " L" + (X0 + XW) + " " + py(r[0]).toFixed(1),
+        stroke: r[1], "stroke-width": 2.2, fill: "none" }));
+      svg.appendChild(el("circle", { cx: (X0 + XW - 10).toFixed(1), cy: py(r[0]).toFixed(1), r: 4.4, fill: r[1] }));
+      svg.appendChild(el("text", { x: X0 + 6, y: (py(r[0]) - 6).toFixed(1), "font-size": 11, fill: r[1] }, r[2]));
+    });
+
+    var cov = grupos.reduce(function (a, g) { return a + (g.n - n / grupos.length) * (g.m - ub); }, 0) / n;
+    lec.innerHTML = "El grupo grande tiene <strong>" + ng + "</strong> filas y media <strong>" + mg.toFixed(2) +
+      "</strong>. La media global vale <strong>" + mu.toFixed(4) + "</strong> y la media de las medias <strong>" +
+      ub.toFixed(4) + "</strong>, con una diferencia de <strong>" + (mu - ub).toFixed(4) +
+      "</strong>. La covarianza entre tamaño y media, dividida entre n, vale <strong>" + cov.toFixed(4) +
+      "</strong>: exactamente lo mismo (Proposición 12.2). Igualando los tamaños, o las medias, las dos líneas se juntan.";
+  }
+
+  cn.addEventListener("input", dibujar);
+  cm.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Un valor por grupo o un valor por fila
+
+::: {.proposicion}
+**Proposición 12.3 (las dos formas del resultado, y la partición de la suma de cuadrados).** Sea una tabla de $n$ filas partida en $g$ grupos. La agregación devuelve $g$ filas, indexadas por la clave; la transformación devuelve $n$ y conserva el índice original, de modo que se puede restar de la columna de partida sin alinear nada a mano.
+
+Restar a cada valor la media de su grupo produce una columna cuya media es cero **dentro de cada grupo** y, por tanto, también en total. Además, escribiendo $\mu$ para la media global,
+$$\underbrace{\sum_{i}(v_i-\mu)^2}_{\text{SC total}}\;=\;\underbrace{\sum_{i}(v_i-m_{k(i)})^2}_{\text{SC dentro}}\;+\;\underbrace{\sum_{i}(m_{k(i)}-\mu)^2}_{\text{SC entre}},$$
+donde $k(i)$ es el grupo de la fila $i$.
+:::
+
+::: {.demostracion}
+*Demostración.* Que la agregación tenga $g$ filas y la transformación $n$ es la Definición 12.1. Que la media dentro de cada grupo sea cero tras restar: la media del grupo $k$ de $v_i-m_k$ vale $m_k-m_k=0$, y la media global es la media ponderada de ceros.
+
+Para la partición, escríbase $v_i-\mu=(v_i-m_{k(i)})+(m_{k(i)}-\mu)$ y elévese al cuadrado:
+$$\sum_i (v_i-\mu)^2=\sum_i (v_i-m_{k(i)})^2+\sum_i (m_{k(i)}-\mu)^2+2\sum_i (v_i-m_{k(i)})(m_{k(i)}-\mu).$$
+El término cruzado se anula agrupando: para cada $k$, el factor $(m_k-\mu)$ es constante dentro del grupo y sale de la suma, y lo que queda es $\sum_{i\in k}(v_i-m_k)=0$ por definición de media. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(122)
+t = pd.DataFrame({"g": rng.choice(["a", "b", "c"], size=200),
+                  "v": rng.normal(size=200)})
+n, gr = len(t), int(t["g"].nunique())
+
+agregado = t.groupby("g")["v"].mean()
+transformado = t.groupby("g")["v"].transform("mean")
+print("filas de la tabla      :", n)
+print("grupos                 :", gr)
+print("filas que devuelve agg      :", len(agregado), "-> una por grupo")
+print("filas que devuelve transform:", len(transformado), "-> una por fila")
+print("transform conserva el indice original:", bool(transformado.index.equals(t.index)))
+print()
+
+# transform permite centrar dentro de cada grupo sin salir de la tabla
+centrado = t["v"] - transformado
+print("la media de cada grupo tras centrar es cero:",
+      bool(np.allclose(t.assign(c=centrado).groupby("g")["c"].mean().values, 0, atol=1e-12)))
+print("y la media global tras centrar tambien:", abs(float(centrado.mean())) < 1e-12)
+print()
+
+# agg con varias funciones a la vez
+tabla = t.groupby("g")["v"].agg(["count", "mean", "std"])
+print("agg con tres funciones devuelve una tabla de", tabla.shape, "= grupos x funciones")
+print("los conteos suman n:", int(tabla["count"].sum()) == n)
+print()
+
+# la suma de los cuadrados se parte en dentro y entre grupos
+sc_total  = float(((t["v"] - t["v"].mean()) ** 2).sum())
+sc_dentro = float((centrado ** 2).sum())
+sc_entre  = float(((transformado - t["v"].mean()) ** 2).sum())
+print("SC total  : %.10f" % sc_total)
+print("SC dentro : %.10f" % sc_dentro)
+print("SC entre  : %.10f" % sc_entre)
+print("dentro + entre = total a 1e-10:", abs(sc_dentro + sc_entre - sc_total) < 1e-10)
+```
+
+La partición de la suma de cuadrados es la misma identidad que sostiene la regresión en Estadística 13, con los grupos en el papel del modelo. Aquí sale a $10^{-10}$: $197{,}22$ de dentro más $2{,}71$ de entre dan los $199{,}93$ del total. La razón entre la parte de entre y el total es lo que un análisis de la varianza llamaría la proporción explicada por el grupo, y con datos sorteados sin ninguna estructura de grupo sale, como debe, muy pequeña.
+
+**Modo de falla.** Usar la agregación donde hacía falta la transformación, y alinear a mano el resultado de $g$ filas contra una tabla de $n$. El error habitual es unir la tabla agregada con la original por la clave, lo cual funciona pero cuesta la Proposición 11.2 de la lección anterior: si la clave no es única en la tabla agregada —y no lo es si se agregó por varias columnas y solo se une por una—, la unión multiplica filas.
+
+**Diagnóstico.** Comparar `len(resultado)` con `len(tabla)`. Si se esperaba una columna nueva y el resultado tiene menos filas, era una agregación.
+
+**Remedio.** `transform` cuando el resultado deba alinearse fila a fila, y `agg` cuando sea una tabla resumen por derecho propio. Las dos usan la misma partición; lo único que cambia es la forma de volver.
+
+## 3. Grupos que existen sin tener filas
+
+::: {.proposicion}
+**Proposición 12.4 (agrupar por categorías declaradas).** Sean dos claves de tipo categórico, con $i$ y $j$ [categorías declaradas]{.g data-t="categoría declarada"}. Agrupar por las dos pidiendo todas las combinaciones devuelve $i\cdot j$ filas, con independencia de cuántas se hayan observado, mientras que pidiendo solo las observadas devuelve tantas como pares distintos aparezcan.
+
+Sobre un grupo sin ninguna fila, la suma devuelve $0$ y la media devuelve un faltante. El primero es indistinguible de una suma de valores que den cero; el segundo no.
+:::
+
+::: {.demostracion}
+*Demostración.* Un dtype categórico lleva la lista de sus categorías admitidas, que no depende de los datos. Pedir todas las combinaciones construye el índice como producto cartesiano de las dos listas, que tiene $i\cdot j$ elementos; es el mismo producto de la Proposición 11.3, con las categorías declaradas en el papel de los niveles. Pedir solo las observadas construye el índice con los pares presentes.
+
+Para la segunda parte: la suma sobre el conjunto vacío es el elemento neutro de la suma, que es $0$; la media es un cociente cuyo denominador es el número de elementos, y sobre el conjunto vacío no está definida, de donde el faltante. La primera es una convención razonable que además destruye información: un cero devuelto por convención y un cero calculado a partir de datos ocupan la misma celda. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+import pandas as pd
+
+# Dos claves categoricas con categorias declaradas que no todas aparecen.
+regiones = pd.CategoricalDtype(["norte", "sur", "este", "oeste"])
+meses    = pd.CategoricalDtype(["ene", "feb", "mar"])
+t = pd.DataFrame({
+    "region": pd.Series(["norte", "norte", "sur", "sur", "este"], dtype=regiones),
+    "mes":    pd.Series(["ene",   "feb",   "ene", "mar", "ene"],  dtype=meses),
+    "v":      [1.0, 2.0, 3.0, 4.0, 5.0],
+})
+n = len(t)
+i, j = len(regiones.categories), len(meses.categories)
+print("filas observadas: %d | categorias: %d regiones x %d meses = %d combinaciones"
+      % (n, i, j, i * j))
+print("regiones que aparecen de verdad:", sorted(set(t["region"].astype(str))))
+print()
+
+# El valor por omision de 'observed' CAMBIO entre versiones: se declara siempre.
+solo_vistas = t.groupby(["region", "mes"], observed=True)["v"].sum()
+todas       = t.groupby(["region", "mes"], observed=False)["v"].sum()
+print("con observed=True  ->", len(solo_vistas), "filas: solo las combinaciones vistas")
+print("con observed=False ->", len(todas), "filas: el producto entero i*j")
+print("y el producto vale i*j =", i * j, ":", len(todas) == i * j)
+print()
+# Y ahora la trampa: que devuelve cada agregacion en los grupos vacios.
+suma  = t.groupby(["region", "mes"], observed=False)["v"].sum()
+media = t.groupby(["region", "mes"], observed=False)["v"].mean()
+cuenta = t.groupby(["region", "mes"], observed=False)["v"].count()
+print("en los %d grupos vacios, sum() devuelve  : %s" % (i*j - n, sorted(set(suma[cuenta == 0]))))
+print("en esos mismos grupos, mean() devuelve   : faltante en los %d" % int(media[cuenta == 0].isna().sum()))
+print("un 0 de sum() no se distingue de un 0 medido:", 0.0 in set(suma.values))
+print()
+
+# Una region declarada y nunca observada tambien sale
+print("el grupo 'oeste' aparece con observed=False:", "oeste" in set(todas.index.get_level_values(0).astype(str)))
+print("y no aparece con observed=True            :", "oeste" not in set(solo_vistas.index.get_level_values(0).astype(str)))
+print()
+print("los valores suman lo mismo en los dos casos:",
+      abs(float(solo_vistas.sum()) - float(np.nansum(todas.values))) < 1e-12)
+print("suma total: %.1f | suma de la columna v: %.1f" % (float(solo_vistas.sum()), float(t["v"].sum())))
+```
+
+De las $12$ combinaciones declaradas solo $5$ se observan, y las otras $7$ aparecen igualmente al pedir todas. La región `oeste` existe como grupo sin tener ni una fila. En esos siete grupos la suma devuelve $0{,}0$ y la media devuelve faltante, que es la diferencia entre una convención y una respuesta.
+
+**Sobre el valor por omisión.** El argumento que decide entre las dos conductas **cambió de valor por omisión entre versiones de pandas**. Las celdas de esta lección lo declaran siempre y de forma explícita, y conviene hacer lo mismo en cualquier código que vaya a sobrevivir a una actualización. La regla general, que esta plataforma aprendió rompiendo el build: *lo que no se declara, lo decide la librería, y lo que decide la librería puede cambiar*.
+
+**Modo de falla.** Un informe por región y mes que muestra una fila de ceros para una región sin actividad, y un total que cuadra igualmente porque sumar ceros no cambia nada. La fila se lee como «esta región vendió cero» cuando dice «de esta región no hay datos».
+
+**Diagnóstico.** Agregar también con la función que cuenta. Las celdas con cuenta cero son las vacías, y son exactamente las que hay que distinguir.
+
+**Remedio.** Llevar la cuenta junto al agregado, o quedarse solo con las combinaciones observadas y dejar que la ausencia se note por ausencia. Rellenar un hueco con cero es una decisión, y como tal se escribe.
+
+```{=html}
+<div class="viz-grupos">
+  <div class="controles">
+    <label>Regiones declaradas <input id="gr-i" type="range" min="2" max="8" step="1" value="4"> <span id="gr-i-v">4</span></label>
+    <label>Meses declarados <input id="gr-j" type="range" min="2" max="8" step="1" value="3"> <span id="gr-j-v">3</span></label>
+    <label>Combinaciones observadas <input id="gr-n" type="range" min="1" max="24" step="1" value="5"> <span id="gr-n-v">5</span></label>
+  </div>
+  <svg id="gr-svg" viewBox="0 0 660 300" role="img" aria-label="La cuadrícula de combinaciones declaradas, con las observadas rellenas y las vacías marcadas, y al lado lo que devuelve la suma y lo que devuelve la media en cada una."></svg>
+  <p class="lectura" id="gr-lectura"></p>
+</div>
+<style>
+.viz-grupos { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-grupos .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-grupos label { display: flex; align-items: center; gap: .4rem; }
+.viz-grupos input[type=range] { width: 120px; padding: 0; }
+.viz-grupos svg { width: 100%; height: auto; display: block; }
+.viz-grupos .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_V = "#0F6E68", C_F = "#B4342E";
+  var svg = document.getElementById("gr-svg"), lec = document.getElementById("gr-lectura");
+  var ci = document.getElementById("gr-i"), ei = document.getElementById("gr-i-v");
+  var cj = document.getElementById("gr-j"), ej = document.getElementById("gr-j-v");
+  var cn = document.getElementById("gr-n"), en = document.getElementById("gr-n-v");
+
+  // Marco anclado: la cuadricula ocupa siempre el mismo rectangulo.
+  var X0 = 56, XW = 380, Y0 = 44, YH = 200;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function ocupadas(i, j, n) {
+    var idx = [], k;
+    for (k = 0; k < i * j; k++) idx.push(k);
+    idx.sort(function (a, b) { return ((a * 29) % (i * j + 5)) - ((b * 29) % (i * j + 5)); });
+    return idx.slice(0, n);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var i = +ci.value, j = +cj.value;
+    cn.max = String(i * j);
+    var n = Math.min(+cn.value, i * j);
+    ei.textContent = String(i); ej.textContent = String(j); en.textContent = String(n);
+
+    var llenas = {}; ocupadas(i, j, n).forEach(function (k) { llenas[k] = 1; });
+    var aw = XW / j, ah = YH / i;
+    for (var a = 0; a < i; a++) for (var b = 0; b < j; b++) {
+      var k = a * j + b, hay = llenas[k];
+      svg.appendChild(el("rect", { x: (X0 + b * aw + 1.5).toFixed(1), y: (Y0 + a * ah + 1.5).toFixed(1),
+        width: (aw - 3).toFixed(1), height: (ah - 3).toFixed(1), rx: 3,
+        fill: hay ? C_V : C_F, "fill-opacity": hay ? .28 : .07,
+        stroke: hay ? C_V : C_F, "stroke-width": 1.2, "stroke-dasharray": hay ? "" : "3 3" }));
+      if (!hay && aw > 42 && ah > 24)
+        svg.appendChild(el("text", { x: (X0 + b * aw + aw / 2).toFixed(1), y: (Y0 + a * ah + ah / 2 + 4).toFixed(1),
+          "text-anchor": "middle", "font-size": 10.5, fill: C_F, opacity: .85 }, "0 / NaN"));
+    }
+    svg.appendChild(el("text", { x: X0, y: 26, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "combinaciones declaradas: i × j"));
+
+    var XR = 470;
+    [["grupos que devuelve", i * j, C_T], ["con datos", n, C_V], ["vacíos", i * j - n, C_F]].forEach(function (r, q) {
+      svg.appendChild(el("text", { x: XR, y: Y0 + 12 + q * 46, "font-size": 11, fill: C_T, opacity: .7 }, r[0]));
+      svg.appendChild(el("text", { x: XR, y: Y0 + 34 + q * 46, "font-size": 19, fill: r[2] }, String(r[1])));
+    });
+    var BW = 120;
+    svg.appendChild(el("rect", { x: XR, y: Y0 + 160, width: BW, height: 12, rx: 3,
+      fill: C_F, "fill-opacity": .12, stroke: C_F, "stroke-width": 1 }));
+    svg.appendChild(el("rect", { x: XR, y: Y0 + 160, width: (BW * n / (i * j)).toFixed(1), height: 12, rx: 3,
+      fill: C_V, "fill-opacity": .5, stroke: C_V, "stroke-width": 1.2 }));
+    svg.appendChild(el("circle", { cx: (XR + BW * n / (i * j)).toFixed(1), cy: Y0 + 166, r: 4, fill: C_V }));
+
+    lec.innerHTML = "Con <strong>" + i + "</strong> regiones y <strong>" + j + "</strong> meses declarados, " +
+      "pedir todas las combinaciones devuelve <strong>" + (i * j) + "</strong> grupos aunque solo se hayan " +
+      "observado <strong>" + n + "</strong> (Proposición 12.4). En los <strong>" + (i * j - n) +
+      "</strong> vacíos, la suma devuelve <strong>0</strong> y la media devuelve <strong>faltante</strong>: " +
+      "el cero se confunde con un cero medido y el faltante no. Pidiendo solo las observadas se devuelven " +
+      "<strong>" + n + "</strong> grupos y la ausencia se nota por ausencia.";
+  }
+
+  ci.addEventListener("input", dibujar);
+  cj.addEventListener("input", dibujar);
+  cn.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## Ejercicios
+
+### Ejercicio 1, Las dos medias
+
+Con la Proposición 12.2, calcular la media global y la media de las medias para tres grupos de tamaños $90$, $6$ y $4$ con medias $2$, $8$ y $9$.
+
+```{pyodide}
+#| exercise: ex_medias
+tam    = [90, 6, 4]
+medias = [2.0, 8.0, 9.0]
+
+global_ = ______
+sin_peso = ______
+
+print(round(global_, 4), round(sin_peso, 4))
+round(global_ - sin_peso, 4)
+```
+
+::: {.hint exercise="ex_medias"}
+La global pondera por tamaño: $\sum n_k m_k/\sum n_k$. La otra promedia las tres medias sin más.
+:::
+
+::: {.solution exercise="ex_medias"}
+```{pyodide}
+tam    = [90, 6, 4]
+medias = [2.0, 8.0, 9.0]
+
+global_ = sum(n * m for n, m in zip(tam, medias)) / sum(tam)
+sin_peso = sum(medias) / len(medias)
+
+print(round(global_, 4), round(sin_peso, 4))
+round(global_ - sin_peso, 4)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_medias
+#| check: true
+if abs(result - (-3.6933)) < 1e-3:
+    feedback = {"correct": True, "message": "Correcto: 2.64 contra 6.3333, una diferencia de −3.6933. El grupo de 90 filas manda en una y pesa lo mismo que los otros dos en la otra.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba −3.6933 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuántos grupos salen
+
+Con la Proposición 12.4, calcular cuántos grupos devuelve una agrupación por dos claves categóricas de $12$ y $7$ categorías declaradas cuando solo se han observado $31$ combinaciones, pidiendo todas.
+
+```{pyodide}
+#| exercise: ex_grupos
+i, j, observadas = 12, 7, 31
+
+grupos = ______
+vacios = ______
+
+print(grupos, vacios)
+int(vacios)
+```
+
+::: {.hint exercise="ex_grupos"}
+Pidiendo todas salen $i\cdot j$ grupos, y los vacíos son los que no se observaron.
+:::
+
+::: {.solution exercise="ex_grupos"}
+```{pyodide}
+i, j, observadas = 12, 7, 31
+
+grupos = i * j
+vacios = i * j - observadas
+
+print(grupos, vacios)
+int(vacios)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_grupos
+#| check: true
+if result == 53:
+    feedback = {"correct": True, "message": "Correcto: 84 grupos, de los que 53 están vacíos. En todos ellos sum() devolvería 0.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 53 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Python 12**:
+
+1. Construir un caso de paradoja de Simpson con `groupby`: dos grupos donde el tratamiento gana en cada uno por separado y pierde en el total. Anotar el valor de la covarianza de la Proposición 12.2 en ese caso y comprobar que es la que explica el cambio de signo.
+2. Comparar `agg`, `transform` y `apply` sobre la misma tarea —centrar una columna dentro de cada grupo— con una tabla de un millón de filas y mil grupos. Cronometrar las tres y anotar cuál es más rápida y por qué, sin fijar dígitos: lo que se anota es el orden.
+3. Tomar un informe por dos claves categóricas con huecos y escribir las dos versiones, la que rellena con cero y la que deja el faltante. Anotar en `50-Errores/` qué pregunta contesta cada una y qué error comete cada lector al confundirlas.
+
+## Del libro
+
+*Python for Data Analysis, 3rd Edition* trata este material en §10.1 *How to Think About Group Operations*, §10.2 *Data Aggregation*, §10.3 *Apply: General split-apply-combine*, §10.4 *Group Transforms and "Unwrapped" GroupBys* y §10.5 *Pivot Tables and Cross-Tabulation*.
+
+Las subsecciones de este capítulo **no llevan número** en el sitio publicado, igual que las de los capítulos 6 y 8, así que se citan las cinco secciones de primer nivel y no se baja más.
+
+**Preguntas para leer el capítulo 10 con lápiz:**
+
+1. §10.2 presenta `agg` con varias funciones a la vez y §10.4 presenta `transform`. Con la Proposición 12.3, ¿qué forma tiene el resultado de cada una y en cuál de las dos se puede restar el resultado de la columna original sin alinear nada?
+2. §10.3 describe `apply` como el caso general del que los otros dos son casos particulares. ¿Qué gana `agg` respecto de `apply` si el resultado es el mismo, y en qué se nota con mil grupos?
+3. §10.5 construye tablas de contingencia. Con la Proposición 12.4, ¿cuántas celdas tiene una tabla cruzada de dos variables categóricas antes de mirar los datos, y qué pone en las que ninguna observación alcanza?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/groupby.md`, enlazada a [[uniones-y-reshape]], [[covarianza]] y [[regresion-primeros-principios]]. Conviene rehacer a mano la Proposición 12.2: el desarrollo del producto cruzado hasta llegar a $n(\mu-\bar{u})$ deja claro que la distancia entre las dos medias **es** una covarianza, y a partir de ahí la paradoja de Simpson deja de ser una curiosidad y pasa a ser aritmética.
+
+```
+¿Qué hace groupby?::Parte las filas por el valor de una clave, aplica una función a cada bloque y recompone
+¿En qué se diferencian agg y transform?::agg devuelve g filas, una por grupo; transform devuelve n y conserva el índice
+¿Cuál permite restar del original sin alinear?::transform, porque ya viene alineado
+¿La media de las medias es la media global?::Solo si la covarianza entre tamaño y media de grupo es nula
+¿Cuánto vale la diferencia?::(1/n)·Σ(n_k − n̄)(m_k − ū), la covarianza reescalada
+¿Cuándo coinciden seguro?::Si todos los grupos tienen el mismo tamaño, o si todas las medias coinciden
+¿Cómo se parte la suma de cuadrados?::SC total = SC dentro + SC entre
+¿Por qué se anula el término cruzado?::Porque dentro de cada grupo los desvíos a su media suman cero
+¿Cuántos grupos da agrupar por dos categóricas?::i·j si se piden todas, y solo los pares vistos si no
+¿Qué devuelve sum() en un grupo vacío?::Cero, que no se distingue de un cero medido
+¿Y mean()?::Faltante, que sí se distingue
+¿Cómo se localizan los grupos vacíos?::Agregando también con count(): son los de cuenta cero
+¿Qué hacer con los argumentos cuyo defecto cambió de versión?::Declararlos siempre
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 12.2 se demuestra desarrollando el producto cruzado hasta obtener $n(\mu-\bar{u})$; se comprueba con cuatro grupos de tamaños $400$, $50$, $30$ y $20$, donde la media global da $1{,}946828$, la media de las medias $4{,}746530$ y la covarianza reescalada reproduce la diferencia $-2{,}799701$ a $10^{-12}$, y donde igualar los tamaños la anula. La Proposición 12.3 se demuestra desarrollando el cuadrado y anulando el término cruzado con que los desvíos a la media de grupo suman cero; se comprueba con $200$ filas y tres grupos, donde $197{,}2217$ de dentro más $2{,}7112$ de entre dan los $199{,}9329$ del total a $10^{-10}$. La Proposición 12.4 se demuestra desde que un dtype categórico lleva sus categorías con independencia de los datos; se comprueba con $4\times 3=12$ combinaciones declaradas y $5$ observadas, donde pedir todas devuelve $12$ grupos, la suma devuelve $0{,}0$ en los $7$ vacíos y la media devuelve faltante en los mismos $7$. Los dos visuales se contrastaron contra estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** Que agrupar descarta las filas de clave faltante es la Proposición 10.5 de Python 10, y aquí se supone conocida. El producto cartesiano de niveles y su recuento son la Proposición 11.3 de Python 11. La covarianza es de Estadística 5, y la partición de la suma de cuadrados aparece en Estadística 13 con el modelo en el papel que aquí ocupan los grupos.
+
+**Lo que se enuncia sin demostrar.** Que `apply` es más lento que `agg` con una función nativa: se menciona en el reto y no se mide en la página, porque un cronómetro depende de la máquina y esta plataforma no publica dígitos que no se puedan reproducir. Que la implementación de `groupby` recorre los datos una sola vez se toma como comportamiento documentado de la librería.
+
+**Lo que viene de los libros.**
+
+- [*Python for Data Analysis, 3rd Edition*](https://wesmckinney.com/book/) (Wes McKinney, O'Reilly, 2022), §10.1 a §10.5 — citadas por número y título. El sitio declara que su contenido no se puede copiar ni reproducir, así que no se transcribe texto.
+
+**Lo que es mío, no del libro.** La Proposición 12.2 con la identidad exacta que convierte la distancia entre las dos medias en una covarianza, de donde la condición de igualdad sale sola y la paradoja de Simpson deja de ser una curiosidad. La lectura de la Proposición 12.3 como una propiedad de la **forma** del resultado, que es lo que decide cuál de las dos operaciones hace falta, junto con la partición de la suma de cuadrados escrita en el lenguaje de `groupby`. Y la Proposición 12.4 con el contraste entre lo que devuelve la suma y lo que devuelve la media sobre un grupo vacío, que es donde un informe pierde la diferencia entre «cero» y «no hay dato».
+
+[Índice de McKinney 3E verificado el 17-09-2026; las secciones del capítulo 10 se trajeron ese día de <https://wesmckinney.com/book/data-aggregation>.]{.sello}
+:::
