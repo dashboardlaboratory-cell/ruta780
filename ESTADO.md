@@ -825,6 +825,50 @@ python3 verificar/visuales.py --estricto
 
 No repetirlos sale más barato que volver a encontrarlos.
 
+**El CI se rompió por el número de condición (18-09-2026).** La segunda vez, en
+ML 9. Y esta no la cazaba el contraste de versiones del punto anterior, por una
+razón que conviene entender: **los dos venv corren en la misma máquina y sobre el
+mismo LAPACK**. El numpy de aquí usa *Accelerate*, el de Ubuntu usa *OpenBLAS*, y
+hay cálculos en los que eso decide el resultado.
+
+**La causa exacta.** Las celdas centraban la matriz de diseño con
+`X -= X.mean(0)`. Eso hace que las filas sumen cero, **anula un valor singular** y
+deja la matriz con rango $n-1$ en vez de $n$. El número de condición salta de
+$2{,}24$ a $2{,}6\times 10^{15}$. En ese régimen, decidir qué valor singular cuenta
+como cero depende del umbral que use cada implementación, y `np.linalg.lstsq` y
+`np.linalg.pinv` dejan de coincidir: aquí daban lo mismo a $2\times 10^{-16}$ y en
+el runner no llegaban a $10^{-10}$.
+
+Lo peor es que **otra celda de la misma lección tenía el defecto y pasó igual**:
+los mismos $10^{15}$ de condición, y el runner acertó por poco. Pasar no es lo
+mismo que estar bien.
+
+**El arreglo fue quitar la causa, no aflojar la tolerancia.** Las dos celdas
+trabajan ahora con la $X$ **sin centrar** —el centrado no hacía falta para lo que
+demuestran— y el número de condición queda en $2{,}24$ y $3{,}63$. Además, donde
+antes se citaba una norma con seis decimales ahora se comprueba la identidad
+$\lVert\beta\rVert^2-\lVert\hat\beta^{+}\rVert^2=25$, que es Pitágoras y **no
+depende de los datos ni de la máquina**.
+
+**La regla, dicha para la próxima.** La regla 7 ya decía «nunca citar dígitos de
+un cálculo numéricamente inestable». Lo que faltaba era el diagnóstico concreto:
+
+- **Lo que hay que mirar es la condición de la matriz que se le pasa a un
+  solucionador** —`lstsq`, `pinv`, `solve`— y de la que salen los dígitos que se
+  citan. Si pasa de $10^{10}$, no se cita ningún dígito de ese cálculo.
+- **No vale medir la condición de cualquier matriz de la celda.** Se auditaron las
+  64 lecciones y salieron 24 «en riesgo», casi todas falsos positivos: eran
+  matrices **sombrero**, **proyectores** y $X^\top X$ con $p>n$, que son singulares
+  **por definición** —un proyector tiene eigenvalores $0$ y $1$— y que nunca se
+  invierten para imprimir un número. El riesgo estaba solo donde una matriz mal
+  condicionada entraba en un solucionador y su salida se citaba con dígitos.
+- **Centrar un diseño y después descomponerlo es el olor característico**: el
+  centrado introduce una dependencia lineal exacta, y a partir de ahí el rango es
+  una decisión de umbral.
+- Cuando dos caminos deben dar lo mismo por matemática —`lstsq` y `pinv`, primal y
+  dual—, comprobar **la propiedad** (que las dos ajusten, que una tenga menor
+  norma) antes que la igualdad numérica estrecha.
+
 **El CI se rompió por una representación, no por un cálculo (17-09-2026).** Al
 subir las seis lecciones, `salidas.py` falló en el runner con **5 fallos** en
 Python 9 y Python 10, después de haber pasado en local. Ninguna proposición era
