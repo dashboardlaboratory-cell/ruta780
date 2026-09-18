@@ -1,0 +1,622 @@
+---
+title: "Bases, polinomios y splines"
+subtitle: "Machine Learning · Lección 10"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/09-alta-dimension, matematica/07-gram-schmidt-qr, estadistica/13-regresion-primeros-principios]
+siguientes: []
+libro: "ISLP §7.1 Polynomial Regression · §7.2 Step Functions · §7.3 Basis Functions · §7.4 Regression Splines"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - scikit-learn
+---
+
+::: {.meta-leccion data-leccion="ml/10-bases-y-splines"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §7.1–7.4]{.item}
+[**Prereqs** [Alta dimensión](09-alta-dimension.qmd) · [Gram-Schmidt y QR](../matematica/07-gram-schmidt-qr.qmd) · [Regresión desde primeros principios](../estadistica/13-regresion-primeros-principios.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir una [función base]{.g} y explicar por qué todo lo demostrado en las lecciones 7 a 9 sigue valiendo sin cambiar una línea.
+2. Demostrar que el ajuste depende del **espacio** que genera la base y no de la base elegida, y que el [número de condición]{.g} sí depende de ella.
+3. Demostrar que con una base de [funciones escalón]{.g data-t="función escalón"} los coeficientes de mínimos cuadrados **son** las medias por tramo.
+4. Contar los grados de libertad de un [spline cúbico]{.g} y saber de dónde sale cada uno.
+5. Demostrar que en la base de [potencias truncadas]{.g} el coeficiente de un [nudo]{.g} es el salto de la tercera derivada dividido entre seis.
+6. Elegir una base por su condicionamiento y no solo por su forma.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 9**: el número de condición y lo que pasa cuando una matriz mal condicionada entra en un solucionador. Esta lección construye a propósito una base pésimamente condicionada y la arregla.
+- **Álgebra 7**: Gram-Schmidt y la factorización QR, que es exactamente el cambio de base que salva al polinomio.
+- **Estadística 13**: la regresión por mínimos cuadrados y la matriz sombrero. Nada de eso cambia aquí; lo único que cambia son las columnas.
+- **Python 12**: la media por grupo. La Proposición 10.4 dice que ajustar funciones escalón **es** calcular esas medias.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 11**: los splines de suavizado, la regresión local y los modelos aditivos generalizados, que penalizan o localizan en vez de fijar nudos a mano.
+- **Machine Learning 12**: los árboles, que son funciones escalón en varias dimensiones con los cortes aprendidos de los datos.
+- **Machine Learning 14**: las máquinas de vectores de soporte, cuyo truco del núcleo es esta misma idea llevada a una base de dimensión infinita.
+- **Series de tiempo**: la descomposición estacional, que es una base de funciones periódicas ajustada por mínimos cuadrados.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $b_j$ | be sub jota | La $j$-ésima función base, fija y conocida |
+| $d$ | de | El grado de un polinomio |
+| $K$ | ka | El número de nudos |
+| $\xi_k$ | xi sub ka | El $k$-ésimo nudo |
+| $(u)_+$ | u sub más | La parte positiva: $u$ si $u>0$ y cero si no |
+| $B$ | be | La matriz de diseño en la base elegida, con $B_{ij}=b_j(x_i)$ |
+| $\kappa(B)$ | kappa de be | El número de condición de $B$ |
+| $\mathcal{C}^2$ | ce dos | La clase de funciones con segunda derivada continua |
+:::
+
+## 1. La misma regresión con otras columnas
+
+::: {.definicion}
+**Definición 10.1 (modelo en una base).** Dadas funciones fijas $b_1,\dots,b_M$, el modelo
+$$y_i=\beta_0+\sum_{j=1}^{M}\beta_j\,b_j(x_i)+\varepsilon_i$$
+es **lineal en los coeficientes** aunque las $b_j$ no lo sean en $x$. Su matriz de diseño tiene por columnas los valores $b_j(x_i)$, y el ajuste es el de mínimos cuadrados de siempre.
+:::
+
+De ahí que nada de las lecciones 7, 8 y 9 haya que rehacerlo: el $C_p$, ridge, la validación cruzada y los grados de libertad se aplican a esta matriz igual que a cualquier otra. Lo único que hay que decidir es qué columnas poner, y esa decisión tiene dos partes que conviene no confundir: **qué espacio de funciones se quiere generar** y **con qué base se lo genera**.
+
+::: {.proposicion}
+**Proposición 10.2 (el espacio decide el ajuste; la base decide el condicionamiento).** Sean $B$ y $B'$ dos matrices de diseño con el mismo espacio columna. Entonces el ajuste por mínimos cuadrados es **el mismo**, $\hat{y}=\hat{y}'$, aunque los coeficientes sean distintos. En cambio, el número de condición $\kappa(B)$ depende de la base: para la [base de potencias]{.g data-t="base de potencias"} sobre un intervalo crece de forma exponencial con el grado, mientras que para una base ortonormal del mismo espacio vale exactamente $1$.
+:::
+
+::: {.demostracion}
+*Demostración.* El ajuste es la proyección ortogonal de $y$ sobre el espacio columna (Álgebra 5), y la proyección depende solo del subespacio, no de qué base se use para describirlo. De ahí la primera afirmación.
+
+Para la segunda, si $B=QR$ es la factorización QR con $Q$ de columnas ortonormales (Álgebra 7), entonces $Q$ genera el mismo espacio y $Q^\top Q=I$, de modo que todos sus valores singulares valen $1$ y $\kappa(Q)=1$. Que $\kappa$ de la base de potencias crezca con el grado se sigue de que las funciones $x^j$ y $x^{j+1}$ se parecen cada vez más sobre un intervalo acotado: su ángulo tiende a cero, las columnas se vuelven casi dependientes y el menor valor singular se va a cero. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+# Una base es una lista de funciones; el modelo sigue siendo lineal EN LOS COEFICIENTES.
+rng = np.random.default_rng(10)
+n = 120
+x = np.sort(rng.uniform(-1, 1, size=n))
+y = np.sin(3 * x) + 0.15 * rng.normal(size=n)
+
+def vandermonde(x, d):
+    """La base de potencias: 1, x, x^2, ..., x^d."""
+    return np.vander(x, d + 1, increasing=True)
+
+for d in [1, 3, 5, 9, 15]:
+    B = vandermonde(x, d)
+    b, *_ = np.linalg.lstsq(B, y, rcond=None)
+    rss = float(np.sum((y - B @ b) ** 2))
+    print("grado %2d -> columnas %2d | rango %2d | RSS %.4f | log10(condicion) %2d"
+          % (d, B.shape[1], int(np.linalg.matrix_rank(B)), rss,
+             int(round(np.log10(float(np.linalg.cond(B)))))))
+
+print()
+# La base ortogonal genera EL MISMO espacio, asi que da EL MISMO ajuste.
+d = 15
+B = vandermonde(x, d)
+Q, _ = np.linalg.qr(B)                       # base ortonormal del mismo espacio
+bp, *_ = np.linalg.lstsq(B, y, rcond=None)
+bq, *_ = np.linalg.lstsq(Q, y, rcond=None)
+print("log10 de la condicion, base de potencias: %2d" % int(round(np.log10(float(np.linalg.cond(B))))))
+print("log10 de la condicion, base ortonormal  : %2d" % int(round(np.log10(float(np.linalg.cond(Q))))))
+print("los dos ajustes coinciden a 1e-6:", bool(np.allclose(B @ bp, Q @ bq, atol=1e-6)))
+print("y generan el mismo espacio columna:",
+      bool(abs(int(np.linalg.matrix_rank(np.column_stack([B, Q]))) - (d + 1)) == 0))
+```
+
+La tabla dice las dos cosas a la vez. El RSS baja al subir el grado, como debe, porque el espacio crece. Y el número de condición pasa de $10^{0}$ con grado $1$ a $10^{5}$ con grado $15$: la base de potencias se degrada sola. La segunda parte lo cierra: la base ortonormal obtenida por QR genera **el mismo espacio**, da **el mismo ajuste** a $10^{-6}$, y tiene condición $10^{0}$.
+
+Esa es la lección práctica de la Proposición 10.2. Un polinomio de grado alto no es intrínsecamente inestable; lo que es inestable es **escribirlo en potencias de $x$**. La biblioteca no puede arreglarlo, porque el problema está en las columnas que se le pasan.
+
+```{=html}
+<div class="viz-bases">
+  <div class="controles">
+    <label>Base
+      <select id="ba-t">
+        <option value="pot" selected>potencias: 1, x, x², …</option>
+        <option value="esc">escalones</option>
+        <option value="spl">potencias truncadas</option>
+      </select>
+    </label>
+    <label>Columnas <input id="ba-m" type="range" min="2" max="12" step="1" value="6"> <span id="ba-m-v">6</span></label>
+  </div>
+  <svg id="ba-svg" viewBox="0 0 660 300" role="img" aria-label="Las funciones de la base elegida dibujadas sobre el intervalo menos uno a uno, sobre ejes fijos, con tantas curvas como columnas se pidan."></svg>
+  <p class="lectura" id="ba-lectura"></p>
+</div>
+<style>
+.viz-bases { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-bases .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-bases label { display: flex; align-items: center; gap: .4rem; }
+.viz-bases input[type=range] { width: 150px; padding: 0; }
+.viz-bases select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-bases svg { width: 100%; height: auto; display: block; }
+.viz-bases .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var PAL = ["#0F6E68", "#B4342E", "#8A5A00", "#3a5f8a", "#6b3a7a", "#2f6b3a"];
+  var svg = document.getElementById("ba-svg"), lec = document.getElementById("ba-lectura");
+  var ct = document.getElementById("ba-t"), cm = document.getElementById("ba-m"), em = document.getElementById("ba-m-v");
+
+  // Marco anclado: x de -1 a 1 y valores de -1.1 a 1.1, siempre.
+  var X0 = 46, XW = 578, Y0 = 26, YH = 232, VMAX = 1.1;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(u) { return X0 + (u + 1) / 2 * XW; }
+  function py(v) { return Y0 + (VMAX - v) / (2 * VMAX) * YH; }
+
+  function fn(tipo, j, M) {
+    if (tipo === "pot") return function (u) { return Math.pow(u, j); };
+    if (tipo === "esc") {
+      var a = -1 + 2 * j / M, b = -1 + 2 * (j + 1) / M;
+      return function (u) { return (u >= a && u < b) ? 1 : 0; };
+    }
+    if (j < 4) return function (u) { return Math.pow(u, j); };
+    var nudo = -1 + 2 * (j - 3) / (M - 3);
+    return function (u) { return u > nudo ? Math.pow(u - nudo, 3) : 0; };
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var tipo = ct.value, M = +cm.value;
+    em.textContent = String(M);
+
+    for (var t = -1; t <= 1.001; t += 0.5) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(t).toFixed(1) + " L" + (X0 + XW) + " " + py(t).toFixed(1),
+        stroke: C_L, "stroke-width": 1, fill: "none", opacity: .45 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(t) + 4, "text-anchor": "end", "font-size": 10.5,
+        fill: C_T, opacity: .65 }, t.toFixed(1)));
+    }
+    svg.appendChild(el("text", { x: X0, y: 16, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "las funciones de la base, sobre el intervalo [−1, 1]"));
+
+    for (var j = 0; j < M; j++) {
+      var f = fn(tipo, j, M), s = "", prev = null;
+      for (var i = 0; i <= 400; i++) {
+        var u = -1 + 2 * i / 400, v = Math.max(-VMAX, Math.min(VMAX, f(u)));
+        if (tipo === "esc" && prev !== null && Math.abs(v - prev) > 0.5) s += " M" + px(u).toFixed(1) + " " + py(v).toFixed(1);
+        else s += (i ? " L" : "M") + px(u).toFixed(1) + " " + py(v).toFixed(1);
+        prev = v;
+      }
+      svg.appendChild(el("path", { d: s, stroke: PAL[j % PAL.length], "stroke-width": 1.9, fill: "none", opacity: .85 }));
+    }
+
+    var texto = {
+      pot: "Las potencias sucesivas se parecen cada vez más entre sí sobre un intervalo acotado: mire cómo las últimas curvas casi se superponen. Esa es la causa geométrica del mal condicionamiento medido en la celda, que pasa de 10⁰ con grado 1 a 10⁵ con grado 15.",
+      esc: "Las indicadoras no se solapan en absoluto: su producto interno es cero, la base es ortogonal y el número de condición sale 1,26 (Proposición 10.3). A cambio no pueden representar nada continuo.",
+      spl: "Las cuatro primeras son el cúbico de partida; cada una de las siguientes arranca en su nudo y aporta un salto de la tercera derivada (Proposición 10.5). Con M columnas hay M−4 nudos."
+    };
+    lec.innerHTML = "<strong>" + M + "</strong> columnas. " + texto[tipo];
+  }
+
+  ct.addEventListener("change", dibujar);
+  cm.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. La base más simple, y la mejor condicionada
+
+::: {.proposicion}
+**Proposición 10.3 (las funciones escalón dan las medias por tramo).** Sea una partición de la recta en $K$ tramos disjuntos y sea $B$ la matriz cuyas columnas son las indicadoras de cada tramo, sin intercepto. Si cada tramo contiene al menos una observación, entonces:
+
+(a) $B^\top B$ es diagonal, con $n_k$ en la posición $k$, de modo que la base es **ortogonal** y $\kappa(B)=\sqrt{\max_k n_k/\min_k n_k}$;
+
+(b) el coeficiente $\hat\beta_k$ es exactamente la media de las $y_i$ del tramo $k$;
+
+(c) los residuos suman cero **dentro de cada tramo**.
+:::
+
+::: {.demostracion}
+*Demostración.* Cada fila de $B$ tiene un único uno, en la columna de su tramo. Por tanto $(B^\top B)_{k\ell}=\sum_i B_{ik}B_{i\ell}$ vale $n_k$ si $k=\ell$ y cero en otro caso, que es (a); los valores singulares de $B$ son las raíces de los $n_k$, de donde el número de condición.
+
+Para (b), las ecuaciones normales $B^\top B\hat\beta=B^\top y$ se leen componente a componente como $n_k\hat\beta_k=\sum_{i\in k} y_i$, cuya solución es la media del tramo. Para (c), el residuo en el tramo $k$ suma $\sum_{i\in k}(y_i-\hat\beta_k)=n_k(\bar{y}_k-\hat\beta_k)=0$. [∎]{.fin-demo}
+:::
+
+Esto conecta dos lecciones que parecían de módulos distintos: **ajustar funciones escalón es agrupar**, y los coeficientes que devuelve la regresión son las medias por grupo de Python 12. El ajuste es la función constante a trozos que la Proposición 12.3 obtenía con `transform`.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(102)
+n = 200
+x = np.sort(rng.uniform(0, 10, size=n))
+y = np.where(x < 3, 1.0, np.where(x < 7, 4.0, 2.0)) + 0.5 * rng.normal(size=n)
+
+cortes = [3.0, 7.0]
+tramo = np.digitize(x, cortes)                  # 0, 1 o 2
+K = len(cortes) + 1
+# La base indicadora: una columna por tramo, sin intercepto.
+B = np.zeros((n, K))
+B[np.arange(n), tramo] = 1.0
+
+b, *_ = np.linalg.lstsq(B, y, rcond=None)
+medias = np.array([y[tramo == k].mean() for k in range(K)])
+print("tamano de cada tramo:", [int((tramo == k).sum()) for k in range(K)])
+print("coeficientes por minimos cuadrados:", np.round(b, 6))
+print("medias de y en cada tramo         :", np.round(medias, 6))
+print("coinciden a 1e-12:", bool(np.allclose(b, medias, atol=1e-12)))
+print()
+print("la base es ortogonal por construccion:",
+      bool(np.allclose(B.T @ B, np.diag([(tramo == k).sum() for k in range(K)]), atol=1e-12)))
+print("numero de condicion de la base: %.4f" % float(np.linalg.cond(B)))
+print()
+# El ajuste es constante a trozos, y los residuos suman cero DENTRO de cada tramo.
+ajuste = B @ b
+print("suma de los residuos dentro de cada tramo:",
+      [round(abs(float(np.sum((y - ajuste)[tramo == k]))), 10) for k in range(K)])
+print("los tres son cero:", all(abs(float(np.sum((y - ajuste)[tramo == k]))) < 1e-10 for k in range(K)))
+print("valores distintos que toma el ajuste:", int(len(np.unique(np.round(ajuste, 10)))), "= numero de tramos")
+```
+
+Los tres coeficientes coinciden con las tres medias a $10^{-12}$, y el número de condición de la base es $1{,}2634$: la mejor condicionada de toda la lección, y la más tosca. Ese contraste es el que hay que tener presente al elegir: la base de potencias representa funciones suaves con pocas columnas y paga en condicionamiento; la de escalones está perfectamente condicionada y no puede representar nada continuo.
+
+## 3. Lo que un spline es, exactamente
+
+Los splines ocupan el punto intermedio: trozos polinómicos, como los escalones, pero pegados con suavidad.
+
+::: {.definicion}
+**Definición 10.4 (spline cúbico y base de potencias truncadas).** Dados nudos $\xi_1<\cdots<\xi_K$, un **spline cúbico** es una función que coincide con un polinomio de grado tres en cada tramo entre nudos consecutivos y es de clase $\mathcal{C}^2$ en todo punto. La **base de potencias truncadas** es
+$$1,\;x,\;x^2,\;x^3,\;(x-\xi_1)_+^3,\;\dots,\;(x-\xi_K)_+^3 .$$
+:::
+
+::: {.proposicion}
+**Proposición 10.5 (la base genera los splines, y cada nudo es un salto).** La base de potencias truncadas genera exactamente el espacio de los splines cúbicos con esos nudos, que tiene dimensión $K+4$. Además, si $f=\sum_j\beta_j b_j$ está escrita en esa base, entonces $f$ es $\mathcal{C}^2$ en cada nudo y su tercera derivada salta:
+$$f'''(\xi_k^{+})-f'''(\xi_k^{-})=6\,\beta_{k},$$
+donde $\beta_k$ es el coeficiente de $(x-\xi_k)_+^3$.
+:::
+
+::: {.demostracion}
+*Demostración.* Para la dimensión, cuéntese por restricciones. Un polinomio cúbico distinto en cada uno de los $K+1$ tramos tiene $4(K+1)$ coeficientes libres. Exigir en cada nudo que coincidan el valor, la primera derivada y la segunda impone $3K$ ecuaciones independientes. Quedan $4(K+1)-3K=K+4$ grados de libertad.
+
+Para ver que la base los genera, obsérvese que $g_k(x)=(x-\xi_k)_+^3$ vale cero a la izquierda de $\xi_k$ y $(x-\xi_k)^3$ a la derecha. Sus tres primeras derivadas por la derecha en $\xi_k$ son $0$, $0$ y $0$, así que $g_k$ es $\mathcal{C}^2$ en $\xi_k$; y su tercera derivada vale $0$ a la izquierda y $6$ a la derecha, luego salta $6$. Cualquier combinación lineal hereda la continuidad $\mathcal{C}^2$, y el salto de $f'''$ en $\xi_k$ es $6\beta_k$ porque solo $g_k$ contribuye allí. Como las $K+4$ funciones son linealmente independientes y viven en un espacio de dimensión $K+4$, lo generan. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def base(x, nudos, orden=0):
+    """La base de potencias truncadas y sus derivadas, analiticas."""
+    def pot(t, k):
+        if orden == 0: return t ** k
+        if orden == 1: return k * t ** (k - 1) if k >= 1 else np.zeros_like(t)
+        if orden == 2: return k * (k - 1) * t ** (k - 2) if k >= 2 else np.zeros_like(t)
+        return k * (k - 1) * (k - 2) * t ** (k - 3) if k >= 3 else np.zeros_like(t)
+    cols = [pot(x, k) for k in range(4)]
+    for s in nudos:
+        cols.append(np.where(x > s, pot(np.clip(x - s, 0, None), 3), 0.0))
+    return np.column_stack(cols)
+
+rng = np.random.default_rng(104)
+n = 400
+x = np.sort(rng.uniform(0, 10, size=n))
+y = np.sin(x) + 0.1 * rng.normal(size=n)
+nudos = [2.5, 5.0, 7.5]
+K = len(nudos)
+
+B = base(x, nudos)
+b, *_ = np.linalg.lstsq(B, y, rcond=None)
+print("nudos: %d | columnas: %d = K + 4 | rango: %d" % (K, B.shape[1], int(np.linalg.matrix_rank(B))))
+print("coeficientes de los nudos:", np.round(b[4:], 6))
+print()
+
+# Cuanto salta cada derivada al cruzar un nudo, al estrechar el intervalo.
+print("salto de cada derivada al cruzar el nudo 5.0, para h cada vez menor:")
+print("      h        f          f'         f''        f'''")
+for h in [1e-2, 1e-3, 1e-4]:
+    fila = []
+    for orden in range(4):
+        vi = (base(np.array([5.0 - h]), nudos, orden) @ b).item()
+        vd = (base(np.array([5.0 + h]), nudos, orden) @ b).item()
+        fila.append(vd - vi)
+    print("  %.0e  %9.5f  %9.5f  %9.5f  %9.5f" % (h, fila[0], fila[1], fila[2], fila[3]))
+print()
+print("las tres primeras se encogen con h -> la funcion es de clase C2 en el nudo")
+print("la tercera NO se encoge: se queda en %.6f" % (6 * b[4 + 1]))
+print("y vale exactamente 6 veces el coeficiente del nudo: 6 * %.6f = %.6f"
+      % (b[4 + 1], 6 * b[4 + 1]))
+print()
+print("cada nudo aporta un salto libre de la tercera derivada, y de ahi los K+4 grados de libertad:")
+print("  4 del cubico inicial + %d de los nudos = %d" % (K, K + 4))
+```
+
+La tabla es la demostración hecha aritmética. Al estrechar el intervalo de $10^{-2}$ a $10^{-4}$, el salto de $f$, de $f'$ y de $f''$ se divide por diez cada vez. Eso no es un salto sino la función cambiando de valor a lo largo del intervalo, y en el límite vale cero. El de $f'''$ **no se mueve**: vale $-1{,}697943$ para los tres valores de $h$, que es exactamente $6$ veces el coeficiente del nudo.
+
+De ahí sale la lectura que conviene retener: **un nudo no es un punto donde la curva se rompe, sino un punto donde se le permite cambiar de curvatura**, y su coeficiente mide cuánto. Los $K+4$ grados de libertad son cuatro del cúbico de partida más uno por cada permiso.
+
+```{=html}
+<div class="viz-salto">
+  <div class="controles">
+    <label>Coeficiente del nudo β <input id="sa-b" type="range" min="-3" max="3" step="0.1" value="1.2"> <span id="sa-b-v">1.2</span></label>
+    <label>Posición del nudo ξ <input id="sa-x" type="range" min="-0.6" max="0.6" step="0.05" value="0"> <span id="sa-x-v">0.00</span></label>
+  </div>
+  <svg id="sa-svg" viewBox="0 0 660 330" role="img" aria-label="Arriba el spline y su segunda derivada, continuas en el nudo; abajo la tercera derivada, que salta en el nudo una cantidad igual a seis veces el coeficiente."></svg>
+  <p class="lectura" id="sa-lectura"></p>
+</div>
+<style>
+.viz-salto { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-salto .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-salto label { display: flex; align-items: center; gap: .4rem; }
+.viz-salto input[type=range] { width: 150px; padding: 0; }
+.viz-salto svg { width: 100%; height: auto; display: block; }
+.viz-salto .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_F = "#0F6E68", C_D = "#B4342E";
+  var svg = document.getElementById("sa-svg"), lec = document.getElementById("sa-lectura");
+  var cb = document.getElementById("sa-b"), eb = document.getElementById("sa-b-v");
+  var cx = document.getElementById("sa-x"), ex = document.getElementById("sa-x-v");
+
+  // Marco anclado: tres paneles fijos, x de -1 a 1 siempre.
+  var X0 = 52, XW = 572, P = [[30, 76, 2.2], [126, 64, 6.5], [222, 64, 22]];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(u) { return X0 + (u + 1) / 2 * XW; }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var b = +cb.value, xi = +cx.value;
+    eb.textContent = b.toFixed(1); ex.textContent = xi.toFixed(2);
+
+    // f(x) = 0.4 + 0.3x - 0.5x^2 + 0.2x^3 + b*(x-xi)_+^3, y sus derivadas
+    function f(u) { var t = u > xi ? Math.pow(u - xi, 3) : 0; return 0.4 + 0.3*u - 0.5*u*u + 0.2*u*u*u + b*t; }
+    function d2(u) { var t = u > xi ? 6*(u - xi) : 0; return -1.0 + 1.2*u + b*t; }
+    function d3(u) { return 1.2 + (u > xi ? 6*b : 0); }
+
+    var etiquetas = ["f, el spline", "f'', continua en el nudo", "f''', con el salto"];
+    [f, d2, d3].forEach(function (g, k) {
+      var Y0 = P[k][0], H = P[k][1], M = P[k][2];
+      function py(v) { return Y0 + (M - v) / (2 * M) * H; }
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + (X0 + XW) + " " + py(0).toFixed(1),
+        stroke: C_L, "stroke-width": 1, fill: "none", opacity: .5 }));
+      svg.appendChild(el("text", { x: X0, y: Y0 - 6, "font-size": 11, fill: C_T, opacity: .7 }, etiquetas[k]));
+      var s = "", roto = false;
+      for (var i = 0; i <= 400; i++) {
+        var u = -1 + 2*i/400;
+        if (k === 2 && !roto && u > xi) { s += " M" + px(u).toFixed(1) + " " + py(Math.max(-M, Math.min(M, g(u)))).toFixed(1); roto = true; continue; }
+        s += (i ? " L" : "M") + px(u).toFixed(1) + " " + py(Math.max(-M, Math.min(M, g(u)))).toFixed(1);
+      }
+      svg.appendChild(el("path", { d: s, stroke: k === 2 ? C_D : C_F, "stroke-width": 2.3, fill: "none" }));
+      svg.appendChild(el("path", { d: "M" + px(xi).toFixed(1) + " " + Y0 + " L" + px(xi).toFixed(1) + " " + (Y0 + H),
+        stroke: C_T, "stroke-width": 1.2, fill: "none", "stroke-dasharray": "3 4", opacity: .6 }));
+      if (k === 2) {
+        svg.appendChild(el("circle", { cx: px(xi).toFixed(1), cy: py(Math.max(-M, Math.min(M, 1.2))).toFixed(1), r: 4, fill: C_D }));
+        svg.appendChild(el("circle", { cx: px(xi).toFixed(1), cy: py(Math.max(-M, Math.min(M, 1.2 + 6*b))).toFixed(1), r: 4, fill: C_D }));
+      }
+    });
+
+    lec.innerHTML = "Con β = <strong>" + b.toFixed(1) + "</strong> y el nudo en ξ = <strong>" + xi.toFixed(2) +
+      "</strong>, la tercera derivada salta <strong>" + (6*b).toFixed(1) + "</strong> = 6β al cruzarlo " +
+      "(Proposición 10.5), mientras que f y f'' pasan sin quiebro. Con β = 0 no hay salto y el spline es un " +
+      "único cúbico: el nudo existe pero no se usa. Mover ξ desplaza el salto sin cambiar su tamaño.";
+  }
+
+  cb.addEventListener("input", dibujar);
+  cx.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Contraste con la librería
+
+Esta lección es de nivel **L3**. Se contrastan las dos bases construidas a mano contra las que fabrica `scikit-learn`, y de paso se comprueba una afirmación de la sección 1 que conviene no dar por supuesta.
+
+```{pyodide}
+import numpy as np
+from sklearn.preprocessing import PolynomialFeatures, KBinsDiscretizer
+
+rng = np.random.default_rng(105)
+n, d = 150, 6
+x = np.sort(rng.uniform(-1, 1, size=n))
+y = np.sin(3 * x) + 0.15 * rng.normal(size=n)
+
+# 1. la base de potencias, propia y de la libreria
+mia = np.vander(x, d + 1, increasing=True)
+suya = PolynomialFeatures(degree=d, include_bias=True).fit_transform(x.reshape(-1, 1))
+print("misma forma:", mia.shape == suya.shape)
+print("mismas columnas a 1e-12:", bool(np.allclose(mia, suya, atol=1e-12)))
+
+def ajuste(M):
+    b, *_ = np.linalg.lstsq(M, y, rcond=None)
+    return M @ b
+
+print("mismo ajuste a 1e-10:", bool(np.allclose(ajuste(mia), ajuste(suya), atol=1e-10)))
+print("log10 de la condicion, propia %d | de la libreria %d"
+      % (int(round(np.log10(float(np.linalg.cond(mia))))),
+         int(round(np.log10(float(np.linalg.cond(suya)))))))
+print("la libreria no arregla una base mal condicionada: es propiedad de la base")
+print()
+
+# 2. las funciones escalon, propias y de la libreria
+kb = KBinsDiscretizer(n_bins=4, encode="onehot-dense", strategy="uniform")
+Bs = kb.fit_transform(x.reshape(-1, 1))
+bordes = kb.bin_edges_[0]
+tramo = np.clip(np.digitize(x, bordes[1:-1]), 0, 3)
+Bm = np.zeros((n, 4)); Bm[np.arange(n), tramo] = 1.0
+print("misma base indicadora a 1e-12:", bool(np.allclose(Bm, Bs, atol=1e-12)))
+
+bm, *_ = np.linalg.lstsq(Bm, y, rcond=None)
+medias = np.array([y[tramo == k].mean() for k in range(4)])
+print("coeficientes == medias por tramo a 1e-12:", bool(np.allclose(bm, medias, atol=1e-12)))
+print("numero de condicion de la base indicadora: %.4f" % float(np.linalg.cond(Bm)))
+print("frente a %.2e de la base de potencias del mismo tamano"
+      % float(np.linalg.cond(np.vander(x, 4, increasing=True))))
+```
+
+Las dos bases coinciden columna a columna y dan el mismo ajuste. Lo que interesa es la línea del condicionamiento: la base que fabrica la librería está **igual de mal condicionada** que la propia, porque es la misma base. Una biblioteca bien escrita no puede arreglar una elección de columnas; eso lo decide quien las elige.
+
+## Ejercicios
+
+### Ejercicio 1, Los grados de libertad de un spline
+
+Con la Proposición 10.5, calcular cuántos grados de libertad tiene un spline cúbico con $9$ nudos, y cuántas restricciones impuso la continuidad.
+
+```{pyodide}
+#| exercise: ex_gl
+K = 9
+
+libres = ______      # coeficientes antes de pegar los trozos
+restricciones = ______
+grados = ______
+
+print(libres, restricciones, grados)
+int(grados)
+```
+
+::: {.hint exercise="ex_gl"}
+Hay $K+1$ tramos con $4$ coeficientes cada uno, y en cada nudo se igualan el valor, la primera derivada y la segunda.
+:::
+
+::: {.solution exercise="ex_gl"}
+```{pyodide}
+K = 9
+
+libres = 4 * (K + 1)
+restricciones = 3 * K
+grados = libres - restricciones
+
+print(libres, restricciones, grados)
+int(grados)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_gl
+#| check: true
+if result == 13:
+    feedback = {"correct": True, "message": "Correcto: 40 − 27 = 13, que es K+4. Cuatro del cúbico de partida y uno por nudo.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 13 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, El salto de la tercera derivada
+
+Un spline ajustado tiene en el nudo $\xi=4$ un coeficiente de $-0{,}75$. Calcular cuánto salta su tercera derivada al cruzarlo.
+
+```{pyodide}
+#| exercise: ex_salto
+beta = -0.75
+
+salto = ______
+
+print(salto)
+float(salto)
+```
+
+::: {.hint exercise="ex_salto"}
+La Proposición 10.5 dice que el salto vale $6\beta$.
+:::
+
+::: {.solution exercise="ex_salto"}
+```{pyodide}
+beta = -0.75
+
+salto = 6 * beta
+
+print(salto)
+float(salto)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_salto
+#| check: true
+if abs(result - (-4.5)) < 1e-9:
+    feedback = {"correct": True, "message": "Correcto: −4.5. El signo dice hacia dónde se dobla la curva a partir del nudo.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba −4.5 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 10**:
+
+1. Medir el número de condición de la base de potencias para grados de $1$ a $20$, sobre $[-1,1]$ y sobre $[0,1]$, y graficar las dos curvas en escala logarítmica. Anotar cuál es peor y por qué el cambio de intervalo importa tanto. Repetirlo con la base ortonormal de la QR y comprobar que sale $1$ en todos los casos.
+2. Comparar splines y polinomios a igualdad de grados de libertad, sobre la función de Runge $1/(1+25x^2)$, midiendo el error máximo global y el error máximo cerca de los bordes para grados de libertad de $6$ a $20$. **Anotar honestamente el resultado**: con regresión sobre muchos puntos ruidosos la ventaja del spline es pequeña e irregular, porque el fenómeno de Runge es de interpolación. Repetirlo después interpolando $n$ puntos exactos con $n$ grados de libertad y ver cómo cambia la conclusión.
+3. Implementar el spline **natural**, que añade la restricción de ser lineal fuera de los nudos extremos, y contar sus grados de libertad. Anotar en `50-Errores/` cuántas restricciones son y por qué la varianza del ajuste baja justo donde el cúbico la tenía más alta.
+
+## Del libro
+
+*An Introduction to Statistical Learning with Applications in Python* trata este material en §7.1 *Polynomial Regression*, §7.2 *Step Functions*, §7.3 *Basis Functions* y §7.4 *Regression Splines*, esta última con sus cinco subsecciones.
+
+Las tres secciones restantes del capítulo —§7.5 *Smoothing Splines*, §7.6 *Local Regression* y §7.7 *Generalized Additive Models*— son la lección 11. El corte está donde el libro cambia de estrategia: hasta §7.4 se **construye una base** y se ajusta por mínimos cuadrados; a partir de §7.5 se **penaliza o se localiza**.
+
+**Preguntas para leer §7.1–7.4 con lápiz:**
+
+1. §7.3 presenta las funciones base como el marco común de todo el capítulo. Con la Proposición 10.2, ¿qué parte de la elección de una base afecta al ajuste y qué parte solo afecta al cálculo?
+2. §7.4.4 discute cuántos nudos poner y dónde. Con la Proposición 10.5, ¿qué significa exactamente añadir un nudo, en términos de lo que se le permite hacer a la función?
+3. §7.4.5 compara splines con polinomios y afirma que los splines se comportan mejor cerca de los bordes. ¿Ese argumento vale igual para interpolación que para regresión con muchas observaciones ruidosas? El reto 2 pide medirlo antes de responder.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/bases-y-splines.md`, enlazada a [[alta-dimension]], [[gram-schmidt-qr]] y [[groupby]]. Conviene rehacer a mano el recuento de la Proposición 10.5: $4(K+1)$ coeficientes menos $3K$ restricciones igual a $K+4$. Es el mismo tipo de cuenta que el teorema del rango-nulidad, y deja claro que un nudo compra exactamente un grado de libertad.
+
+```
+¿Qué es una función base?::Una función fija cuya combinación lineal forma el modelo
+¿Por qué sigue siendo regresión lineal?::Porque es lineal en los coeficientes, aunque no en x
+¿Qué decide el ajuste?::El espacio que genera la base, no la base concreta
+¿Qué decide el condicionamiento?::La base concreta: potencias 10⁵, ortonormal 10⁰
+¿Se arregla usando una librería?::No: la base es la que uno le pasa, y el problema está en las columnas
+¿Qué devuelve ajustar funciones escalón?::Las medias de y en cada tramo, exactamente
+¿Cómo es su matriz BᵀB?::Diagonal, con n_k en la posición k: la base es ortogonal
+¿Qué es un spline cúbico?::Un cúbico distinto en cada tramo, pegado con clase C² en los nudos
+¿Cuántos grados de libertad tiene?::K+4: cuatro del cúbico y uno por nudo
+¿De dónde sale esa cuenta?::4(K+1) coeficientes menos 3K restricciones de continuidad
+¿Cuál es la base de potencias truncadas?::1, x, x², x³ y (x−ξ)³₊ por cada nudo
+¿Qué mide el coeficiente de un nudo?::El salto de la tercera derivada, dividido entre seis
+¿Qué compra un nudo?::Permiso para cambiar de curvatura, no un quiebro en la curva
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 10.2 se demuestra con que la proyección ortogonal depende del subespacio y no de la base, y con la factorización QR para la parte del condicionamiento; se comprueba midiendo el número de condición de la base de potencias en cinco grados, de $10^{0}$ a $10^{5}$, contra $10^{0}$ de la base ortonormal, y verificando que las dos dan el mismo ajuste a $10^{-6}$. La Proposición 10.3 se demuestra leyendo las ecuaciones normales componente a componente; se comprueba con tres tramos, donde los coeficientes coinciden con las medias a $10^{-12}$, la matriz $B^\top B$ sale diagonal y el número de condición vale $1{,}2634$. La Proposición 10.5 se demuestra contando $4(K+1)-3K=K+4$ y derivando la parte positiva al cubo; se comprueba estrechando el intervalo alrededor de un nudo: los saltos de $f$, $f'$ y $f''$ se dividen por diez al dividir $h$ por diez, mientras que el de $f'''$ se queda fijo en $-1{,}697943$, que es $6$ veces el coeficiente del nudo. Los dos visuales se contrastaron contra estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** La proyección ortogonal y la matriz sombrero son de Álgebra 5 y Estadística 13. La factorización QR y la ortonormalización son de Álgebra 7. El número de condición y lo que significa que pase de $10^{10}$ son de Machine Learning 9. La media por grupo, con la que coinciden los coeficientes de la Proposición 10.3, es de Python 12.
+
+**Lo que se enuncia sin demostrar.** Que las $K+4$ funciones de la base de potencias truncadas son linealmente independientes: se usa para concluir que generan el espacio y se comprueba midiendo el rango de la matriz, pero no se demuestra. Que el número de condición de la base de potencias crece **exponencialmente** con el grado se enuncia con esa palabra y se mide en cinco puntos; la cota asintótica pertenece a la teoría de matrices de Vandermonde y no se desarrolla aquí.
+
+**Lo que NO se afirma, y conviene decirlo.** Esta página **no** demuestra que los splines se comporten mejor que los polinomios cerca de los bordes. Se midió, y con regresión sobre $300$ observaciones ruidosas la ventaja resultó pequeña e irregular: el fenómeno de Runge es de **interpolación** y se atenúa mucho al ajustar por mínimos cuadrados con muchos puntos. El reto 2 pide reproducir esa medición y contrastarla con el caso de interpolación. Lo que sí queda demostrado es el recuento de grados de libertad y el significado exacto de un nudo.
+
+**Lo que viene de los libros.**
+
+- [*An Introduction to Statistical Learning with Applications in Python*](https://www.statlearning.com/) (James, Witten, Hastie, Tibshirani, Taylor; Springer, 2023), §7.1 *Polynomial Regression*, §7.2 *Step Functions*, §7.3 *Basis Functions* y §7.4 *Regression Splines* — citadas por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La Proposición 10.2 separada en dos mitades —el espacio decide el ajuste, la base decide el condicionamiento—, que convierte la elección de base en una decisión numérica y no estética, y que enlaza este capítulo con lo aprendido en la lección 9. La Proposición 10.3 con la identidad exacta entre coeficientes y medias por tramo, que une la regresión con la agregación de Python 12. Y la Proposición 10.5 leída por el salto de la tercera derivada: el libro presenta las potencias truncadas como una receta, y aquí el coeficiente de cada nudo tiene un significado medible que además explica de dónde sale el $K+4$.
+
+[Índice de ISLP verificado el 13-09-2026 contra los marcadores del PDF oficial.]{.sello}
+:::
