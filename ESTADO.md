@@ -344,14 +344,23 @@ Lo que sigue, en orden de coste creciente:
 2. **ML: el plan listado está incompleto, y el propio plan ya lo sabía.**
    Anotado el 13-09-2026 al traer el tercer nivel del índice de ISLP.
 
-   `ml/index.qmd` enumera **33 filas**, de las que 14 se reparten los 13
-   capítulos de ISLP. Pero `data-total` del plan dice **90**. Faltan 57 filas
+   `ml/index.qmd` enumeraba **33 filas**, de las que 14 se repartían los 13
+   capítulos de ISLP. Pero `data-total` del plan dice **90**. Faltaban 57 filas
    por escribir en el índice, y ese número no es casual: ISLP tiene exactamente
    **57 secciones sustantivas de nivel N.M**. A razón de una lección por
    sección —que es el ritmo real de las lecciones ya escritas, que citan una o
    dos secciones cada una— ISLP pide unas 57, y con las 33 listadas salen las
    90. Quien escribió el plan ya había hecho la cuenta: **las 14 filas son el
    esqueleto, un título por capítulo, pendiente de desglosar.**
+
+   **Al día de hoy son 39 filas** —20 de ISLP en Fase 2, 13 de ESL y 6 de deep
+   learning en Fase 4—, porque se han desglosado los capítulos 4, 6, 7 y 8. Luis
+   preguntó el 18-09-2026 por qué la barra decía 90 con 39 filas a la vista, y
+   la decisión fue **dejar el 90 y explicarlo en la página**: `ml/index.qmd`
+   lleva ahora un `callout-important` que dice cuántas están desglosadas,
+   cuántas publicadas y por qué los capítulos sin desglosar aparecen con una
+   sola fila de esqueleto. Bajar el total a 39 se descartó porque haría que el
+   progreso fuese hacia atrás cada vez que se parte un capítulo.
 
    La medida del problema, con el tercer nivel a la vista: **199 unidades
    enseñables contra 14 lecciones, o sea 14,2 por lección.** Los peores son el
