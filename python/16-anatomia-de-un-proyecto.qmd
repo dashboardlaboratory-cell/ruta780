@@ -1,0 +1,627 @@
+---
+title: "Anatomía de un proyecto de datos"
+subtitle: "Python · Lección 16"
+nivel: L4
+modulo: python
+fase: F1
+prereqs: [python/15-rendimiento, python/12-groupby-y-agregacion, python/05-entorno-uv-git]
+siguientes: []
+libro: "—"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - pandas
+---
+
+::: {.meta-leccion data-leccion="python/16-anatomia-de-un-proyecto"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F1]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Rendimiento](15-rendimiento.qmd) · [Groupby y agregación](12-groupby-y-agregacion.qmd) · [Entorno reproducible](05-entorno-uv-git.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Decir qué hace falta para que un cálculo sea [reproducible]{.g}, y por qué fijar la semilla no basta.
+2. Demostrar que la suma en coma flotante no es asociativa, y deducir que reordenar filas cambia un total.
+3. Usar la [huella]{.g} de un artefacto como contrato, y construir un [manifiesto]{.g} que diga de dónde salió cada salida.
+4. Describir un [cauce]{.g} como un [grafo acíclico dirigido]{.g data-t="grafo acíclico dirigido"} y demostrar cuándo existe un [orden topológico]{.g}.
+5. Detectar el ciclo que se forma cuando un paso lee lo que otro posterior escribe.
+6. Reconocer esta misma anatomía en la plataforma que se está estudiando.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 5**: el entorno reproducible con `uv` y `git`. Aquella lección fijaba las versiones; esta fija lo que ocurre **dentro** de una ejecución.
+- **Python 15**: el coste de cada paso, y la idea de medir contando. Un manifiesto es otra forma de contar.
+- **Python 12 y 14**: las agregaciones y los remuestreos, que son los pasos típicos de un cauce.
+- **Álgebra 3**: los grafos no aparecían allí, pero la noción de dependencia y de orden sí: un orden topológico es una linealización de un orden parcial.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Todo el módulo de Series de tiempo y el de Inferencia causal**, cuyos análisis son cauces de varios pasos sobre datos que cambian.
+- **Machine Learning 6**: la validación cruzada, cuyo resultado deja de ser reproducible si el reparto en pliegues no lleva semilla.
+- **Estadística 11 y 22**: el bootstrap y las cadenas, donde la semilla es parte del resultado y no un detalle.
+- **Esta misma plataforma**, que es el ejemplo trabajado: sus cinco gates, su `afirmaciones.json` y su `grafo/build_graph.py` son las tres piezas de esta lección.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $h(\cdot)$ | hache de | La huella de un artefacto: su resumen criptográfico |
+| $G=(V,E)$ | ge igual a ve, e | El grafo del cauce: pasos y dependencias |
+| $\text{dep}(p)$ | dep de pe | Los pasos de los que depende el paso $p$ |
+| $\varepsilon$ | épsilon | La precisión relativa de la aritmética de coma flotante |
+:::
+
+## 1. Reproducible no es lo mismo que determinista
+
+::: {.proposicion}
+**Proposición 16.1 (lo que hace falta para repetir un número).** Fijar la semilla del generador hace que dos ejecuciones del mismo código produzcan los mismos datos aleatorios. **No basta.** La suma en coma flotante no es asociativa: existen conjuntos de valores cuya suma de izquierda a derecha difiere de su suma en otro orden. En consecuencia, reordenar las filas de una tabla puede cambiar un total, aunque el conjunto de filas sea idéntico.
+
+Un cálculo es reproducible cuando se fijan **los datos, el código, las versiones, la semilla y el orden**.
+:::
+
+::: {.demostracion}
+*Demostración.* Que la semilla baste para los datos aleatorios es la definición de un generador determinista: el mismo estado inicial produce la misma sucesión.
+
+Para la no asociatividad, basta observar que cada suma redondea a la precisión de la máquina. Si $a$ es grande y $b,c$ pequeños, $(a+b)+c$ puede perder $b$ en el redondeo y conservar $c$, mientras que $a+(b+c)$ suma primero los dos pequeños y conserva su efecto. Los dos resultados difieren en un orden de $\varepsilon\,|a|$.
+
+Reordenar las filas es reordenar los sumandos, así que la conclusión se hereda. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+# 1. La semilla: sin ella, dos ejecuciones del mismo codigo difieren.
+a = np.random.default_rng().normal(size=5)
+b = np.random.default_rng().normal(size=5)
+print("sin semilla, dos ejecuciones coinciden:", bool(np.array_equal(a, b)))
+
+c = np.random.default_rng(16).normal(size=5)
+d = np.random.default_rng(16).normal(size=5)
+print("con la misma semilla, coinciden bit a bit:", bool(np.array_equal(c, d)))
+print()
+
+# 2. La suma en coma flotante NO es asociativa: el orden cambia el resultado.
+rng = np.random.default_rng(161)
+x = rng.normal(size=100_000) * 1e6
+orden1 = 0.0
+for v in x: orden1 += v                       # de izquierda a derecha
+orden2 = 0.0
+for v in x[::-1]: orden2 += v                 # al reves
+por_pares = float(np.sum(x))                  # numpy suma por pares
+
+print("suma de izquierda a derecha == suma al reves:", orden1 == orden2)
+print("suma secuencial == suma de numpy          :", orden1 == por_pares)
+print("las tres estan de acuerdo a 1e-6 relativo :",
+      abs(orden1 - por_pares) / abs(por_pares) < 1e-6)
+print()
+print("un mismo conjunto de datos sumado en dos ordenes da dos numeros")
+print("por eso 'mismo codigo y mismos datos' no basta: hace falta el mismo ORDEN")
+print()
+
+# 3. Reordenar las filas de una tabla es una operacion inocente que cambia la suma.
+y = x.copy()
+rng.shuffle(y)
+print("los mismos valores, barajados:", bool(np.array_equal(np.sort(x), np.sort(y))))
+s1 = 0.0
+for v in y: s1 += v
+print("y su suma secuencial coincide con la de antes:", s1 == orden1)
+rel = abs(s1 - orden1) / abs(orden1)
+# El digito exacto depende de la maquina, asi que se acota y no se cita.
+print("la diferencia relativa es mayor que cero:", rel > 0)
+print("y menor que 1e-9, o sea invisible salvo que se compare bit a bit:", rel < 1e-9)
+```
+
+La diferencia relativa es menor que $10^{-9}$: invisible salvo que se compare bit a bit, que es justo lo que hace un contrato de reproducibilidad. Y ahí está el problema, porque **una diferencia invisible sigue siendo una diferencia**: si el criterio es que dos ejecuciones den lo mismo, barajar las filas lo rompe.
+
+**Modo de falla.** Un informe que no cuadra con el del mes pasado por unas milésimas, sin que nadie haya tocado los datos ni el código. La causa suele ser que la consulta que los trae ya no devuelve las filas en el mismo orden, porque la base de datos cambió de plan de ejecución.
+
+**Diagnóstico.** Ordenar explícitamente antes de agregar y volver a comparar. Si la diferencia desaparece, era el orden.
+
+**Remedio.** Ordenar por una clave estable antes de cualquier reducción cuyo resultado se vaya a comparar entre ejecuciones. No es gratis —ordenar cuesta— y por eso se hace donde el número se publica, no en cada paso intermedio.
+
+## 2. La huella como contrato
+
+::: {.proposicion}
+**Proposición 16.2 (qué garantiza y qué no una huella).** Sea $h$ un resumen criptográfico del contenido de un artefacto. Entonces:
+
+(a) el mismo contenido da **siempre** la misma huella;
+
+(b) cambiar un solo valor, por poco que sea, cambia la huella entera;
+
+(c) reordenar las filas cambia la huella, aunque el conjunto de filas sea el mismo.
+
+Guardar la huella de las entradas junto a cada salida —un **manifiesto**— permite responder «¿de dónde salió este número?» sin volver a ejecutar nada, y detectar que una entrada cambió sin mirar su contenido.
+:::
+
+::: {.demostracion}
+*Demostración.* (a) es la definición de función: el resumen se calcula a partir de los bytes, y los mismos bytes dan el mismo resultado. (b) es la propiedad de avalancha que se le exige a un resumen criptográfico: un cambio de un bit altera la salida de forma que no se parece a la anterior. (c) se sigue de (b), porque serializar una tabla en otro orden produce otros bytes.
+
+Para la última afirmación: si el manifiesto guarda $h(\text{entrada})$ y al recalcularlo sale otro valor, la entrada cambió; si sale el mismo y la salida difiere, lo que cambió fue el código o el entorno. Las dos preguntas se responden comparando huellas, sin releer los datos. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import hashlib
+import io
+import numpy as np
+import pandas as pd
+
+def huella(obj):
+    """La huella de un artefacto: el mismo contenido da la misma, siempre."""
+    if isinstance(obj, pd.DataFrame):
+        crudo = obj.to_csv(index=False).encode("utf-8")
+    elif isinstance(obj, np.ndarray):
+        crudo = obj.tobytes() + str(obj.dtype).encode() + str(obj.shape).encode()
+    else:
+        crudo = str(obj).encode("utf-8")
+    return hashlib.sha256(crudo).hexdigest()[:16]
+
+rng = np.random.default_rng(162)
+tabla = pd.DataFrame({"id": range(200), "v": rng.normal(size=200).round(6)})
+
+h1 = huella(tabla)
+h2 = huella(tabla.copy())
+print("la misma tabla, dos veces      :", h1 == h2)
+print("huella:", h1)
+print()
+
+# Cambiar UN valor cambia la huella entera.
+otra = tabla.copy()
+otra.loc[0, "v"] = float(otra.loc[0, "v"]) + 1e-9
+print("cambiando un valor en 1e-9, la huella cambia:", huella(otra) != h1)
+print()
+
+# Y reordenar las filas tambien, aunque el conjunto sea el mismo.
+barajada = tabla.sample(frac=1.0, random_state=0).reset_index(drop=True)
+print("mismo conjunto de filas:", bool(barajada.sort_values('id').reset_index(drop=True).equals(tabla)))
+print("misma huella          :", huella(barajada) == h1)
+print("por eso un cauce reproducible fija tambien el ORDEN, no solo el contenido")
+print()
+
+# La huella de la ENTRADA se guarda junto a la salida: eso es la trazabilidad.
+def paso(t):
+    return t.assign(w=t["v"] * 2)
+salida = paso(tabla)
+manifiesto = {"entrada": huella(tabla), "salida": huella(salida), "filas": len(salida)}
+print("manifiesto del paso:", manifiesto)
+print()
+print("repetido con la misma entrada, el manifiesto es identico:",
+      {"entrada": huella(tabla), "salida": huella(paso(tabla)), "filas": len(paso(tabla))} == manifiesto)
+print("con la entrada barajada, la salida ya no coincide:",
+      huella(paso(barajada)) != manifiesto["salida"])
+```
+
+Un cambio de $10^{-9}$ en un valor cambia la huella entera, y barajar las filas también. La última parte es el manifiesto: repetido con la misma entrada sale idéntico, y con la entrada barajada la salida ya no coincide.
+
+**Esta plataforma hace exactamente eso.** `verificar/afirmaciones.json` guarda los fragmentos que la prosa afirma, y `verificar/salidas.py` vuelve a ejecutar cada celda en cada construcción y compara. Es un manifiesto con otra forma: en lugar de una huella del artefacto entero, guarda las afirmaciones concretas que importan. La diferencia no es de fondo sino de grano.
+
+**Modo de falla.** Un resultado publicado que nadie sabe reproducir porque no se guardó qué versión de los datos lo produjo. Seis meses después, la tabla de origen ya cambió y no hay forma de saber si el número era correcto.
+
+**Diagnóstico.** Intentar reproducirlo. Si hace falta preguntarle a alguien qué datos se usaron, falta el manifiesto.
+
+**Remedio.** Escribir junto a cada salida la huella de sus entradas y la versión del código. Es una línea por paso y convierte una arqueología en una comparación.
+
+```{=html}
+<div class="viz-huella">
+  <div class="controles">
+    <label>Qué se cambia
+      <select id="hu-c">
+        <option value="nada" selected>nada</option>
+        <option value="valor">un valor, en 0,000000001</option>
+        <option value="orden">el orden de las filas</option>
+        <option value="fila">se quita una fila</option>
+      </select>
+    </label>
+  </div>
+  <svg id="hu-svg" viewBox="0 0 660 250" role="img" aria-label="Dos cajas con la huella del artefacto original y la del modificado, y debajo una fila de bloques que marca qué posiciones del resumen coinciden."></svg>
+  <p class="lectura" id="hu-lectura"></p>
+</div>
+<style>
+.viz-huella { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-huella .controles { display: flex; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-huella label { display: flex; align-items: center; gap: .4rem; }
+.viz-huella select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-huella svg { width: 100%; height: auto; display: block; }
+.viz-huella .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_I = "#0F6E68", C_D = "#B4342E";
+  var svg = document.getElementById("hu-svg"), lec = document.getElementById("hu-lectura");
+  var cc = document.getElementById("hu-c");
+  // Huellas REALES de la tabla de la celda, calculadas con el mismo codigo y
+  // comprobadas identicas en las dos versiones de pandas con las que se verifica.
+  var H = { nada:   "f62ae60a7c6ed1b9",
+            valor:  "48fa677d770ea5e5",
+            orden:  "39ff613c16188dd5",
+            fila:   "bfc69dde1d6b849f" };
+  var BASE = H.nada;
+  var X0 = 40, W = 268, Y0 = 44, HH = 62;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function caja(x, titulo, txt, color) {
+    svg.appendChild(el("rect", { x: x, y: Y0, width: W, height: HH, rx: 8, fill: "none",
+      stroke: color, "stroke-width": 1.6 }));
+    svg.appendChild(el("text", { x: x + W / 2, y: Y0 - 10, "text-anchor": "middle", "font-size": 11.5,
+      fill: C_T, opacity: .75 }, titulo));
+    svg.appendChild(el("text", { x: x + W / 2, y: Y0 + 38, "text-anchor": "middle", "font-size": 15,
+      fill: C_T, "font-family": "var(--bs-font-monospace,monospace)" }, txt));
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var modo = cc.value, otra = H[modo], igual = otra === BASE;
+    caja(X0, "el artefacto original", BASE, C_I);
+    caja(X0 + W + 44, "tras el cambio", otra, igual ? C_I : C_D);
+
+    svg.appendChild(el("text", { x: X0, y: 148, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "coincidencia posición a posición del resumen"));
+    var an = 580 / 16;
+    for (var i = 0; i < 16; i++) {
+      var ok = BASE[i] === otra[i];
+      svg.appendChild(el("rect", { x: (X0 + i * an).toFixed(1), y: 160, width: (an - 4).toFixed(1), height: 34, rx: 3,
+        fill: ok ? C_I : C_D, "fill-opacity": ok ? .3 : .12,
+        stroke: ok ? C_I : C_D, "stroke-width": 1.2 }));
+    }
+    var iguales = 0;
+    for (var j = 0; j < 16; j++) if (BASE[j] === otra[j]) iguales++;
+    svg.appendChild(el("text", { x: X0, y: 216, "font-size": 11.5, fill: C_T },
+      iguales + " de 16 posiciones coinciden"));
+
+    var texto = {
+      nada:  "Sin tocar nada, la huella es la misma: eso es lo que la vuelve un contrato (Proposición 16.2a).",
+      valor: "Cambiando <strong>un</strong> valor en 0,000000001, la huella no se parece en nada a la anterior. Un resumen criptográfico no mide distancias: marca identidad (16.2b).",
+      orden: "El conjunto de filas es <strong>el mismo</strong> y la huella cambia igual, porque los bytes serializados son otros (16.2c). Por eso un cauce reproducible fija también el orden.",
+      fila:  "Quitando una fila cambia todo, como era de esperar. Lo interesante son los dos casos de arriba."
+    };
+    lec.innerHTML = texto[modo];
+  }
+
+  cc.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. El cauce es un grafo
+
+::: {.definicion}
+**Definición 16.3 (cauce y su grafo).** Un **cauce** es un conjunto de pasos, cada uno declarando qué artefactos lee y cuáles escribe. Su grafo tiene un nodo por paso y una flecha de $q$ a $p$ cuando $p$ lee algo que $q$ escribe.
+:::
+
+::: {.proposicion}
+**Proposición 16.4 (cuándo se puede ejecutar).** Existe un orden en el que ejecutar los pasos de modo que cada uno vaya después de aquellos de los que depende **si y solo si** el grafo no tiene ciclos. Un paso que lee lo que un paso posterior escribe cierra un ciclo, y entonces no hay ningún orden válido.
+:::
+
+::: {.demostracion}
+*Demostración.* Si el grafo tiene un ciclo $p_1\to p_2\to\cdots\to p_k\to p_1$, cualquier orden tendría que colocar cada $p_i$ antes que el siguiente y, dando la vuelta, $p_1$ antes que sí mismo, que es imposible.
+
+Recíprocamente, si no hay ciclos, existe al menos un nodo sin dependencias: partiendo de cualquiera y retrocediendo por las flechas, el camino no puede repetir nodos —eso sería un ciclo— y como hay finitos, termina en uno sin entradas. Colocándolo primero, quitándolo del grafo y repitiendo, se construye el orden. El grafo restante sigue siendo acíclico, así que el argumento se puede aplicar hasta agotarlo. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+# Un cauce es un grafo dirigido: cada paso declara que lee y que escribe.
+CAUCE = {
+    "descargar":  {"lee": [],                 "escribe": ["crudo.csv"]},
+    "limpiar":    {"lee": ["crudo.csv"],      "escribe": ["limpio.parquet"]},
+    "agregar":    {"lee": ["limpio.parquet"], "escribe": ["mensual.parquet"]},
+    "graficar":   {"lee": ["mensual.parquet"],"escribe": ["figura.png"]},
+    "informar":   {"lee": ["mensual.parquet", "figura.png"], "escribe": ["informe.html"]},
+}
+
+def aristas(cauce):
+    """De quien depende cada paso: quien escribe lo que este lee."""
+    quien_escribe = {a: p for p, d in cauce.items() for a in d["escribe"]}
+    return {p: {quien_escribe[a] for a in d["lee"] if a in quien_escribe} for p, d in cauce.items()}
+
+def orden_topologico(dep):
+    """Devuelve un orden valido, o None si hay un ciclo."""
+    pendientes = {p: set(s) for p, s in dep.items()}
+    orden = []
+    while pendientes:
+        libres = sorted(p for p, s in pendientes.items() if not s)
+        if not libres:
+            return None                       # nadie esta libre: hay un ciclo
+        for p in libres:
+            orden.append(p); del pendientes[p]
+        for s in pendientes.values():
+            s.difference_update(libres)
+    return orden
+
+dep = aristas(CAUCE)
+print("de quien depende cada paso:")
+for p in CAUCE: print("   %-10s <- %s" % (p, sorted(dep[p]) or "nada"))
+orden = orden_topologico(dep)
+print()
+print("orden de ejecucion:", orden)
+print("todos los pasos aparecen una vez:", sorted(orden) == sorted(CAUCE))
+print("cada paso va despues de aquellos de los que depende:",
+      all(orden.index(q) < orden.index(p) for p in CAUCE for q in dep[p]))
+print()
+
+# Un paso que lee lo que un paso posterior escribe cierra un ciclo.
+ROTO = {k: {kk: list(vv) for kk, vv in v.items()} for k, v in CAUCE.items()}
+ROTO["descargar"]["lee"] = ["informe.html"]
+dep2 = aristas(ROTO)
+print("con 'descargar' leyendo el informe final, hay orden valido:",
+      orden_topologico(dep2) is not None)
+print("el cauce dejo de ser un grafo aciclico, y por eso no se puede ordenar")
+print()
+print("pasos: %d | dependencias: %d" % (len(CAUCE), sum(len(s) for s in dep.values())))
+print("un paso sin dependencias puede correr primero:",
+      [p for p in CAUCE if not dep[p]])
+```
+
+El cauce de cinco pasos se ordena solo, y la comprobación de la penúltima línea es la que importa: **cada paso va después de aquellos de los que depende**. Con `descargar` leyendo el informe final, el orden desaparece: la construcción de la demostración se queda sin nodos libres y lo detecta.
+
+**La plataforma otra vez.** `grafo/build_graph.py` lee el campo `prereqs` del frontmatter de cada lección y construye este mismo grafo, con las lecciones como pasos. Que el grafo de una ruta de estudio sea acíclico tiene una consecuencia práctica, y es la que garantiza que exista un orden en el que estudiarla.
+
+**Modo de falla.** Un cauce que a veces funciona y a veces no, según qué paso se ejecutó antes. Suele ser un ciclo escondido: dos pasos que se leen mutuamente, y el resultado depende de cuál corrió primero con los datos del día anterior.
+
+**Diagnóstico.** Construir el grafo a partir de lo que cada paso declara leer y escribir, y buscar el orden. Si no lo hay, el algoritmo señala los pasos que quedan bloqueados, que son los del ciclo.
+
+**Remedio.** Partir el artefacto que cierra el ciclo en dos: lo que se escribe y lo que se lee no pueden ser el mismo. Casi siempre esconde un paso que en realidad eran dos.
+
+```{=html}
+<div class="viz-grafo">
+  <div class="controles">
+    <label>Dependencia extra
+      <select id="gr-d">
+        <option value="ninguna" selected>ninguna</option>
+        <option value="salto">informar lee también el archivo limpio</option>
+        <option value="ciclo">descargar lee el informe final</option>
+      </select>
+    </label>
+  </div>
+  <svg id="gr-svg" viewBox="0 0 660 260" role="img" aria-label="Los cinco pasos del cauce dispuestos en fila con flechas de dependencia, y debajo el orden de ejecución que resulta o el aviso de que no existe."></svg>
+  <p class="lectura" id="gr-lectura"></p>
+</div>
+<style>
+.viz-grafo { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-grafo .controles { display: flex; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-grafo label { display: flex; align-items: center; gap: .4rem; }
+.viz-grafo select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-grafo svg { width: 100%; height: auto; display: block; }
+.viz-grafo .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.4em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_O = "#0F6E68", C_X = "#B4342E";
+  var svg = document.getElementById("gr-svg"), lec = document.getElementById("gr-lectura");
+  var cd = document.getElementById("gr-d");
+  var P = ["descargar", "limpiar", "agregar", "graficar", "informar"];
+  var X0 = 26, AN = 118, SEP = 6, Y0 = 60, H = 40;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function cx(i) { return X0 + i * (AN + SEP) + AN / 2; }
+
+  function orden(dep) {
+    var pend = {}; P.forEach(function (p) { pend[p] = dep[p].slice(); });
+    var out = [];
+    while (Object.keys(pend).length) {
+      var libres = Object.keys(pend).filter(function (p) { return pend[p].length === 0; });
+      if (!libres.length) return null;
+      libres.forEach(function (p) { out.push(p); delete pend[p]; });
+      Object.keys(pend).forEach(function (p) {
+        pend[p] = pend[p].filter(function (q) { return libres.indexOf(q) < 0; }); });
+    }
+    return out;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var modo = cd.value;
+    var dep = { descargar: [], limpiar: ["descargar"], agregar: ["limpiar"],
+                graficar: ["agregar"], informar: ["agregar", "graficar"] };
+    if (modo === "salto") dep.informar = dep.informar.concat(["limpiar"]);
+    if (modo === "ciclo") dep.descargar = ["informar"];
+    var ord = orden(dep);
+
+    svg.appendChild(el("text", { x: X0, y: 28, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "los pasos, y una flecha de cada paso a los que dependen de él"));
+    P.forEach(function (p, i) {
+      svg.appendChild(el("rect", { x: (cx(i) - AN / 2).toFixed(1), y: Y0, width: AN, height: H, rx: 6,
+        fill: ord ? C_O : C_X, "fill-opacity": .14, stroke: ord ? C_O : C_X, "stroke-width": 1.4 }));
+      svg.appendChild(el("text", { x: cx(i).toFixed(1), y: Y0 + 25, "text-anchor": "middle",
+        "font-size": 11.5, fill: C_T }, p));
+    });
+    P.forEach(function (p, i) {
+      dep[p].forEach(function (q) {
+        var j = P.indexOf(q), arriba = Math.abs(i - j) > 1 || j > i;
+        var y = arriba ? Y0 - 16 : Y0 + H / 2;
+        if (arriba) {
+          var mx = (cx(i) + cx(j)) / 2;
+          svg.appendChild(el("path", { d: "M" + cx(j).toFixed(1) + " " + Y0 + " Q" + mx.toFixed(1) + " " + (Y0 - 34) + " " + cx(i).toFixed(1) + " " + Y0,
+            stroke: j > i ? C_X : C_T, "stroke-width": 1.6, fill: "none", opacity: .8 }));
+        } else {
+          svg.appendChild(el("path", { d: "M" + (cx(j) + AN / 2).toFixed(1) + " " + y + " L" + (cx(i) - AN / 2 - 2).toFixed(1) + " " + y,
+            stroke: C_T, "stroke-width": 1.6, fill: "none", opacity: .7 }));
+        }
+      });
+    });
+
+    svg.appendChild(el("text", { x: X0, y: 168, "font-size": 11.5, fill: C_T, opacity: .75 }, "orden de ejecución"));
+    if (ord) {
+      ord.forEach(function (p, i) {
+        svg.appendChild(el("rect", { x: (X0 + i * (AN + SEP)).toFixed(1), y: 182, width: AN, height: 32, rx: 5,
+          fill: C_O, "fill-opacity": .22, stroke: C_O, "stroke-width": 1.3 }));
+        svg.appendChild(el("text", { x: cx(i).toFixed(1), y: 203, "text-anchor": "middle", "font-size": 11, fill: C_T },
+          (i + 1) + ". " + p));
+      });
+    } else {
+      svg.appendChild(el("rect", { x: X0, y: 182, width: 580, height: 32, rx: 5,
+        fill: C_X, "fill-opacity": .12, stroke: C_X, "stroke-width": 1.4 }));
+      svg.appendChild(el("text", { x: X0 + 290, y: 203, "text-anchor": "middle", "font-size": 12, fill: C_X },
+        "no existe: hay un ciclo"));
+    }
+
+    var texto = {
+      ninguna: "Sin dependencias extra el cauce se ordena solo, y cada paso queda después de aquellos de los que depende (Proposición 16.4).",
+      salto:   "Una dependencia que salta un paso no rompe nada: el grafo sigue siendo acíclico y el orden existe igual. Lo que decide no es la forma sino la ausencia de ciclos.",
+      ciclo:   "Con <strong>descargar</strong> leyendo el informe final, el grafo deja de ser acíclico y <strong>no hay ningún orden válido</strong>. La construcción de la demostración se queda sin pasos libres, y eso es exactamente lo que detecta."
+    };
+    lec.innerHTML = texto[modo];
+  }
+
+  cd.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## Ejercicios
+
+### Ejercicio 1, Qué falta para reproducir
+
+Un cauce fija el código, los datos y las versiones, y obtiene totales distintos en dos ejecuciones. Con la Proposición 16.1, decidir cuáles de los cinco requisitos están cubiertos y cuántos faltan.
+
+```{pyodide}
+#| exercise: ex_repro
+requisitos = ["datos", "codigo", "versiones", "semilla", "orden"]
+cubiertos = ["datos", "codigo", "versiones"]
+
+faltan = ______
+
+print(sorted(faltan), len(faltan))
+len(faltan)
+```
+
+::: {.hint exercise="ex_repro"}
+La proposición enumera cinco. Los que no están cubiertos son los que pueden explicar la diferencia.
+:::
+
+::: {.solution exercise="ex_repro"}
+```{pyodide}
+requisitos = ["datos", "codigo", "versiones", "semilla", "orden"]
+cubiertos = ["datos", "codigo", "versiones"]
+
+faltan = [r for r in requisitos if r not in cubiertos]
+
+print(sorted(faltan), len(faltan))
+len(faltan)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_repro
+#| check: true
+if result == 2:
+    feedback = {"correct": True, "message": "Correcto: faltan la semilla y el orden. Si el cálculo no usa azar, el culpable es el orden.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 2 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Contar las dependencias
+
+Un cauce tiene seis pasos y cada uno, salvo el primero, lee exactamente lo que escribe el anterior; además el último lee también lo que escribe el segundo. Contar las flechas del grafo y decir si hay orden válido.
+
+```{pyodide}
+#| exercise: ex_grafo
+pasos = 6
+
+flechas = ______
+hay_orden = ______
+
+print(flechas, hay_orden)
+int(flechas)
+```
+
+::: {.hint exercise="ex_grafo"}
+La cadena aporta una flecha por cada paso menos el primero, y la dependencia extra aporta una más. Ninguna va hacia atrás, así que no hay ciclo.
+:::
+
+::: {.solution exercise="ex_grafo"}
+```{pyodide}
+pasos = 6
+
+flechas = (pasos - 1) + 1
+hay_orden = True
+
+print(flechas, hay_orden)
+int(flechas)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_grafo
+#| check: true
+if result == 6:
+    feedback = {"correct": True, "message": "Correcto: seis flechas y orden válido. Una dependencia que salta hacia adelante nunca cierra un ciclo.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 6 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Python 16**:
+
+1. Escribir `manifiesto(pasos, artefactos)` que, dado un cauce, calcule la huella de cada artefacto y devuelva qué pasos habría que volver a ejecutar si cambiara uno concreto. Comprobarlo cambiando un valor de la entrada y viendo que la lista crece hacia adelante y no hacia atrás.
+2. Tomar un cálculo propio con una reducción —una suma, una media, una varianza— y medir cuánto cambia al barajar las filas, para tamaños de $10^3$ a $10^7$. Anotar cómo crece la diferencia relativa con $n$ y por qué. **Anotar la cota, no el dígito**, por la razón de la sección 1.
+3. Construir el grafo de esta plataforma a partir del campo `prereqs` de las lecciones, comprobar que es acíclico y obtener un orden de estudio válido. Compararlo con el orden de los índices de los módulos y anotar en `50-Errores/` dónde difieren y si alguna de las dos es incorrecta.
+
+## Del libro
+
+Esta lección es **autocontenida**, como la 15: ninguno de los libros con índice verificado trata la anatomía de un proyecto de datos, así que su campo `libro:` va vacío y no se cita nada.
+
+Con ella se cierra la **Fase 1 de Python**, de la lección 7 a la 16: NumPy, pandas, visualización, series de tiempo, rendimiento y esta. Las seis primeras, de la 1 a la 6, son la Fase 0.
+
+**Preguntas para mirar esta plataforma con lápiz**, que es el ejemplo trabajado más cercano:
+
+1. `verificar/salidas.py` vuelve a ejecutar cada celda y compara su salida con lo declarado. Con la Proposición 16.2, ¿de qué es eso un manifiesto, y qué grano de detalle guarda frente a una huella del artefacto entero?
+2. `grafo/build_graph.py` construye el grafo de las lecciones desde el campo `prereqs`. Con la Proposición 16.4, ¿qué pasaría si dos lecciones se declararan prerrequisito la una de la otra, y qué lo detectaría?
+3. Las celdas de estas lecciones fijan siempre la semilla. Con la Proposición 16.1, ¿es eso suficiente para que el gate no falle, y qué otro requisito cubre el hecho de que los datos se generen dentro de la propia celda?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/anatomia-de-un-proyecto.md`, enlazada a [[entorno-uv-git]], [[rendimiento]] y [[groupby]]. Conviene rehacer a mano la demostración de la Proposición 16.4: el argumento de retroceder por las flechas hasta encontrar un nodo sin entradas es el mismo que sostiene cualquier algoritmo de ordenación topológica, y una vez visto explica también por qué un cauce con un ciclo no se arregla reordenando.
+
+```
+¿Basta la semilla para reproducir?::No: hacen falta datos, código, versiones, semilla y orden
+¿Por qué el orden?::Porque la suma en coma flotante no es asociativa
+¿Cuánto cambia un total al barajar las filas?::Poco —por debajo de 1e-9 relativo— pero no cero
+¿Qué garantiza una huella?::Que el mismo contenido da el mismo resumen, siempre
+¿Qué le pasa si cambia un valor en 1e-9?::Cambia entera: un resumen criptográfico no mide distancias
+¿Y si solo se reordenan las filas?::También cambia, porque los bytes serializados son otros
+¿Qué es un manifiesto?::El registro que guarda la huella de las entradas junto a la salida
+¿Para qué sirve?::Para saber de dónde salió un número sin volver a ejecutar nada
+¿Qué es el grafo de un cauce?::Un nodo por paso y una flecha de quien escribe a quien lee
+¿Cuándo existe orden de ejecución?::Si y solo si el grafo no tiene ciclos
+¿Qué crea un ciclo?::Un paso que lee lo que un paso posterior escribe
+¿Cómo se detecta?::Buscando pasos sin dependencias; si no queda ninguno y sobran pasos, hay ciclo
+¿Cómo se arregla?::Partiendo en dos el artefacto que lo cierra: casi siempre eran dos pasos
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 16.1 se demuestra desde el redondeo de cada suma parcial, y se comprueba: dos generadores sin semilla difieren, con la misma semilla coinciden bit a bit, y la suma de cien mil valores de izquierda a derecha, al revés y por pares da **tres resultados distintos** que coinciden a $10^{-6}$ relativo. Barajar las filas cambia el total, con diferencia relativa mayor que cero y menor que $10^{-9}$. La Proposición 16.2 se comprueba sobre una tabla de doscientas filas: la misma tabla da la misma huella, cambiar un valor en $10^{-9}$ la cambia entera, y barajar las filas también; el manifiesto se reproduce idéntico con la misma entrada y difiere con la entrada barajada. La Proposición 16.4 se demuestra en las dos direcciones —el ciclo impide el orden, y la ausencia de ciclos lo construye— y se comprueba sobre un cauce de cinco pasos, que se ordena y cuya versión con un ciclo no admite ningún orden. Los dos visuales usan **las huellas reales** de la celda, comprobadas idénticas en las dos versiones de pandas con las que se verifica esta plataforma.
+
+**Lo que se usa de otras lecciones sin repetir.** El entorno reproducible, con versiones fijadas y control de versiones, es de Python 5. La idea de medir contando en lugar de cronometrar es de Python 15. Las agregaciones que sirven de ejemplo son de Python 12.
+
+**Lo que se enuncia sin demostrar.** Las propiedades criptográficas del resumen —que sea inviable encontrar dos contenidos con la misma huella, y que un cambio de un bit altere la salida por completo— se toman como dadas: son el objeto de diseño de esas funciones y su demostración no pertenece a esta plataforma. Aquí se usan solo dos consecuencias, y las dos se comprueban.
+
+**Lo que es mío, no del libro.** La lección entera. En particular, la elección de los tres resultados que la sostienen: la no asociatividad como razón concreta de que «mismo código y mismos datos» no baste, la huella como contrato con su condición de orden, y el cauce como grafo con la demostración de cuándo se puede ejecutar. Y la decisión de usar **esta misma plataforma como ejemplo trabajado**: sus cinco gates son manifiestos, su `afirmaciones.json` es un manifiesto de grano fino, y su grafo de prerrequisitos es exactamente el de la Proposición 16.4.
+:::

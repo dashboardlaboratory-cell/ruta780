@@ -1,0 +1,645 @@
+---
+title: "Rendimiento: vectorizar contra iterar"
+subtitle: "Python · Lección 15"
+nivel: L3
+modulo: python
+fase: F1
+prereqs: [python/14-series-de-tiempo, python/06-numpy-primer-contacto]
+siguientes: []
+libro: "—"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="python/15-rendimiento"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F1]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Series de tiempo](14-series-de-tiempo.qmd) · [Vistas y difusión](06-numpy-primer-contacto.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir qué significa [vectorizar]{.g} y decir qué **no** cambia al hacerlo.
+2. Contar los pasos del intérprete que ejecuta un bucle y compararlos con los de la versión vectorizada.
+3. Contar los [arreglos temporales]{.g data-t="arreglo temporal"} que reserva una expresión y saber cómo escribirla para que no reserve ninguno.
+4. Demostrar que hacer crecer un arreglo copiando cuesta $n(n-1)/2$ copias, y elegir entre [preasignar]{.g} y acumular en una lista.
+5. Explicar por qué el número de realojos de una lista crece como el logaritmo y no como $n$.
+6. Medir rendimiento sin citar segundos, que es lo único honesto que se puede publicar.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 6**: las vistas y la difusión, y la idea de que un arreglo es un bloque contiguo con un descriptor. Todo el coste de esta lección sale de ahí.
+- **Python 7 y 8**: los ejes, las reducciones y las ventanas, que son las operaciones cuyo coste se cuenta aquí.
+- **Álgebra 6**: la multiplicación de matrices, cuyas $2m^3$ operaciones sirven de patrón en la sección 4.
+- **Machine Learning 9**: el sistema dual de ridge, que es el mismo tipo de decisión con otra cara: $n\times n$ en lugar de $p\times p$.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 16**: la anatomía de un proyecto, donde una medición de rendimiento es un artefacto que se genera y se guarda como cualquier otro.
+- **Machine Learning 12 y 13**: los árboles y los bosques, cuyo ajuste es un bucle que **no** se puede vectorizar, y ahí la cuenta cambia.
+- **Series de tiempo**: las ventanas móviles sobre series largas, donde la diferencia entre $n$ y $n^2$ decide si el cálculo termina.
+- **Estadística 11**: el bootstrap, que repite un cálculo $B$ veces y por eso multiplica cualquier descuido por $B$.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | El número de elementos de un arreglo |
+| $m$ | eme | El lado de una matriz cuadrada |
+| $O(\cdot)$ | o grande de | La complejidad: cómo crece el trabajo con el tamaño, sin la constante |
+| `out=` | out | El argumento que le dice a una operación dónde escribir, sin reservar |
+| $2m^3$ | dos eme al cubo | Las operaciones de una multiplicación de matrices $m\times m$ |
+| $p$ | pe | El número de predictores, al comparar el sistema $p\times p$ con el $n\times n$ de Machine Learning 9 |
+:::
+
+## 1. Lo que vectorizar no cambia
+
+::: {.definicion}
+**Definición 15.1 (vectorizar).** Vectorizar es sustituir un bucle escrito en Python por una operación que recorre el arreglo entero dentro de código compilado. **Las operaciones aritméticas que se ejecutan son las mismas**; lo que cambia es quién las ordena y cuántas veces interviene el intérprete.
+:::
+
+::: {.proposicion}
+**Proposición 15.2 (el recuento que explica la diferencia).** Un bucle de Python sobre $n$ elementos ejecuta su cuerpo $n$ veces en el intérprete; la operación vectorizada equivalente lo ejecuta **cero** veces, porque el bucle vive dentro de la función compilada. Además, cada iteración del bucle construye un objeto de Python por cada valor intermedio, mientras que el arreglo guarda cada valor en el espacio que ocupa su tipo.
+:::
+
+::: {.demostracion}
+*Demostración.* La primera afirmación es la definición del bucle: el cuerpo se ejecuta una vez por elemento. En la versión vectorizada no hay cuerpo que ejecutar en Python; la llamada es una sola y el recorrido ocurre dentro de la implementación.
+
+Para la segunda, indexar un arreglo de punto flotante devuelve un objeto escalar de Python, con su cabecera de objeto y su cuenta de referencias, mientras que el valor dentro del arreglo ocupa exactamente los bytes de su tipo. El bucle crea uno de esos objetos por vuelta; la operación vectorizada no crea ninguno. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+n = 200_000
+a = np.arange(n, dtype=float)
+b = np.arange(n, dtype=float) * 2.0
+
+# Version con bucle: el interprete de Python ejecuta el cuerpo n veces.
+pasos_bucle = 0
+salida = np.empty(n)
+for i in range(n):
+    pasos_bucle += 1
+    salida[i] = a[i] + b[i]
+
+# Version vectorizada: el cuerpo del bucle no se ejecuta NINGUNA vez en Python.
+pasos_vector = 0
+salida2 = a + b
+
+print("elementos                    :", n)
+print("pasos del interprete, bucle  :", pasos_bucle)
+print("pasos del interprete, vector :", pasos_vector)
+print("los dos resultados coinciden :", bool(np.array_equal(salida, salida2)))
+print()
+print("razon de pasos: %d a 1" % (pasos_bucle if pasos_vector == 0 else pasos_bucle // pasos_vector))
+print("el bucle no es mas lento por sumar peor, sino por sumar %d veces desde Python" % n)
+print()
+
+# Cada iteracion del bucle crea objetos de Python; la version vectorizada, no.
+from sys import getsizeof
+escalar = a[0] + b[0]
+print("lo que devuelve a[0] + b[0] es un objeto de Python:", type(escalar).__name__)
+print("ocupa %d bytes por si solo" % getsizeof(escalar))
+print("y el bucle crea uno de esos en cada una de las %d vueltas" % n)
+print("el arreglo entero ocupa %d bytes para los %d valores" % (salida2.nbytes, n))
+print("bytes por valor en el arreglo: %d" % (salida2.nbytes // n))
+```
+
+Doscientas mil vueltas contra cero, y el mismo resultado. El objeto escalar ocupa $32$ bytes por sí solo, cuatro veces lo que ocupa el valor dentro del arreglo; el bucle fabrica doscientos mil de esos y los tira.
+
+Conviene retener la frase de la definición: **el bucle no es más lento porque sume peor**. Suma exactamente igual. Es más lento porque pide permiso al intérprete doscientas mil veces.
+
+```{=html}
+<div class="viz-pasos">
+  <div class="controles">
+    <label>Elementos n <input id="pa-n" type="range" min="10" max="2000" step="10" value="200"> <span id="pa-n-v">200</span></label>
+    <label>Operaciones encadenadas <input id="pa-k" type="range" min="1" max="6" step="1" value="3"> <span id="pa-k-v">3</span></label>
+  </div>
+  <svg id="pa-svg" viewBox="0 0 660 300" role="img" aria-label="Dos barras en escala logarítmica sobre un eje fijo: los pasos del intérprete que ejecuta el bucle y los que ejecuta la versión vectorizada, y debajo los arreglos que reserva cada una."></svg>
+  <p class="lectura" id="pa-lectura"></p>
+</div>
+<style>
+.viz-pasos { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-pasos .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-pasos label { display: flex; align-items: center; gap: .4rem; }
+.viz-pasos input[type=range] { width: 150px; padding: 0; }
+.viz-pasos svg { width: 100%; height: auto; display: block; }
+.viz-pasos .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_B = "#B4342E", C_V = "#0F6E68";
+  var svg = document.getElementById("pa-svg"), lec = document.getElementById("pa-lectura");
+  var cn = document.getElementById("pa-n"), en = document.getElementById("pa-n-v");
+  var ck = document.getElementById("pa-k"), ek = document.getElementById("pa-k-v");
+  // Marco anclado: eje logaritmico de 10^0 a 10^4, siempre.
+  var LMAX = 4, X0 = 60, XW = 560, Y0 = 40, YH = 110, Y2 = 190, H2 = 64;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(l) { return X0 + Math.min(l, LMAX) / LMAX * XW; }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var n = +cn.value, k = +ck.value;
+    en.textContent = String(n); ek.textContent = String(k);
+
+    for (var e2 = 0; e2 <= LMAX; e2++) {
+      svg.appendChild(el("path", { d: "M" + px(e2).toFixed(1) + " " + Y0 + " L" + px(e2).toFixed(1) + " " + (Y0 + YH),
+        stroke: C_L, "stroke-width": 1, fill: "none", opacity: .5 }));
+      svg.appendChild(el("text", { x: px(e2).toFixed(1), y: Y0 + YH + 15, "text-anchor": "middle",
+        "font-size": 10.5, fill: C_T, opacity: .65 }, "10^" + e2));
+    }
+    svg.appendChild(el("text", { x: X0, y: 26, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "pasos del intérprete de Python, en escala logarítmica"));
+
+    [[Math.log10(Math.max(n, 1)), C_B, "bucle: n pasos", 0],
+     [0, C_V, "vectorizado: 0 pasos", 1]].forEach(function (r, q) {
+      var y = Y0 + 14 + q * 46;
+      svg.appendChild(el("rect", { x: X0, y: y, width: Math.max(px(r[0]) - X0, 2).toFixed(1), height: 26, rx: 4,
+        fill: r[1], "fill-opacity": .28, stroke: r[1], "stroke-width": 1.4 }));
+      svg.appendChild(el("text", { x: X0 + 8, y: y + 18, "font-size": 11.5, fill: C_T }, r[2]));
+    });
+
+    // los arreglos reservados, abajo
+    svg.appendChild(el("text", { x: X0, y: Y2 - 8, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "arreglos enteros que reserva una expresión de " + k + " operaciones"));
+    var an = 42;
+    for (var j = 0; j < k; j++) {
+      svg.appendChild(el("rect", { x: (X0 + j * (an + 8)).toFixed(1), y: Y2, width: an, height: H2, rx: 4,
+        fill: C_B, "fill-opacity": .22, stroke: C_B, "stroke-width": 1.3 }));
+    }
+    svg.appendChild(el("text", { x: (X0 + k * (an + 8) + 10).toFixed(1), y: Y2 + H2 / 2 + 4, "font-size": 11.5, fill: C_B },
+      "suelta: " + k));
+    svg.appendChild(el("rect", { x: (X0 + 330).toFixed(1), y: Y2, width: 6, height: H2, rx: 3,
+      fill: C_V, "fill-opacity": .3, stroke: C_V, "stroke-width": 1.3 }));
+    svg.appendChild(el("text", { x: (X0 + 346).toFixed(1), y: Y2 + H2 / 2 + 4, "font-size": 11.5, fill: C_V },
+      "con out=: 0"));
+
+    lec.innerHTML = "Con n = <strong>" + n + "</strong>, el bucle ejecuta <strong>" + n +
+      "</strong> pasos del intérprete y la versión vectorizada <strong>cero</strong> (Proposición 15.2). " +
+      "Las dos hacen las mismas <strong>" + n + "</strong> sumas: lo que cambia es quién las ordena. " +
+      "Abajo, una expresión de <strong>" + k + "</strong> operaciones encadenadas reserva <strong>" + k +
+      "</strong> arreglos enteros si se escribe suelta y <strong>ninguno</strong> escribiendo en un destino " +
+      "ya creado (Proposición 15.3).";
+  }
+
+  cn.addEventListener("input", dibujar);
+  ck.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. De dónde sale el espacio
+
+::: {.proposicion}
+**Proposición 15.3 (los temporales).** Una expresión con varias operaciones reserva un arreglo por cada resultado intermedio. Escribiendo las mismas operaciones con un destino ya creado, la reserva es **cero**: el tráfico de lecturas y escrituras no cambia, y lo que cambia es de dónde sale el espacio.
+
+Con $n$ grande, esa diferencia decide si el cálculo cabe.
+:::
+
+::: {.demostracion}
+*Demostración.* Cada operación binaria debe depositar su resultado en algún sitio; si no se le dice cuál, crea un arreglo nuevo del tamaño del resultado. Encadenando $k$ operaciones se crean $k$ arreglos, de los que solo el último sobrevive.
+
+El tráfico de memoria es el mismo en las dos formas: cada operación lee sus dos operandos y escribe su resultado, esté ese resultado en un arreglo nuevo o en uno dado. Por tanto la diferencia está en las reservas y no en el número de lecturas y escrituras. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import tracemalloc
+import numpy as np
+
+n = 500_000
+a = np.ones(n); b = np.ones(n) * 2; c = np.ones(n) * 3; d = np.ones(n) * 4
+tam = a.nbytes
+
+def arreglos_reservados(f):
+    """Cuantos arreglos enteros llega a pedir una expresion mientras se evalua.
+
+    Se mide el PICO, no el total: los bytes exactos dependen de la sobrecarga
+    interna de cada version, asi que se cita el numero de arreglos y no los bytes.
+    """
+    tracemalloc.start()
+    base = tracemalloc.get_traced_memory()[0]
+    r = f()
+    pico = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    return round((pico - base) / tam), r
+
+print("un arreglo de %d valores ocupa %d bytes" % (n, tam))
+print()
+
+suelta, r1 = arreglos_reservados(lambda: (a * b) + (c * d))
+print("la expresion (a*b) + (c*d) reserva %d arreglos enteros de mas" % suelta)
+
+dest = np.empty(n); tmp = np.empty(n)
+def fusionada():
+    np.multiply(a, b, out=dest)
+    np.multiply(c, d, out=tmp)
+    np.add(dest, tmp, out=dest)
+    return dest
+fus, r2 = arreglos_reservados(fusionada)
+print("la misma cuenta escribiendo en destinos ya creados reserva %d" % fus)
+print("y da exactamente el mismo resultado:", bool(np.array_equal(r1, r2)))
+print()
+print("cada operacion binaria suelta pide memoria; con out= no pide ninguna")
+print("con n grande, esa memoria es lo que decide si el calculo cabe")
+print()
+
+# El numero de PASADAS por la memoria si se puede contar a mano, y no cambia.
+print("lecturas y escrituras de la expresion, contadas a mano:")
+print("   a*b   : lee 2n, escribe n")
+print("   c*d   : lee 2n, escribe n")
+print("   la suma: lee 2n, escribe n")
+print("   total : lee 6n y escribe 3n, con n =", n)
+print("   o sea %d lecturas y %d escrituras" % (6 * n, 3 * n))
+print("eso es igual en las dos versiones: lo que cambia es de donde sale el espacio")
+```
+
+Dos arreglos enteros de más frente a cero, con el mismo resultado. La celda cita **el número de arreglos y no los bytes**, y eso es deliberado: los bytes exactos incluyen una sobrecarga interna que cambia entre versiones de la biblioteca, así que citarlos sería declarar un número que el gate de salidas rompería en la siguiente actualización.
+
+**Cuándo importa.** Con arreglos de unos megabytes, nada. Con arreglos que ocupan una fracción apreciable de la memoria disponible, la versión suelta falla y la de destino explícito termina. El umbral se calcula, y vale el tamaño del arreglo multiplicado por el número de operaciones intermedias.
+
+## 3. Crecer copiando cuesta el cuadrado
+
+::: {.proposicion}
+**Proposición 15.4 (el coste de añadir de uno en uno).** Añadir $n$ elementos a un arreglo creando uno nuevo en cada paso copia
+$$0+1+2+\cdots+(n-1)=\frac{n(n-1)}{2}$$
+valores en total, un trabajo que crece como $n^2$: al doblar $n$ se cuadruplica. Preasignar el arreglo del tamaño final copia **cero**.
+
+Una lista de Python **no** se comporta así: reserva de más al crecer, de modo que el número de realojos crece como el logaritmo de $n$ y el coste por añadido es [amortizado]{.g} constante.
+:::
+
+::: {.demostracion}
+*Demostración.* Si el arreglo tiene $i$ elementos y se crea uno nuevo de $i+1$, hay que copiar los $i$ que ya estaban. Sumando sobre $i=0,\dots,n-1$ se obtiene la suma de Gauss, que vale $n(n-1)/2$.
+
+Preasignando, el arreglo se crea una vez con su tamaño final y cada asignación escribe en su sitio: no hay nada que copiar.
+
+Para la lista, sea $c_k$ la capacidad tras el $k$-ésimo realojo. Como la capacidad se multiplica por un factor $r>1$ en cada uno, se tiene $c_k\ge c_0 r^{k}$, y llegar a $n$ elementos exige $c_k\ge n$, de donde $k\ge\log_r(n/c_0)$ realojos, un número logarítmico. La copia total es $\sum_k c_k$, una geométrica dominada por su último término, y por tanto proporcional a $n$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+# Crecer un arreglo copiandolo en cada paso: cuantos valores se copian en total.
+def copias_creciendo(n):
+    """np.append crea un arreglo nuevo cada vez, asi que copia lo que ya habia."""
+    total = 0
+    x = np.empty(0)
+    for i in range(n):
+        total += x.size            # lo que hay que copiar antes de anadir uno
+        x = np.append(x, i)
+    return total, x.size
+
+for n in [100, 200, 400, 800]:
+    copiados, largo = copias_creciendo(n)
+    print("n = %4d -> valores copiados %7d | n(n-1)/2 = %7d | iguales: %s"
+          % (n, copiados, n * (n - 1) // 2, copiados == n * (n - 1) // 2))
+print()
+print("el trabajo crece como n^2/2: al doblar n se cuadruplica")
+print()
+
+# Preasignar copia cero veces.
+def copias_preasignando(n):
+    x = np.empty(n)
+    for i in range(n):
+        x[i] = i
+    return 0, x.size
+for n in [100, 800]:
+    copiados, _ = copias_preasignando(n)
+    print("preasignando n = %4d -> valores copiados %d" % (n, copiados))
+print()
+
+# La lista de Python no es lo mismo: reserva de mas y solo copia al agotarse.
+# Esto NO es un modelo: se mide viendo cuando cambia el espacio reservado.
+from sys import getsizeof
+
+def realojos_lista(n):
+    L, antes, veces = [], getsizeof([]), 0
+    for i in range(n):
+        L.append(i)
+        ahora = getsizeof(L)
+        if ahora != antes:
+            veces += 1
+            antes = ahora
+    return veces
+
+# El numero EXACTO de realojos depende de la version de CPython -cambio entre
+# la 3.8 y la 3.14-, asi que se afirma la cota y no el digito.
+for n in [100, 800, 6400]:
+    veces = realojos_lista(n)
+    print("lista de Python, n = %5d -> realojos muy por debajo de n: %-5s | 2^realojos supera n: %s"
+          % (n, veces < n // 4, 2 ** veces > n))
+print("np.append, en cambio, copia en las n vueltas, sin excepcion")
+print()
+print("la receta: acumular en una lista y convertir UNA vez, o preasignar el arreglo")
+```
+
+La fórmula acierta en los cuatro tamaños, y la última parte comprueba la afirmación sobre las listas de la forma que se puede: **$2^{\text{realojos}}$ supera a $n$**, que es lo que dice que los realojos son logarítmicos.
+
+**Una nota de versión, que es parte del contenido.** El número **exacto** de realojos depende de la versión de CPython: con $n=100$ salen diez en la 3.8 y once en la 3.14, porque la regla de crecimiento cambió. Por eso la celda afirma la cota y no el dígito. La conclusión práctica no depende de la versión.
+
+**La receta**, entonces: acumular en una lista y convertir una sola vez al final, o preasignar el arreglo si el tamaño se conoce. Lo que no hay que hacer es crear un arreglo nuevo por cada elemento, que es lo que parece inocente y cuesta el cuadrado.
+
+```{=html}
+<div class="viz-crecer">
+  <div class="controles">
+    <label>Elementos n <input id="cr-n" type="range" min="20" max="400" step="10" value="200"> <span id="cr-n-v">200</span></label>
+    <label>Estrategia
+      <select id="cr-e">
+        <option value="ambas" selected>las dos</option>
+        <option value="append">crear uno nuevo cada vez</option>
+        <option value="pre">preasignar</option>
+      </select>
+    </label>
+  </div>
+  <svg id="cr-svg" viewBox="0 0 660 300" role="img" aria-label="El trabajo acumulado al construir un arreglo de n elementos, sobre ejes fijos: una parábola para la estrategia que copia en cada paso y una recta en cero para la que preasigna."></svg>
+  <p class="lectura" id="cr-lectura"></p>
+</div>
+<style>
+.viz-crecer { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-crecer .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-crecer label { display: flex; align-items: center; gap: .4rem; }
+.viz-crecer input[type=range] { width: 150px; padding: 0; }
+.viz-crecer select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-crecer svg { width: 100%; height: auto; display: block; }
+.viz-crecer .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#B4342E", C_P = "#0F6E68", C_M = "#8A5A00";
+  var svg = document.getElementById("cr-svg"), lec = document.getElementById("cr-lectura");
+  var cn = document.getElementById("cr-n"), en = document.getElementById("cr-n-v");
+  var ce = document.getElementById("cr-e");
+  // Marco anclado: n de 0 a 400 y copias de 0 a 80000, siempre.
+  var NMAX = 400, CMAX = 80000, X0 = 62, XW = 562, Y0 = 26, YH = 226;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(v) { return X0 + v / NMAX * XW; }
+  function py(v) { return Y0 + (CMAX - Math.min(v, CMAX)) / CMAX * YH; }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var n = +cn.value, modo = ce.value;
+    en.textContent = String(n);
+
+    for (var t = 0; t <= CMAX; t += 20000) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(t).toFixed(1) + " L" + (X0 + XW) + " " + py(t).toFixed(1),
+        stroke: C_L, "stroke-width": 1, fill: "none", opacity: .5 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(t) + 4, "text-anchor": "end", "font-size": 10.5,
+        fill: C_T, opacity: .65 }, (t / 1000) + "k"));
+    }
+    svg.appendChild(el("text", { x: X0, y: 16, "font-size": 11.5, fill: C_T, opacity: .75 }, "valores copiados en total"));
+    svg.appendChild(el("text", { x: X0 + XW / 2, y: 292, "text-anchor": "middle", "font-size": 11, fill: C_T, opacity: .75 },
+      "elementos añadidos"));
+
+    if (modo !== "pre") {
+      var s = "";
+      for (var i = 0; i <= NMAX; i++) s += (i ? " L" : "M") + px(i).toFixed(1) + " " + py(i * (i - 1) / 2).toFixed(1);
+      svg.appendChild(el("path", { d: s, stroke: C_A, "stroke-width": 2.6, fill: "none" }));
+      svg.appendChild(el("circle", { cx: px(n).toFixed(1), cy: py(n * (n - 1) / 2).toFixed(1), r: 5, fill: C_A }));
+    }
+    if (modo !== "append") {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + (X0 + XW) + " " + py(0).toFixed(1),
+        stroke: C_P, "stroke-width": 2.6, fill: "none" }));
+      svg.appendChild(el("circle", { cx: px(n).toFixed(1), cy: py(0).toFixed(1), r: 5, fill: C_P }));
+    }
+    // la lista, proporcional a n: apenas se despega del cero en esta escala
+    var l = "";
+    for (var j = 0; j <= NMAX; j++) l += (j ? " L" : "M") + px(j).toFixed(1) + " " + py(2.2 * j).toFixed(1);
+    svg.appendChild(el("path", { d: l, stroke: C_M, "stroke-width": 1.8, fill: "none", "stroke-dasharray": "5 4" }));
+    svg.appendChild(el("text", { x: X0 + XW - 4, y: py(2.2 * NMAX) - 8, "text-anchor": "end", "font-size": 11, fill: C_M },
+      "lista de Python: proporcional a n"));
+
+    lec.innerHTML = "Con n = <strong>" + n + "</strong>, crear un arreglo nuevo en cada paso copia " +
+      "<strong>" + (n * (n - 1) / 2) + "</strong> valores, que es n(n−1)/2 (Proposición 15.4); preasignar copia " +
+      "<strong>cero</strong>. Doblando n, la curva roja se cuadruplica y la verde sigue en el suelo. " +
+      "La línea ámbar es la lista de Python, cuyo coste total es proporcional a n porque reserva de más al crecer.";
+  }
+
+  cn.addEventListener("input", dibujar);
+  ce.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. El tiempo, y lo que se puede publicar de él
+
+::: {.proposicion}
+**Proposición 15.5 (vectorizar cambia la constante, no la complejidad).** Sean dos implementaciones del mismo cálculo, una con bucles en Python y otra vectorizada. Ejecutan **el mismo número de operaciones aritméticas**, así que tienen **la misma complejidad**: si el trabajo crece como $m^3$, crece como $m^3$ en las dos. Lo que vectorizar reduce es la [constante oculta]{.g}.
+
+En consecuencia, un dato de tiempo en segundos **no es publicable** en esta plataforma: depende de la máquina, del momento y de la versión. Lo que sí se puede afirmar es una **propiedad** —que una versión sea más rápida que la otra, o que lo sea por más de un factor— y el **recuento de operaciones**, que es exacto.
+:::
+
+::: {.demostracion}
+*Demostración.* Multiplicar dos matrices $m\times m$ por la definición requiere $m^3$ multiplicaciones y $m^3-m^2$ sumas en las dos implementaciones, porque la definición no cambia. Por tanto la razón entre los trabajos de dos tamaños depende solo de los tamaños, y la complejidad es la misma.
+
+Que el tiempo no sea publicable se sigue de la regla 7 de esta plataforma: un número que cambia de una máquina a otra no se puede declarar en `verificar/afirmaciones.json` sin que el gate lo rompa. Una desigualdad entre dos tiempos medidos en la misma ejecución sí es estable, porque el factor es de órdenes de magnitud. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import time
+import numpy as np
+
+rng = np.random.default_rng(15)
+m = 120
+A = rng.normal(size=(m, m)); B = rng.normal(size=(m, m))
+
+def multiplica_a_mano(A, B):
+    n, p = A.shape[0], B.shape[1]
+    C = np.zeros((n, p))
+    for i in range(n):
+        for j in range(p):
+            s = 0.0
+            for k in range(A.shape[1]):
+                s += A[i, k] * B[k, j]
+            C[i, j] = s
+    return C
+
+t0 = time.perf_counter(); mio = multiplica_a_mano(A, B); t_mio = time.perf_counter() - t0
+t0 = time.perf_counter(); suyo = A @ B;                   t_lib = time.perf_counter() - t0
+
+print("matrices de %d x %d" % (m, m))
+print("los dos resultados coinciden a 1e-10:", bool(np.allclose(mio, suyo, atol=1e-10)))
+print("multiplicaciones que hacen los dos: 2*m^3 =", 2 * m ** 3)
+print()
+
+# El TIEMPO no se cita en digitos: depende de la maquina. Se afirma la propiedad.
+print("la version de la libreria es mas rapida:", t_lib < t_mio)
+print("y lo es por mas de un factor 10:", t_mio > 10 * t_lib)
+print()
+print("las dos hacen las MISMAS operaciones aritmeticas")
+print("lo que cambia es quien las ordena: %d vueltas del interprete de Python" % (m ** 3))
+print("contra una sola llamada que baja a codigo compilado")
+print()
+
+# Como crece el trabajo: eso si es exacto y no depende de la maquina.
+print("  m     multiplicaciones 2m^3   razon con la fila anterior")
+previo = None
+for mm in [50, 100, 200, 400]:
+    ops = 2 * mm ** 3
+    razon = "" if previo is None else "%.1f" % (ops / previo)
+    print("%4d %22d   %s" % (mm, ops, razon))
+    previo = ops
+print()
+print("doblar el lado multiplica el trabajo por 8: es cubico en las dos versiones")
+print("vectorizar no cambia la complejidad, cambia la constante")
+```
+
+La celda hace lo que la proposición autoriza y nada más: comprueba que los dos resultados coinciden a $10^{-10}$, afirma que la versión de la biblioteca es más rápida y que lo es por más de un factor diez, y muestra que doblar el lado multiplica el trabajo por ocho en las dos.
+
+Ese último número —el ocho— es el que sí conviene tener en la cabeza. **La complejidad decide si el cálculo termina; la constante decide cuánto se espera.** Vectorizar ataca lo segundo, y por eso es una mejora enorme y a la vez limitada: si el algoritmo es cuadrático donde podía ser lineal, ninguna vectorización lo arregla.
+
+## Ejercicios
+
+### Ejercicio 1, El coste de crecer
+
+Con la Proposición 15.4, calcular cuántos valores se copian al construir un arreglo de $2\,000$ elementos creando uno nuevo en cada paso, y cuántos al preasignar.
+
+```{pyodide}
+#| exercise: ex_crecer
+n = 2000
+
+copiando = ______
+preasignando = ______
+
+print(copiando, preasignando)
+int(copiando)
+```
+
+::: {.hint exercise="ex_crecer"}
+La suma $0+1+\dots+(n-1)$ vale $n(n-1)/2$. Preasignar no copia nada.
+:::
+
+::: {.solution exercise="ex_crecer"}
+```{pyodide}
+n = 2000
+
+copiando = n * (n - 1) // 2
+preasignando = 0
+
+print(copiando, preasignando)
+int(copiando)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_crecer
+#| check: true
+if result == 1999000:
+    feedback = {"correct": True, "message": "Correcto: casi dos millones de copias para colocar dos mil valores. Preasignando, cero.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 1999000 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Lo que cuesta una expresión encadenada
+
+Una expresión encadena $4$ operaciones sobre arreglos de $10^{7}$ valores de ocho bytes. Calcular cuántos bytes de temporales reserva si se escribe suelta.
+
+```{pyodide}
+#| exercise: ex_temp
+n, operaciones, bytes_por_valor = 10_000_000, 4, 8
+
+reservados = ______
+en_gigabytes = ______
+
+print(reservados, round(en_gigabytes, 3))
+int(reservados)
+```
+
+::: {.hint exercise="ex_temp"}
+Cada operación intermedia reserva un arreglo entero: $n$ valores por los bytes de cada uno. Un gigabyte son $10^9$ bytes.
+:::
+
+::: {.solution exercise="ex_temp"}
+```{pyodide}
+n, operaciones, bytes_por_valor = 10_000_000, 4, 8
+
+reservados = operaciones * n * bytes_por_valor
+en_gigabytes = reservados / 1e9
+
+print(reservados, round(en_gigabytes, 3))
+int(reservados)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_temp
+#| check: true
+if result == 320000000:
+    feedback = {"correct": True, "message": "Correcto: 320 MB de temporales para un cálculo cuyo resultado ocupa 80. Con arreglos diez veces mayores, eso es lo que decide si cabe.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 320000000 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Python 15**:
+
+1. Tomar un cálculo de tres operaciones encadenadas sobre arreglos grandes y escribirlo de tres formas: suelto, con `out=`, y con un bucle sobre bloques que quepan en memoria. Medir el pico de reserva de las tres con `tracemalloc` y anotar cuál es el tamaño de bloque a partir del cual la tercera deja de compensar. **Anotar el número de arreglos, no los bytes**, por la razón que explica la sección 2.
+2. Construir un arreglo de un millón de elementos de las tres maneras de la sección 3 y contar operaciones, no segundos: copias totales en cada una. Después cronometrarlas y comprobar que el orden de los tiempos coincide con el de las copias. Anotar en qué tamaño empieza a notarse.
+3. Encontrar un caso donde vectorizar **no** ayude: un bucle cuyo cuerpo dependa del resultado de la vuelta anterior. Explicar por qué la definición 15.1 no se puede aplicar ahí, y buscar si existe una formulación equivalente que sí se deje vectorizar. Anotar en `50-Errores/` la diferencia entre «no vectorizable» y «no vectorizable tal como está escrito».
+
+## Del libro
+
+Esta lección es **autocontenida**: ninguno de los libros con índice verificado en `verificar/indices.json` trata el rendimiento de NumPy, así que su campo `libro:` va vacío y no se cita nada. Lo que se afirma aquí se demuestra o se mide en la propia página.
+
+La documentación de NumPy sí cubre el argumento `out=` y las reglas de difusión, pero no se cita como fuente porque no es un libro con índice traído y verificado, y la regla de esta plataforma es no citar lo que no se ha comprobado.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/rendimiento.md`, enlazada a [[vistas-y-difusion]], [[alta-dimension]] y [[uniones-y-reshape]]. Conviene rehacer a mano la suma de Gauss de la Proposición 15.4: ver que $0+1+\dots+(n-1)$ es $n(n-1)/2$ y no algo proporcional a $n$ es lo que convierte «añadir de uno en uno es lento» en una cantidad que se puede calcular antes de escribir el bucle.
+
+```
+¿Qué cambia al vectorizar?::Quién ordena las operaciones, no cuáles se hacen
+¿Cuántos pasos del intérprete ejecuta un bucle sobre n?::n; la versión vectorizada, cero
+¿Qué ocupa un escalar de Python frente a un valor del arreglo?::32 bytes frente a 8
+¿Cuántos arreglos reserva una expresión de k operaciones?::k, uno por resultado intermedio
+¿Cómo se evitan?::Escribiendo en un destino ya creado, con out=
+¿Cambia eso el tráfico de memoria?::No: las mismas lecturas y escrituras; cambia de dónde sale el espacio
+¿Cuánto cuesta crecer un arreglo de uno en uno?::n(n−1)/2 copias, que crece como n²
+¿Y preasignando?::Cero copias
+¿Por qué una lista de Python no sufre eso?::Reserva de más, así que realoja un número logarítmico de veces
+¿Vectorizar cambia la complejidad?::No: cambia la constante oculta
+¿Se puede publicar un tiempo en segundos?::No: depende de la máquina. Se afirma la propiedad o el recuento de operaciones
+¿Qué se afirma entonces?::Que una versión es más rápida, o que lo es por más de un factor
+¿Cuántas operaciones tiene multiplicar matrices m×m?::2m³, y doblar m las multiplica por ocho
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 15.2 se comprueba contando: con $n=200\,000$, el bucle ejecuta $200\,000$ pasos y la versión vectorizada **cero**, con resultados idénticos; el escalar de Python ocupa $32$ bytes frente a los $8$ del valor en el arreglo. La Proposición 15.3 se demuestra observando que cada operación binaria necesita un destino, y se comprueba midiendo el pico de reserva: la expresión suelta pide **dos arreglos enteros** de más y la versión con destino explícito pide **cero**, con el mismo resultado. La Proposición 15.4 se demuestra con la suma de Gauss y se comprueba en cuatro tamaños, donde las copias coinciden exactamente con $n(n-1)/2$; la parte de las listas se verifica midiendo cuándo cambia el espacio reservado, y se afirma solo la cota logarítmica. La Proposición 15.5 se comprueba contra la multiplicación de la biblioteca: los dos resultados coinciden a $10^{-10}$ y el trabajo se multiplica por ocho al doblar el lado.
+
+**Lo que se usa de otras lecciones sin repetir.** La estructura de un arreglo, las vistas y la difusión son de Python 6. Las reducciones por eje son de Python 7. La multiplicación de matrices y su recuento de operaciones son de Álgebra 6.
+
+**Lo que se enuncia sin demostrar.** El factor exacto por el que una lista de Python amplía su capacidad: se usa que es mayor que uno para deducir que los realojos son logarítmicos, pero el valor concreto es un detalle de implementación que **cambia entre versiones** y no se cita. Que la implementación compilada de la multiplicación de matrices use un algoritmo con la misma complejidad cúbica se toma como cierto para el tamaño usado; existen algoritmos asintóticamente mejores que no intervienen aquí.
+
+**Una nota de versión que forma parte del contenido.** El número exacto de realojos de una lista **cambió entre CPython 3.8 y 3.14**: con $n=100$ son diez en la primera y once en la segunda. La celda afirma la cota y no el dígito, que es la regla que esta plataforma fijó el 18-09-2026. Por la misma razón, los bytes exactos de los temporales incluyen una sobrecarga interna que varía entre versiones de la biblioteca, y la celda cita **el número de arreglos**.
+
+**Lo que es mío, no del libro.** La lección entera, empezando por el marco: medir rendimiento **contando** en lugar de cronometrando. La Proposición 15.2 con el recuento explícito de pasos del intérprete, que convierte «los bucles son lentos» en un número. La Proposición 15.3 con la separación entre reservas y tráfico de memoria, que es la que dice cuándo importa de verdad. Y la Proposición 15.5, que declara explícitamente **qué se puede publicar de una medición de tiempo y qué no**, y que es la razón de que esta lección no contenga un solo dato en segundos.
+:::

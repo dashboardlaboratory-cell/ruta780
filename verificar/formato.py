@@ -114,6 +114,8 @@ MIGRADAS = {
     "python/12-groupby-y-agregacion.qmd",
     "python/13-visualizacion.qmd",
     "python/14-series-de-tiempo.qmd",
+    "python/15-rendimiento.qmd",
+    "python/16-anatomia-de-un-proyecto.qmd",
     "matematica/01-vectores-y-espacios.qmd",
     "matematica/02-matriz-como-transformacion.qmd",
     "matematica/03-espacio-columna.qmd",
