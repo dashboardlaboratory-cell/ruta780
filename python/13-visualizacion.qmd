@@ -1,0 +1,605 @@
+---
+title: "Visualización con matplotlib"
+subtitle: "Python · Lección 13"
+nivel: L4
+modulo: python
+fase: F1
+prereqs: [python/12-groupby-y-agregacion, python/09-pandas-series-dataframe]
+siguientes: []
+libro: "McKinney 3E §9.1 A Brief matplotlib API Primer · §9.2 Plotting with pandas and seaborn"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - pandas
+    - matplotlib
+---
+
+::: {.meta-leccion data-leccion="python/13-visualizacion"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F1]{.item}
+[**Libro** McKinney §9.1–9.2]{.item}
+[**Prereqs** [Groupby y agregación](12-groupby-y-agregacion.qmd) · [Series y DataFrame](09-pandas-series-dataframe.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Describir una [figura]{.g} como un árbol de objetos y decir qué es lo que un archivo de imagen pierde.
+2. Recuperar de un [artista]{.g} los datos que dibuja, y comprobar un gráfico **con aserciones, sin mirarlo**.
+3. Calcular los [límites automáticos]{.g data-t="límites automáticos"} de un eje antes de dibujarlo, y medir cuánto exageran una diferencia pequeña.
+4. Predecir el [ancho de bin]{.g} de un histograma, y qué le hace un único valor atípico.
+5. Explicar qué es el [eje actual]{.g} y por qué el mismo código dibuja en sitios distintos según lo que haya pasado antes.
+6. Elegir entre la interfaz con estado y la explícita con un criterio, no por costumbre.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 12**: la tabla agregada, que es lo que casi siempre se grafica. Un gráfico de barras por grupo es la Proposición 12.2 dibujada, con el mismo riesgo de confundir las dos medias.
+- **Python 9**: la Series y su índice, que es lo que `plot` toma por omisión como eje x.
+- **Python 3**: los iteradores y la composición, que explican por qué construir una figura es acumular objetos y no imprimir píxeles.
+- **Estadística 2**: la función de masa y la de distribución, que son las dos formas de resumir lo que un histograma aproxima.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 14**: las series de tiempo, cuyo eje x es una fecha y cuyas marcas las elige un localizador que conviene entender.
+- **Python 16**: la anatomía de un proyecto, donde una figura es un artefacto que se genera y se verifica como cualquier otro.
+- **Machine Learning 1 a 10**: todas las curvas de error, de coeficientes y de validación que estas lecciones dibujan.
+- **Estadística 16**: la calibración, cuyo diagrama es un gráfico que se lee mal si el eje no arranca donde debe.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $R$ | erre | El recorrido de los datos, $\max-\min$ |
+| $[\ell,h]$ | ele, hache | Los límites inferior y superior del eje |
+| $m$ | eme | El margen que el eje añade a cada lado |
+| $n_b$ | ene sub be | El número de bins de un histograma |
+| $w$ | doble ve | El ancho de cada bin |
+| $\text{alto}$ | alto | La fracción del panel que ocupa una diferencia dibujada |
+:::
+
+## 1. Un gráfico es un objeto, no una imagen
+
+::: {.definicion}
+**Definición 13.1 (la figura como árbol).** Una figura contiene uno o varios [ejes]{.g data-t="eje"}; cada eje contiene [artistas]{.g data-t="artista"} —líneas, colecciones de puntos, rectángulos— y dos escalas con sus marcas. Dibujar consiste en **añadir artistas a un eje**. El archivo de imagen es una proyección de ese árbol a píxeles, y en esa proyección se pierde todo lo que el árbol sabía.
+:::
+
+::: {.proposicion}
+**Proposición 13.2 (un gráfico se puede comprobar sin mirarlo).** Los datos que un artista representa quedan guardados en él y se pueden recuperar exactamente: para una línea, la sucesión de pares $(x_i,y_i)$ tal como se pasaron. En consecuencia, cualquier afirmación sobre la **geometría** de un gráfico —que una curva sea decreciente al final, que unos puntos caigan dentro de un rango, que haya dos series y no tres— es una afirmación comprobable con aserciones, sin renderizar nada.
+:::
+
+::: {.demostracion}
+*Demostración.* El artista no almacena píxeles sino los arreglos que se le pasaron, junto con las propiedades de estilo; el paso a píxeles ocurre al renderizar y no modifica lo almacenado. Por tanto el mapa «datos $\to$ artista» es inyectivo sobre los datos y tiene inversa explícita, que es el descriptor de acceso correspondiente. Cualquier predicado sobre los datos originales se evalúa entonces sobre lo recuperado. [∎]{.fin-demo}
+:::
+
+Esta proposición es la que sostiene el quinto gate de esta plataforma. `verificar/visuales.py` no compara imágenes: acciona cada control, lee la geometría del SVG y **mide cuántos píxeles se mueve cada trazo**. La idea es la misma que aquí, en otro dialecto.
+
+```{pyodide}
+import matplotlib
+matplotlib.use("Agg")                 # sin ventana: la figura es un objeto, no una pantalla
+import matplotlib.pyplot as plt
+import numpy as np
+
+fig, ax = plt.subplots()
+linea, = ax.plot([0.0, 1.0, 2.0, 3.0], [3.0, 1.0, 2.0, 0.5], label="serie")
+puntos = ax.scatter([0.5, 1.5], [2.0, 1.5])
+
+print("la figura contiene", len(fig.axes), "eje")
+print("el eje contiene", len(ax.lines), "linea y", len(ax.collections), "coleccion de puntos")
+print()
+
+# Los datos NO se pierden al dibujar: se pueden recuperar del artista.
+xy = linea.get_xydata()
+print("datos recuperados de la linea:", xy.tolist())
+print("coinciden con los que se pasaron:",
+      xy.tolist() == [[0.0, 3.0], [1.0, 1.0], [2.0, 2.0], [3.0, 0.5]])
+print("etiqueta de la linea:", linea.get_label())
+print("puntos recuperados de la coleccion:", puntos.get_offsets().tolist())
+print()
+
+# De ahi que un grafico se pueda comprobar con aserciones, sin mirarlo.
+print("la linea es decreciente al final:", bool(xy[-1, 1] < xy[-2, 1]))
+print("todos los puntos caen dentro del rango de la linea:",
+      bool(puntos.get_offsets()[:, 1].max() <= xy[:, 1].max()))
+plt.close(fig)
+```
+
+Los cuatro pares vuelven idénticos a como entraron, la etiqueta sigue ahí, y las dos últimas líneas son aserciones sobre la forma del dibujo que no necesitaron abrirlo. Ese es el hábito que conviene adquirir: **si una afirmación sobre un gráfico importa, se comprueba**.
+
+## 2. El eje que no empieza en cero
+
+::: {.proposicion}
+**Proposición 13.3 (los límites automáticos y cuánto exageran).** Con datos de recorrido $R=\max-\min$ positivo, el eje se ajusta por omisión a
+$$\ell=\min-0{,}05\,R,\qquad h=\max+0{,}05\,R,$$
+de modo que el alto del panel vale $h-\ell=1{,}1\,R$ y **el cero queda fuera** salvo que los datos lo rodeen. En consecuencia, una diferencia $\Delta$ entre dos valores dibujados ocupa una fracción
+$$\text{alto}=\frac{\Delta}{1{,}1\,R}$$
+del panel, que no guarda relación con $\Delta$ dividido entre el valor de partida.
+:::
+
+::: {.demostracion}
+*Demostración.* El margen por omisión es una fracción fija $0{,}05$ del recorrido aplicada a cada lado, de donde las dos igualdades y $h-\ell=R+2(0{,}05R)=1{,}1R$. El cero pertenece a $[\ell,h]$ si y solo si $\min-0{,}05R\le 0\le\max+0{,}05R$; con datos positivos y $\min>0{,}05R$ la primera desigualdad falla. La fracción del panel es el cociente entre la diferencia dibujada y el alto total. [∎]{.fin-demo}
+:::
+
+La consecuencia importa porque las dos cantidades se confunden al leer. Si los datos van de $10$ a $11$, el recorrido es $1$ y el panel mide $1{,}1$; una subida de $1$ —el $10$ % del valor de partida— ocupa el $91$ % del alto. El gráfico es correcto y la lectura es falsa.
+
+```{pyodide}
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+valores = [10.0, 10.5, 11.0]
+fig, ax = plt.subplots()
+ax.plot([1, 2, 3], valores)
+lo, hi = ax.get_ylim()
+rango = max(valores) - min(valores)
+
+print("datos entre %.1f y %.1f, rango %.1f" % (min(valores), max(valores), rango))
+print("limites automaticos: (%.4f, %.4f)" % (lo, hi))
+print("margen a cada lado: %.4f = %.0f%% del rango" % (min(valores) - lo, 100 * (min(valores) - lo) / rango))
+print("la formula es [min - 0.05*rango, max + 0.05*rango]:",
+      abs(lo - (min(valores) - 0.05 * rango)) < 1e-9 and abs(hi - (max(valores) + 0.05 * rango)) < 1e-9)
+print("el cero NO esta dentro:", not (lo <= 0 <= hi))
+print()
+
+# Consecuencia: la altura visual exagera la diferencia real.
+alto_visual = (valores[-1] - valores[0]) / (hi - lo)
+razon_real = valores[-1] / valores[0] - 1
+print("la subida real es del %.1f%%" % (100 * razon_real))
+print("pero ocupa el %.1f%% del alto del panel" % (100 * alto_visual))
+print("factor de exageracion: %.1f veces" % (alto_visual / razon_real))
+print()
+
+fig2, ax2 = plt.subplots()
+ax2.plot([1, 2, 3], valores)
+ax2.set_ylim(0, 12)
+lo2, hi2 = ax2.get_ylim()
+alto2 = (valores[-1] - valores[0]) / (hi2 - lo2)
+print("fijando el eje en (0, 12), la misma subida ocupa el %.1f%% del alto" % (100 * alto2))
+print("factor de exageracion: %.2f veces" % (alto2 / razon_real))
+plt.close("all")
+```
+
+Un factor de exageración de $9{,}1$. Fijando el eje en $(0,12)$ la misma subida ocupa el $8{,}3$ % del alto, que es lo que corresponde a un $10$ % sobre un valor de $10$ cuando el cero está a la vista.
+
+```{=html}
+<div class="viz-ejes">
+  <div class="controles">
+    <label>Valor de partida <input id="ej-v" type="range" min="1" max="60" step="1" value="10"> <span id="ej-v-v">10</span></label>
+    <label>Subida <input id="ej-d" type="range" min="0.2" max="8" step="0.2" value="1"> <span id="ej-d-v">1.0</span></label>
+  </div>
+  <svg id="ej-svg" viewBox="0 0 660 300" role="img" aria-label="Los mismos tres valores dibujados dos veces: a la izquierda con los límites automáticos del eje y a la derecha con el eje arrancando en cero, sobre marcos fijos."></svg>
+  <p class="lectura" id="ej-lectura"></p>
+</div>
+<style>
+.viz-ejes { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-ejes .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-ejes label { display: flex; align-items: center; gap: .4rem; }
+.viz-ejes input[type=range] { width: 150px; padding: 0; }
+.viz-ejes svg { width: 100%; height: auto; display: block; }
+.viz-ejes .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#B4342E", C_B = "#0F6E68";
+  var svg = document.getElementById("ej-svg"), lec = document.getElementById("ej-lectura");
+  var cv = document.getElementById("ej-v"), ev = document.getElementById("ej-v-v");
+  var cd = document.getElementById("ej-d"), ed = document.getElementById("ej-d-v");
+  // Marco anclado: dos paneles de tamano fijo, siempre en el mismo sitio.
+  var PA = 46, PB = 370, PW = 244, Y0 = 34, YH = 216;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function panel(x0, lo, hi, vals, color, titulo) {
+    function py(v) { return Y0 + (hi - v) / (hi - lo) * YH; }
+    svg.appendChild(el("rect", { x: x0, y: Y0, width: PW, height: YH, fill: "none",
+      stroke: C_L, "stroke-width": 1.2 }));
+    svg.appendChild(el("text", { x: x0, y: Y0 - 10, "font-size": 11.5, fill: C_T, opacity: .75 }, titulo));
+    var s = "";
+    vals.forEach(function (v, i) {
+      var px = x0 + 24 + i * (PW - 48) / (vals.length - 1);
+      s += (i ? " L" : "M") + px.toFixed(1) + " " + py(v).toFixed(1);
+      svg.appendChild(el("circle", { cx: px.toFixed(1), cy: py(v).toFixed(1), r: 4.2, fill: color }));
+    });
+    svg.appendChild(el("path", { d: s, stroke: color, "stroke-width": 2.4, fill: "none" }));
+    svg.appendChild(el("text", { x: x0 + 4, y: Y0 + YH + 15, "font-size": 10.5, fill: C_T, opacity: .7 }, lo.toFixed(2)));
+    svg.appendChild(el("text", { x: x0 + PW - 4, y: Y0 + YH + 15, "text-anchor": "end", "font-size": 10.5,
+      fill: C_T, opacity: .7 }, "arriba " + hi.toFixed(2)));
+    return (vals[vals.length - 1] - vals[0]) / (hi - lo);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var v0 = +cv.value, d = +cd.value;
+    ev.textContent = String(v0); ed.textContent = d.toFixed(1);
+    var vals = [v0, v0 + d / 2, v0 + d], R = d;
+    var lo = v0 - 0.05 * R, hi = v0 + d + 0.05 * R;
+    var fa = panel(PA, lo, hi, vals, C_A, "límites automáticos");
+    var fb = panel(PB, 0, (v0 + d) * 1.1, vals, C_B, "eje desde cero");
+    var real = d / v0;
+    lec.innerHTML = "Los mismos tres valores, de <strong>" + v0 + "</strong> a <strong>" + (v0 + d).toFixed(1) +
+      "</strong>: una subida real del <strong>" + (100 * real).toFixed(1) + "%</strong>. Con límites " +
+      "automáticos ocupa el <strong>" + (100 * fa).toFixed(1) + "%</strong> del panel, un factor de <strong>" +
+      (fa / real).toFixed(1) + "</strong> (Proposición 13.3). Con el eje desde cero ocupa el <strong>" +
+      (100 * fb).toFixed(1) + "%</strong>. Cuanto mayor es el valor de partida frente a la subida, más exagera " +
+      "el panel de la izquierda: el alto del eje automático vale siempre 1,1 veces el recorrido, sea cual sea la escala.";
+  }
+
+  cv.addEventListener("input", dibujar);
+  cd.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+**Modo de falla.** Una serie que parece dispararse y no se mueve, o al revés. Ocurre sobre todo al graficar tablas agregadas de la lección 12, donde los grupos suelen tener valores parecidos y el recorrido es pequeño: cuanto más parecidos, más exagera el eje automático.
+
+**Diagnóstico.** Leer los límites del eje y compararlos con el recorrido de los datos: `ax.get_ylim()` frente a `max − min`. Si el alto del panel es $1{,}1$ veces el recorrido, el eje es automático.
+
+**Remedio.** Decidir el rango a mano cuando la magnitud importe, y en particular incluir el cero en los gráficos de barras, donde el área de la barra se lee como el valor. Cuando el cero no tenga sentido —temperaturas, fechas, tasas alrededor de un nivel— dejarlo fuera y decirlo en el eje.
+
+## 3. El histograma que un solo dato decide
+
+::: {.proposicion}
+**Proposición 13.4 (el ancho de bin y el valor atípico).** Con bordes explícitos $b_0<\cdots<b_{n_b}$, la altura de cada barra es el número de observaciones en $[b_{k-1},b_k)$ y está determinada por los datos y los bordes, sin nada más.
+
+Por omisión se toman $n_b=10$ bins repartidos uniformemente sobre el recorrido observado, de donde
+$$w=\frac{\max-\min}{10}.$$
+Como $w$ depende solo de los dos valores extremos, **una única observación alejada cambia todas las barras a la vez**: si el máximo pasa de $M$ a $M'$, el ancho se multiplica por $(M'-\min)/(M-\min)$ y el número de bins ocupados por el grueso de los datos se divide aproximadamente por ese mismo factor.
+:::
+
+::: {.demostracion}
+*Demostración.* Con bordes dados, la altura es un recuento y no depende de ninguna otra elección; ese es todo el contenido de la primera afirmación, y es la razón para fijarlos.
+
+Para la segunda, el reparto uniforme sobre $[\min,\max]$ en diez partes da $w=(\max-\min)/10$ por definición. Si la observación nueva es mayor que todas, $\min$ no cambia y $\max$ pasa a $M'$, de donde el cociente de anchos. Como los datos originales siguen ocupando el mismo intervalo de longitud $M-\min$, y ahora cada bin mide $(M'-\min)/10$, el número de bins que los contienen pasa de $10$ a aproximadamente $10(M-\min)/(M'-\min)$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
+rng = np.random.default_rng(133)
+x = rng.normal(size=400)
+
+# Con bordes EXPLICITOS las cuentas estan determinadas y no dependen de nada mas.
+bordes = np.linspace(-3, 3, 13)
+fig, ax = plt.subplots()
+alturas, b, _ = ax.hist(x, bins=bordes)
+print("bordes explicitos: %d bins de ancho %.2f" % (len(alturas), b[1] - b[0]))
+print("alturas:", [int(a) for a in alturas])
+print("suma de alturas: %d de %d observaciones" % (int(alturas.sum()), len(x)))
+print("las que se quedan fuera del rango:", int(((x < -3) | (x > 3)).sum()))
+print()
+
+# Por omision son 10 bins REPARTIDOS SOBRE EL RANGO DE LOS DATOS.
+fig2, ax2 = plt.subplots()
+a2, b2, _ = ax2.hist(x)
+print("por omision: %d bins" % len(a2))
+print("el ancho lo fijan los extremos: (%.4f - %.4f)/10 = %.4f"
+      % (x.max(), x.min(), (x.max() - x.min()) / 10))
+print("y coincide con el medido:", abs((b2[1] - b2[0]) - (x.max() - x.min()) / 10) < 1e-12)
+print()
+
+# Un solo valor atipico cambia TODO el histograma.
+x2 = np.append(x, 30.0)
+fig3, ax3 = plt.subplots()
+a3, b3, _ = ax3.hist(x2)
+print("anadiendo UNA observacion en 30.0:")
+print("  ancho de bin: %.4f -> %.4f" % (b2[1] - b2[0], b3[1] - b3[0]))
+print("  observaciones en el primer bin: %d -> %d" % (int(a2[0]), int(a3[0])))
+print("  bins con al menos una observacion: %d -> %d"
+      % (int((a2 > 0).sum()), int((a3 > 0).sum())))
+print("  el 99.8%% de los datos cabe ahora en %d bins de %d" % (int((a3 > 0).sum()), len(a3)))
+plt.close("all")
+```
+
+Una sola observación en $30$ multiplica el ancho de bin por cinco y deja el $99{,}8$ % de los datos apretado en **tres** barras de diez. El histograma sigue siendo correcto: representa fielmente unos datos cuyo recorrido es ahora otro. Lo que ya no representa es la forma de la distribución, que era lo que se quería ver.
+
+**Modo de falla.** Una distribución que se ve normal en el borrador y aparece como una barra única en el informe, porque entre medias entró un registro con una unidad equivocada. La forma del histograma cambió sin que cambiara ninguno de los datos que interesaban.
+
+**Diagnóstico.** Comparar el recorrido con los cuantiles: si `max − min` es mucho mayor que el recorrido intercuartílico, hay cola, y los bins por omisión la van a servir a costa del resto.
+
+**Remedio.** Fijar los bordes, que es lo que los vuelve comparables entre gráficos y entre versiones. Si hay cola con sentido, recortar el rango dibujado y decir cuántas observaciones quedaron fuera —como hace la primera parte de la celda, que declara la que se sale.
+
+```{=html}
+<div class="viz-bins">
+  <div class="controles">
+    <label>Bins <input id="bi-n" type="range" min="3" max="40" step="1" value="10"> <span id="bi-n-v">10</span></label>
+    <label>Posición del valor atípico <input id="bi-o" type="range" min="3" max="30" step="1" value="3"> <span id="bi-o-v">3</span></label>
+  </div>
+  <svg id="bi-svg" viewBox="0 0 660 300" role="img" aria-label="Un histograma de datos normales con un valor atípico cuya posición se controla, sobre un marco fijo, con el ancho de bin y el número de barras ocupadas indicados."></svg>
+  <p class="lectura" id="bi-lectura"></p>
+</div>
+<style>
+.viz-bins { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-bins .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-bins label { display: flex; align-items: center; gap: .4rem; }
+.viz-bins input[type=range] { width: 150px; padding: 0; }
+.viz-bins svg { width: 100%; height: auto; display: block; }
+.viz-bins .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_V = "#0F6E68", C_O = "#B4342E";
+  var svg = document.getElementById("bi-svg"), lec = document.getElementById("bi-lectura");
+  var cn = document.getElementById("bi-n"), en = document.getElementById("bi-n-v");
+  var co = document.getElementById("bi-o"), eo = document.getElementById("bi-o-v");
+
+  // Datos fijos: una normal generada con un congruencial propio, para que no cambien.
+  var DATOS = (function () {
+    var s = 12345, out = [];
+    function u() { s = (1103515245 * s + 12345) % 2147483648; return s / 2147483648; }
+    for (var i = 0; i < 400; i++) {
+      var a = u(), b = u();
+      out.push(Math.sqrt(-2 * Math.log(a + 1e-12)) * Math.cos(2 * Math.PI * b));
+    }
+    return out;
+  })();
+  // Marco anclado: el rectangulo del histograma no se mueve nunca.
+  var X0 = 46, XW = 578, Y0 = 30, YH = 214;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var nb = +cn.value, out = +co.value;
+    en.textContent = String(nb); eo.textContent = String(out);
+    var todos = DATOS.concat([out]);
+    var lo = Math.min.apply(null, todos), hi = Math.max.apply(null, todos);
+    var w = (hi - lo) / nb, cuentas = new Array(nb).fill(0);
+    todos.forEach(function (v) {
+      var k = Math.min(nb - 1, Math.floor((v - lo) / w));
+      cuentas[k]++;
+    });
+    var maxc = Math.max.apply(null, cuentas), ocupados = cuentas.filter(function (c) { return c > 0; }).length;
+
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1.2 }));
+    svg.appendChild(el("text", { x: X0, y: 20, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "el histograma, con el marco siempre del mismo tamaño"));
+    var aw = XW / nb;
+    cuentas.forEach(function (c, k) {
+      var h = c / maxc * (YH - 8);
+      svg.appendChild(el("rect", { x: (X0 + k * aw + 1).toFixed(1), y: (Y0 + YH - h).toFixed(1),
+        width: Math.max(aw - 2, 1).toFixed(1), height: h.toFixed(1),
+        fill: c > 0 ? C_V : C_L, "fill-opacity": .35, stroke: c > 0 ? C_V : C_L, "stroke-width": 1 }));
+    });
+    var px = X0 + (out - lo) / (hi - lo) * XW;
+    svg.appendChild(el("path", { d: "M" + px.toFixed(1) + " " + Y0 + " L" + px.toFixed(1) + " " + (Y0 + YH),
+      stroke: C_O, "stroke-width": 1.8, fill: "none", "stroke-dasharray": "4 4" }));
+    svg.appendChild(el("circle", { cx: px.toFixed(1), cy: (Y0 + YH).toFixed(1), r: 4.4, fill: C_O }));
+    svg.appendChild(el("text", { x: X0 + XW / 2, y: Y0 + YH + 20, "text-anchor": "middle", "font-size": 11,
+      fill: C_T, opacity: .7 }, "400 observaciones normales más una en " + out));
+
+    lec.innerHTML = "Con <strong>" + nb + "</strong> bins y el valor atípico en <strong>" + out +
+      "</strong>, el ancho de bin vale <strong>" + w.toFixed(3) + "</strong> = (" + hi.toFixed(2) + " − " +
+      lo.toFixed(2) + ")/" + nb + " y solo <strong>" + ocupados + "</strong> de las " + nb +
+      " barras contienen alguna observación (Proposición 13.4). Alejando el atípico, el ancho crece y el " +
+      "grueso de los datos se comprime en cada vez menos barras, sin que ninguno de esos datos haya cambiado.";
+  }
+
+  cn.addEventListener("input", dibujar);
+  co.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. El eje actual, y por qué el mismo código dibuja en sitios distintos
+
+::: {.proposicion}
+**Proposición 13.5 (la interfaz con estado).** La interfaz `pyplot` mantiene un **eje actual** global. Una orden de dibujo que no diga sobre qué eje actúa va al eje actual, y cuál sea depende de la historia del programa: crear una figura o un eje lo cambia. En consecuencia, el mismo fragmento de código produce resultados distintos según lo ejecutado antes, y el resultado deja de depender solo de sus argumentos.
+
+Pidiéndole el dibujo **al objeto eje**, el resultado depende solo de qué objeto se eligió, y el orden de las órdenes deja de importar.
+:::
+
+::: {.demostracion}
+*Demostración.* Basta exhibir dos ejecuciones del mismo fragmento con estados previos distintos y resultados distintos, lo que hace la celda: tras crear dos ejes, una orden sin destino va al segundo; tras cambiar el eje actual, la misma orden va al primero. La segunda parte es inmediata: un método de un objeto actúa sobre ese objeto. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+# La interfaz pyplot lleva un "eje actual" GLOBAL. Quien dibuja sin decir donde,
+# dibuja ahi, y cual sea depende de lo que haya pasado antes.
+fig, (izq, der) = plt.subplots(1, 2)
+plt.plot([0, 1], [0, 1])                 # va al eje actual, que es el ultimo creado
+print("tras plt.plot: lineas en el izquierdo %d, en el derecho %d" % (len(izq.lines), len(der.lines)))
+print("el eje actual es el derecho:", plt.gca() is der)
+print()
+
+plt.sca(izq)                             # cambiar el eje actual a mano
+plt.plot([0, 1], [1, 0])
+print("tras sca(izq) y plt.plot: izquierdo %d, derecho %d" % (len(izq.lines), len(der.lines)))
+print()
+
+# Con el eje explicito no hay estado que recordar ni orden que respetar.
+fig2, (a, b) = plt.subplots(1, 2)
+b.plot([0, 1], [0, 1])
+a.plot([0, 1], [1, 0])
+a.plot([0, 1], [0.5, 0.5])
+print("con ejes explicitos, en el orden que sea: a tiene %d, b tiene %d" % (len(a.lines), len(b.lines)))
+print("y el resultado no depende de cual sea el eje actual:", plt.gca() is not a)
+print()
+
+# El mismo estado global explica las figuras que no se cierran.
+antes = len(plt.get_fignums())
+for _ in range(3):
+    plt.subplots()
+print("figuras abiertas tras crear tres mas: %d" % len(plt.get_fignums()))
+plt.close("all")
+print("tras close('all'): %d" % len(plt.get_fignums()))
+```
+
+La última parte enseña el otro efecto del estado global: las figuras creadas siguen vivas hasta que se cierran, porque algo las retiene para poder devolverlas como «actuales». En un bucle que genera cien gráficos, eso es cien figuras en memoria.
+
+**Modo de falla.** Un cuaderno donde una celda dibuja bien la primera vez y encima de otra figura la segunda, o un proceso que consume memoria sin motivo aparente al generar informes en serie.
+
+**Diagnóstico.** `plt.get_fignums()` dice cuántas figuras hay abiertas. Si crece en un bucle, falta cerrarlas.
+
+**Remedio.** Usar el eje explícito y cerrar la figura al terminar con ella. La interfaz con estado está pensada para la exploración interactiva, donde hay una sola figura y quien mira decide; en código que se ejecuta solo, el destino se nombra.
+
+## Ejercicios
+
+### Ejercicio 1, Cuánto exagera el eje
+
+Con la Proposición 13.3, calcular qué fracción del panel ocupa una subida de $2$ sobre unos datos que van de $48$ a $50$, y compararla con la subida relativa.
+
+```{pyodide}
+#| exercise: ex_eje
+minimo, maximo = 48.0, 50.0
+subida = 2.0
+
+alto = ______          # fraccion del panel que ocupa la subida
+relativa = ______      # la subida en proporcion del valor de partida
+
+print(round(alto, 4), round(relativa, 4))
+round(alto / relativa, 2)
+```
+
+::: {.hint exercise="ex_eje"}
+El alto del panel vale $1{,}1$ veces el recorrido. La subida relativa es la subida dividida entre el mínimo.
+:::
+
+::: {.solution exercise="ex_eje"}
+```{pyodide}
+minimo, maximo = 48.0, 50.0
+subida = 2.0
+
+alto = subida / (1.1 * (maximo - minimo))
+relativa = subida / minimo
+
+print(round(alto, 4), round(relativa, 4))
+round(alto / relativa, 2)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_eje
+#| check: true
+if abs(result - 21.82) < 0.01:
+    feedback = {"correct": True, "message": "Correcto: casi 22 veces. La subida es del 4,2 % y ocupa el 90,9 % del panel.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 21.82 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, El ancho de bin tras el atípico
+
+Unos datos van de $-3$ a $3$. Con diez bins por omisión, calcular el ancho antes y después de añadir una observación en $97$.
+
+```{pyodide}
+#| exercise: ex_bin
+minimo, maximo, atipico = -3.0, 3.0, 97.0
+
+antes = ______
+despues = ______
+
+print(round(antes, 4), round(despues, 4))
+round(despues / antes, 2)
+```
+
+::: {.hint exercise="ex_bin"}
+Por la Proposición 13.4 el ancho es el recorrido dividido entre diez, y el atípico solo cambia el máximo.
+:::
+
+::: {.solution exercise="ex_bin"}
+```{pyodide}
+minimo, maximo, atipico = -3.0, 3.0, 97.0
+
+antes = (maximo - minimo) / 10
+despues = (atipico - minimo) / 10
+
+print(round(antes, 4), round(despues, 4))
+round(despues / antes, 2)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_bin
+#| check: true
+if abs(result - 16.67) < 0.01:
+    feedback = {"correct": True, "message": "Correcto: el ancho se multiplica por 16,67, así que los datos originales caben en menos de una barra.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 16.67 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F1-retos.ipynb`, sección **Python 13**:
+
+1. Escribir `comprueba_grafico(ax)` que, sin renderizar nada, verifique una lista de afirmaciones sobre un eje: cuántas series tiene, si alguna es monótona, si el cero está dentro del rango y si todas las etiquetas están puestas. Aplicarla a tres gráficos propios y anotar cuál falla y por qué. Es la Proposición 13.2 convertida en herramienta.
+2. Tomar la tabla agregada de la lección 12 —medias por grupo con tamaños muy distintos— y dibujarla de dos formas: barras con el eje desde cero y barras con el eje automático. Medir en cada una la razón entre las alturas dibujadas y anotar cuál de las dos coincide con la razón entre los valores.
+3. Reproducir la Proposición 13.4 con las tres reglas clásicas de número de bins —raíz de $n$, Sturges y Freedman-Diaconis— y comprobar cuáles dependen de los extremos y cuáles del recorrido intercuartílico. Anotar en `50-Errores/` cuál sobrevive a un atípico y por qué.
+
+## Del libro
+
+*Python for Data Analysis, 3rd Edition* trata este material en §9.1 *A Brief matplotlib API Primer* y §9.2 *Plotting with pandas and seaborn*.
+
+La sección §9.3 *Other Python Visualization Tools* **no se trata aquí**: enumera bibliotecas que esta página no puede ejecutar, y esta plataforma no publica código que no se haya corrido. Los visuales interactivos de estas lecciones no usan ninguna de ellas; están escritos a mano en SVG, por la razón que explica la Proposición 13.2.
+
+**Preguntas para leer §9.1 y §9.2 con lápiz:**
+
+1. §9.1 presenta primero la interfaz `pyplot` y después los objetos. Con la Proposición 13.5, ¿qué afirmación sobre un fragmento de código deja de poder hacerse cuando usa la primera?
+2. §9.2 muestra que `Series.plot` y `DataFrame.plot` toman el índice como eje x. Con lo visto en Python 9, ¿qué pasa si el índice no está ordenado, y por qué el gráfico no avisa?
+3. §9.1 explica cómo guardar una figura en un archivo. Con la Definición 13.1, ¿qué información del árbol se conserva en un PNG y cuál solo en un SVG?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/visualizacion.md`, enlazada a [[groupby]], [[series-y-dataframe]] y [[calibracion]]. Conviene rehacer a mano la cuenta de la Proposición 13.3 con tres o cuatro pares de valores: ver que el alto del panel es siempre $1{,}1$ veces el recorrido, y que por tanto la fracción ocupada no depende de la escala, es lo que vacuna contra leer una pendiente como si fuera una magnitud.
+
+```
+¿Qué es una figura?::Un árbol de objetos: figura, ejes y artistas
+¿Qué se pierde al guardar un PNG?::Todo lo que el árbol sabía: queda una proyección a píxeles
+¿Se pueden recuperar los datos de una línea?::Sí, exactamente como se pasaron
+¿Para qué sirve eso?::Para comprobar un gráfico con aserciones, sin mirarlo
+¿Cuáles son los límites automáticos?::[min − 0,05·R, max + 0,05·R], con R el recorrido
+¿Cuánto mide el alto del panel?::1,1 veces el recorrido, siempre
+¿Incluye el cero?::No, salvo que los datos lo rodeen
+¿Cuánto exagera?::Una subida ocupa Δ/(1,1·R) del panel, sin relación con Δ/valor
+¿Cuántos bins hay por omisión?::Diez, repartidos sobre el recorrido observado
+¿De qué depende el ancho de bin?::Solo de los dos extremos: (max − min)/10
+¿Qué le hace un atípico?::Multiplica el ancho y comprime todo lo demás en menos barras
+¿Qué es el eje actual?::Una variable global que decide dónde dibuja pyplot cuando no se le dice
+¿Cómo se evita depender de él?::Pidiéndole el dibujo al objeto eje
+¿Por qué crece la memoria en un bucle de gráficos?::Porque las figuras siguen abiertas hasta cerrarlas
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 13.2 se demuestra observando que el artista guarda los arreglos y no los píxeles, de modo que la recuperación es exacta; se comprueba recuperando los cuatro pares de una línea y las dos posiciones de una colección de puntos, idénticos a los pasados. La Proposición 13.3 se demuestra desde la definición del margen por omisión; se comprueba con datos entre $10$ y $11$, donde los límites salen $(9{,}95,\ 11{,}05)$, la fórmula cuadra a $10^{-9}$ y una subida del $10$ % ocupa el $90{,}9$ % del panel, un factor de $9{,}1$ que baja a $0{,}83$ al fijar el eje en $(0,12)$. La Proposición 13.4 se demuestra por el reparto uniforme sobre el recorrido; se comprueba con $400$ observaciones normales, donde los bordes explícitos dan doce barras que suman $399$ y dejan una fuera, el ancho por omisión coincide con $(\max-\min)/10$ a $10^{-12}$, y una única observación en $30$ multiplica el ancho por más de cinco y deja $10$ barras ocupadas en $3$. La Proposición 13.5 se demuestra por contraejemplo y se comprueba contando líneas por eje. Los dos visuales se contrastaron contra estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** La tabla agregada y el riesgo de confundir la media global con la media de las medias son de Python 12. La Series y su índice son de Python 9. La comprobación de un visual midiendo su geometría en lugar de comparar imágenes es la regla 19b de esta plataforma, implementada en `verificar/visuales.py`, y esta lección explica el principio que la sostiene.
+
+**Lo que se enuncia sin demostrar.** Que el margen por omisión vale $0{,}05$ del recorrido es un valor de configuración de la biblioteca: se verifica en la celda y se comprueba que la fórmula cuadra, pero no se deduce de nada. Que el número de bins por omisión sea diez es igualmente una elección de la biblioteca. **Las dos se midieron en matplotlib 3.3 y en 3.11 y dieron lo mismo**, que es lo que permite afirmarlas aquí; un cambio futuro las rompería y el gate de salidas lo detectaría.
+
+**Lo que viene de los libros.**
+
+- [*Python for Data Analysis, 3rd Edition*](https://wesmckinney.com/book/) (Wes McKinney, O'Reilly, 2022), §9.1 *A Brief matplotlib API Primer* y §9.2 *Plotting with pandas and seaborn* — citadas por número y título. El sitio declara que su contenido no se puede copiar ni reproducir, así que no se transcribe texto.
+
+**Lo que es mío, no del libro.** La Proposición 13.2 enunciada como lo que habilita: **un gráfico es comprobable sin mirarlo**, que es el principio del quinto gate de esta plataforma y que el libro no formula. La Proposición 13.3 con la fórmula exacta del alto del panel y el factor de exageración medido, que convierte «cuidado con los ejes que no empiezan en cero» en una cantidad que se calcula antes de dibujar. Y la Proposición 13.4 con la dependencia del ancho de bin de **solo dos observaciones**, con el cociente exacto que predice cuánto se comprime el resto.
+
+[Índice de McKinney 3E verificado el 17-09-2026; las secciones del capítulo 9 se trajeron el 18-09-2026 de <https://wesmckinney.com/book/plotting-and-visualization>.]{.sello}
+:::
