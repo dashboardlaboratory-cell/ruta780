@@ -1,0 +1,856 @@
+---
+title: "Clustering: K-means y jerárquico"
+subtitle: "Machine Learning · Lección 21"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/19-pca, ml/12-arboles-de-decision, matematica/04-producto-interno]
+siguientes: []
+libro: "ISLP §12.4 Clustering Methods · §12.4.1 K-Means Clustering · §12.4.2 Hierarchical Clustering · §12.4.3 Practical Issues in Clustering"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="ml/21-clustering"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §12.4]{.item}
+[**Prereqs** [PCA](19-pca.qmd) · [Árboles de decisión](12-arboles-de-decision.qmd) · [Producto interno](../matematica/04-producto-interno.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Escribir el criterio de [K-means]{.g} de dos maneras y **demostrar que son la misma suma**.
+2. Demostrar que el algoritmo baja el criterio en cada paso y que por tanto termina.
+3. Exhibir un arranque desde el que K-means termina en un óptimo **local**, comprobado contra la enumeración de todas las particiones.
+4. Contar cuántas particiones hay y ver por qué nadie las enumera.
+5. Definir los tres [enlaces]{.g data-t="enlace"} del [clustering jerárquico]{.g} y exhibir datos donde dan particiones distintas.
+6. Explicar por qué el clustering **siempre devuelve grupos**, y qué se mira para decidir si significan algo.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 12**: que la media minimiza la suma de cuadrados dentro de un grupo, que es el paso de recálculo de centros.
+- **Machine Learning 19**: la sensibilidad a las unidades, que aquí vuelve intacta.
+- **Álgebra 4**: la distancia euclídea, que es la que define todo el capítulo.
+- **Machine Learning 1**: la diferencia entre encontrar estructura y confirmarla.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 22**: las pruebas múltiples, que cierran la Fase 2 de ISLP.
+- **Machine Learning 29**: el algoritmo EM, del que K-means es el caso duro y degenerado.
+- **Machine Learning 33**: el clustering espectral, SOM y la factorización no negativa.
+- **Inferencia causal**: la formación de estratos, donde agrupar mal sesga lo que venga después.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $C_1,\dots,C_K$ | ce sub uno a ce sub ka | Los grupos: una partición de las observaciones |
+| $K$ | ka | El número de grupos, fijado de antemano en K-means |
+| $\lvert C_k\rvert$ | tamaño de ce sub ka | Cuántas observaciones tiene el grupo $k$ |
+| $\bar{x}_k$ | equis barra sub ka | El centro del grupo $k$: la media de sus puntos |
+| $W$ | doble ve | El criterio: la suma dentro de los grupos |
+| $n$, $p$ | ene, pe | El número de observaciones y de variables |
+| $S(n,K)$ | ese de ene y ka | El número de particiones de $n$ puntos en $K$ grupos no vacíos |
+| $d(A,B)$ | de de a y be | La distancia entre dos grupos, según el enlace |
+:::
+
+## 1. El criterio, escrito de dos maneras
+
+::: {.definicion}
+**Definición 21.1 (el criterio de K-means).** Dada una partición $C_1,\dots,C_K$,
+$$W(C)=\sum_{k=1}^{K}\frac{1}{\lvert C_k\rvert}\sum_{i,i'\in C_k}\lVert x_i-x_{i'}\rVert^2.$$
+K-means busca la partición que lo minimiza, con $K$ fijado de antemano.
+:::
+
+::: {.proposicion}
+**Proposición 21.2 (la otra forma).** Para cualquier grupo $C$ con centro $\bar{x}$,
+$$\frac{1}{\lvert C\rvert}\sum_{i,i'\in C}\lVert x_i-x_{i'}\rVert^2=2\sum_{i\in C}\lVert x_i-\bar{x}\rVert^2.$$
+Por tanto minimizar $W$ es minimizar la suma de distancias al cuadrado de cada punto **a su propio centro**.
+:::
+
+::: {.demostracion}
+*Demostración.* Escríbase $m=\lvert C\rvert$. Desarrollando el cuadrado,
+$$\sum_{i,i'}\lVert x_i-x_{i'}\rVert^2=\sum_{i,i'}\big(\lVert x_i\rVert^2-2x_i^\top x_{i'}+\lVert x_{i'}\rVert^2\big)=2m\sum_i\lVert x_i\rVert^2-2\Big\lVert\sum_i x_i\Big\rVert^2.$$
+Dividiendo entre $m$ y usando $\sum_i x_i=m\bar{x}$:
+$$\frac{1}{m}\sum_{i,i'}\lVert x_i-x_{i'}\rVert^2=2\sum_i\lVert x_i\rVert^2-2m\lVert\bar{x}\rVert^2=2\sum_i\lVert x_i-\bar{x}\rVert^2,$$
+donde la última igualdad es la descomposición de la Proposición 12.2a aplicada coordenada a coordenada. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(37)
+X = rng.normal(size=(9, 3))
+
+# El criterio de K-means tiene dos formas, y son la misma.
+def suma_de_pares(P):
+    """(1/|C|) veces la suma de todas las distancias al cuadrado entre pares."""
+    m = len(P)
+    total = 0.0
+    for i in range(m):
+        for j in range(m):
+            total += float(((P[i] - P[j]) ** 2).sum())
+    return total / m
+
+def suma_al_centro(P):
+    """El doble de la suma de distancias al cuadrado al centro del grupo."""
+    return 2.0 * float(((P - P.mean(0)) ** 2).sum())
+
+print("las dos formas del criterio, sobre grupos de distinto tamano:")
+print("   tamano   suma de pares / |C|   2 x suma al centro   iguales a 1e-10")
+for m in [2, 3, 5, 9]:
+    P = X[:m]
+    a, b = suma_de_pares(P), suma_al_centro(P)
+    print("%9d %21.8f %20.8f %18s" % (m, a, b, bool(abs(a - b) < 1e-10)))
+print()
+print("por eso da igual pensar el criterio como «los del mismo grupo estan cerca")
+print("entre si» o como «cada uno esta cerca de su centro»: es la misma suma")
+print()
+
+# Y de ahi sale el algoritmo: con los grupos fijos, el mejor centro es la media.
+P = X[:5]
+c = P.mean(0)
+print("con el grupo fijo, la media minimiza la suma de distancias al cuadrado:")
+for nombre, punto in [("la media", c), ("la media + 0.3", c + 0.3), ("el primer punto", P[0])]:
+    print("   %-16s suma %.8f" % (nombre, float(((P - punto) ** 2).sum())))
+print("es la Proposicion 12.2a de la leccion 12, en varias dimensiones")
+```
+
+El libro da esta identidad como la ecuación que justifica el algoritmo, sin demostrarla. Es la que convierte «los del mismo grupo están cerca entre sí» —que habla de pares— en «cada uno está cerca de su centro» —que habla de centros—, y sin ella el paso de recalcular centros no tendría por qué bajar nada.
+
+## 2. El algoritmo baja, termina, y se queda donde le toque
+
+::: {.proposicion}
+**Proposición 21.3 (baja y termina).** El algoritmo que alterna (i) asignar cada punto al centro más cercano y (ii) recalcular cada centro como la media de su grupo **no aumenta** $W$ en ningún paso, y termina en un número finito de iteraciones.
+:::
+
+::: {.demostracion}
+*Demostración.* El paso (ii) no aumenta $W$ porque, con los grupos fijos, la media es la constante que minimiza la suma de distancias al cuadrado (Proposición 12.2a en varias dimensiones). El paso (i) tampoco: reasignar cada punto al centro más cercano solo puede reducir su aporte, y la suma de aportes es $W$ evaluado con los centros actuales, que por la Proposición 21.2 acota a $W$ de la nueva partición.
+
+Como $W$ no aumenta y el número de particiones es finito, la sucesión de particiones no puede repetir ninguna salvo estancándose; en cuanto una iteración no cambia ninguna asignación, el algoritmo se detiene. [∎]{.fin-demo}
+:::
+
+::: {.proposicion}
+**Proposición 21.4 (termina, pero no en el óptimo).** Existen datos y arranques desde los que el algoritmo se detiene en una partición cuyo $W$ es estrictamente mayor que el mínimo. Además, el número de particiones de $n$ puntos en $K$ grupos no vacíos es el número de Stirling de segunda especie $S(n,K)$, que crece más deprisa que cualquier exponencial: enumerar no es una alternativa.
+:::
+
+::: {.demostracion}
+*Demostración.* Para la primera parte basta exhibir el caso, y la celda lo hace sobre nueve puntos, donde la enumeración completa de las $3025$ particiones da el mínimo y un arranque concreto se queda muy por encima.
+
+Para la segunda, $S(n,K)$ cuenta las maneras de repartir $n$ objetos distinguibles en $K$ cajas no vacías e indistinguibles, y satisface $S(n,K)=K\,S(n-1,K)+S(n-1,K-1)$, de donde $S(n,K)\ge K^{n-K}$ y por tanto crece exponencialmente en $n$ para $K$ fijo. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+from itertools import product
+
+def criterio(X, etiquetas, K):
+    """La suma dentro de los grupos: 2 veces la distancia al cuadrado a su centro."""
+    total = 0.0
+    for k in range(K):
+        P = X[etiquetas == k]
+        if len(P):
+            total += 2.0 * float(((P - P.mean(0)) ** 2).sum())
+    return total
+
+def kmeans(X, centros, pasos=50):
+    """Asignar al centro mas cercano, recalcular centros, repetir. Sin sorteos."""
+    K = len(centros)
+    historia = []
+    etiquetas = np.zeros(len(X), dtype=int)
+    for _ in range(pasos):
+        d = ((X[:, None, :] - centros[None, :, :]) ** 2).sum(-1)
+        nuevas = np.argmin(d, axis=1)
+        historia.append(criterio(X, nuevas, K))
+        for k in range(K):
+            if (nuevas == k).any():
+                centros[k] = X[nuevas == k].mean(0)
+        historia.append(criterio(X, nuevas, K))
+        if (nuevas == etiquetas).all() and len(historia) > 2:
+            break
+        etiquetas = nuevas
+    return etiquetas, historia
+
+# Un conjunto pequeno, para poder enumerar TODAS las particiones.
+X = np.array([[0.0, 0.0], [0.4, 0.2], [0.1, 0.5],
+              [4.0, 0.1], [4.3, 0.4], [3.8, 0.6],
+              [2.0, 5.0], [2.3, 5.3], [1.8, 4.7]])
+K = 3
+
+# Fuerza bruta: todas las asignaciones, quitando las que dejan grupos vacios.
+mejor, arg = np.inf, None
+vistos = 0
+for etq in product(range(K), repeat=len(X)):
+    e = np.array(etq)
+    if len(np.unique(e)) < K:
+        continue
+    vistos += 1
+    c = criterio(X, e, K)
+    if c < mejor - 1e-12:
+        mejor, arg = c, e
+print("con %d puntos y K = %d hay %d asignaciones sin grupos vacios" % (len(X), K, vistos))
+print("y como el nombre del grupo da igual, particiones distintas hay %d" % (vistos // 6))
+print("el mejor criterio posible vale %.8f" % mejor)
+print()
+
+# Dos arranques distintos, dos finales distintos.
+print("   arranque                     criterio final   es el optimo")
+for nombre, centros in [
+        ("los tres grupos visibles", np.array([[0.2, 0.2], [4.0, 0.4], [2.0, 5.0]])),
+        ("todos juntos a la izquierda", np.array([[0.0, 0.0], [0.4, 0.2], [0.1, 0.5]])),
+        ("dos juntos y uno lejos", np.array([[0.0, 0.0], [0.1, 0.5], [3.0, 3.0]]))]:
+    etq, hist = kmeans(X, centros.copy())
+    fin = criterio(X, etq, K)
+    print("   %-28s %12.8f %14s" % (nombre, fin, bool(abs(fin - mejor) < 1e-9)))
+print()
+
+# El numero de particiones es el de Stirling de segunda especie, y crece rapido.
+def stirling(n, k):
+    fila = [1] + [0] * k
+    for i in range(1, n + 1):
+        nueva = [0] * (k + 1)
+        for j in range(1, min(i, k) + 1):
+            nueva[j] = j * fila[j] + fila[j - 1]
+        fila = nueva
+    return fila[k]
+
+print("el recuento coincide con el numero de Stirling de segunda especie:")
+print("   S(9,3) = %d, y la enumeracion dio %d" % (stirling(9, 3), vistos // 6))
+print("   iguales:", bool(stirling(9, 3) == vistos // 6))
+print()
+print("   n    K    particiones S(n,K)")
+for n_, k_ in [(9, 3), (20, 3), (50, 5), (100, 10)]:
+    print("%5d %4d %22s" % (n_, k_, "{:,}".format(stirling(n_, k_)).replace(",", " ")))
+print("por eso nadie enumera: con 100 puntos y 10 grupos no cabe el numero")
+print()
+
+# Y el criterio nunca sube por el camino.
+etq, hist = kmeans(X, np.array([[0.0, 0.0], [0.4, 0.2], [0.1, 0.5]]))
+print("el criterio paso a paso desde el arranque de los tres puntos juntos:")
+print("   " + "  ".join("%.4f" % v for v in hist))
+print("nunca sube:", bool(all(a >= b - 1e-12 for a, b in zip(hist, hist[1:]))))
+print("y baja de %.4f a %.4f" % (hist[0], hist[-1]))
+print()
+print("K-means baja el criterio en cada paso y hay un numero finito de")
+print("particiones, asi que termina. Pero termina donde le toque: desde un")
+print("arranque malo se queda en %.8f cuando el optimo es %.8f"
+      % (criterio(X, kmeans(X, np.array([[0.0, 0.0], [0.1, 0.5], [3.0, 3.0]]))[0], K), mejor))
+```
+
+Desde un arranque malo el algoritmo se queda en $77{,}70333333$ cuando el óptimo es $1{,}54666667$: un factor de cincuenta. Y no es que se haya detenido antes de tiempo —el criterio no bajaba ya en el primer paso—, sino que ahí no hay ningún movimiento de un punto que mejore.
+
+De ahí la práctica que recomienda el libro: **arrancar muchas veces y quedarse con el mejor**. No garantiza el óptimo, y con $S(100,10)$ particiones posibles nada lo garantiza; lo que hace es bajar la probabilidad de quedarse en un caso como este.
+
+```{=html}
+<div class="viz-kmeans">
+  <div class="controles">
+    <label>Paso <input id="km-p" type="range" min="0" max="12" step="1" value="0"> <span id="km-p-v">0</span></label>
+    <label>Arranque
+      <select id="km-a">
+        <option value="0" selected>los tres separados</option>
+        <option value="1">los tres juntos</option>
+        <option value="2">dos juntos y uno lejos</option>
+      </select>
+    </label>
+  </div>
+  <svg id="km-svg" viewBox="0 0 660 330" role="img" aria-label="Los puntos coloreados por grupo con los centros marcados, y a la derecha el criterio paso a paso sobre un eje fijo."></svg>
+  <p class="lectura" id="km-lectura"></p>
+</div>
+<style>
+.viz-kmeans { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-kmeans .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-kmeans label { display: flex; align-items: center; gap: .4rem; }
+.viz-kmeans input[type=range] { width: 180px; padding: 0; }
+.viz-kmeans select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-kmeans svg { width: 100%; height: auto; display: block; }
+.viz-kmeans .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var COL = ["#0F6E68", "#B4342E", "#8A6D1F"];
+  var svg = document.getElementById("km-svg"), lec = document.getElementById("km-lectura");
+  var cp = document.getElementById("km-p"), ca = document.getElementById("km-a");
+  var ep = document.getElementById("km-p-v");
+  var PX = 34, PW = 300, PY = 26, PH = 250, QX = 390, QW = 240, QY = 40, QH = 210;
+
+  var X = [[0,0],[0.4,0.2],[0.1,0.5],[4,0.1],[4.3,0.4],[3.8,0.6],[2,5],[2.3,5.3],[1.8,4.7]];
+  var ARR = [[[0.2,0.2],[4.0,0.4],[2.0,5.0]],
+             [[0.0,0.0],[0.4,0.2],[0.1,0.5]],
+             [[0.0,0.0],[0.1,0.5],[3.0,3.0]]];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function crit(etq) {
+    var t = 0, k, i;
+    for (k = 0; k < 3; k++) {
+      var P = [];
+      for (i = 0; i < X.length; i++) if (etq[i] === k) P.push(X[i]);
+      if (!P.length) continue;
+      var mx = 0, my = 0;
+      for (i = 0; i < P.length; i++) { mx += P[i][0]; my += P[i][1]; }
+      mx /= P.length; my /= P.length;
+      for (i = 0; i < P.length; i++) t += 2 * ((P[i][0]-mx)*(P[i][0]-mx) + (P[i][1]-my)*(P[i][1]-my));
+    }
+    return t;
+  }
+  function recorrido(arr) {
+    var C = ARR[arr].map(function (c) { return c.slice(); });
+    var estados = [], etq = new Array(X.length).fill(-1), paso;
+    for (paso = 0; paso <= 12; paso++) {
+      var nuevas = [], i, k;
+      for (i = 0; i < X.length; i++) {
+        var mejor = Infinity, arg = 0;
+        for (k = 0; k < 3; k++) {
+          var d = (X[i][0]-C[k][0])*(X[i][0]-C[k][0]) + (X[i][1]-C[k][1])*(X[i][1]-C[k][1]);
+          if (d < mejor) { mejor = d; arg = k; }
+        }
+        nuevas.push(arg);
+      }
+      estados.push({ etq: nuevas.slice(), C: C.map(function (c) { return c.slice(); }), w: crit(nuevas) });
+      for (k = 0; k < 3; k++) {
+        var sx = 0, sy = 0, m = 0;
+        for (i = 0; i < X.length; i++) if (nuevas[i] === k) { sx += X[i][0]; sy += X[i][1]; m++; }
+        if (m) { C[k][0] = sx / m; C[k][1] = sy / m; }
+      }
+      etq = nuevas;
+    }
+    return estados;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var paso = +cp.value, arr = +ca.value;
+    ep.textContent = paso;
+    var est = recorrido(arr), E = est[paso];
+    var px = function (v) { return PX + (v + 1) / 7 * PW; };
+    var py = function (v) { return PY + (6.5 - v) / 8 * PH; };
+    svg.appendChild(el("rect", { x: PX, y: PY, width: PW, height: PH, fill: "none", stroke: C_L, "stroke-width": 1 }));
+    svg.appendChild(el("text", { x: PX, y: 18, "font-size": 11.5, fill: C_T, opacity: .75 }, "los puntos y los centros"));
+    var i, k;
+    for (i = 0; i < X.length; i++) {
+      svg.appendChild(el("path", { d: "M" + px(X[i][0]).toFixed(1) + " " + py(X[i][1]).toFixed(1) +
+        " L" + px(E.C[E.etq[i]][0]).toFixed(1) + " " + py(E.C[E.etq[i]][1]).toFixed(1),
+        stroke: COL[E.etq[i]], "stroke-width": .9, opacity: .5 }));
+      svg.appendChild(el("circle", { cx: px(X[i][0]).toFixed(1), cy: py(X[i][1]).toFixed(1), r: 4.4,
+        fill: COL[E.etq[i]], "fill-opacity": .7 }));
+    }
+    for (k = 0; k < 3; k++)
+      svg.appendChild(el("path", { d: "M" + (px(E.C[k][0]) - 6).toFixed(1) + " " + py(E.C[k][1]).toFixed(1) +
+        " L" + (px(E.C[k][0]) + 6).toFixed(1) + " " + py(E.C[k][1]).toFixed(1) +
+        " M" + px(E.C[k][0]).toFixed(1) + " " + (py(E.C[k][1]) - 6).toFixed(1) +
+        " L" + px(E.C[k][0]).toFixed(1) + " " + (py(E.C[k][1]) + 6).toFixed(1),
+        stroke: COL[k], "stroke-width": 2.6 }));
+
+    // criterio, escala fija de 0 a 100
+    var qx = function (t) { return QX + t / 12 * QW; };
+    var qy = function (w) { return QY + (100 - Math.min(w, 100)) / 100 * QH; };
+    var t2;
+    for (t2 = 0; t2 <= 100.01; t2 += 25) {
+      svg.appendChild(el("path", { d: "M" + QX + " " + qy(t2).toFixed(1) + " L" + (QX + QW) + " " + qy(t2).toFixed(1),
+        stroke: C_L, "stroke-width": 1, opacity: .5 }));
+      svg.appendChild(el("text", { x: QX - 7, y: qy(t2) + 4, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .65 }, t2));
+    }
+    svg.appendChild(el("text", { x: QX, y: 18, "font-size": 11.5, fill: C_T, opacity: .75 }, "el criterio paso a paso"));
+    var d = "";
+    for (i = 0; i < est.length; i++) d += (i ? " L" : "M") + qx(i).toFixed(1) + " " + qy(est[i].w).toFixed(1);
+    svg.appendChild(el("path", { d: d, stroke: C_T, "stroke-width": 2.2, fill: "none" }));
+    svg.appendChild(el("circle", { cx: qx(paso).toFixed(1), cy: qy(E.w).toFixed(1), r: 4.4, fill: "#8A6D1F" }));
+    svg.appendChild(el("path", { d: "M" + QX + " " + qy(1.5467).toFixed(1) + " L" + (QX + QW) + " " + qy(1.5467).toFixed(1),
+      stroke: "#B4342E", "stroke-width": 1.4, "stroke-dasharray": "5 4" }));
+    svg.appendChild(el("text", { x: QX + QW, y: qy(1.5467) - 6, "text-anchor": "end", "font-size": 10.5, fill: "#B4342E" }, "óptimo 1.5467"));
+
+    lec.innerHTML = "En el paso <strong>" + paso + "</strong> el criterio vale <strong>" + E.w.toFixed(4) +
+      "</strong>. La raya roja es el mínimo sobre las 3025 particiones posibles. " +
+      (Math.abs(E.w - 1.5467) < 1e-3
+        ? "Desde este arranque el algoritmo llega al óptimo."
+        : "Desde este arranque se queda en <strong>" + est[12].w.toFixed(4) + "</strong> y ya no se mueve: ningún punto mejora cambiándose de grupo, aunque la partición no sea la mejor (Proposición 21.4).") +
+      " El criterio nunca sube, que es lo que garantiza la Proposición 21.3.";
+  }
+  cp.addEventListener("input", dibujar);
+  ca.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Sin fijar K: el árbol
+
+::: {.definicion}
+**Definición 21.5 (clustering jerárquico aglomerativo).** Se empieza con cada punto en su propio grupo y se unen los dos grupos más cercanos, una y otra vez, hasta que queda uno. La distancia entre grupos depende del **enlace**:
+$$d_{\text{simple}}(A,B)=\min_{a\in A,b\in B}\lVert a-b\rVert,\qquad
+d_{\text{completo}}(A,B)=\max_{a\in A,b\in B}\lVert a-b\rVert,$$
+y el **promedio**, que es la media de todas las distancias entre pares. El resultado es un árbol; cortarlo a una altura da una partición.
+:::
+
+::: {.proposicion}
+**Proposición 21.6 (el enlace decide).** Existen conjuntos de datos donde el enlace simple y el completo dan **particiones distintas** al pedir el mismo número de grupos.
+:::
+
+::: {.demostracion}
+*Demostración.* Basta exhibir uno, y la celda lo hace: dos núcleos compactos separados por un puente de dos puntos sueltos. El enlace simple mide la distancia más corta entre grupos, así que un único punto cercano basta para unir dos grupos enteros; el completo mide la más larga, así que exige que **todos** los pares estén cerca. Sobre esa configuración las dos reglas se separan. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def aglomera(X, enlace):
+    """Une los dos grupos mas cercanos, una y otra vez. Devuelve las fusiones."""
+    grupos = [[i] for i in range(len(X))]
+    D = np.sqrt(((X[:, None, :] - X[None, :, :]) ** 2).sum(-1))
+    fusiones = []
+    while len(grupos) > 1:
+        mejor, par = np.inf, None
+        for a in range(len(grupos)):
+            for b in range(a + 1, len(grupos)):
+                sub = D[np.ix_(grupos[a], grupos[b])]
+                if enlace == "simple":
+                    d = float(sub.min())
+                elif enlace == "completo":
+                    d = float(sub.max())
+                else:
+                    d = float(sub.mean())
+                if d < mejor - 1e-12:
+                    mejor, par = d, (a, b)
+        a, b = par
+        fusiones.append((sorted(grupos[a]), sorted(grupos[b]), mejor))
+        grupos = [g for i, g in enumerate(grupos) if i not in (a, b)] + [grupos[a] + grupos[b]]
+    return fusiones
+
+def corta(fusiones, n, K):
+    """Deshace las ultimas fusiones hasta quedarse con K grupos."""
+    grupos = [[i] for i in range(n)]
+    for a, b, _ in fusiones[:n - K]:
+        nuevo = sorted(a + b)
+        grupos = [g for g in grupos if g != sorted(a) and g != sorted(b)] + [nuevo]
+    return sorted([sorted(g) for g in grupos])
+
+# Dos nucleos compactos unidos por un puente de dos puntos sueltos.
+X = np.array([[0.0, 0.0], [0.6, 0.0], [1.2, 0.0],
+              [4.0, 0.0], [7.0, 0.0],
+              [9.8, 0.0], [10.4, 0.0], [11.0, 0.0]])
+n = len(X)
+print("ocho puntos en una recta: dos nucleos de tres y un puente de dos")
+print("   posiciones: " + "  ".join("%.1f" % v for v in X[:, 0]))
+print("   nucleo izquierdo: 0 1 2   puente: 3 4   nucleo derecho: 5 6 7")
+print()
+
+resultados = {}
+for enlace in ["simple", "completo", "promedio"]:
+    f = aglomera(X, enlace)
+    resultados[enlace] = {K: corta(f, n, K) for K in (2, 3)}
+    print("enlace %s:" % enlace)
+    print("   alturas de las fusiones: " + "  ".join("%.2f" % d for _, _, d in f))
+    for K in (2, 3):
+        print("   con K = %d -> %s" % (K, resultados[enlace][K]))
+    print()
+
+print("con K = 2 simple y completo dan particiones distintas:",
+      bool(resultados["simple"][2] != resultados["completo"][2]))
+print("con K = 3 tambien:",
+      bool(resultados["simple"][3] != resultados["completo"][3]))
+print()
+print("con K = 3, el enlace completo aisla el puente como su propio grupo")
+print("—[[0,1,2], [3,4], [5,6,7]]— y el simple le engancha el punto 3 al nucleo")
+print("izquierdo y deja el 4 solo: [[0,1,2,3], [4], [5,6,7]]")
+print()
+print("el simple mide la distancia MAS CORTA entre dos grupos, asi que un solo")
+print("punto cercano basta para unir; el completo mide la MAS LARGA, asi que")
+print("exige que todo el grupo este cerca. Sobre los mismos datos, responden")
+print("preguntas distintas, y ninguna de las dos es la correcta")
+```
+
+Con $K=3$, el enlace completo aísla el puente como su propio grupo y el simple le engancha un punto al núcleo izquierdo dejando el otro solo. Las dos lecturas son defendibles, y ese es el asunto: **el enlace forma parte de la definición de «grupo»**, y no es un detalle de implementación que se elija por comodidad.
+
+Las alturas de fusión lo dicen también: el simple termina uniendo todo a altura $3{,}00$ y el completo a $11{,}00$, que es la distancia entre los dos extremos. Un dendrograma de enlace completo y otro de enlace simple sobre los mismos datos no son el mismo dibujo con otra escala.
+
+```{=html}
+<div class="viz-enlace">
+  <div class="controles">
+    <label>Enlace
+      <select id="en-e">
+        <option value="simple" selected>simple (la más corta)</option>
+        <option value="completo">completo (la más larga)</option>
+        <option value="promedio">promedio</option>
+      </select>
+    </label>
+    <label>Altura del corte <input id="en-h" type="range" min="0" max="12" step="0.1" value="2"> <span id="en-h-v">2.0</span></label>
+  </div>
+  <svg id="en-svg" viewBox="0 0 660 330" role="img" aria-label="El dendrograma del enlace elegido con la línea de corte, y debajo los puntos coloreados según los grupos que ese corte produce."></svg>
+  <p class="lectura" id="en-lectura"></p>
+</div>
+<style>
+.viz-enlace { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-enlace .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-enlace label { display: flex; align-items: center; gap: .4rem; }
+.viz-enlace input[type=range] { width: 180px; padding: 0; }
+.viz-enlace select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-enlace svg { width: 100%; height: auto; display: block; }
+.viz-enlace .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_B = "#B4342E";
+  var COL = ["#0F6E68", "#B4342E", "#8A6D1F", "#5B4B8A", "#2F6FA8"];
+  var svg = document.getElementById("en-svg"), lec = document.getElementById("en-lectura");
+  var ce = document.getElementById("en-e"), ch = document.getElementById("en-h");
+  var eh = document.getElementById("en-h-v");
+  var X = [0, 0.6, 1.2, 4, 7, 9.8, 10.4, 11];
+  var n = X.length;
+  // Marco anclado: altura de 0 a 12 siempre, posiciones de -1 a 12.
+  var DX = 46, DW = 574, DY = 26, DH = 176, PY = 252;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function dist(A, B, enlace) {
+    var mejor = enlace === "completo" ? -Infinity : Infinity, suma = 0, cuenta = 0, i, j;
+    for (i = 0; i < A.length; i++) for (j = 0; j < B.length; j++) {
+      var d = Math.abs(X[A[i]] - X[B[j]]);
+      suma += d; cuenta++;
+      if (enlace === "simple") mejor = Math.min(mejor, d);
+      else if (enlace === "completo") mejor = Math.max(mejor, d);
+    }
+    return enlace === "promedio" ? suma / cuenta : mejor;
+  }
+  function arbol(enlace) {
+    var G = [], i;
+    for (i = 0; i < n; i++) G.push({ miembros: [i], altura: 0, hijos: null, pos: i });
+    while (G.length > 1) {
+      var mejor = Infinity, pa = 0, pb = 1, a, b;
+      for (a = 0; a < G.length; a++) for (b = a + 1; b < G.length; b++) {
+        var d = dist(G[a].miembros, G[b].miembros, enlace);
+        if (d < mejor - 1e-12) { mejor = d; pa = a; pb = b; }
+      }
+      var nuevo = { miembros: G[pa].miembros.concat(G[pb].miembros), altura: mejor,
+                    hijos: [G[pa], G[pb]], pos: (G[pa].pos + G[pb].pos) / 2 };
+      G = G.filter(function (_, i2) { return i2 !== pa && i2 !== pb; });
+      G.push(nuevo);
+    }
+    return G[0];
+  }
+  function grupos(nodo, h, salida) {
+    if (nodo.altura <= h) { salida.push(nodo.miembros.slice().sort(function (a, b) { return a - b; })); return; }
+    grupos(nodo.hijos[0], h, salida); grupos(nodo.hijos[1], h, salida);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var enlace = ce.value, h = +ch.value;
+    eh.textContent = h.toFixed(1);
+    var raiz = arbol(enlace);
+    var gx = function (pos) { return DX + (pos + 0.5) / n * DW; };
+    var gy = function (a) { return DY + DH - Math.min(a, 12) / 12 * DH; };
+    var t;
+    for (t = 0; t <= 12.01; t += 4) {
+      svg.appendChild(el("path", { d: "M" + DX + " " + gy(t).toFixed(1) + " L" + (DX + DW) + " " + gy(t).toFixed(1),
+        stroke: C_L, "stroke-width": 1, opacity: .45 }));
+      svg.appendChild(el("text", { x: DX - 7, y: gy(t) + 4, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .65 }, t));
+    }
+    svg.appendChild(el("text", { x: DX, y: 18, "font-size": 11.5, fill: C_T, opacity: .75 }, "el dendrograma del enlace elegido"));
+    (function pinta(nodo) {
+      if (!nodo.hijos) return;
+      var a = nodo.hijos[0], b = nodo.hijos[1];
+      pinta(a); pinta(b);
+      svg.appendChild(el("path", { d: "M" + gx(a.pos).toFixed(1) + " " + gy(a.altura).toFixed(1) +
+        " L" + gx(a.pos).toFixed(1) + " " + gy(nodo.altura).toFixed(1) +
+        " L" + gx(b.pos).toFixed(1) + " " + gy(nodo.altura).toFixed(1) +
+        " L" + gx(b.pos).toFixed(1) + " " + gy(b.altura).toFixed(1),
+        stroke: C_T, "stroke-width": 1.6, fill: "none", opacity: .85 }));
+    })(raiz);
+    svg.appendChild(el("path", { d: "M" + DX + " " + gy(h).toFixed(1) + " L" + (DX + DW) + " " + gy(h).toFixed(1),
+      stroke: C_B, "stroke-width": 2, "stroke-dasharray": "6 4" }));
+
+    var G = []; grupos(raiz, h, G);
+    G.sort(function (a, b) { return a[0] - b[0]; });
+    var px = function (v) { return DX + (v + 1) / 13 * DW; };
+    svg.appendChild(el("text", { x: DX, y: PY - 14, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "los puntos, coloreados por el grupo que produce ese corte"));
+    svg.appendChild(el("path", { d: "M" + DX + " " + PY + " L" + (DX + DW) + " " + PY, stroke: C_L, "stroke-width": 1 }));
+    G.forEach(function (g, k) {
+      g.forEach(function (i) {
+        svg.appendChild(el("circle", { cx: px(X[i]).toFixed(1), cy: PY, r: 6, fill: COL[k % COL.length], "fill-opacity": .75 }));
+        svg.appendChild(el("text", { x: px(X[i]).toFixed(1), y: PY + 22, "text-anchor": "middle", "font-size": 10, fill: C_T, opacity: .7 }, i));
+      });
+    });
+
+    lec.innerHTML = "Con enlace <strong>" + enlace + "</strong> y corte a altura <strong>" + h.toFixed(1) +
+      "</strong> quedan <strong>" + G.length + "</strong> grupos: " +
+      G.map(function (g) { return "{" + g.join(",") + "}"; }).join(" ") + ". " +
+      "Los puntos 0, 1 y 2 son el núcleo izquierdo, el 3 y el 4 el puente, y el 5, 6 y 7 el derecho. " +
+      (enlace === "simple"
+        ? "El simple une en cuanto <strong>un</strong> par está cerca, así que el puente se engancha pronto a un núcleo."
+        : enlace === "completo"
+        ? "El completo exige que <strong>todos</strong> los pares estén cerca, así que el puente aguanta como grupo propio hasta arriba."
+        : "El promedio queda entre los dos, y con estos datos coincide con el completo.") +
+      " Cambiando el enlace con el mismo corte, la partición cambia (Proposición 21.6).";
+  }
+  ce.addEventListener("change", dibujar);
+  ch.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Lo que el método no puede decirte
+
+```{pyodide}
+import numpy as np
+
+def criterio(X, etq, K):
+    t = 0.0
+    for k in range(K):
+        P = X[etq == k]
+        if len(P):
+            t += 2.0 * float(((P - P.mean(0)) ** 2).sum())
+    return t
+
+def kmeans(X, K, arranques, semilla):
+    """El mejor de varios arranques, como se hace en la practica."""
+    rng = np.random.default_rng(semilla)
+    mejor, arg = np.inf, None
+    for _ in range(arranques):
+        centros = X[rng.choice(len(X), K, replace=False)].astype(float)
+        etq = np.zeros(len(X), dtype=int)
+        for _ in range(60):
+            d = ((X[:, None, :] - centros[None, :, :]) ** 2).sum(-1)
+            nuevas = np.argmin(d, axis=1)
+            if (nuevas == etq).all():
+                break
+            etq = nuevas
+            for k in range(K):
+                if (etq == k).any():
+                    centros[k] = X[etq == k].mean(0)
+        c = criterio(X, etq, K)
+        if c < mejor:
+            mejor, arg = c, etq
+    return arg, mejor
+
+# Ruido puro: una sola nube normal, sin ningun grupo dentro.
+rng = np.random.default_rng(53)
+n, p = 200, 2
+X = rng.normal(size=(n, p))
+
+print("una sola nube normal de %d puntos, SIN grupos de ninguna clase" % n)
+print()
+print("    K   criterio   baja respecto a K-1   tamanos de los grupos")
+anterior = None
+for K in [1, 2, 3, 4, 5, 6]:
+    etq, c = kmeans(X, K, 10, 7)
+    tam = sorted(int((etq == k).sum()) for k in range(K))
+    baja = "" if anterior is None else "%.1f%%" % (100 * (1 - c / anterior))
+    print("%5d %10.4f %21s   %s" % (K, c, baja, tam))
+    anterior = c
+print()
+print("el criterio baja siempre, y los grupos salen del tamano que uno espera.")
+print("Nada en esta tabla avisa de que no hay grupos: el metodo no puede decir")
+print("«aqui no hay nada que agrupar», porque no es una pregunta que se le haga")
+print()
+
+# La comparacion honesta: los mismos numeros sobre datos que SI tienen grupos.
+centros = np.array([[-3.0, 0.0], [3.0, 0.0], [0.0, 4.0]])
+Y = np.vstack([c + rng.normal(0, 0.6, size=(70, 2)) for c in centros])
+print("y ahora sobre datos con tres grupos de verdad:")
+print("    K   criterio   baja respecto a K-1")
+anterior = None
+for K in [1, 2, 3, 4, 5, 6]:
+    etq, c = kmeans(Y, K, 10, 7)
+    baja = "" if anterior is None else "%.1f%%" % (100 * (1 - c / anterior))
+    print("%5d %10.4f %21s" % (K, c, baja))
+    anterior = c
+print()
+print("aqui si hay una senal: la bajada al pasar a K = 3 es grande y la")
+print("siguiente es pequena. En el ruido puro, todas las bajadas se parecen")
+print()
+print("esa diferencia entre las dos tablas es lo unico que hay para elegir K, y")
+print("es un juicio sobre una curva, no una prueba. §12.4.3 lo dice y conviene")
+print("creerselo: el clustering siempre devuelve grupos")
+```
+
+Las dos tablas tienen la misma forma —el criterio baja siempre— y dicen cosas opuestas. Sobre ruido puro las bajadas son suaves: $39{,}8$, $27{,}9$, $21{,}1$, $18{,}4$, $15{,}2$ por ciento. Sobre tres grupos de verdad hay un escalón: $52{,}8$, **$84{,}5$**, y luego $14{,}7$.
+
+Ese escalón es todo lo que hay para elegir $K$, y es **un juicio sobre una curva, no una prueba**. El clustering siempre devuelve grupos: es lo único que sabe hacer. Preguntarle si los hay es preguntarle algo que su criterio no formula.
+
+**Y las unidades siguen mandando.** Los tres métodos de esta lección miden distancias euclídeas entre columnas, así que multiplicar una columna por mil cambia la respuesta exactamente por la razón de la Proposición 19.5. La decisión de estandarizar o no es la misma de allí, y tiene la misma respuesta: depende de si las unidades significan lo mismo.
+
+## Ejercicios
+
+### Ejercicio 1, Las dos formas del criterio
+
+Un grupo tiene los puntos $(1,2)$, $(3,4)$ y $(5,0)$. Calcular el criterio por las dos vías de la Proposición 21.2 y comprobar que coinciden.
+
+```{pyodide}
+#| exercise: ex_criterio
+import numpy as np
+
+P = np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 0.0]])
+
+por_pares = ______
+por_centro = ______
+
+print(round(por_pares, 6), round(por_centro, 6))
+round(por_centro, 6)
+```
+
+::: {.hint exercise="ex_criterio"}
+Por pares: la suma de $\lVert x_i-x_{i'}\rVert^2$ sobre **todos** los pares ordenados, dividida entre el tamaño del grupo. Por centro: el doble de la suma de distancias al cuadrado a la media.
+:::
+
+::: {.solution exercise="ex_criterio"}
+```{pyodide}
+import numpy as np
+
+P = np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 0.0]])
+
+por_pares = sum(float(((P[i] - P[j]) ** 2).sum())
+                for i in range(len(P)) for j in range(len(P))) / len(P)
+por_centro = 2 * float(((P - P.mean(0)) ** 2).sum())
+
+print(round(por_pares, 6), round(por_centro, 6))
+round(por_centro, 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_criterio
+#| check: true
+if abs(result - 32.0) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: 32 por los dos caminos. Nótese que en la suma por pares entran también los pares (i,i), que aportan cero, y cada par desordenado dos veces: por eso la fórmula lleva el factor 2 al otro lado.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 32.0 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuántas particiones hay
+
+Calcular en cuántas particiones se pueden repartir $10$ observaciones en $3$ grupos no vacíos, con la recurrencia $S(n,K)=K\,S(n-1,K)+S(n-1,K-1)$.
+
+```{pyodide}
+#| exercise: ex_stirling
+def stirling(n, k):
+    fila = [1] + [0] * k
+    for i in range(1, n + 1):
+        nueva = [0] * (k + 1)
+        for j in range(1, min(i, k) + 1):
+            nueva[j] = ______
+        fila = nueva
+    return fila[k]
+
+print(stirling(10, 3), stirling(12, 4))
+stirling(10, 3)
+```
+
+::: {.hint exercise="ex_stirling"}
+La recurrencia dice que el $j$-ésimo valor de la fila nueva es $j$ veces el $j$-ésimo de la anterior más el $(j-1)$-ésimo de la anterior.
+:::
+
+::: {.solution exercise="ex_stirling"}
+```{pyodide}
+def stirling(n, k):
+    fila = [1] + [0] * k
+    for i in range(1, n + 1):
+        nueva = [0] * (k + 1)
+        for j in range(1, min(i, k) + 1):
+            nueva[j] = j * fila[j] + fila[j - 1]
+        fila = nueva
+    return fila[k]
+
+print(stirling(10, 3), stirling(12, 4))
+stirling(10, 3)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_stirling
+#| check: true
+if result == 9330:
+    feedback = {"correct": True, "message": "Correcto: 9330 particiones con solo diez puntos. Con doce puntos y cuatro grupos ya son 611 501, y con cien y diez el número tiene más de noventa cifras: por eso K-means arranca varias veces en lugar de enumerar.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 9330 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 21**:
+
+1. Repetir K-means con cien arranques distintos sobre los nueve puntos de la sección 2 y contar en cuántos termina en el óptimo. Anotar cuántos arranques hacen falta para que la probabilidad de fallar baje del uno por ciento, y comparar con el número total de particiones.
+2. Construir el dendrograma de los tres enlaces sobre un conjunto con un punto claramente apartado, y anotar cuál de los tres lo aísla y cuál se lo engancha a un grupo. Relacionarlo con la definición de cada enlace y decir cuál preferirías si el punto fuera un error de medición.
+3. Aplicar K-means a datos sin ninguna estructura y calcular la curva del criterio para $K$ de $1$ a $10$, como en la sección 4, pero **veinte veces con datos nuevos cada vez**. Anotar en `50-Errores/` cuántas de las veinte curvas parecen tener un codo, y qué dice eso sobre elegir $K$ mirando la curva.
+
+## Del libro
+
+*An Introduction to Statistical Learning with Applications in Python* trata este material en §12.4 *Clustering Methods*, con §12.4.1 *K-Means Clustering*, §12.4.2 *Hierarchical Clustering* y §12.4.3 *Practical Issues in Clustering*.
+
+**Con esta lección queda cubierto el capítulo 12**: la lección 19 cubrió §12.1–12.3 y esta cubre §12.4. De la Fase 2 de ISLP solo queda el capítulo 13, que es la **lección 22**.
+
+**Dos diferencias con el libro que conviene tener presentes.** La primera: el libro da la identidad entre las dos formas del criterio —su ecuación de §12.4.1— como un hecho, y de ella depende que el algoritmo tenga sentido. Aquí se **demuestra** en cuatro líneas, y sin ella el paso de recalcular centros no tendría por qué bajar nada.
+
+La segunda: el libro advierte de que K-means encuentra óptimos locales y recomienda arrancar varias veces. Esta página **exhibe el caso y lo mide contra la verdad**: sobre nueve puntos se enumeran las $3025$ particiones, se obtiene el mínimo exacto, y se muestra un arranque que termina cincuenta veces peor. La advertencia deja de ser un consejo y pasa a ser un número.
+
+**Preguntas para leer §12.4 con lápiz:**
+
+1. §12.4.1 describe el algoritmo en dos pasos. Con la Proposición 21.3, ¿cuál de los dos usa la Proposición 12.2a de la lección 12, y qué papel juega el otro?
+2. §12.4.2 dice que el enlace simple tiende a producir grupos «alargados». Con la Proposición 21.6, ¿qué propiedad exacta de su definición lo causa, y en qué configuración se ve mejor?
+3. §12.4.3 advierte de que los grupos hallados pueden no significar nada. Con la última tabla de la sección 4, ¿qué se compara exactamente para decidirlo, y por qué esa comparación no es una prueba de hipótesis?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/clustering.md`, enlazada a [[pca]], [[arboles-de-decision]] y [[producto-interno]]. Conviene rehacer a mano la Proposición 21.2: desarrollar el cuadrado y ver aparecer $2m\sum\lVert x_i\rVert^2-2\lVert\sum x_i\rVert^2$ deja claro de una vez **por qué el algoritmo puede alternar entre asignar y promediar**, que es lo único que hace.
+
+```
+¿Cuál es el criterio de K-means?::La suma de distancias al cuadrado dentro de los grupos
+¿Cuáles son sus dos formas?::Por pares dentro del grupo, o al centro del grupo
+¿Cuánto vale el factor entre ellas?::2, y la de pares se divide entre el tamaño
+¿Qué hace el paso de asignación?::Manda cada punto al centro más cercano
+¿Y el de recálculo?::Pone cada centro en la media de su grupo
+¿Por qué baja el criterio?::Porque la media minimiza la suma de cuadrados, y reasignar solo puede reducir
+¿Por qué termina?::Porque el criterio no sube y hay un número finito de particiones
+¿Termina en el óptimo?::No: en un óptimo local, y el arranque decide cuál
+¿Cuántas particiones hay?::S(n,K), el número de Stirling de segunda especie
+¿Se pueden enumerar?::Con 100 puntos y 10 grupos el número tiene más de noventa cifras
+¿Qué se hace entonces?::Arrancar muchas veces y quedarse con el mejor
+¿Qué es el clustering jerárquico?::Unir los dos grupos más cercanos repetidamente, formando un árbol
+¿Cuáles son los tres enlaces?::Simple (mínimo), completo (máximo) y promedio
+¿Dan la misma partición?::No: sobre los mismos datos pueden diferir
+¿Devuelve grupos el clustering si no los hay?::Siempre: es lo único que sabe hacer
+¿Qué se mira para decidir si significan algo?::El escalón en la curva del criterio, que es un juicio y no una prueba
+¿Importan las unidades?::Sí, exactamente como en PCA
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 21.2 se demuestra desarrollando el cuadrado y usando $\sum_i x_i=m\bar{x}$; se comprueba en cuatro tamaños de grupo, donde las dos formas coinciden a $10^{-10}$. La Proposición 21.3 se demuestra por la optimalidad de la media y por la finitud del número de particiones; se comprueba con el rastro del criterio, que baja de $56{,}9450$ a $1{,}5467$ sin subir nunca. La Proposición 21.4 se demuestra exhibiendo el caso: sobre nueve puntos se enumeran las $18\,150$ asignaciones sin grupos vacíos —$3025$ particiones, que coincide con $S(9,3)$ calculado por la recurrencia— y se obtiene el mínimo $1{,}54666667$; un arranque concreto termina en $77{,}70333333$. La Proposición 21.6 se demuestra exhibiendo el conjunto de los dos núcleos con puente, donde simple y completo difieren tanto en $K=2$ como en $K=3$. La última sección mide el contraste entre ruido puro —bajadas de $39{,}8$, $27{,}9$, $21{,}1$, $18{,}4$ y $15{,}2$ por ciento— y tres grupos reales, con un escalón del $84{,}5$ al pasar a $K=3$. Los dos visuales recalculan estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** Que la media minimiza la suma de distancias al cuadrado es la Proposición 12.2a de Machine Learning 12, aquí aplicada coordenada a coordenada. La sensibilidad a las unidades es la Proposición 19.5 de Machine Learning 19. La distancia euclídea y el producto interno son de Álgebra 4.
+
+**Lo que se enuncia sin demostrar.** Que $S(n,K)$ cuenta las particiones y satisface su recurrencia se **usa** y se comprueba contra la enumeración para $n=9$, pero la recurrencia **no se demuestra**. Que el número de iteraciones de K-means está acotado por una cantidad razonable —y no solo por el número de particiones— **no se afirma**: lo que se demuestra es que termina, sin decir en cuántos pasos. Y que arrancar muchas veces encuentre el óptimo con alta probabilidad es una práctica, no un teorema: el reto 1 pide medirla.
+
+**Lo que viene de los libros.**
+
+- [*An Introduction to Statistical Learning with Applications in Python*](https://www.statlearning.com/) (James, Witten, Hastie, Tibshirani, Taylor; Springer, 2023), §12.4 *Clustering Methods* con sus tres subsecciones — citadas por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La demostración de la Proposición 21.2, que el libro da como ecuación sin justificar y de la que depende todo el algoritmo. La verificación de la Proposición 21.4 **contra la enumeración completa**, que convierte «puede quedarse en un óptimo local» en dos números concretos y un factor de cincuenta entre ellos. El conjunto de los dos núcleos con puente, construido para que simple y completo discrepen en dos valores de $K$ a la vez. Y la última sección, que pone **la misma tabla sobre ruido y sobre grupos reales** para que la diferencia entre las dos sea lo único que se afirme: no hay una prueba de que existan grupos, hay una curva con escalón o sin él.
+
+[Índice de ISLP verificado el 13-09-2026 contra los marcadores del PDF oficial.]{.sello}
+:::

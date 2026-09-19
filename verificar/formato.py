@@ -109,6 +109,7 @@ MIGRADAS = {
     "ml/18-riesgos-proporcionales-y-cox.qmd",
     "ml/19-pca.qmd",
     "ml/20-pcr-y-pls.qmd",
+    "ml/21-clustering.qmd",
     "python/01-tipos-y-estructuras.qmd",
     "python/02-funciones-y-scope.qmd",
     "python/03-comprehensions.qmd",
