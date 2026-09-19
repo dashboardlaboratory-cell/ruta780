@@ -1,0 +1,715 @@
+---
+title: "Censura y la curva de Kaplan-Meier"
+subtitle: "Machine Learning · Lección 17"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [estadistica/11-bootstrap, estadistica/10-pruebas-de-hipotesis, ml/01-aprendizaje-estadistico]
+siguientes: []
+libro: "ISLP §11.1 Survival and Censoring Times · §11.2 A Closer Look at Censoring · §11.3 The Kaplan–Meier Survival Curve · §11.4 The Log-Rank Test"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="ml/17-censura-y-kaplan-meier"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §11.1–11.4]{.item}
+[**Prereqs** [Bootstrap](../estadistica/11-bootstrap.qmd) · [Pruebas de hipótesis](../estadistica/10-pruebas-de-hipotesis.qmd) · [Aprendizaje estadístico](01-aprendizaje-estadistico.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Distinguir el tiempo de supervivencia del tiempo de [censura]{.g}, y decir qué es exactamente lo que se observa.
+2. **Demostrar que tratar la censura como si fuera el suceso estima $S(t)G(t)$ y no $S(t)$**, y medir el daño.
+3. Definir la curva de [Kaplan-Meier]{.g data-t="Kaplan-Meier"} y demostrar que sin censura coincide con la supervivencia empírica.
+4. Demostrar que Kaplan-Meier es exactamente **repartir a la derecha** la masa de cada censurado, y leer ahí por qué la curva no llega a cero.
+5. Construir el estadístico [log-rank]{.g} a partir de la media y la varianza exactas de una hipergeométrica.
+6. Medir la calibración de la prueba y decir hasta dónde se puede confiar en su cola.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Estadística 11**: la distribución empírica, que es lo que Kaplan-Meier generaliza cuando hay censura.
+- **Estadística 10**: las pruebas de hipótesis y la calibración de un nivel, que es lo que se mide en la sección 4.
+- **Estadística 2**: la función de supervivencia como complemento de la acumulada.
+- **Machine Learning 1**: la distinción entre lo que se quiere estimar y lo que los datos dejan ver.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 18**: los riesgos proporcionales y el modelo de Cox, que añaden covariables a todo esto.
+- **Machine Learning 22**: las pruebas múltiples, cuando se comparan muchas curvas a la vez.
+- **Series de tiempo**: los procesos de conteo, que son la maquinaria formal detrás del conjunto en riesgo.
+- **Inferencia causal**: el sesgo de selección, del que la censura informativa es un caso con nombre propio.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $T$ | te | El tiempo de supervivencia real, que puede no verse |
+| $C$ | ce | El tiempo de censura: cuándo se deja de observar al sujeto |
+| $Y$ | y griega | Lo que se observa: $\min(T,C)$ |
+| $\delta$ | delta | Vale $1$ si se vio el suceso y $0$ si hubo censura |
+| $S(t)$ | ese de te | La supervivencia real, $P(T>t)$ |
+| $G(t)$ | ge de te | La supervivencia de la censura, $P(C>t)$ |
+| $\hat{S}(t)$ | ese gorro de te | La curva de Kaplan-Meier |
+| $n_k$ | ene sub ka | Cuántos siguen en riesgo justo antes del instante $t_k$ |
+| $d_k$ | de sub ka | Cuántos sucesos ocurren exactamente en $t_k$ |
+| $\lambda$, $\mu$ | lambda, mu | Las tasas de las exponenciales de $T$ y de $C$ en la simulación |
+| $O-E$ | o menos e | Lo observado menos lo esperado, sumado sobre los instantes |
+| $\chi^2$ | ji cuadrado | La distribución de referencia de la prueba, con un grado de libertad |
+:::
+
+## 1. Lo que se observa no es lo que se quiere
+
+::: {.definicion}
+**Definición 17.1 (censura por la derecha).** Cada sujeto tiene un tiempo de supervivencia $T$ y un tiempo de censura $C$. Lo que se registra es
+$$Y=\min(T,C),\qquad \delta=\mathbf{1}\{T\le C\}.$$
+Con $\delta=1$ se vio el suceso en $Y$; con $\delta=0$ solo se sabe que $T>Y$. El objetivo es $S(t)=P(T>t)$, y **$T$ no se observa**.
+:::
+
+Esa última frase es todo el problema. La tentación es reducirlo a un conjunto de datos normal por alguno de tres atajos, y los tres fallan de una forma que se puede calcular.
+
+::: {.proposicion}
+**Proposición 17.2 (los tres atajos y su sesgo).** Supóngase $T$ y $C$ independientes. Entonces:
+
+(a) tratar la censura como si fuera el suceso —es decir, estimar $P(Y>t)$— converge a
+$$P(Y>t)=P(T>t)\,P(C>t)=S(t)\,G(t)\ \le\ S(t),$$
+con desigualdad estricta en cuanto $G(t)<1$;
+
+(b) tratar a los censurados como supervivientes eternos sobreestima: converge a $P(T>t\ \text{o}\ \delta=0)\ge S(t)$;
+
+(c) quedarse solo con los casos completos estima la supervivencia **condicionada a haber muerto antes de ser censurado**, que no es $S$ ni tiene por qué parecerse.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (a), $\{Y>t\}=\{T>t\}\cap\{C>t\}$ y los dos sucesos son independientes por hipótesis, luego la probabilidad es el producto. Como $G(t)\le 1$, el producto no supera a $S(t)$, y es estrictamente menor si $G(t)<1$.
+
+Para (b), el suceso $\{T>t\}$ está contenido en $\{T>t\ \text{o}\ \delta=0\}$, así que su probabilidad no es mayor.
+
+Para (c), el conjunto de casos completos es $\{\delta=1\}=\{T\le C\}$, que depende de $T$: condicionar a él cambia la distribución de $T$ salvo que $C$ sea constante e infinito. [∎]{.fin-demo}
+:::
+
+La parte (a) es la más útil de las tres porque **dice exactamente cuánto se pierde**: el factor es la supervivencia de la censura. Con censura frecuente, $G$ baja deprisa y el atajo se hunde con ella.
+
+```{pyodide}
+import numpy as np
+
+# Tiempo real T, tiempo de censura C, y lo unico que se observa: Y y delta.
+lam, mu = 0.5, 0.25          # tasas de la exponencial de cada uno
+rng = np.random.default_rng(17)
+n = 200_000
+T = rng.exponential(1 / lam, n)
+C = rng.exponential(1 / mu, n)
+Y = np.minimum(T, C)
+delta = (T <= C).astype(int)
+
+S = lambda t: np.exp(-lam * t)          # supervivencia verdadera
+G = lambda t: np.exp(-mu * t)           # supervivencia de la censura
+
+print("con %d sujetos simulados:" % n)
+print("   observaciones con el suceso visto (delta = 1): %.4f" % delta.mean())
+print("   el valor exacto es lam/(lam+mu) = %.4f" % (lam / (lam + mu)))
+print()
+
+print("tres atajos, y lo que estiman de verdad en cada instante:")
+print("     t     S(t) real   censura=suceso   S(t)G(t)   solo completos   censurado=vive")
+for t in [0.5, 1.0, 2.0, 4.0]:
+    ingenuo = float((Y > t).mean())                    # el censurado cuenta como muerto
+    completos = float((T[delta == 1] > t).mean())      # solo los que se vieron morir
+    optimista = float(((Y > t) | (delta == 0)).mean()) # el censurado vive para siempre
+    print("%6.1f %12.4f %16.4f %10.4f %16.4f %15.4f"
+          % (t, S(t), ingenuo, S(t) * G(t), completos, optimista))
+print()
+print("la columna del atajo «censura = suceso» sigue a S(t)G(t) y no a S(t):")
+peor = max(abs(float((Y > t).mean()) - S(t) * G(t)) for t in [0.5, 1.0, 2.0, 4.0])
+print("   maxima diferencia contra S(t)G(t) en los cuatro instantes: %.4f" % peor)
+print("   y contra S(t): %.4f"
+      % max(abs(float((Y > t).mean()) - S(t)) for t in [0.5, 1.0, 2.0, 4.0]))
+print()
+print("los tres atajos fallan, y se sabe en que direccion:")
+for t in [1.0, 2.0]:
+    print("   en t = %.1f -> censura=suceso %.4f < real %.4f < censurado=vive %.4f"
+          % (t, float((Y > t).mean()), S(t), float(((Y > t) | (delta == 0)).mean())))
+print("   el de solo completos ni siquiera estima S: condiciona a haber muerto antes")
+print("   de ser censurado, que es una poblacion distinta")
+```
+
+El atajo de la censura sigue a $S(t)G(t)$ con un error máximo de $0{,}0020$ en los cuatro instantes, mientras que se aleja de $S(t)$ hasta $0{,}1452$. No es que estime mal $S$: **es que estima otra cosa, y la estima bien**.
+
+```{=html}
+<div class="viz-censura">
+  <div class="controles">
+    <label>Cuánta censura <input id="ce-g" type="range" min="0" max="0.9" step="0.02" value="0.35"> <span id="ce-g-v">0.35</span></label>
+    <label>Instante <input id="ce-t" type="range" min="0.2" max="6" step="0.05" value="2"> <span id="ce-t-v">2.00</span></label>
+  </div>
+  <svg id="ce-svg" viewBox="0 0 660 340" role="img" aria-label="Arriba, una línea por sujeto con su tiempo observado y una marca distinta según se viera el suceso o hubiera censura; abajo, la supervivencia real y lo que estiman los tres atajos, sobre un eje fijo de cero a uno."></svg>
+  <p class="lectura" id="ce-lectura"></p>
+</div>
+<style>
+.viz-censura { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-censura .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-censura label { display: flex; align-items: center; gap: .4rem; }
+.viz-censura input[type=range] { width: 170px; padding: 0; }
+.viz-censura svg { width: 100%; height: auto; display: block; }
+.viz-censura .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("ce-svg"), lec = document.getElementById("ce-lectura");
+  var cg = document.getElementById("ce-g"), ct = document.getElementById("ce-t");
+  var eg = document.getElementById("ce-g-v"), et = document.getElementById("ce-t-v");
+  var X0 = 44, XW = 576, Y1 = 22, H1 = 128, Y2 = 186, H2 = 118, TMAX = 6;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var px = function (t) { return X0 + t / TMAX * XW; };
+  // 18 sujetos deterministas: los tiempos no cambian, solo la censura
+  var lam = 0.5, N = 18, tiempos = [], censuras = [];
+  var s = 31;
+  function r() { s = (s * 48271) % 2147483647; return s / 2147483647; }
+  for (var i = 0; i < N; i++) { tiempos.push(-Math.log(1 - r() * 0.97) / lam); censuras.push(r()); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var g = +cg.value, t0 = +ct.value;
+    eg.textContent = g.toFixed(2); et.textContent = t0.toFixed(2);
+    // mu se elige para que la fraccion censurada sea aproximadamente g
+    var mu = g <= 0 ? 0 : lam * g / (1 - g);
+    var i, Y = [], D = [], vistos = 0;
+    for (i = 0; i < N; i++) {
+      var c = mu === 0 ? 1e9 : -Math.log(1 - censuras[i] * 0.97) / mu;
+      Y.push(Math.min(tiempos[i], c));
+      D.push(tiempos[i] <= c ? 1 : 0);
+      vistos += D[i];
+    }
+    var py1 = function (k) { return Y1 + (k + 0.5) * H1 / N; };
+    svg.appendChild(el("text", { x: X0, y: 14, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "un sujeto por línea: círculo si se vio el suceso, barra si hubo censura"));
+    for (i = 0; i < N; i++) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py1(i).toFixed(1) + " L" + px(Math.min(Y[i], TMAX)).toFixed(1) + " " + py1(i).toFixed(1),
+        stroke: D[i] ? C_A : C_G, "stroke-width": 1.6, opacity: .7 }));
+      if (Y[i] <= TMAX) {
+        if (D[i]) svg.appendChild(el("circle", { cx: px(Y[i]).toFixed(1), cy: py1(i).toFixed(1), r: 3.4, fill: C_A }));
+        else svg.appendChild(el("path", { d: "M" + px(Y[i]).toFixed(1) + " " + (py1(i) - 4).toFixed(1) + " L" + px(Y[i]).toFixed(1) + " " + (py1(i) + 4).toFixed(1),
+          stroke: C_G, "stroke-width": 2.4 }));
+      }
+    }
+    svg.appendChild(el("path", { d: "M" + px(t0).toFixed(1) + " " + Y1 + " L" + px(t0).toFixed(1) + " " + (Y2 + H2),
+      stroke: C_B, "stroke-width": 1.4, "stroke-dasharray": "4 4", opacity: .8 }));
+
+    // panel de abajo: las curvas, escala fija de 0 a 1
+    var py2 = function (v) { return Y2 + (1 - v) * H2; };
+    var t;
+    for (t = 0; t <= 1.001; t += 0.5) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py2(t).toFixed(1) + " L" + (X0 + XW) + " " + py2(t).toFixed(1),
+        stroke: C_L, "stroke-width": 1, opacity: .5 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py2(t) + 4, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .65 }, t.toFixed(1)));
+    }
+    svg.appendChild(el("text", { x: X0, y: Y2 - 8, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "supervivencia real (roja) y el atajo «censura = suceso» (ámbar)"));
+    function curva(f, color, ancho) {
+      var d = "", q;
+      for (q = 0; q <= TMAX; q += 0.02) d += (d ? " L" : "M") + px(q).toFixed(1) + " " + py2(f(q)).toFixed(1);
+      svg.appendChild(el("path", { d: d, stroke: color, "stroke-width": ancho, fill: "none" }));
+    }
+    curva(function (q) { return Math.exp(-lam * q); }, C_B, 2.4);
+    curva(function (q) { return Math.exp(-(lam + mu) * q); }, C_G, 2.2);
+
+    var Sreal = Math.exp(-lam * t0), Satajo = Math.exp(-(lam + mu) * t0);
+    lec.innerHTML = "Con esta censura, <strong>" + vistos + "</strong> de " + N +
+      " sujetos llegan a verse morir; el resto solo dice «seguía vivo cuando dejé de mirar». " +
+      "En t = <strong>" + t0.toFixed(2) + "</strong> la supervivencia real vale <strong>" + Sreal.toFixed(4) +
+      "</strong> y el atajo da <strong>" + Satajo.toFixed(4) + "</strong>, que es S(t)·G(t) (Proposición 17.2a). " +
+      (g < 0.02 ? "Sin censura las dos curvas coinciden: el atajo solo falla cuando hay algo que censurar."
+                : "La distancia entre las dos curvas es exactamente el factor G(t), y crece con el tiempo aunque la censura no cambie.");
+  }
+  cg.addEventListener("input", dibujar);
+  ct.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Kaplan-Meier, o qué hacer con la masa de un censurado
+
+::: {.definicion}
+**Definición 17.3 (curva de Kaplan-Meier).** Sean $t_1<t_2<\dots$ los instantes donde se observa al menos un suceso, $n_k$ los sujetos en riesgo justo antes de $t_k$ —es decir, los que tienen $Y\ge t_k$— y $d_k$ los sucesos en $t_k$. La curva es
+$$\hat{S}(t)=\prod_{k:\,t_k\le t}\Big(1-\frac{d_k}{n_k}\Big).$$
+Solo baja en instantes con suceso; en un censurado no baja, pero el censurado deja de contar en los $n_k$ posteriores.
+:::
+
+::: {.proposicion}
+**Proposición 17.4 (dos maneras de entenderla).** Con la notación de la Definición 17.3:
+
+(a) **sin ninguna censura**, $\hat{S}$ coincide con la supervivencia empírica $\frac1n\#\{i: Y_i>t\}$ en todo $t$;
+
+(b) **con censura**, $\hat{S}$ coincide con la supervivencia de la distribución que se obtiene dando masa $1/n$ a cada observación y **repartiendo la masa de cada censurado, en orden creciente, a partes iguales entre las observaciones estrictamente mayores**. La coincidencia vale para todo $t$ menor que el mayor tiempo observado.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (a), sin censura $n_k$ es el número de $Y_i\ge t_k$ y $d_k$ el de $Y_i=t_k$, de modo que $1-d_k/n_k=n_{k+1}/n_k$ con $n_{k+1}$ el número de $Y_i>t_k$. El producto telescopea:
+$$\prod_{k:\,t_k\le t}\frac{n_{k+1}}{n_k}=\frac{\#\{i:Y_i>t\}}{n},$$
+porque $n_1=n$ y cada denominador cancela con el numerador anterior.
+
+Para (b) la clave es que el reparto no cambia la masa total a la derecha de ningún punto anterior al censurado, y multiplica la masa a la derecha de él por el factor que toca. Al procesar los censurados en orden creciente, el efecto acumulado sobre $\#\{\text{masa}>t\}$ es exactamente el producto de los factores $1-d_k/n_k$. Si el censurado es el mayor de todos no hay a quién repartir y su masa se queda donde está; por eso la curva se detiene en un valor positivo y por eso la identidad se enuncia solo por debajo del mayor tiempo observado. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def kaplan_meier(Y, delta):
+    """La curva: producto de (1 - muertos/en riesgo) sobre los instantes con suceso."""
+    orden = np.argsort(Y, kind="mergesort")
+    Y, delta = Y[orden], delta[orden]
+    instantes, curva, S = [], [], 1.0
+    for t in np.unique(Y[delta == 1]):
+        en_riesgo = int((Y >= t - 1e-12).sum())
+        muertos = int(((Y == t) & (delta == 1)).sum())
+        S *= 1.0 - muertos / en_riesgo
+        instantes.append(float(t)); curva.append(S)
+    return np.array(instantes), np.array(curva)
+
+def evalua(instantes, curva, t):
+    k = np.searchsorted(instantes, t, side="right")
+    return 1.0 if k == 0 else float(curva[k - 1])
+
+# (a) Sin censura, Kaplan-Meier es la supervivencia empirica y nada mas.
+rng = np.random.default_rng(7)
+Y = np.round(rng.exponential(2.0, 40), 4)
+sin_censura = np.ones(len(Y), dtype=int)
+inst, curva = kaplan_meier(Y, sin_censura)
+peor = 0.0
+for t in np.linspace(0, 12, 601):
+    empirica = float((Y > t).mean())
+    peor = max(peor, abs(evalua(inst, curva, t) - empirica))
+print("sin ninguna censura, con %d observaciones:" % len(Y))
+print("   Kaplan-Meier y la supervivencia empirica coinciden en 601 instantes")
+print("   a 1e-12: %s" % bool(peor < 1e-12))
+print("   la curva da %d escalones, uno por tiempo distinto" % len(inst))
+print()
+
+# (b) Con censura: Kaplan-Meier es repartir a la derecha la masa de los censurados.
+Y = np.array([2.0, 3.0, 4.0, 4.5, 6.0, 7.0, 9.0, 11.0])
+delta = np.array([1, 0, 1, 1, 0, 1, 1, 0])
+inst, curva = kaplan_meier(Y, delta)
+print("ocho sujetos, con censura en %s" % Y[delta == 0].tolist())
+print("   instante   en riesgo   muertos   Kaplan-Meier")
+for t in inst:
+    print("%11.1f %11d %9d %14.6f"
+          % (t, int((Y >= t).sum()), int(((Y == t) & (delta == 1)).sum()), evalua(inst, curva, t)))
+print()
+
+masa = np.full(len(Y), 1.0 / len(Y))
+for t in np.sort(Y[delta == 0]):
+    i = int(np.flatnonzero(Y == t)[0])
+    posteriores = Y > t
+    if posteriores.any():
+        masa[posteriores] += masa[i] / int(posteriores.sum())
+        masa[i] = 0.0
+    # Si el censurado es el mayor de todos, su masa NO tiene a donde ir y se
+    # queda donde esta. Por eso la curva de Kaplan-Meier no llega a cero.
+# La identidad vale mientras quede alguien a la derecha, o sea por debajo del
+# mayor tiempo observado. Mas alla, Kaplan-Meier se queda plano y no afirma nada.
+tope = float(Y.max())
+malla = np.linspace(0, tope - 1e-6, 1200)
+peor = max(abs(evalua(inst, curva, t) - float(masa[Y > t].sum())) for t in malla)
+print("repartiendo a la derecha la masa de cada censurado, en orden:")
+print("   masa final de cada sujeto:", [round(float(m), 6) for m in masa])
+print("   suma de las masas: %.6f" % float(masa.sum()))
+print("   coincide con Kaplan-Meier en %d instantes por debajo de t = %.1f" % (len(malla), tope))
+print("   a 1e-12: %s" % bool(peor < 1e-12))
+print()
+print("por eso la curva no baja en un censurado: su masa no desaparece, se")
+print("reparte entre los que siguen vivos despues de el")
+print()
+print("y si el censurado es el mayor de todos, como el de t = 11, su masa se")
+print("queda: no hay nadie a la derecha entre quien repartirla. Ahi esta la")
+print("razon de que la curva se detenga en %.6f y nunca llegue a cero"
+      % evalua(inst, curva, 12.0))
+```
+
+La segunda lectura es la que hace entender la primera. Kaplan-Meier **no descarta** a los censurados ni los cuenta como muertos: reparte lo que sabe de ellos —que llegaron vivos hasta ahí— entre los que siguieron. Y cuando el último dato es un censurado, esa masa no tiene destinatario y la curva se queda colgada en $0{,}194444$, que es la forma honesta de decir «a partir de aquí no sé».
+
+```{=html}
+<div class="viz-km">
+  <div class="controles">
+    <label>Hasta el instante <input id="km-t" type="range" min="0" max="12" step="0.1" value="12"> <span id="km-t-v">12.0</span></label>
+    <label>El dato de t = 4 es
+      <select id="km-d">
+        <option value="1" selected>un suceso</option>
+        <option value="0">una censura</option>
+      </select>
+    </label>
+  </div>
+  <svg id="km-svg" viewBox="0 0 660 330" role="img" aria-label="La curva de Kaplan-Meier construida escalón a escalón hasta el instante elegido, con el conjunto en riesgo dibujado debajo de cada tramo."></svg>
+  <p class="lectura" id="km-lectura"></p>
+</div>
+<style>
+.viz-km { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-km .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-km label { display: flex; align-items: center; gap: .4rem; }
+.viz-km input[type=range] { width: 170px; padding: 0; }
+.viz-km select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-km svg { width: 100%; height: auto; display: block; }
+.viz-km .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_G = "#8A6D1F";
+  var svg = document.getElementById("km-svg"), lec = document.getElementById("km-lectura");
+  var ct = document.getElementById("km-t"), cd = document.getElementById("km-d");
+  var et = document.getElementById("km-t-v");
+  // Marco anclado: t de 0 a 12, supervivencia de 0 a 1, siempre.
+  var X0 = 48, XW = 572, Y0 = 26, YH = 190, TMAX = 12;
+  var Y = [2, 3, 4, 4.5, 6, 7, 9, 11];
+  var base = [1, 0, 1, 1, 0, 1, 1, 0];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var px = function (t) { return X0 + t / TMAX * XW; };
+  var py = function (v) { return Y0 + (1 - v) * YH; };
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var tope = +ct.value, d4 = +cd.value;
+    et.textContent = tope.toFixed(1);
+    var D = base.slice(); D[2] = d4;
+
+    var t, i;
+    for (t = 0; t <= 1.001; t += 0.25) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(t).toFixed(1) + " L" + (X0 + XW) + " " + py(t).toFixed(1),
+        stroke: C_L, "stroke-width": 1, opacity: .5 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(t) + 4, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .65 }, t.toFixed(2)));
+    }
+    [0, 3, 6, 9, 12].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y0 + YH + 17, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .65 }, v));
+    });
+    svg.appendChild(el("text", { x: X0, y: 16, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "Ŝ(t), construida escalón a escalón"));
+
+    var S = 1, d = "M" + X0 + " " + py(1).toFixed(1), ultimo = 0, escalones = 0, detalle = [];
+    var instantes = [];
+    for (i = 0; i < Y.length; i++) if (D[i] === 1 && instantes.indexOf(Y[i]) < 0) instantes.push(Y[i]);
+    instantes.sort(function (a, b) { return a - b; });
+    for (var k = 0; k < instantes.length; k++) {
+      var tk = instantes[k];
+      if (tk > tope) break;
+      var nk = 0, dk = 0;
+      for (i = 0; i < Y.length; i++) { if (Y[i] >= tk - 1e-9) nk++; if (Math.abs(Y[i] - tk) < 1e-9 && D[i] === 1) dk++; }
+      d += " L" + px(tk).toFixed(1) + " " + py(S).toFixed(1);
+      S *= 1 - dk / nk;
+      d += " L" + px(tk).toFixed(1) + " " + py(S).toFixed(1);
+      ultimo = tk; escalones++;
+      detalle.push({ t: tk, n: nk, d: dk, S: S });
+      svg.appendChild(el("text", { x: px(tk), y: Y0 + YH + 32, "text-anchor": "middle", "font-size": 10, fill: C_A, opacity: .85 }, nk));
+    }
+    d += " L" + px(Math.min(tope, TMAX)).toFixed(1) + " " + py(S).toFixed(1);
+    svg.appendChild(el("path", { d: d, stroke: C_T, "stroke-width": 2.4, fill: "none" }));
+    svg.appendChild(el("text", { x: X0, y: Y0 + YH + 32, "text-anchor": "end", "font-size": 10, fill: C_A, opacity: .85 }, ""));
+    svg.appendChild(el("text", { x: X0 - 6, y: Y0 + YH + 32, "text-anchor": "end", "font-size": 10, fill: C_A }, "en riesgo:"));
+    // las censuras, marcadas sobre la curva
+    for (i = 0; i < Y.length; i++) if (D[i] === 0 && Y[i] <= tope) {
+      var Sc = 1;
+      for (var j = 0; j < detalle.length; j++) if (detalle[j].t <= Y[i]) Sc = detalle[j].S;
+      svg.appendChild(el("path", { d: "M" + px(Y[i]).toFixed(1) + " " + (py(Sc) - 5).toFixed(1) +
+        " L" + px(Y[i]).toFixed(1) + " " + (py(Sc) + 5).toFixed(1), stroke: C_G, "stroke-width": 2.4 }));
+    }
+
+    lec.innerHTML = "Hasta t = <strong>" + tope.toFixed(1) + "</strong> la curva ha dado <strong>" + escalones +
+      "</strong> escalones y vale <strong>" + S.toFixed(6) + "</strong>. Los números bajo el eje son los sujetos en riesgo en cada instante, " +
+      "y las marcas verticales ámbar son las censuras: <strong>la curva no baja en ellas</strong>, pero después el denominador es menor y " +
+      "cada muerte pesa más. " +
+      (d4 === 1
+        ? "Con el dato de t = 4 como suceso, la curva baja ahí."
+        : "Con el dato de t = 4 como censura, ese escalón desaparece y el de t = 4,5 cae más hondo: la masa se ha repartido (Proposición 17.4b).");
+  }
+  ct.addEventListener("input", dibujar);
+  cd.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Comparar dos curvas
+
+::: {.definicion}
+**Definición 17.5 (estadístico log-rank).** En cada instante $t_k$ con suceso, sean $n_k$ los sujetos en riesgo, $n_{1k}$ los del grupo $1$ entre ellos, $d_k$ los sucesos y $d_{1k}$ los del grupo $1$. El estadístico es
+$$\frac{\Big(\sum_k \big(d_{1k}-\tfrac{d_k n_{1k}}{n_k}\big)\Big)^2}{\sum_k \dfrac{d_k\,\tfrac{n_{1k}}{n_k}\big(1-\tfrac{n_{1k}}{n_k}\big)(n_k-d_k)}{n_k-1}}.$$
+:::
+
+::: {.proposicion}
+**Proposición 17.6 (de dónde salen esos dos términos).** Bajo la hipótesis de que los dos grupos tienen la misma supervivencia, y condicionando a $n_k$, $n_{1k}$ y $d_k$, el número $d_{1k}$ de sucesos del grupo $1$ sigue una distribución **hipergeométrica**, cuya media y varianza son exactamente el numerador y el sumando del denominador de la Definición 17.5.
+:::
+
+::: {.demostracion}
+*Demostración.* Bajo la hipótesis nula, los $d_k$ sujetos que sufren el suceso en $t_k$ son una muestra sin reemplazo de los $n_k$ en riesgo, de los cuales $n_{1k}$ son del grupo $1$: eso es la definición de la hipergeométrica. Su media es $d_k\,n_{1k}/n_k$ y su varianza es
+$$d_k\,\frac{n_{1k}}{n_k}\Big(1-\frac{n_{1k}}{n_k}\Big)\frac{n_k-d_k}{n_k-1},$$
+donde el último factor es la corrección por población finita. La celda las comprueba enumerando **todos** los repartos posibles de un instante concreto. Que la suma estandarizada se reparta como una $\chi^2$ con un grado de libertad es un resultado asintótico que **aquí no se demuestra**: se mide. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def log_rank(Y, delta, grupo):
+    """El estadistico: en cada instante con suceso, lo observado menos lo esperado."""
+    O_menos_E, varianza, filas = 0.0, 0.0, []
+    for t in np.unique(Y[delta == 1]):
+        n_riesgo = int((Y >= t).sum())
+        n1 = int(((Y >= t) & (grupo == 1)).sum())
+        d = int(((Y == t) & (delta == 1)).sum())
+        d1 = int(((Y == t) & (delta == 1) & (grupo == 1)).sum())
+        # bajo la hipotesis nula, d1 es hipergeometrica: de n_riesgo bolas, n1
+        # del grupo 1, se sacan d sin reemplazo
+        esperado = d * n1 / n_riesgo
+        if n_riesgo > 1:
+            v = d * (n1 / n_riesgo) * (1 - n1 / n_riesgo) * (n_riesgo - d) / (n_riesgo - 1)
+        else:
+            v = 0.0
+        O_menos_E += d1 - esperado
+        varianza += v
+        filas.append((float(t), n_riesgo, n1, d, d1, esperado, v))
+    return O_menos_E, varianza, filas
+
+# Un ejemplo pequeno, para ver la cuenta instante a instante.
+Y = np.array([2.0, 3.0, 4.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
+delta = np.array([1, 1, 1, 0, 1, 1, 0, 1, 1, 0])
+grupo = np.array([1, 0, 1, 1, 0, 0, 1, 0, 1, 0])
+OE, V, filas = log_rank(Y, delta, grupo)
+print("instante  en riesgo  del grupo 1  muertos  del grupo 1  esperado  varianza")
+for t, nr, n1, d, d1, e, v in filas:
+    print("%8.1f %10d %12d %8d %12d %9.4f %9.4f" % (t, nr, n1, d, d1, e, v))
+print()
+print("suma de observado menos esperado: %.6f" % OE)
+print("suma de varianzas               : %.6f" % V)
+print("estadistico (O-E)^2 / V         : %.6f" % (OE * OE / V))
+print()
+
+# La media y la varianza que se usan son las EXACTAS de la hipergeometrica.
+# Se comprueba enumerando todos los repartos posibles de un instante concreto.
+from itertools import combinations
+n_riesgo, n1, d = 7, 3, 2
+casos = list(combinations(range(n_riesgo), d))
+cuenta = np.array([sum(1 for i in c if i < n1) for c in casos], dtype=float)
+print("en un instante con %d en riesgo, %d del grupo 1 y %d muertos:" % (n_riesgo, n1, d))
+print("   repartos posibles: %d" % len(casos))
+print("   media enumerada  : %.10f" % cuenta.mean())
+print("   la formula d*n1/n: %.10f" % (d * n1 / n_riesgo))
+print("   varianza enumerada: %.10f" % cuenta.var())
+v_formula = d * (n1 / n_riesgo) * (1 - n1 / n_riesgo) * (n_riesgo - d) / (n_riesgo - 1)
+print("   la formula        : %.10f" % v_formula)
+print("   coinciden a 1e-12: %s" % bool(abs(cuenta.mean() - d * n1 / n_riesgo) < 1e-12
+                                        and abs(cuenta.var() - v_formula) < 1e-12))
+print()
+
+# Y la calibracion: bajo la nula, el estadistico deberia repartirse como chi2 con
+# un grado de libertad. Se mide, no se demuestra.
+rng = np.random.default_rng(23)
+estadisticos = []
+for _ in range(4000):
+    m = 60
+    T = rng.exponential(2.0, m)
+    C = rng.exponential(4.0, m)
+    yy = np.minimum(T, C); dd = (T <= C).astype(int)
+    gg = np.r_[np.ones(m // 2), np.zeros(m - m // 2)].astype(int)
+    o, v, _ = log_rank(yy, dd, gg)
+    if v > 0:
+        estadisticos.append(o * o / v)
+estadisticos = np.array(estadisticos)
+m_ensayos = len(estadisticos)
+print("bajo la nula, con %d ensayos de 60 sujetos cada uno:" % m_ensayos)
+print("   nivel   rechazos   error tipico del ensayo   desvios de distancia")
+for nivel, corte in [(0.10, 2.7055), (0.05, 3.8415), (0.01, 6.6349)]:
+    obs = float((estadisticos > corte).mean())
+    et = (nivel * (1 - nivel) / m_ensayos) ** 0.5
+    print("%8.0f%% %10.4f %24.4f %21.1f" % (100 * nivel, obs, et, (obs - nivel) / et))
+print()
+print("los TRES niveles quedan por encima del nominal, a 2.3, 3.0 y 3.5 desvios:")
+print("con 60 sujetos la aproximacion chi-cuadrado es optimista en todo el rango.")
+print("y el exceso RELATIVO crece hacia la cola:")
+for nivel, corte in [(0.10, 2.7055), (0.05, 3.8415), (0.01, 6.6349)]:
+    obs = float((estadisticos > corte).mean())
+    print("   al %4.1f%% rechaza %5.2f%%, o sea un %+.0f por ciento de mas"
+          % (100 * nivel, 100 * obs, 100 * (obs / nivel - 1)))
+print()
+print("asi que una prueba que promete el 1 por ciento esta dando cerca del 1.5,")
+print("y conviene no apoyarse en la cola con muestras de este tamano")
+```
+
+La media y la varianza salen exactas por enumeración: $0{,}8571428571$ y $0{,}4081632653$ en el instante que se examina, idénticas a las fórmulas.
+
+La calibración es otra cosa, y conviene leerla con cuidado. Con $60$ sujetos y $4000$ ensayos, la prueba rechaza el $11{,}10\,\%$ al nivel del $10$, el $6{,}02$ al del $5$ y el $1{,}55$ al del $1$: **los tres por encima**, a $2{,}3$, $3{,}0$ y $3{,}5$ errores típicos. La aproximación es optimista en todo el rango y su exceso relativo crece hacia la cola, de un $11\,\%$ a un $55\,\%$.
+
+Eso no invalida la prueba: la invita a usarse con la cola corta. Una diferencia que sale al $1\,\%$ con sesenta sujetos está más cerca del $1{,}5$, y conviene decirlo antes que después.
+
+## Ejercicios
+
+### Ejercicio 1, Lo que estima el atajo
+
+Con supervivencia exponencial de tasa $0{,}4$ y censura exponencial de tasa $0{,}3$, calcular en $t=2$ la supervivencia real y lo que estima el atajo de tratar la censura como suceso.
+
+```{pyodide}
+#| exercise: ex_atajo
+from math import exp
+
+lam, mu, t = 0.4, 0.3, 2.0
+
+real = ______
+atajo = ______
+
+print(round(real, 6), round(atajo, 6))
+round(atajo, 6)
+```
+
+::: {.hint exercise="ex_atajo"}
+La real es $S(t)=e^{-\lambda t}$ y el atajo converge a $S(t)G(t)=e^{-(\lambda+\mu)t}$, por la Proposición 17.2a.
+:::
+
+::: {.solution exercise="ex_atajo"}
+```{pyodide}
+from math import exp
+
+lam, mu, t = 0.4, 0.3, 2.0
+
+real = exp(-lam * t)
+atajo = exp(-(lam + mu) * t)
+
+print(round(real, 6), round(atajo, 6))
+round(atajo, 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_atajo
+#| check: true
+if abs(result - 0.246597) < 1e-5:
+    feedback = {"correct": True, "message": "Correcto: 0,246597 frente a un 0,449329 real. El atajo se queda casi a la mitad, y no porque estime mal: estima S(t)·G(t), que es otra cosa.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.246597 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Un escalón de Kaplan-Meier
+
+Justo antes de un instante hay $12$ sujetos en riesgo y en él ocurren $2$ sucesos. Si la curva valía $0{,}75$, calcular cuánto vale después.
+
+```{pyodide}
+#| exercise: ex_km
+en_riesgo, muertos, antes = 12, 2, 0.75
+
+factor = ______
+despues = ______
+
+print(round(factor, 6), round(despues, 6))
+round(despues, 6)
+```
+
+::: {.hint exercise="ex_km"}
+Cada escalón multiplica por $1-d_k/n_k$. Aquí ese factor es $1-2/12$.
+:::
+
+::: {.solution exercise="ex_km"}
+```{pyodide}
+en_riesgo, muertos, antes = 12, 2, 0.75
+
+factor = 1 - muertos / en_riesgo
+despues = antes * factor
+
+print(round(factor, 6), round(despues, 6))
+round(despues, 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_km
+#| check: true
+if abs(result - 0.625) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: 0,625. Con solo 4 en riesgo en vez de 12, los mismos 2 sucesos habrían dejado la curva en 0,375: el mismo número de muertes pesa el triple cuando queda menos gente.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.625 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 17**:
+
+1. Comprobar que Kaplan-Meier acierta donde los atajos fallan: simular con censura conocida, calcular la curva y contrastarla contra la supervivencia verdadera en varios instantes. Anotar cómo crece el error en la cola y con qué cantidad de sujetos en riesgo deja de ser fiable.
+2. Romper el supuesto de independencia entre $T$ y $C$ —censurar antes a quienes van a morir antes— y medir cuánto se desvía Kaplan-Meier. Anotar en qué dirección va el sesgo y por qué ningún método que solo vea $Y$ y $\delta$ puede detectarlo.
+3. Repetir la medición de calibración de la sección 3 con $30$, $60$, $200$ y $600$ sujetos, y anotar en `50-Errores/` a partir de qué tamaño la cola del $1\,\%$ deja de estar por encima de su nivel. Comparar con la advertencia de la Proposición 17.6.
+
+## Del libro
+
+*An Introduction to Statistical Learning with Applications in Python* trata este material en §11.1 *Survival and Censoring Times*, §11.2 *A Closer Look at Censoring*, §11.3 *The Kaplan–Meier Survival Curve* y §11.4 *The Log-Rank Test*.
+
+**El capítulo 11 se reparte en dos lecciones.** Esta cubre §11.1–11.4, el caso sin covariables; la **lección 18** cubre §11.5–11.7, donde entran la función de riesgo, el modelo de Cox y su regularización. El capítulo tiene $17$ unidades enseñables y **no reaparece en ninguna fase posterior**, así que partirlo en dos es lo que evita que quede en una pasada superficial.
+
+**Dos diferencias con el libro que conviene tener presentes.** La primera: el libro advierte de que ignorar la censura sesga el resultado. Esta página **calcula el sesgo**: la Proposición 17.2a dice que el atajo converge exactamente a $S(t)G(t)$, con lo que el factor perdido tiene nombre y se puede medir.
+
+La segunda: el libro presenta Kaplan-Meier con su fórmula de producto y su justificación por probabilidades condicionadas. Esta página añade la lectura de **repartir a la derecha** —Proposición 17.4b—, que es una identidad exacta y no una analogía, y de la que se lee de inmediato por qué la curva no llega a cero cuando el último dato es un censurado.
+
+**Preguntas para leer §11.1–11.4 con lápiz:**
+
+1. §11.2 distingue entre censura independiente y censura informativa. Con la Proposición 17.2a, ¿qué paso exacto de la demostración se cae si $T$ y $C$ no son independientes?
+2. §11.3 deduce la fórmula del producto por probabilidades condicionadas sucesivas. Con la Proposición 17.4a, ¿qué se obtiene al aplicar esa misma deducción a datos sin ninguna censura?
+3. §11.4 presenta el estadístico log-rank y dice que se distribuye aproximadamente como una $\chi^2$. Con la medición de la sección 3, ¿en qué dirección falla esa aproximación con muestras pequeñas y qué consecuencia práctica tiene?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/censura-y-supervivencia.md`, enlazada a [[bootstrap]], [[pruebas-de-hipotesis]] y [[arboles-de-decision]]. Conviene rehacer a mano la Proposición 17.4a: ver el producto telescopar hasta la supervivencia empírica deja claro de una vez que **Kaplan-Meier no es un método aparte**, sino lo que queda de la distribución empírica cuando algunos datos solo dicen «más que esto».
+
+```
+¿Qué se observa con censura por la derecha?::Y = min(T, C) y un indicador δ
+¿Qué dice δ = 0?::Que el tiempo real es mayor que Y, nada más
+¿Qué estima tratar la censura como suceso?::S(t)·G(t), no S(t)
+¿Qué es G(t)?::La supervivencia de la censura
+¿Y tratar al censurado como superviviente eterno?::Sobreestima S(t)
+¿Y quedarse solo con los casos completos?::Estima otra población: la que muere antes de ser censurada
+¿Cuál es la fórmula de Kaplan-Meier?::El producto de (1 − dₖ/nₖ) sobre los instantes con suceso
+¿Cuándo baja la curva?::Solo en instantes con suceso
+¿Qué hace entonces una censura?::Sale del conjunto en riesgo, así que las muertes posteriores pesan más
+¿A qué se reduce sin censura?::A la supervivencia empírica, exactamente
+¿Cuál es la otra lectura?::Repartir a la derecha la masa de cada censurado
+¿Por qué no llega a cero la curva?::Si el último dato es censurado, su masa no tiene a quién repartirse
+¿De qué distribución sale el log-rank?::De la hipergeométrica en cada instante con suceso
+¿Cuál es su media?::dₖ·n₁ₖ/nₖ
+¿Y su varianza?::Esa misma con el factor (nₖ − dₖ)/(nₖ − 1)
+¿Está bien calibrada la prueba con 60 sujetos?::No: rechaza de más en los tres niveles, y un 55 % de más al 1 %
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 17.2a se demuestra por independencia de los dos sucesos; se comprueba con $200\,000$ sujetos simulados, donde el atajo sigue a $S(t)G(t)$ con un error máximo de $0{,}0020$ en cuatro instantes mientras se aparta de $S(t)$ hasta $0{,}1452$, y donde la fracción de sucesos observados sale $0{,}6679$ contra el $2/3$ exacto. Las partes (b) y (c) se demuestran por inclusión de sucesos y por dependencia del condicionamiento. La Proposición 17.4a se demuestra viendo telescopar el producto; se comprueba en $601$ instantes sobre $40$ observaciones sin censura, con coincidencia a $10^{-12}$. La 17.4b se demuestra por el efecto acumulado del reparto; se comprueba sobre ocho sujetos con tres censuras, en $1200$ instantes por debajo del mayor tiempo observado, a $10^{-12}$, y las masas finales suman $1{,}000000$. La Proposición 17.6 se demuestra identificando el sorteo sin reemplazo bajo la hipótesis nula; se comprueba **enumerando los $21$ repartos posibles** de un instante con $7$ en riesgo, $3$ del grupo uno y $2$ sucesos, donde la media y la varianza enumeradas coinciden con las fórmulas a $10^{-12}$. Los dos visuales recalculan estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** La distribución empírica y su papel como estimador no paramétrico son de Estadística 11. El nivel de una prueba y qué significa que esté calibrada son de Estadística 10. La función de supervivencia como complemento de la acumulada es de Estadística 2.
+
+**Lo que se enuncia sin demostrar.** Que el estadístico log-rank se reparte asintóticamente como una $\chi^2$ con un grado de libertad **no se demuestra**: exige teoría de martingalas para procesos de conteo. Lo que la página hace en su lugar es **medirlo**, y el resultado es una advertencia concreta: con $60$ sujetos la aproximación rechaza de más en los tres niveles probados, a $2{,}3$, $3{,}0$ y $3{,}5$ errores típicos, con un exceso relativo que va del $11\,\%$ al $55\,\%$. Que Kaplan-Meier es el estimador de máxima verosimilitud no paramétrico se menciona en el libro y **aquí no se demuestra ni se usa**: las dos caracterizaciones que sí se demuestran son la telescópica y la del reparto.
+
+**Lo que viene de los libros.**
+
+- [*An Introduction to Statistical Learning with Applications in Python*](https://www.statlearning.com/) (James, Witten, Hastie, Tibshirani, Taylor; Springer, 2023), §11.1 *Survival and Censoring Times*, §11.2 *A Closer Look at Censoring*, §11.3 *The Kaplan–Meier Survival Curve* y §11.4 *The Log-Rank Test* — citadas por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La Proposición 17.2 con los tres atajos puestos uno al lado del otro y el sesgo de cada uno calculado, en lugar de una advertencia general: el factor $G(t)$ convierte «sesga» en una cantidad. La Proposición 17.4b, la identidad del reparto a la derecha, demostrada y comprobada a $10^{-12}$, con la consecuencia sobre el último censurado leída directamente de ella. Y la medición de calibración de la sección 3 con su error típico al lado, que convierte «aproximadamente $\chi^2$» en un número: cuántos desvíos, en qué dirección y con qué exceso relativo.
+
+[Índice de ISLP verificado el 13-09-2026 contra los marcadores del PDF oficial.]{.sello}
+:::
