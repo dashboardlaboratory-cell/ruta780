@@ -104,6 +104,7 @@ MIGRADAS = {
     "ml/13-bagging-bosques-y-boosting.qmd",
     "ml/14-margen-maximo.qmd",
     "ml/15-nucleos-y-perdida-bisagra.qmd",
+    "ml/16-redes-neuronales.qmd",
     "python/01-tipos-y-estructuras.qmd",
     "python/02-funciones-y-scope.qmd",
     "python/03-comprehensions.qmd",

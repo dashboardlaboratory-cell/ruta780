@@ -1,0 +1,810 @@
+---
+title: "Redes neuronales, primera vuelta"
+subtitle: "Machine Learning · Lección 16"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/10-bases-y-splines, ml/09-alta-dimension, matematica/16-descenso-de-gradiente]
+siguientes: []
+libro: "ISLP §10.1 Single Layer Neural Networks · §10.2 Multilayer Neural Networks · §10.6 When to Use Deep Learning · §10.8 Interpolation and Double Descent"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="ml/16-redes-neuronales"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §10.1–10.2, §10.6, §10.8]{.item}
+[**Prereqs** [Bases y splines](10-bases-y-splines.qmd) · [Alta dimensión](09-alta-dimension.qmd) · [Descenso de gradiente](../matematica/16-descenso-de-gradiente.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir una [red de una capa oculta]{.g data-t="red de una capa oculta"} y decir cuántos parámetros tiene.
+2. **Demostrar que sin activación no lineal, apilar capas no añade absolutamente nada**, y comprobarlo sobre una red de tres capas.
+3. Demostrar que en una variable, una capa oculta de $K$ unidades [ReLU]{.g} es **exactamente** la familia de funciones lineales a trozos con a lo sumo $K$ quiebres.
+4. Demostrar que la profundidad multiplica los trozos y la anchura los suma, y contar el precio de cada camino.
+5. Explicar qué dice y qué no dice el [doble descenso]{.g}, y por qué su pico no se puede citar con decimales.
+6. Decir dónde termina esta lección y qué partes del capítulo 10 quedan para la Fase 4.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 10**: las funciones base, que ampliaban el espacio con una base **elegida a mano**; aquí la red la aprende.
+- **Machine Learning 15**: el núcleo, que amplía el espacio sin construirlo; la red lo construye y lo ajusta.
+- **Machine Learning 9**: la regresión con más parámetros que observaciones, que es donde vive la sección 4.
+- **Álgebra 16**: el descenso de gradiente, que es como se ajustan estos modelos.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 35**: la retropropagación derivada a mano, que es el gradiente de la Definición 16.1.
+- **Machine Learning 36**: la red densa escrita entera en NumPy, que implementa lo que aquí solo se define.
+- **Machine Learning 37 y 38**: la inicialización, las activaciones y los optimizadores, que son las decisiones que esta página deja abiertas.
+- **Machine Learning 40**: la convolución, que es la arquitectura de §10.3 y no se toca aquí.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $g$ | ge | La función de activación, aplicada coordenada a coordenada |
+| $z$ | zeta | El argumento de la activación, es decir la combinación lineal antes de aplicarla |
+| $\theta$ | theta | El vector de coeficientes del modelo lineal de la sección 4 |
+| $K$ | ka | El número de unidades de una capa oculta |
+| $w_{kj}$ | doble ve sub ka jota | El peso de la entrada $j$ en la unidad $k$ |
+| $w_{k0}$ | doble ve sub ka cero | El sesgo de la unidad $k$ |
+| $\beta_k$ | beta sub ka | El peso de la unidad $k$ en la salida |
+| $p$ | pe | El número de predictores de entrada |
+| $n$ | ene | El número de observaciones |
+| $d$ | de | El número de rasgos del modelo, en la sección 4 |
+| $A_k$ | a sub ka | La activación de la unidad $k$, es decir $g(w_{k0}+\sum_j w_{kj}x_j)$ |
+| $P$ | pe mayúscula | La función pliegue de la sección 3, que dobla $[0,1]$ por la mitad |
+:::
+
+## 1. Qué calcula una red, y qué pasa sin la activación
+
+::: {.definicion}
+**Definición 16.1 (red de una capa oculta).** Con $p$ entradas y $K$ unidades ocultas,
+$$A_k=g\Big(w_{k0}+\sum_{j=1}^{p}w_{kj}x_j\Big),\qquad f(x)=\beta_0+\sum_{k=1}^{K}\beta_k A_k,$$
+donde $g$ es la **activación**. Los parámetros son los $K(p+1)$ pesos de la capa oculta más los $K+1$ de la salida. Una red de varias capas repite el primer paso, tomando como entrada las activaciones de la capa anterior.
+:::
+
+La activación parece un detalle de implementación y no lo es: es lo único que separa a este modelo de una regresión lineal.
+
+::: {.proposicion}
+**Proposición 16.2 (sin no linealidad no hay nada nuevo).** Si $g$ es afín, $g(z)=az+b$, entonces una red con cualquier número de capas y cualquier anchura calcula una función **afín** de $x$. En particular, todos sus parámetros se reducen a $p+1$ números.
+:::
+
+::: {.demostracion}
+*Demostración.* Una capa con activación afín manda $h$ a $a(Wh+w_0)+b\mathbf{1}=(aW)h+(aw_0+b\mathbf{1})$, que es afín en $h$. La composición de dos funciones afines es afín: si $u\mapsto A_1u+c_1$ y $v\mapsto A_2v+c_2$, la composición es $u\mapsto A_2A_1u+(A_2c_1+c_2)$. Por inducción sobre el número de capas, la red entera es $x\mapsto Ax+c$ para una matriz $A$ y un vector $c$, y la salida final, que es una forma lineal de eso, es afín en $x$. Una función afín de $\mathbb{R}^p$ en $\mathbb{R}$ queda determinada por $p+1$ números. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(3)
+
+def capa(W, b, x, activacion):
+    return activacion(x @ W.T + b)
+
+identidad = lambda z: z
+relu = lambda z: np.maximum(0.0, z)
+
+# Una red de tres capas ocultas, con anchuras 6, 5 y 4.
+p = 3
+anchuras = [6, 5, 4]
+pesos, sesgos = [], []
+entrada = p
+for ancho in anchuras:
+    pesos.append(rng.normal(0, 0.8, size=(ancho, entrada)))
+    sesgos.append(rng.normal(0, 0.5, size=ancho))
+    entrada = ancho
+w_final = rng.normal(0, 0.8, size=entrada)
+b_final = float(rng.normal())
+
+def red(X, activacion):
+    h = X
+    for W, b in zip(pesos, sesgos):
+        h = capa(W, b, h, activacion)
+    return h @ w_final + b_final
+
+X = rng.normal(0, 1.5, size=(7, p))
+
+# Con activacion identidad, las tres capas colapsan en UNA transformacion afin.
+A = np.eye(p)
+c = np.zeros(p)
+for W, b in zip(pesos, sesgos):
+    A = W @ A
+    c = W @ c + b
+beta = w_final @ A
+beta0 = float(w_final @ c + b_final)
+
+print("red de %d capas ocultas, con anchuras %s" % (len(anchuras), anchuras))
+print("parametros de la red: %d" % (sum(W.size + b.size for W, b in zip(pesos, sesgos)) + w_final.size + 1))
+print()
+print("con activacion IDENTIDAD, la red equivale a una sola funcion afin:")
+print("   beta  = [%s]" % ", ".join("%+.6f" % v for v in beta))
+print("   beta0 = %+.6f" % beta0)
+directo = red(X, identidad)
+afin = X @ beta + beta0
+for i in range(4):
+    print("   x%d: red %+.6f   afin %+.6f   iguales a 1e-10: %s"
+          % (i, directo[i], afin[i], bool(abs(directo[i] - afin[i]) < 1e-10)))
+print("   en los %d puntos coinciden a 1e-10: %s"
+      % (len(X), bool(np.allclose(directo, afin, atol=1e-10))))
+print("   y la funcion afin tiene %d parametros, no %d"
+      % (p + 1, sum(W.size + b.size for W, b in zip(pesos, sesgos)) + w_final.size + 1))
+print()
+
+# Con ReLU, no hay ninguna afin que la reproduzca.
+conrelu = red(X, relu)
+mejor, resto = np.linalg.lstsq(np.c_[X, np.ones(len(X))], conrelu, rcond=None)[:2]
+ajuste = np.c_[X, np.ones(len(X))] @ mejor
+print("con ReLU, la mejor aproximacion afin a la red sobre esos puntos:")
+print("   error cuadratico medio que le queda: %.6f" % float(((conrelu - ajuste) ** 2).mean()))
+print("   varianza de lo que produce la red   : %.6f" % float(conrelu.var()))
+print("   ¿queda algo sin explicar?", bool(((conrelu - ajuste) ** 2).mean() > 1e-6))
+print()
+print("apilar capas afines no anade nada: el conjunto de funciones que la red")
+print("puede representar no crece con la profundidad si la activacion es afin")
+```
+
+Ochenta y ocho parámetros que se reducen a cuatro. Con ReLU, en cambio, ninguna función afín reproduce lo que la red produce: le queda sin explicar una quinta parte de la varianza.
+
+## 2. Qué familia de funciones es, exactamente
+
+La Proposición 16.2 dice qué **no** es una red. La siguiente dice qué **sí** es, en el caso de una entrada, y lo dice con una igualdad y no con una aproximación.
+
+::: {.proposicion}
+**Proposición 16.3 (una capa de ReLU, en una variable).** Sea $p=1$ y $g(z)=\max(0,z)$. Entonces:
+
+(a) una capa oculta de $K$ unidades produce una función continua **lineal a trozos** con a lo sumo $K+1$ trozos, porque cada unidad aporta como mucho un quiebre, en $x=-w_{k0}/w_{k1}$;
+
+(b) recíprocamente, **toda** función continua lineal a trozos con $K$ quiebres se escribe **exactamente** con $K+2$ unidades ReLU.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (a), $\max(0,w_{k1}x+w_{k0})$ es lineal en cada uno de los dos semiejes que separa el punto $-w_{k0}/w_{k1}$, y lineal en toda la recta si $w_{k1}=0$. Una suma de $K$ funciones de ese tipo solo puede cambiar de pendiente en esos $K$ puntos, y $K$ puntos parten la recta en a lo sumo $K+1$ trozos.
+
+Para (b), sea $f$ lineal a trozos con quiebres $t_1<\dots<t_K$ y pendientes $s_0,\dots,s_K$ en los trozos sucesivos. Entonces
+$$f(x)=f(0)+s_0\,x+\sum_{k=1}^{K}(s_k-s_{k-1})\max(0,x-t_k)$$
+para todo $x$: las dos funciones tienen la misma pendiente en cada trozo por construcción, y coinciden en un punto, luego coinciden. El término $s_0x$ se escribe con dos unidades, $x=\max(0,x)-\max(0,-x)$, y cada sumando restante con una. En total, $K+2$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+relu = lambda z: np.maximum(0.0, z)
+malla = np.linspace(-3, 3, 30001)
+
+def trozos(v, tol=1e-7):
+    """Cuenta los tramos de una funcion lineal a trozos sobre la malla.
+
+    Un quiebre cae dentro de un intervalo de la malla, asi que la pendiente de
+    ESE intervalo es intermedia y el cambio se detecta en dos sitios seguidos.
+    Por eso los indices consecutivos se agrupan: un quiebre cuenta una vez.
+    """
+    pend = np.diff(v) / np.diff(malla)
+    saltos = np.flatnonzero(np.abs(np.diff(pend)) > tol)
+    if saltos.size == 0:
+        return 1
+    grupos = 1 + int((np.diff(saltos) > 1).sum())
+    return 1 + grupos
+
+# 1. Una capa de K unidades ReLU no puede dar mas de K+1 tramos.
+rng = np.random.default_rng(12)
+print("una sola capa oculta, entrada de una variable:")
+print("      K   tramos observados   cota K+1")
+for K in [1, 2, 3, 6, 12, 25]:
+    w = rng.normal(0, 2, K); b = rng.normal(0, 2, K); v = rng.normal(0, 1, K)
+    salida = relu(malla[:, None] * w + b) @ v
+    dentro = int((np.abs(-b / w) < 3).sum())      # quiebres que caen en la malla
+    t = trozos(salida)
+    print("%7d %18d %10d   se cumple: %-5s  (quiebres dentro de la malla: %d)"
+          % (K, t, K + 1, bool(t <= K + 1), dentro))
+print()
+
+# 2. Y al reves: cualquier lineal a trozos con K quiebres se escribe exacta.
+quiebres = np.array([-1.7, -0.4, 0.9, 2.1])
+pendientes = np.array([0.6, -1.3, 2.0, -0.5, 1.1])   # una por tramo, K+1 en total
+altura = 0.3
+
+def objetivo(x):
+    y = np.full_like(x, altura) + pendientes[0] * x
+    for k, t in enumerate(quiebres):
+        y = y + (pendientes[k + 1] - pendientes[k]) * relu(x - t)
+    return y
+
+# la red: x = relu(x) - relu(-x) da la parte lineal con dos unidades mas
+W = np.r_[1.0, -1.0, np.ones(len(quiebres))]
+B = np.r_[0.0, 0.0, -quiebres]
+V = np.r_[pendientes[0], -pendientes[0], np.diff(pendientes)]
+red = relu(malla[:, None] * W + B) @ V + altura
+
+print("una funcion con %d quiebres, representada con %d unidades ReLU:"
+      % (len(quiebres), len(W)))
+print("   maxima diferencia contra el objetivo menor que 1e-12: %s"
+      % bool(np.abs(red - objetivo(malla)).max() < 1e-12))
+print("   tramos del objetivo: %d   tramos de la red: %d"
+      % (trozos(objetivo(malla)), trozos(red)))
+print("   las unidades son %d = K + 2, con K = %d quiebres" % (len(W), len(quiebres)))
+print()
+print("asi que en una variable, una capa oculta de K unidades es EXACTAMENTE")
+print("la familia de las funciones lineales a trozos con a lo sumo K quiebres")
+```
+
+Las dos partes juntas dicen algo más fuerte que «las redes aproximan cualquier función»: en una variable, **la familia es exactamente esa**, con la cota $K+1$ apretada en los dos sentidos. Y explica el parecido con la lección 10: una capa oculta de ReLU es una base de funciones bisagra, solo que con los nudos **aprendidos** en lugar de puestos a mano.
+
+```{=html}
+<div class="viz-bisagras">
+  <div class="controles">
+    <label>Unidades K <input id="bi-k" type="range" min="1" max="8" step="1" value="3"> <span id="bi-k-v">3</span></label>
+    <label>Quiebre de la unidad 1 <input id="bi-t" type="range" min="-2.5" max="2.5" step="0.05" value="-1"> <span id="bi-t-v">-1.00</span></label>
+    <label>Peso de salida de la 1 <input id="bi-v" type="range" min="-3" max="3" step="0.05" value="1.5"> <span id="bi-v-v">1.50</span></label>
+  </div>
+  <svg id="bi-svg" viewBox="0 0 660 330" role="img" aria-label="Arriba las bisagras que aporta cada unidad por separado, abajo su suma, que es la función lineal a trozos que calcula la red, con sus quiebres marcados."></svg>
+  <p class="lectura" id="bi-lectura"></p>
+</div>
+<style>
+.viz-bisagras { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-bisagras .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-bisagras label { display: flex; align-items: center; gap: .4rem; }
+.viz-bisagras input[type=range] { width: 150px; padding: 0; }
+.viz-bisagras svg { width: 100%; height: auto; display: block; }
+.viz-bisagras .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_G = "#8A6D1F";
+  var svg = document.getElementById("bi-svg"), lec = document.getElementById("bi-lectura");
+  var ck = document.getElementById("bi-k"), ct = document.getElementById("bi-t"), cv = document.getElementById("bi-v");
+  var ek = document.getElementById("bi-k-v"), et = document.getElementById("bi-t-v"), ev = document.getElementById("bi-v-v");
+  // Marco anclado: x de -3 a 3 siempre; los dos paneles tienen escalas fijas.
+  var X0 = 46, XW = 574, Y1 = 22, H1 = 110, Y2 = 168, H2 = 128;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var px = function (x) { return X0 + (x + 3) / 6 * XW; };
+  // unidades fijas salvo la primera, que la mueven los mandos
+  function unidades(K, t1, v1) {
+    var u = [{ t: t1, v: v1, w: 1 }];
+    var base = [[0.6, -1.1, -1], [1.7, 0.9, 1], [-2.1, 1.4, 1], [2.4, -0.8, -1], [-0.3, 2.0, 1], [1.1, -1.6, -1], [-1.5, 0.7, 1]];
+    for (var i = 0; i + 1 < K; i++) u.push({ t: base[i][0], v: base[i][1], w: base[i][2] });
+    return u;
+  }
+  function relu(z) { return Math.max(0, z); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var K = +ck.value, t1 = +ct.value, v1 = +cv.value;
+    ek.textContent = K; et.textContent = t1.toFixed(2); ev.textContent = v1.toFixed(2);
+    var U = unidades(K, t1, v1), i, q;
+
+    // panel de arriba: cada bisagra por separado, escala fija de -4 a 4
+    var py1 = function (y) { return Y1 + (4 - Math.max(-4, Math.min(4, y))) / 8 * H1; };
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py1(0) + " L" + (X0 + XW) + " " + py1(0),
+      stroke: C_L, "stroke-width": 1 }));
+    svg.appendChild(el("text", { x: X0, y: 14, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "lo que aporta cada unidad: βₖ · max(0, ±(x − tₖ))"));
+    U.forEach(function (u, idx) {
+      var d = "";
+      for (q = -3; q <= 3.0001; q += 0.01)
+        d += (d ? " L" : "M") + px(q).toFixed(1) + " " + py1(u.v * relu(u.w * (q - u.t))).toFixed(1);
+      svg.appendChild(el("path", { d: d, stroke: idx === 0 ? C_G : C_A, "stroke-width": idx === 0 ? 2.2 : 1.3,
+        fill: "none", opacity: idx === 0 ? 1 : .5 }));
+    });
+
+    // panel de abajo: la suma, escala fija de -6 a 6
+    var py2 = function (y) { return Y2 + (6 - Math.max(-6, Math.min(6, y))) / 12 * H2; };
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py2(0) + " L" + (X0 + XW) + " " + py2(0),
+      stroke: C_L, "stroke-width": 1 }));
+    svg.appendChild(el("text", { x: X0, y: Y2 - 8, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "la suma: lo que calcula la red"));
+    var dd = "";
+    function f(x) { var s = 0; U.forEach(function (u) { s += u.v * relu(u.w * (x - u.t)); }); return s; }
+    for (q = -3; q <= 3.0001; q += 0.005) dd += (dd ? " L" : "M") + px(q).toFixed(1) + " " + py2(f(q)).toFixed(1);
+    svg.appendChild(el("path", { d: dd, stroke: C_T, "stroke-width": 2.4, fill: "none" }));
+    var dentro = 0;
+    U.forEach(function (u) {
+      if (u.t > -3 && u.t < 3) {
+        dentro++;
+        svg.appendChild(el("circle", { cx: px(u.t).toFixed(1), cy: py2(f(u.t)).toFixed(1), r: 3.6,
+          fill: "none", stroke: C_G, "stroke-width": 1.8 }));
+      }
+    });
+
+    lec.innerHTML = "Con <strong>" + K + "</strong> unidades, la red calcula una función lineal a trozos con <strong>" +
+      dentro + "</strong> quiebres visibles —los círculos ámbar— y por tanto <strong>" + (dentro + 1) +
+      "</strong> trozos, nunca más de K+1 = " + (K + 1) + " (Proposición 16.3a). " +
+      "Moviendo el quiebre de la primera unidad se desplaza <strong>solo un círculo</strong>, y cambiando su peso de salida " +
+      "cambia <strong>solo la pendiente a partir de ahí</strong>: cada unidad manda en su trozo y en los de su derecha, " +
+      "que es lo que hace que la suma sea una base de bisagras con los nudos aprendidos.";
+  }
+  [ck, ct, cv].forEach(function (c) { c.addEventListener("input", dibujar); });
+  dibujar();
+})();
+</script>
+```
+
+## 3. Qué compra la profundidad
+
+::: {.proposicion}
+**Proposición 16.4 (la profundidad multiplica, la anchura suma).** Sea $P(x)=2\max(0,x)-4\max(0,x-\tfrac12)$, el **pliegue**, que manda $[0,1]$ sobre $[0,1]$ doblándolo por la mitad. Entonces la composición de $P$ consigo misma $d$ veces es lineal a trozos con **exactamente $2^d$ trozos**, y se escribe con una red de $d$ capas de $2$ unidades, o sea $2d$ unidades. Por la Proposición 16.3, una sola capa oculta necesitaría $2^d-1$ unidades para esa misma función.
+:::
+
+::: {.demostracion}
+*Demostración.* $P$ es lineal a trozos con dos trozos y manda cada uno de ellos, $[0,\tfrac12]$ y $[\tfrac12,1]$, sobre $[0,1]$ de forma biyectiva y afín. Por inducción: si $P^{\circ d}$ tiene $2^d$ trozos y cada uno se aplica sobre $[0,1]$ de forma biyectiva, entonces al componer con $P$ cada uno de esos trozos se parte en dos, porque $P$ tiene dos trozos sobre $[0,1]$, y se obtienen $2^{d+1}$. El recuento de unidades es inmediato: $2$ por capa y $d$ capas. La última afirmación es la parte (a) de la Proposición 16.3 leída al revés: para tener $2^d$ trozos hacen falta $2^d-1$ quiebres, y por tanto al menos $2^d-1$ unidades. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+relu = lambda z: np.maximum(0.0, z)
+malla = np.linspace(0.0, 1.0, 200001)
+
+def trozos(v, tol=1e-7):
+    pend = np.diff(v) / np.diff(malla)
+    saltos = np.flatnonzero(np.abs(np.diff(pend)) > tol)
+    if saltos.size == 0:
+        return 1
+    return 2 + int((np.diff(saltos) > 1).sum())
+
+def pliegue(x):
+    """El pliegue: dobla [0,1] por la mitad, con DOS unidades ReLU."""
+    return 2.0 * relu(x) - 4.0 * relu(x - 0.5)
+
+print("el pliegue: manda [0,1] sobre [0,1] doblandolo por la mitad")
+for x in [0.0, 0.25, 0.5, 0.75, 1.0]:
+    print("   pliegue(%.2f) = %.4f" % (x, float(pliegue(np.array([x]))[0])))
+print("   tramos del pliegue:", trozos(pliegue(malla)))
+print()
+
+print("componiendola consigo misma, con 2 unidades por capa:")
+print("   capas   unidades   tramos   2^capas   anchura que haria falta")
+v = malla.copy()
+for d in range(1, 9):
+    v = pliegue(v)
+    t = trozos(v)
+    print("%8d %10d %8d %9d %23d" % (d, 2 * d, t, 2 ** d, 2 ** d - 1))
+print()
+print("la profundidad multiplica los tramos por dos en cada capa y la anchura")
+print("los suma de uno en uno. Con 16 unidades en 8 capas salen 256 tramos;")
+print("una sola capa necesitaria 255 unidades para los mismos")
+print()
+
+# Y el contraste que importa: lo que cuesta cada cosa en parametros.
+print("   tramos   parametros en profundidad   parametros en una capa")
+for d in [4, 8, 12, 20]:
+    # por capa: 2 unidades con peso y sesgo, mas la salida
+    profundo = d * (2 * 2 + 2)
+    ancho = 3 * (2 ** d - 1) + 1
+    print("%9d %27d %24d" % (2 ** d, profundo, ancho))
+print()
+print("esto NO dice que lo profundo sea siempre mejor: dice que hay funciones")
+print("baratas en profundidad y carisimas en anchura. El pliegue compuesto es una")
+```
+
+Con $16$ unidades repartidas en $8$ capas salen $256$ trozos; una sola capa necesitaría $255$ unidades. En parámetros, $2^{20}$ trozos cuestan $120$ en profundidad y más de tres millones en anchura.
+
+Conviene leer esto con cuidado, porque es fácil sacarle una conclusión que no tiene. **No dice que lo profundo sea mejor**: dice que existen funciones baratas en profundidad y carísimas en anchura, y el pliegue compuesto es uno de ellos. Que las funciones útiles en un problema real se parezcan a esa es otra afirmación, y esta página no la hace.
+
+## 4. Interpolar sin que todo se rompa
+
+El capítulo 10 termina con un fenómeno que contradice la curva en U de la lección 1: al pasar de $n$ parámetros, el error de prueba vuelve a bajar.
+
+::: {.proposicion}
+**Proposición 16.5 (lo que se puede afirmar del doble descenso).** Ajustando por **norma mínima** un modelo lineal con $d$ rasgos sobre $n$ observaciones:
+
+(a) para $d\ge n$ el error de entrenamiento es cero: el modelo interpola;
+
+(b) el error de prueba tiene un máximo cerca de $d=n$ y vuelve a bajar después;
+
+(c) **cerca de $d=n$ la matriz está mal condicionada**, así que las cifras del error de prueba ahí no son reproducibles y **no se publican**: se publica su orden de magnitud y las comparaciones, que sí lo son.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (a), con $d\ge n$ y rasgos en posición general el sistema $Z\theta=y$ tiene solución, y la pseudoinversa devuelve una: la de norma mínima. Las partes (b) y (c) **no se demuestran aquí**: (b) es una observación empírica que la celda mide, y (c) se sigue de que el número de condición de $Z$ crece sin cota cuando $d$ se acerca a $n$ —la matriz se vuelve casi singular—, y el error relativo de la solución se amplifica por ese factor. El condicionamiento y su papel están en Álgebra 11, y la advertencia concreta sobre citar dígitos en ese régimen es la de Machine Learning 9. Lo que la celda hace es aplicarla: **comprobar el condicionamiento antes de decidir cuántos dígitos tiene derecho a imprimir**. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(5)
+n, n_prueba = 40, 2000
+
+# Un diccionario fijo de rasgos: senos y cosenos de frecuencias crecientes.
+def rasgos(x, d):
+    salida = [np.ones_like(x)]
+    k = 1
+    while len(salida) < d:
+        salida.append(np.sin(k * x))
+        if len(salida) < d:
+            salida.append(np.cos(k * x))
+        k += 1
+    return np.stack(salida[:d], axis=1)
+
+x = np.sort(rng.uniform(-np.pi, np.pi, n))
+xp = np.linspace(-np.pi, np.pi, n_prueba)
+verdad = lambda t: np.sin(t) + 0.5 * np.sin(3 * t)
+y = verdad(x) + rng.normal(0, 0.3, n)
+yp = verdad(xp)
+
+print("n = %d observaciones, y el numero de rasgos d va de 1 a 120" % n)
+print("el ajuste es el de NORMA MINIMA, que es lo que devuelve la pseudoinversa")
+print()
+print("    d   error de entrenamiento   error de prueba   condicion de la matriz")
+guardado = {}
+for d in [2, 10, 20, 30, 38, 40, 42, 50, 80, 120]:
+    Z = rasgos(x, d)
+    coef = np.linalg.pinv(Z) @ y
+    ent = float(((y - Z @ coef) ** 2).mean())
+    pru = float(((yp - rasgos(xp, d) @ coef) ** 2).mean())
+    cond = float(np.linalg.cond(Z))
+    guardado[d] = (ent, pru, cond)
+    # Los digitos solo se citan donde el calculo los sostiene. Con la matriz
+    # mal condicionada, los coeficientes son enormes y se cancelan: el ultimo
+    # digito del error de prueba cambia de una version de numpy a otra.
+    if cond < 1e3:
+        texto = "%.4f" % pru
+    else:
+        texto = "del orden de 1e%+03d" % int(np.floor(np.log10(pru)))
+    print("%5d %24.6f %21s %18.2e" % (d, ent, texto, cond))
+print()
+print("cerca de d = n la matriz tiene condicion de 1.1e+08, y ahi los")
+print("digitos del error de prueba no significan nada: se publica el orden de")
+print("magnitud y no la cifra (regla 7). Lo que si se puede afirmar entero son")
+print("las comparaciones:")
+print()
+print("   el entrenamiento cae a cero al llegar a d = n:",
+      bool(guardado[40][0] < 1e-12 and guardado[50][0] < 1e-12 and guardado[120][0] < 1e-12))
+print("   el error de prueba en d = n supera al de d = n/2:",
+      bool(guardado[40][1] > guardado[20][1]))
+print("   y el de d = 3n esta por DEBAJO del de d = n:",
+      bool(guardado[120][1] < guardado[40][1]))
+print("   pero NO por debajo del mejor modelo pequeno, el de d = 10:",
+      bool(guardado[120][1] < guardado[10][1]))
+print("   o sea: el segundo descenso baja mucho y aun asi no gana al de d = 10,")
+print("   que con estos datos y este diccionario es %.4f contra %.4f"
+      % (guardado[10][1], guardado[120][1]))
+print()
+print("   error de prueba con d = 20 (la mitad de n): %.4f" % guardado[20][1])
+print("   error de prueba con d = 120 (el triple de n): %.4f" % guardado[120][1])
+print("   veces que el pico de d = n supera a d = 120: mas de 100: %s"
+      % bool(guardado[40][1] > 100 * guardado[120][1]))
+print()
+print("interpolar los datos no condena al modelo: pasado el punto justo donde")
+print("los rasgos igualan a las observaciones, seguir anadiendo MEJORA la")
+print("prueba, porque de todas las soluciones que interpolan se elige la de")
+print("norma minima, y esa es cada vez mas suave.")
+print()
+print("lo que NO dice este experimento es que pasarse sea mejor que quedarse")
+print("corto: aqui el mejor modelo sigue siendo el de d = 10, muy por debajo")
+print("de n. El doble descenso explica por que lo enorme no es un desastre,")
+print("no por que sea lo optimo")
+```
+
+El error de prueba recorre $0{,}1259$, baja a $0{,}0498$, sube a $0{,}1270$ y a $12{,}61$, revienta en el entorno de $d=n$ —del orden de $10^{12}$— y vuelve a bajar hasta $0{,}6484$ con el triple de rasgos que observaciones.
+
+Y aquí está la parte que conviene no perder de vista: **el mejor modelo de todo el barrido sigue siendo el de $d=10$**, con $0{,}0498$, muy por debajo de $n$. El doble descenso explica por qué un modelo enorme no es un desastre, **no** por qué sería la mejor opción.
+
+```{=html}
+<div class="viz-descenso">
+  <div class="controles">
+    <label>Observaciones n <input id="dd-n" type="range" min="15" max="60" step="1" value="30"> <span id="dd-n-v">30</span></label>
+    <label>Ruido <input id="dd-r" type="range" min="0" max="0.8" step="0.02" value="0.3"> <span id="dd-r-v">0.30</span></label>
+  </div>
+  <svg id="dd-svg" viewBox="0 0 660 320" role="img" aria-label="El error de entrenamiento y el de prueba en función del número de rasgos, en escala logarítmica, con la línea vertical que marca d igual a n y el pico de la interpolación."></svg>
+  <p class="lectura" id="dd-lectura"></p>
+</div>
+<style>
+.viz-descenso { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-descenso .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-descenso label { display: flex; align-items: center; gap: .4rem; }
+.viz-descenso input[type=range] { width: 170px; padding: 0; }
+.viz-descenso svg { width: 100%; height: auto; display: block; }
+.viz-descenso .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("dd-svg"), lec = document.getElementById("dd-lectura");
+  var cn = document.getElementById("dd-n"), cr = document.getElementById("dd-r");
+  var en_ = document.getElementById("dd-n-v"), er = document.getElementById("dd-r-v");
+  // Marco anclado: d de 1 a 120 en horizontal; error en log10 de -3 a 6 siempre.
+  var X0 = 54, XW = 566, Y0 = 26, YH = 216, DMAX = 120;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var px = function (d) { return X0 + (d - 1) / (DMAX - 1) * XW; };
+  var py = function (e) {
+    var L = Math.log(Math.max(e, 1e-3)) / Math.LN10;
+    return Y0 + (6 - Math.max(-3, Math.min(6, L))) / 9 * YH;
+  };
+  // ruido determinista: el mismo para una semilla dada
+  function ruidos(m, s) {
+    var out = [], i, x = 99;
+    for (i = 0; i < m; i++) { x = (x * 48271) % 2147483647; out.push((x / 2147483647 - 0.5) * 3.46 * s); }
+    return out;
+  }
+  function rasgos(x, d) {
+    var v = [1], k = 1;
+    while (v.length < d) { v.push(Math.sin(k * x)); if (v.length < d) v.push(Math.cos(k * x)); k++; }
+    return v.slice(0, d);
+  }
+  // minimos cuadrados de norma minima por ecuaciones normales regularizadas
+  // con una ridge minuscula: es lo que hace estable el dibujo sin cambiar la forma
+  function ajusta(Z, y, d) {
+    var i, j, k, n = Z.length;
+    var A = [], b = [];
+    for (i = 0; i < d; i++) { A.push(new Array(d).fill(0)); b.push(0); }
+    for (i = 0; i < d; i++) {
+      for (j = 0; j < d; j++) { var s = 0; for (k = 0; k < n; k++) s += Z[k][i] * Z[k][j]; A[i][j] = s; }
+      A[i][i] += 1e-8;
+      var t = 0; for (k = 0; k < n; k++) t += Z[k][i] * y[k]; b[i] = t;
+    }
+    for (i = 0; i < d; i++) {
+      var piv = i;
+      for (j = i; j < d; j++) if (Math.abs(A[j][i]) > Math.abs(A[piv][i])) piv = j;
+      var tmp = A[i]; A[i] = A[piv]; A[piv] = tmp;
+      var tb = b[i]; b[i] = b[piv]; b[piv] = tb;
+      if (Math.abs(A[i][i]) < 1e-14) continue;
+      for (j = i + 1; j < d; j++) {
+        var f = A[j][i] / A[i][i];
+        for (k = i; k < d; k++) A[j][k] -= f * A[i][k];
+        b[j] -= f * b[i];
+      }
+    }
+    var c = new Array(d).fill(0);
+    for (i = d - 1; i >= 0; i--) {
+      var acc = b[i];
+      for (j = i + 1; j < d; j++) acc -= A[i][j] * c[j];
+      c[i] = Math.abs(A[i][i]) < 1e-14 ? 0 : acc / A[i][i];
+    }
+    return c;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var n = +cn.value, sr = +cr.value;
+    en_.textContent = n; er.textContent = sr.toFixed(2);
+    var i, k, xs = [], ys = [], rr = ruidos(n, sr);
+    for (i = 0; i < n; i++) { var xv = -Math.PI + (i + 0.5) * 2 * Math.PI / n; xs.push(xv); ys.push(Math.sin(xv) + 0.5 * Math.sin(3 * xv) + rr[i]); }
+    var xp = [], yp = [];
+    for (i = 0; i < 200; i++) { var t = -Math.PI + i * 2 * Math.PI / 199; xp.push(t); yp.push(Math.sin(t) + 0.5 * Math.sin(3 * t)); }
+
+    var t2;
+    for (t2 = -3; t2 <= 6.001; t2 += 3) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(Math.pow(10, t2)) + " L" + (X0 + XW) + " " + py(Math.pow(10, t2)),
+        stroke: C_L, "stroke-width": 1, opacity: .5 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(Math.pow(10, t2)) + 4, "text-anchor": "end", "font-size": 10.5,
+        fill: C_T, opacity: .65 }, "1e" + (t2 >= 0 ? "+" : "") + t2));
+    }
+    svg.appendChild(el("text", { x: X0, y: 16, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "error cuadrático medio, en escala logarítmica: entrenamiento en verde, prueba en rojo"));
+    svg.appendChild(el("path", { d: "M" + px(n) + " " + Y0 + " L" + px(n) + " " + (Y0 + YH),
+      stroke: C_G, "stroke-width": 1.6, "stroke-dasharray": "5 4" }));
+    svg.appendChild(el("text", { x: px(n) + 5, y: Y0 + 13, "font-size": 11, fill: C_G }, "d = n"));
+
+    var de = "", dp = "", pico = 0, picoD = 0, ultimo = 0;
+    for (var d = 2; d <= DMAX; d += 2) {
+      var Z = [], Zp = [];
+      for (i = 0; i < n; i++) Z.push(rasgos(xs[i], d));
+      var c = ajusta(Z, ys, d);
+      var et = 0;
+      for (i = 0; i < n; i++) { var s = 0; for (k = 0; k < d; k++) s += Z[i][k] * c[k]; et += (ys[i] - s) * (ys[i] - s); }
+      et /= n;
+      var ep = 0;
+      for (i = 0; i < xp.length; i++) {
+        var r = rasgos(xp[i], d), s2 = 0;
+        for (k = 0; k < d; k++) s2 += r[k] * c[k];
+        ep += (yp[i] - s2) * (yp[i] - s2);
+      }
+      ep /= xp.length;
+      if (ep > pico) { pico = ep; picoD = d; }
+      ultimo = ep;
+      de += (de ? " L" : "M") + px(d).toFixed(1) + " " + py(et).toFixed(1);
+      dp += (dp ? " L" : "M") + px(d).toFixed(1) + " " + py(ep).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: de, stroke: C_A, "stroke-width": 2.2, fill: "none" }));
+    svg.appendChild(el("path", { d: dp, stroke: C_B, "stroke-width": 2.2, fill: "none" }));
+
+    lec.innerHTML = "Con <strong>" + n + "</strong> observaciones, el error de prueba sube hasta un máximo en d = <strong>" +
+      picoD + "</strong> —la raya ámbar marca d = n— y vuelve a bajar: con " + DMAX + " rasgos queda en <strong>" +
+      ultimo.toFixed(4) + "</strong>. El de entrenamiento cae a cero y se queda ahí desde que d alcanza a n. " +
+      "Moviendo n, el pico se mueve con él: <strong>no está en un número de rasgos, está donde los rasgos igualan a las observaciones</strong>. " +
+      (sr < 0.02 ? "Sin ruido el pico casi desaparece: lo que revienta en d = n es el ruido amplificado por el mal condicionamiento."
+                 : "Subiendo el ruido, el pico crece; el segundo descenso sigue ahí debajo.");
+  }
+  cn.addEventListener("input", dibujar);
+  cr.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Dónde termina esta lección
+
+El capítulo 10 es el más largo del libro y esta página cubre cuatro de sus secciones. El resto tiene sitio asignado y conviene saber cuál:
+
+- §10.3 *Convolutional Neural Networks*, con sus cinco subsecciones, es **Machine Learning 40**, en la Fase 4.
+- §10.7 *Fitting a Neural Network*, con la retropropagación, el descenso estocástico, el dropout y el ajuste de la red, se reparte entre **Machine Learning 35 a 39**, también en la Fase 4.
+- §10.4 *Document Classification* y §10.5 *Recurrent Neural Networks* **no están en el plan actual** de ninguna de las dos fases. Queda anotado aquí para que la omisión sea una decisión y no un olvido.
+
+§10.6 *When to Use Deep Learning* es la sección que cierra el argumento del capítulo, y su contenido es justo el aviso de la sección 3 de esta página: la red gana cuando la función que se busca es de las que le salen baratas, y sobre datos tabulares con pocas observaciones rara vez lo es.
+
+## Ejercicios
+
+### Ejercicio 1, Los parámetros de una red
+
+Una red con $10$ entradas, dos capas ocultas de $32$ y $16$ unidades y una salida escalar. Calcular cuántos parámetros tiene, contando sesgos.
+
+```{pyodide}
+#| exercise: ex_param
+p, K1, K2 = 10, 32, 16
+
+capa1 = ______
+capa2 = ______
+salida = ______
+total = capa1 + capa2 + salida
+
+print(capa1, capa2, salida, total)
+int(total)
+```
+
+::: {.hint exercise="ex_param"}
+Cada unidad de una capa tiene un peso por cada entrada que recibe, más su sesgo. La salida escalar tiene un peso por unidad de la última capa, más el suyo.
+:::
+
+::: {.solution exercise="ex_param"}
+```{pyodide}
+p, K1, K2 = 10, 32, 16
+
+capa1 = K1 * (p + 1)
+capa2 = K2 * (K1 + 1)
+salida = K2 + 1
+total = capa1 + capa2 + salida
+
+print(capa1, capa2, salida, total)
+int(total)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_param
+#| check: true
+if result == 897:
+    feedback = {"correct": True, "message": "Correcto: 352 + 528 + 17 = 897. Con activación afín, esos 897 números se reducirían a 11, que es lo que dice la Proposición 16.2.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 897 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Profundidad contra anchura
+
+Se quiere una función lineal a trozos con $1024$ trozos. Calcular cuántas unidades hacen falta componiendo el pliegue y cuántas con una sola capa oculta.
+
+```{pyodide}
+#| exercise: ex_trozos
+from math import log2
+
+trozos = 1024
+
+capas = ______             # cuántas veces hay que componer el pliegue
+unidades_profundo = ______ # dos unidades por capa
+unidades_ancho = ______    # por la Proposición 16.3a
+
+print(capas, unidades_profundo, unidades_ancho)
+int(unidades_ancho)
+```
+
+::: {.hint exercise="ex_trozos"}
+Componer $d$ veces da $2^d$ trozos, así que $d=\log_2(1024)$. Y para $T$ trozos con una capa hacen falta $T-1$ quiebres.
+:::
+
+::: {.solution exercise="ex_trozos"}
+```{pyodide}
+from math import log2
+
+trozos = 1024
+
+capas = int(log2(trozos))
+unidades_profundo = 2 * capas
+unidades_ancho = trozos - 1
+
+print(capas, unidades_profundo, unidades_ancho)
+int(unidades_ancho)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_trozos
+#| check: true
+if result == 1023:
+    feedback = {"correct": True, "message": "Correcto: 10 capas y 20 unidades en profundidad, contra 1023 en anchura. Un factor de más de cincuenta, y crece con el número de trozos.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 1023 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 16**:
+
+1. Comprobar la Proposición 16.3b sobre una función lineal a trozos elegida al azar con diez quiebres: construir la red de doce unidades, verificar que coincide exactamente, y después **quitarle una unidad** y medir cuánto error mínimo queda. Anotar por qué ese error no baja de cierto valor por mucho que se ajusten los pesos restantes.
+2. Repetir el experimento del doble descenso cambiando el diccionario de rasgos —polinomios en lugar de senos— y anotar si el pico sigue apareciendo en $d=n$ y cómo cambia el condicionamiento. Comparar con la tabla de la sección 4 y anotar qué parte del fenómeno es del método y cuál del diccionario.
+3. Medir los trozos de una red de dos capas con anchuras distintas, $K_1$ y $K_2$, sobre una entrada, y contrastar el recuento contra la cota que se obtenga a mano. Anotar en `50-Errores/` en qué se equivocó la primera predicción y por qué la cota $2^d$ del pliegue es un caso muy particular y no la regla general.
+
+## Del libro
+
+*An Introduction to Statistical Learning with Applications in Python* trata este material en §10.1 *Single Layer Neural Networks*, §10.2 *Multilayer Neural Networks*, §10.6 *When to Use Deep Learning* y §10.8 *Interpolation and Double Descent*.
+
+**Esta lección cubre cuatro secciones del capítulo 10, no el capítulo entero**, y el reparto del resto está en la sección 5: §10.3 va a la lección 40, §10.7 se reparte entre las lecciones 35 y 39, y §10.4 y §10.5 no están en el plan. Se dice aquí y allí para que la omisión sea explícita.
+
+**Dos diferencias con el libro que conviene tener presentes.** La primera: el libro presenta la activación y comenta que sin ella «el modelo colapsa a uno lineal». Esta página lo **demuestra** —Proposición 16.2, por composición de funciones afines— y lo mide: $88$ parámetros que se reducen a $4$.
+
+La segunda, y es la que más cambia la lectura de §10.8: el libro dibuja la curva del doble descenso con su pico. Esta página **no publica las cifras del pico**, porque ahí la matriz tiene número de condición de $1{,}1\times 10^{8}$ y el último dígito del error ya cambia entre dos versiones de NumPy. Publica el orden de magnitud y las comparaciones, que sí son reproducibles. Esa decisión no es cosmética: **el pico y el mal condicionamiento son el mismo fenómeno**, así que exigir dígitos ahí sería exigirle precisión justo a lo que no la tiene.
+
+**Preguntas para leer §10.1–10.2, §10.6 y §10.8 con lápiz:**
+
+1. §10.2 describe la red de dos capas para dígitos manuscritos y cuenta sus parámetros. Con la Definición 16.1, ¿cuántos de ellos están en la primera capa, y qué proporción del total es?
+2. §10.6 concluye que en problemas tabulares con pocas observaciones conviene empezar por métodos más simples. Con la Proposición 16.4, ¿qué tendría que ser cierto sobre la función buscada para que la red compensara?
+3. §10.8 relaciona el doble descenso con la norma mínima de la solución. Con la Proposición 16.5, ¿por qué esa elección concreta entre infinitas soluciones que interpolan es la que hace que el error vuelva a bajar?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/redes-neuronales.md`, enlazada a [[bases-y-splines]], [[alta-dimension]] y [[nucleos]]. Conviene rehacer a mano la Proposición 16.3b: escribir una función lineal a trozos como suma de bisagras deja claro de una vez que **una capa oculta de ReLU es una base**, y que lo único que la separa de los splines de la lección 10 es que aquí los nudos se ajustan en lugar de elegirse.
+
+```
+¿Qué calcula una red de una capa?::β₀ + Σ βₖ g(wₖ₀ + Σ wₖⱼxⱼ)
+¿Cuántos parámetros tiene?::K(p+1) en la capa oculta más K+1 en la salida
+¿Qué pasa si la activación es afín?::La red entera es afín, con cualquier profundidad
+¿Cuántos parámetros le quedan entonces?::p+1, sin importar cuántos tuviera
+¿Qué familia es una capa de K unidades ReLU con una entrada?::Las lineales a trozos con a lo sumo K quiebres
+¿Cuántas unidades hacen falta para K quiebres?::K+2
+¿Por qué dos de más?::Para escribir la parte lineal: x = max(0,x) − max(0,−x)
+¿Qué hace el pliegue?::Dobla [0,1] por la mitad, con dos unidades ReLU
+¿Cuántos trozos da componerlo d veces?::2^d exactamente
+¿Cuántas unidades cuesta en profundidad?::2d
+¿Y en anchura?::2^d − 1
+¿Se sigue de ahí que lo profundo es mejor?::No: solo que hay funciones baratas en profundidad
+¿Qué es el doble descenso?::El error de prueba sube hasta d = n y vuelve a bajar
+¿Cuándo el error de entrenamiento llega a cero?::Cuando d alcanza a n, y se queda ahí
+¿Por qué no se citan las cifras del pico?::Porque ahí la condición es 1e+08 y los dígitos no son reproducibles
+¿Qué se publica entonces?::El orden de magnitud y las comparaciones
+¿El modelo enorme gana al pequeño?::Aquí no: el mejor del barrido está en d = 10, muy por debajo de n
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 16.2 se demuestra por inducción sobre la composición de funciones afines; se comprueba sobre una red de tres capas ocultas con $88$ parámetros, que con activación identidad coincide a $10^{-10}$ con una función afín de $4$, y que con ReLU deja sin explicar $0{,}097127$ de una varianza de $0{,}549016$. La Proposición 16.3a se demuestra observando que cada unidad aporta un único quiebre; se comprueba en seis anchuras, donde los trozos observados nunca superan $K+1$ y coinciden con los quiebres que caen dentro de la malla más uno. La 16.3b se demuestra con la fórmula de reconstrucción por bisagras; se comprueba sobre una función de cuatro quiebres, reproducida con seis unidades por debajo de $10^{-12}$. La Proposición 16.4 se demuestra por inducción sobre la composición del pliegue; se comprueba en ocho profundidades, donde los trozos son exactamente $2^d$ hasta $256$ con $16$ unidades. La Proposición 16.5a se sigue de que la pseudoinversa resuelve el sistema; (b) y (c) se **miden** y se declaran como medición, con el condicionamiento comprobado antes de imprimir cada cifra. Los dos visuales recalculan estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** Las funciones base y los nudos elegidos a mano son de Machine Learning 10, y el paralelo con las bisagras se apoya en ellas. La interpolación exacta con más parámetros que observaciones y la no identificabilidad son la Proposición 9.2 y la 9.4 de Machine Learning 9. El número de condición y su papel en la amplificación del error son de Álgebra 11. El descenso de gradiente con el que se ajustan estos modelos es de Álgebra 16, y aquí no se usa: **esta página no ajusta ninguna red**.
+
+**Lo que se enuncia sin demostrar.** El **teorema de aproximación universal** —que una capa oculta lo bastante ancha aproxima cualquier función continua sobre un compacto tan bien como se quiera— **no se demuestra ni se usa**; lo que sí se demuestra es su versión exacta en una variable, la Proposición 16.3, que es más fuerte en ese caso particular y más débil en general. Que el error de prueba del ajuste de norma mínima vuelve a bajar pasado $d=n$ (Proposición 16.5b) se **mide y no se demuestra**: hacerlo exige un análisis asintótico de valores singulares aleatorios que esta página no hace. Que el mejor $d$ del barrido sea el de $d=10$ es un hecho de **este** conjunto de datos y este diccionario, no una regla.
+
+**Lo que viene de los libros.**
+
+- [*An Introduction to Statistical Learning with Applications in Python*](https://www.statlearning.com/) (James, Witten, Hastie, Tibshirani, Taylor; Springer, 2023), §10.1 *Single Layer Neural Networks*, §10.2 *Multilayer Neural Networks*, §10.6 *When to Use Deep Learning* y §10.8 *Interpolation and Double Descent* — citadas por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La Proposición 16.3 con sus dos direcciones, que convierte «las redes aproximan cualquier cosa» en una **igualdad de familias** en una variable, y de paso enlaza con los splines de la lección 10 por la vía de los nudos aprendidos. La Proposición 16.4 con el pliegue y el recuento exacto de $2^d$ trozos contra $2^d-1$ unidades, junto con la tabla de parámetros que pone el precio a cada camino, y el aviso explícito de que de ahí **no** se sigue que lo profundo sea mejor. Y el tratamiento del doble descenso bajo la regla 7: medir el condicionamiento antes de decidir cuántos dígitos se publican, que convierte la advertencia de la lección 9 en una práctica y no en un recuerdo.
+
+[Índice de ISLP verificado el 13-09-2026 contra los marcadores del PDF oficial.]{.sello}
+:::
