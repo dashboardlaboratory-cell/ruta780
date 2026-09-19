@@ -1,6 +1,6 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **18-09-2026**, tras una sesión larga que publicó **diecisiete
+Última actualización: **19-09-2026**, tras una sesión larga que publicó **dieciocho
 lecciones** y cerró **tres deudas**.
 
 Las lecciones: **ML 7** (selección de subconjuntos, ISLP §6.1), **ML 8**
@@ -8,10 +8,11 @@ Las lecciones: **ML 7** (selección de subconjuntos, ISLP §6.1), **ML 8**
 splines, §7.1–7.4), **ML 11** (suavizado y GAMs, §7.5–7.7), **ML 12** (árboles de
 decisión, §8.1), **ML 13** (bagging, bosques e impulso, §8.2), **ML 14** (margen
 máximo, §9.1–9.2), **ML 15** (núcleos y pérdida bisagra, §9.3–9.5), **ML 16** (redes neuronales,
-§10.1–10.2, §10.6 y §10.8), y **Python 10** a **16** (carga y limpieza, uniones y reshape,
+§10.1–10.2, §10.6 y §10.8), **ML 17** (censura y Kaplan-Meier, §11.1–11.4), y
+**Python 10** a **16** (carga y limpieza, uniones y reshape,
 groupby, visualización, series de tiempo, rendimiento y anatomía de un proyecto).
 
-**Las 75 publicadas cumplen el molde: 75 de 75.**
+**Las 76 publicadas cumplen el molde: 76 de 76.**
 
 Tres hitos de esta sesión:
 
@@ -21,13 +22,14 @@ Tres hitos de esta sesión:
   lección de componentes principales; **el capítulo 8 queda cubierto entero**
   —§8.1 en ML 12 y §8.2 en ML 13— y **el 9 también entero**: §9.1–9.2 en ML 14 y
   §9.3–9.5 en ML 15. Del **capítulo 10**, ML 16 cubre §10.1–10.2, §10.6 y §10.8;
-  el resto está repartido entre las lecciones 35 a 40 de la Fase 4, salvo §10.4 y
-  §10.5, que **no están en el plan** y quedan anotadas como omisión deliberada.
+  el resto está repartido entre las lecciones 36 a 41 de la Fase 4, salvo §10.4 y
+  §10.5, que **no están en el plan** y quedan anotadas como omisión deliberada. Del
+  **capítulo 11**, ML 17 cubre §11.1–11.4 y ML 18 cubrirá §11.5–11.7.
 - **Las tres deudas abiertas se cerraron**: las colisiones del glosario (punto 6),
   las 33 secciones de retos y los 106 símbolos sin declarar.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
-faltando lecciones por escribir: **ML va por 16 de 90**, y **Series de tiempo e
+faltando lecciones por escribir: **ML va por 17 de 90**, y **Series de tiempo e
 Inferencia causal están vacíos**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -97,15 +99,15 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 0 | 11 | — | todas |
-| Machine Learning | 16 | 90 | **16 de 16** | 17 a 21 de la Fase 2, y el resto |
+| Machine Learning | 17 | 90 | **17 de 17** | 18 a 22 de la Fase 2, y el resto |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **75 lecciones** publicadas, **75** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 103 según el plan.
+- **76 lecciones** publicadas, **76** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 102 según el plan.
 - **Tres módulos cerrados**: Estadística 25/25, Álgebra 18/18 y **Python 16/16**.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
@@ -132,15 +134,15 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   marginales exactas, que es más fuerte que cualquier librería; y `np.trapz` se
   retiró del espacio de nombres en NumPy 2.0, así que las celdas nuevas no lo
   usan.
-- **159 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
+- **161 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
   Siguen los mismos cuatro avisos, todos anteriores: tres de no idempotencia
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. Los visuales de esta tanda no añaden ninguno.
-- **1691 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **404 celdas** que el gate ejecuta en cada build, y comprobadas **con las
+- **1724 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **409 celdas** que el gate ejecuta en cada build, y comprobadas **con las
   dos parejas de versiones** (ver el punto 5).
-- Glosario: **372 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **376 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -1364,6 +1366,68 @@ lugar de añadir una excepción al filtro, la función pasó a llamarse **pliegu
 que además describe mejor lo que hace —dobla $[0,1]$ por la mitad— y encaja con
 el verbo que la prosa ya usaba. El filtro se queda tal cual: un falso positivo
 que se arregla con una palabra mejor no justifica debilitar la regla.
+
+### 3.21 ML 17, el capítulo sin red de seguridad (19-09-2026)
+
+**El capítulo 11 se parte en dos**, y esta vez el motivo estaba anotado desde el
+13-09 en el punto 6: tiene $17$ unidades enseñables, una sola lección asignada, y
+**no reaparece en ninguna fase posterior**. Deep learning tenía seis lecciones de
+red en la Fase 4; supervivencia no tiene ninguna. Dejarlo en una lección habría
+sido garantizar una pasada superficial sobre el único tema de ISLP que no vuelve.
+
+- **ML 17**: §11.1–11.4, el caso sin covariables;
+- **ML 18**: §11.5–11.7, la función de riesgo, Cox y su regularización.
+
+Renumeración de la 18 a la 40, que pasan a 19–41, con $27$ referencias cruzadas
+subidas en nueve lecciones. El gate `referencias.py` que se escribió para la
+renumeración anterior hizo su trabajo a la primera.
+
+**Y cazó dos referencias que el script no toca**, porque estaban en prosa y no
+en el formato `**Machine Learning N**`:
+
+- ML 16 decía «§10.3 va a la lección 40, §10.7 se reparte entre las lecciones 35
+  y 39» en «Del libro», con los números de antes de la renumeración anterior;
+- ML 04 tenía «**ESL, lección 20**», que apuntaba a una numeración de hace dos
+  renumeraciones.
+
+Las dos se reescribieron **en el formato que el gate sí verifica**. La lección de
+método: al renumerar, revisar también las menciones en prosa, o mejor, escribirlas
+siempre con el patrón que el gate reconoce.
+
+#### Los tres resultados
+
+- la **17.2**: los tres atajos para librarse de la censura, con el sesgo de cada
+  uno calculado. El mejor de los tres, tratar la censura como suceso, converge
+  **exactamente** a $S(t)G(t)$: el factor perdido es la supervivencia de la
+  censura y tiene nombre. Medido con $200\,000$ sujetos: sigue a $S(t)G(t)$ con
+  error máximo $0{,}0020$ mientras se aparta de $S(t)$ hasta $0{,}1452$. **No
+  estima mal $S$: estima otra cosa, y la estima bien**;
+- la **17.4**: Kaplan-Meier por dos caminos. Sin censura telescopa hasta la
+  supervivencia empírica —comprobado en $601$ instantes a $10^{-12}$—, y con
+  censura es **exactamente repartir a la derecha** la masa de cada censurado
+  —comprobado en $1200$ instantes a $10^{-12}$—. De la segunda lectura se lee sin
+  esfuerzo por qué la curva se queda en $0{,}194444$ y no llega a cero: el último
+  dato es un censurado y su masa no tiene a quién repartirse;
+- la **17.6**: la media y la varianza del log-rank salen de una hipergeométrica, y
+  se comprueban **enumerando los $21$ repartos posibles** de un instante.
+
+#### La calibración, medida en vez de prometida
+
+El libro dice que el estadístico se distribuye «aproximadamente» como una
+$\chi^2$. La página lo mide con $4000$ ensayos de $60$ sujetos y el resultado
+obliga a matizar: rechaza el $11{,}10$ al $10\,\%$, el $6{,}02$ al $5$ y el $1{,}55$
+al $1$. **Los tres por encima**, a $2{,}3$, $3{,}0$ y $3{,}5$ errores típicos.
+
+La primera redacción decía «al 10 y al 5 la aproximación aguanta», y los números
+la desmintieron: también están fuera. La versión publicada dice lo que hay —es
+optimista en todo el rango— y añade lo que de verdad cambia con el nivel: el
+**exceso relativo** crece del $11\,\%$ al $55\,\%$. Con la tabla va el error típico
+del ensayo, para que se vea que no es ruido.
+
+Es la tercera vez en la sesión que una redacción cómoda no sobrevive a la
+medición, después del bosque aleatorio de ML 13 y de los dos textos del visual de
+ML 12. El patrón es siempre el mismo: **escribir la conclusión antes de mirar la
+tabla**.
 
 ---
 
