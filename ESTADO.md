@@ -1,6 +1,6 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **19-09-2026**, tras una sesión larga que publicó **dieciocho
+Última actualización: **19-09-2026**, tras una sesión larga que publicó **diecinueve
 lecciones** y cerró **tres deudas**.
 
 Las lecciones: **ML 7** (selección de subconjuntos, ISLP §6.1), **ML 8**
@@ -8,11 +8,11 @@ Las lecciones: **ML 7** (selección de subconjuntos, ISLP §6.1), **ML 8**
 splines, §7.1–7.4), **ML 11** (suavizado y GAMs, §7.5–7.7), **ML 12** (árboles de
 decisión, §8.1), **ML 13** (bagging, bosques e impulso, §8.2), **ML 14** (margen
 máximo, §9.1–9.2), **ML 15** (núcleos y pérdida bisagra, §9.3–9.5), **ML 16** (redes neuronales,
-§10.1–10.2, §10.6 y §10.8), **ML 17** (censura y Kaplan-Meier, §11.1–11.4), y
-**Python 10** a **16** (carga y limpieza, uniones y reshape,
+§10.1–10.2, §10.6 y §10.8), **ML 17** (censura y Kaplan-Meier, §11.1–11.4), **ML 18** (riesgos proporcionales
+y Cox, §11.5–11.7), y **Python 10** a **16** (carga y limpieza, uniones y reshape,
 groupby, visualización, series de tiempo, rendimiento y anatomía de un proyecto).
 
-**Las 76 publicadas cumplen el molde: 76 de 76.**
+**Las 77 publicadas cumplen el molde: 77 de 77.**
 
 Tres hitos de esta sesión:
 
@@ -24,12 +24,13 @@ Tres hitos de esta sesión:
   §9.3–9.5 en ML 15. Del **capítulo 10**, ML 16 cubre §10.1–10.2, §10.6 y §10.8;
   el resto está repartido entre las lecciones 36 a 41 de la Fase 4, salvo §10.4 y
   §10.5, que **no están en el plan** y quedan anotadas como omisión deliberada. Del
-  **capítulo 11**, ML 17 cubre §11.1–11.4 y ML 18 cubrirá §11.5–11.7.
+  **capítulo 11 queda cubierto entero**: §11.1–11.4 en ML 17 y §11.5–11.7 en ML 18,
+  con tres subsecciones de §11.7 nombradas como omisión deliberada.
 - **Las tres deudas abiertas se cerraron**: las colisiones del glosario (punto 6),
   las 33 secciones de retos y los 106 símbolos sin declarar.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
-faltando lecciones por escribir: **ML va por 17 de 90**, y **Series de tiempo e
+faltando lecciones por escribir: **ML va por 18 de 90**, y **Series de tiempo e
 Inferencia causal están vacíos**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -99,15 +100,15 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 0 | 11 | — | todas |
-| Machine Learning | 17 | 90 | **17 de 17** | 18 a 22 de la Fase 2, y el resto |
+| Machine Learning | 18 | 90 | **18 de 18** | 19 a 22 de la Fase 2, y el resto |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **76 lecciones** publicadas, **76** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 102 según el plan.
+- **77 lecciones** publicadas, **77** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 101 según el plan.
 - **Tres módulos cerrados**: Estadística 25/25, Álgebra 18/18 y **Python 16/16**.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
@@ -134,15 +135,15 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   marginales exactas, que es más fuerte que cualquier librería; y `np.trapz` se
   retiró del espacio de nombres en NumPy 2.0, así que las celdas nuevas no lo
   usan.
-- **161 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
+- **163 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
   Siguen los mismos cuatro avisos, todos anteriores: tres de no idempotencia
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. Los visuales de esta tanda no añaden ninguno.
-- **1724 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **409 celdas** que el gate ejecuta en cada build, y comprobadas **con las
+- **1758 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **416 celdas** que el gate ejecuta en cada build, y comprobadas **con las
   dos parejas de versiones** (ver el punto 5).
-- Glosario: **376 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **380 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -1428,6 +1429,49 @@ Es la tercera vez en la sesión que una redacción cómoda no sobrevive a la
 medición, después del bosque aleatorio de ML 13 y de los dos textos del visual de
 ML 12. El patrón es siempre el mismo: **escribir la conclusión antes de mirar la
 tabla**.
+
+### 3.22 ML 18: el capítulo 11 cerrado, y dos capítulos que eran el mismo (19-09-2026)
+
+Con ML 18 **queda cubierto el capítulo 11 entero**, el que no reaparece en
+ninguna fase posterior. Cinco resultados:
+
+- la **18.2**: riesgo y supervivencia son la misma información. Comprobado en las
+  dos direcciones con tres formas de riesgo distintas;
+- la **18.4**: la proporcionalidad implica $S=S_0^{\theta}$, y de ahí que **las
+  curvas del modelo no se crucen jamás**. Con un contraejemplo donde sí se cruzan
+  —cociente de riesgos que pasa de $2{,}6667$ a $0{,}4000$, cruce en $t=7{,}55$ con
+  las dos curvas en $0{,}1038$—, que es lo que convierte «hay que comprobar la
+  proporcionalidad» en algo que se ve;
+- la **18.5**: la verosimilitud parcial cancela el riesgo base. Y aquí está lo
+  que más me gusta de la lección: en vez de repetir la cancelación, se **deduce
+  una consecuencia comprobable**. Si solo entra el orden de los tiempos, entonces
+  pasar todos los tiempos por cualquier función creciente tiene que dejar el
+  ajuste idéntico. Cuatro transformaciones tan distintas como $t^3$ y $\log(1+t)$,
+  y el mismo $\beta$ a $10^{-10}$;
+- la **18.6**: el log-rank de ML 17 **es** la prueba de puntuación de Cox en
+  $\beta=0$. Sin empates coinciden a $10^{-10}$ en cuatro tamaños; con $17$
+  empates se separan —$1{,}207554$ contra $1{,}160413$— y el culpable tiene
+  nombre: el factor de población finita. El libro los presenta en dos secciones
+  distintas sin decir que son el mismo estadístico;
+- la **18.7**: el índice de concordancia y lo que la censura le quita. Con censura
+  fuerte quedan $2632$ pares de $7140$: se pierde el $63{,}1\,\%$ de las
+  comparaciones y el índice se sigue calculando sobre lo que queda.
+
+#### Otro número escrito a mano
+
+El ejercicio 2 llevaba $0{,}343207$ como respuesta esperada y la celda da
+$0{,}358358$. Lo cazó la ejecución de las celdas antes de registrar las
+afirmaciones, no la relectura. Es el mismo error que ya está anotado en el punto
+5 desde Python 12: **una cifra calculada de cabeza en un bloque de comprobación**.
+El procedimiento lo caza siempre, pero conviene no escribirlas de cabeza.
+
+#### Qué queda del capítulo, dicho en la lección
+
+De §11.7 quedan fuera tres subsecciones y la lección las nombra una por una:
+§11.7.2 queda cubierta de refilón por la invariancia de la 18.5; §11.7.3
+—covariables que cambian con el tiempo— exige cambiar la maquinaria del conjunto
+en riesgo; y §11.7.5 —árboles de supervivencia— no está en el plan de ninguna
+fase. Se escribe para que la omisión sea una decisión.
 
 ---
 
