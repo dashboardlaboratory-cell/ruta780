@@ -1,6 +1,6 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **19-09-2026**, tras una sesión larga que publicó **diecinueve
+Última actualización: **19-09-2026**, tras una sesión larga que publicó **veinte
 lecciones** y cerró **tres deudas**.
 
 Las lecciones: **ML 7** (selección de subconjuntos, ISLP §6.1), **ML 8**
@@ -9,10 +9,10 @@ splines, §7.1–7.4), **ML 11** (suavizado y GAMs, §7.5–7.7), **ML 12** (ár
 decisión, §8.1), **ML 13** (bagging, bosques e impulso, §8.2), **ML 14** (margen
 máximo, §9.1–9.2), **ML 15** (núcleos y pérdida bisagra, §9.3–9.5), **ML 16** (redes neuronales,
 §10.1–10.2, §10.6 y §10.8), **ML 17** (censura y Kaplan-Meier, §11.1–11.4), **ML 18** (riesgos proporcionales
-y Cox, §11.5–11.7), y **Python 10** a **16** (carga y limpieza, uniones y reshape,
+y Cox, §11.5–11.7), **ML 19** (PCA, §12.1–12.3), y **Python 10** a **16** (carga y limpieza, uniones y reshape,
 groupby, visualización, series de tiempo, rendimiento y anatomía de un proyecto).
 
-**Las 77 publicadas cumplen el molde: 77 de 77.**
+**Las 78 publicadas cumplen el molde: 78 de 78.**
 
 Tres hitos de esta sesión:
 
@@ -25,12 +25,14 @@ Tres hitos de esta sesión:
   el resto está repartido entre las lecciones 36 a 41 de la Fase 4, salvo §10.4 y
   §10.5, que **no están en el plan** y quedan anotadas como omisión deliberada. Del
   **capítulo 11 queda cubierto entero**: §11.1–11.4 en ML 17 y §11.5–11.7 en ML 18,
-  con tres subsecciones de §11.7 nombradas como omisión deliberada.
+  con tres subsecciones de §11.7 nombradas como omisión deliberada. Del **12**,
+  ML 19 cubre §12.1–12.3 y ML 21 cubrirá §12.4. **ML 19 desbloquea §6.3**, el
+  último hueco de los capítulos 2 a 9, que será la lección 20.
 - **Las tres deudas abiertas se cerraron**: las colisiones del glosario (punto 6),
   las 33 secciones de retos y los 106 símbolos sin declarar.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
-faltando lecciones por escribir: **ML va por 18 de 90**, y **Series de tiempo e
+faltando lecciones por escribir: **ML va por 19 de 90**, y **Series de tiempo e
 Inferencia causal están vacíos**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -100,15 +102,15 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 0 | 11 | — | todas |
-| Machine Learning | 18 | 90 | **18 de 18** | 19 a 22 de la Fase 2, y el resto |
+| Machine Learning | 19 | 90 | **19 de 19** | 20 a 22 de la Fase 2, y el resto |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **77 lecciones** publicadas, **77** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 101 según el plan.
+- **78 lecciones** publicadas, **78** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 100 según el plan.
 - **Tres módulos cerrados**: Estadística 25/25, Álgebra 18/18 y **Python 16/16**.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
@@ -135,15 +137,15 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   marginales exactas, que es más fuerte que cualquier librería; y `np.trapz` se
   retiró del espacio de nombres en NumPy 2.0, así que las celdas nuevas no lo
   usan.
-- **163 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
+- **165 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
   Siguen los mismos cuatro avisos, todos anteriores: tres de no idempotencia
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. Los visuales de esta tanda no añaden ninguno.
-- **1758 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **416 celdas** que el gate ejecuta en cada build, y comprobadas **con las
+- **1796 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **422 celdas** que el gate ejecuta en cada build, y comprobadas **con las
   dos parejas de versiones** (ver el punto 5).
-- Glosario: **380 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **383 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -1473,6 +1475,47 @@ De §11.7 quedan fuera tres subsecciones y la lección las nombra una por una:
 en riesgo; y §11.7.5 —árboles de supervivencia— no está en el plan de ninguna
 fase. Se escribe para que la omisión sea una decisión.
 
+### 3.23 ML 19: PCA, el signo arbitrario y §6.3 desbloqueado (19-09-2026)
+
+Cinco resultados, y dos de ellos son identidades exactas que el libro presenta
+como «dos puntos de vista»:
+
+- la **19.2**: las componentes son los eigenvectores de la covarianza y la
+  varianza proyectada es el eigenvalor. Comprobado contra $200\,000$ direcciones
+  al azar, cuya mejor marca es $5{,}651898$ contra $5{,}653235$ y se queda a
+  $1{,}09$ grados;
+- la **19.3**: las $k$ primeras componentes dan la **mejor** aproximación de rango
+  $k$, con error igual a la suma de los $\sigma^2$ descartados. Comprobado contra
+  $3000$ subespacios al azar en rango uno y dos: **ninguno** mejora;
+- la **19.4**: la varianza acumulada **es** el complemento del error relativo. No
+  algo parecido: la misma cuenta escrita al revés, comprobada a $10^{-10}$;
+- la **19.5**: multiplicar una columna por mil —la misma medida en otra unidad—
+  lleva la primera componente de $[0{,}6165,\ 0{,}6836,\ 0{,}3906]$ a ser esa
+  columna sola con el $99{,}9998\,\%$ de la varianza. Estandarizando, la respuesta
+  no se mueve y la varianza total vale exactamente $p$;
+- la **19.6**: el criterio del completado no sube. Baja de $96{,}938400$ a
+  $23{,}290645$ en $40$ pasos, y el error en las casillas ocultas mejora un
+  $91{,}5\,\%$ frente a rellenar con la media. Pero la última tabla enseña lo que
+  la proposición **no** garantiza: con rango $8$ sobre $8$ columnas el error
+  vuelve al de partida.
+
+#### El signo de una componente es arbitrario
+
+Si $\varphi$ es una componente, $-\varphi$ también, con la misma varianza
+explicada. Dos versiones de la misma biblioteca pueden devolver una u otra, las
+dos correctas, y cualquier cifra publicada de sus coeficientes dejaría de
+cuadrar. La celda **fija el signo** —que la coordenada de mayor magnitud sea
+positiva— antes de imprimir nada, y la lección lo explica donde toca.
+
+Ningún libro lo menciona y es exactamente el tipo de detalle que rompe una
+afirmación en el gate meses después.
+
+#### §6.3 queda desbloqueado
+
+*Dimension Reduction Methods* quedó fuera de ML 8 porque necesitaba componentes
+principales. Con ML 19 ya se puede escribir **ML 20**, y con ella los capítulos
+del 2 al 9 de ISLP quedarán cubiertos **sin ningún hueco**.
+
 ---
 
 ## 4. Cómo se escribe una lección
@@ -1517,6 +1560,17 @@ python3 verificar/visuales.py --estricto
 ## 5. Errores que ya se cometieron
 
 No repetirlos sale más barato que volver a encontrarlos.
+
+**Números escritos de cabeza en los bloques de comprobación (19-09-2026).**
+Van tres en dos días: Python 12 en su momento, ML 18 con $0{,}343207$ cuando la
+celda daba $0{,}358358$, y ML 19 con $0{,}924528$ cuando daba $0{,}923599$. Los
+tres eran la respuesta esperada de un ejercicio, calculada mentalmente al
+escribir el bloque `check`.
+
+**Los tres los cazó el procedimiento** —ejecutar todas las celdas antes de
+registrar las afirmaciones—, así que ninguno llegó a publicarse. Pero la
+costumbre correcta es más simple: **calcular el valor con el intérprete y pegarlo**,
+nunca escribirlo de cabeza, por fácil que parezca la cuenta.
 
 **Una cifra de la prosa se quedó huérfana de su celda (18-09-2026).** En ML 13,
 la prosa y el bloque de Fuentes citaban $0{,}0887$ y $0{,}2396$ como prueba de que
