@@ -1,0 +1,857 @@
+---
+title: "Riesgos proporcionales y el modelo de Cox"
+subtitle: "Machine Learning · Lección 18"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/17-censura-y-kaplan-meier, estadistica/08-maxima-verosimilitud, matematica/17-metodo-de-newton]
+siguientes: []
+libro: "ISLP §11.5 Regression Models With a Survival Response · §11.5.1 The Hazard Function · §11.5.2 Proportional Hazards · §11.6 Shrinkage for the Cox Model · §11.7 Additional Topics · §11.7.1 Area Under the Curve for Survival Analysis · §11.7.4 Checking the Proportional Hazards Assumption"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="ml/18-riesgos-proporcionales-y-cox"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §11.5–11.7]{.item}
+[**Prereqs** [Censura y Kaplan-Meier](17-censura-y-kaplan-meier.qmd) · [Máxima verosimilitud](../estadistica/08-maxima-verosimilitud.qmd) · [Método de Newton](../matematica/17-metodo-de-newton.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir la [función de riesgo]{.g data-t="función de riesgo"} y demostrar que determina la supervivencia, y al revés.
+2. Definir los [riesgos proporcionales]{.g} y demostrar que implican $S(t\mid x)=S_0(t)^{\theta}$, de donde las curvas **no se cruzan nunca**.
+3. **Demostrar que la [verosimilitud parcial]{.g} elimina el riesgo base sin estimarlo**, y comprobarlo pasando los tiempos por cualquier función creciente.
+4. Demostrar que el log-rank de la lección 17 **es** la prueba de puntuación de Cox en $\beta=0$, y decir qué los separa cuando hay empates.
+5. Exhibir datos donde la proporcionalidad falla y explicar qué pierde el modelo ahí.
+6. Definir el [índice de concordancia]{.g} y contar cuántos pares se lleva la censura.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 17**: la censura, el conjunto en riesgo y el log-rank, que aquí reaparece como un caso particular.
+- **Estadística 8**: la máxima verosimilitud, de la que la parcial es una variante con una justificación propia.
+- **Álgebra 17**: el método de Newton, que es como se maximiza la verosimilitud parcial.
+- **Machine Learning 8**: el encogimiento, que en §11.6 se aplica tal cual a este modelo.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 19**: el análisis de componentes principales, siguiente en la Fase 2.
+- **Machine Learning 22**: las pruebas múltiples, cuando se prueban muchas covariables a la vez.
+- **Series de tiempo**: los procesos de conteo y las intensidades, que generalizan la función de riesgo.
+- **Inferencia causal**: los modelos de duración con tratamiento, donde la proporcionalidad se vuelve un supuesto de identificación.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $h(t)$ | hache de te | La función de riesgo: la tasa de fallo instantánea entre los que llegan vivos |
+| $h_0(t)$ | hache cero de te | El riesgo base, común a todos los sujetos |
+| $H(t)$ | hache mayúscula de te | El riesgo acumulado, $\int_0^t h$ |
+| $S(t)$ | ese de te | La supervivencia, como en la lección 17 |
+| $\theta$ | theta | El cociente de riesgos $e^{\beta^\top x}$ de un sujeto frente al base |
+| $\beta$ | beta | Los coeficientes de las covariables en el riesgo |
+| $x_i$ | equis sub i | Las covariables del sujeto $i$ |
+| $R(t)$ | erre de te | El conjunto en riesgo en el instante $t$ |
+| $U$ | u | La derivada de la log-verosimilitud parcial: la puntuación |
+| $I$ | i | Menos su segunda derivada: la información observada |
+| $C$ | ce | El índice de concordancia |
+| $n$ | ene | El número de sujetos |
+| $\delta_i$ | delta sub i | Vale $1$ si se vio el suceso del sujeto $i$ y $0$ si hubo censura |
+| $\lambda$ | lambda | La tasa de una exponencial, y en §11.6 la penalización del encogimiento |
+:::
+
+## 1. El riesgo, que es la supervivencia dicha al revés
+
+::: {.definicion}
+**Definición 18.1 (función de riesgo).** Para un tiempo de supervivencia $T$ continuo,
+$$h(t)=\lim_{\Delta\to 0}\frac{P(t\le T<t+\Delta\mid T\ge t)}{\Delta}.$$
+Es la tasa de fallo **entre los que han llegado vivos hasta $t$**, no entre todos. El riesgo acumulado es $H(t)=\int_0^t h(u)\,du$.
+:::
+
+::: {.proposicion}
+**Proposición 18.2 (riesgo y supervivencia son lo mismo).** Con $S(t)=P(T>t)$ derivable y positiva:
+$$h(t)=-\frac{d}{dt}\log S(t),\qquad S(t)=e^{-H(t)}.$$
+En particular, **el riesgo es constante si y solo si $T$ es exponencial**.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $f$ la densidad de $T$. La probabilidad condicionada del numerador es $P(t\le T<t+\Delta)/P(T\ge t)$, y al dividir por $\Delta$ y pasar al límite queda $f(t)/S(t)$. Como $S'=-f$, eso es $-S'(t)/S(t)=-\frac{d}{dt}\log S(t)$. Integrando de $0$ a $t$ con $S(0)=1$ se obtiene $\log S(t)=-H(t)$, es decir la segunda fórmula.
+
+Si $h\equiv\lambda$ entonces $H(t)=\lambda t$ y $S(t)=e^{-\lambda t}$, que es la exponencial; al revés, si $S(t)=e^{-\lambda t}$ entonces $-\frac{d}{dt}\log S=\lambda$. [∎]{.fin-demo}
+:::
+
+Que sean equivalentes no significa que dé igual cuál se use. El modelo de esta lección entra por el riesgo, y la razón es que ahí las covariables pueden **multiplicar**.
+
+```{pyodide}
+import numpy as np
+
+# El riesgo y la supervivencia son la misma informacion escrita de dos maneras:
+#   S(t) = exp(-integral de h),  h(t) = -d/dt log S(t)
+malla = np.linspace(0, 8, 160001)
+paso = malla[1] - malla[0]
+
+def superviv_desde_riesgo(h):
+    acumulado = np.concatenate([[0.0], np.cumsum((h[1:] + h[:-1]) / 2 * paso)])
+    return np.exp(-acumulado)
+
+casos = {
+    "constante 0.4": np.full_like(malla, 0.4),
+    "creciente 0.15t": 0.15 * malla,
+    "en banera": 0.6 - 0.28 * malla + 0.05 * malla ** 2,
+}
+print("riesgo acumulado y supervivencia, comprobados contra la forma cerrada:")
+print("   riesgo h(t)          S(2) numerico   S(2) exacto   coinciden a 1e-9")
+i2 = int(round(2.0 / paso))
+exactos = {
+    "constante 0.4": np.exp(-0.4 * 2),
+    "creciente 0.15t": np.exp(-0.15 * 2 ** 2 / 2),
+    "en banera": np.exp(-(0.6 * 2 - 0.28 * 2 ** 2 / 2 + 0.05 * 2 ** 3 / 3)),
+}
+for nombre, h in casos.items():
+    S = superviv_desde_riesgo(h)
+    print("   %-20s %13.8f %13.8f %17s"
+          % (nombre, S[i2], exactos[nombre], bool(abs(S[i2] - exactos[nombre]) < 1e-9)))
+print()
+
+# Riesgo constante equivale a exponencial, y a nada mas.
+h = np.full_like(malla, 0.4)
+S = superviv_desde_riesgo(h)
+peor = float(np.abs(S - np.exp(-0.4 * malla)).max())
+print("con riesgo constante 0.4, S(t) coincide con exp(-0.4t) en toda la malla")
+print("   a 1e-9: %s" % bool(peor < 1e-9))
+print()
+
+# La derivada logaritmica devuelve el riesgo de partida: la vuelta del viaje.
+for nombre, h in casos.items():
+    S = superviv_desde_riesgo(h)
+    reconstruido = -np.gradient(np.log(np.maximum(S, 1e-300)), paso)
+    dentro = (malla > 0.2) & (malla < 6.0)
+    print("   %-20s reconstruir h desde S, error maximo %s"
+          % (nombre, "menor que 1e-6: %s" % bool(np.abs(reconstruido[dentro] - h[dentro]).max() < 1e-6)))
+print()
+print("por eso da igual con cual de los dos se trabaje: el modelo de Cox elige")
+print("el riesgo porque ahi es donde las covariables entran multiplicando")
+```
+
+## 2. Proporcionales: qué se gana y qué se promete
+
+::: {.definicion}
+**Definición 18.3 (riesgos proporcionales).** El modelo de Cox supone
+$$h(t\mid x)=h_0(t)\,e^{\beta^\top x},$$
+con $h_0$ el **riesgo base**, común y sin forma fijada. El factor $\theta=e^{\beta^\top x}$ no depende del tiempo: esa es toda la restricción.
+:::
+
+::: {.proposicion}
+**Proposición 18.4 (tres consecuencias).** Bajo la Definición 18.3:
+
+(a) el cociente de riesgos entre dos sujetos vale $e^{\beta^\top(x_1-x_2)}$ y **no depende de $t$**: el riesgo base se cancela;
+
+(b) $S(t\mid x)=S_0(t)^{\theta}$ con $S_0=e^{-H_0}$, es decir cada curva es una **potencia** de la base;
+
+(c) por tanto **dos curvas de supervivencia del modelo no se cruzan nunca**: si $\theta_1<\theta_2$ entonces $S_0^{\theta_1}\ge S_0^{\theta_2}$ en todo instante.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (a), el cociente es $h_0(t)e^{\beta^\top x_1}/\big(h_0(t)e^{\beta^\top x_2}\big)$, y $h_0(t)$ se cancela siempre que sea distinto de cero.
+
+Para (b), $H(t\mid x)=\int_0^t h_0(u)\theta\,du=\theta H_0(t)$, así que por la Proposición 18.2, $S(t\mid x)=e^{-\theta H_0(t)}=\big(e^{-H_0(t)}\big)^{\theta}=S_0(t)^{\theta}$.
+
+Para (c), $S_0(t)\in(0,1]$ y la función $a\mapsto S_0(t)^a$ es no creciente en $a$ para una base en ese intervalo; por tanto $\theta_1<\theta_2$ da $S_0^{\theta_1}\ge S_0^{\theta_2}$ en cada $t$ por separado, sin posibilidad de cruce. [∎]{.fin-demo}
+:::
+
+La parte (c) es la que conviene recordar cuando se mira un ajuste: **el modelo no puede representar dos grupos que se adelanten el uno al otro**. Si los datos hacen eso, el ajuste devolverá igualmente un número, y ese número será un promedio de dos situaciones opuestas.
+
+```{pyodide}
+import numpy as np
+
+malla = np.linspace(0.001, 8, 40001)
+paso = malla[1] - malla[0]
+
+def acumula(h):
+    return np.concatenate([[0.0], np.cumsum((h[1:] + h[:-1]) / 2 * paso)])
+
+# Riesgo base cualquiera, y dos sujetos con riesgos proporcionales.
+h0 = 0.25 + 0.18 * np.sin(malla)          # sube y baja: da igual
+S0 = np.exp(-acumula(h0))
+for theta in [0.5, 1.0, 2.0, 4.0]:
+    S = np.exp(-acumula(theta * h0))
+    print("con cociente de riesgos %.1f: S(t) = S0(t)^%.1f en toda la malla a 1e-9: %s"
+          % (theta, theta, bool(np.abs(S - S0 ** theta).max() < 1e-9)))
+print()
+print("de ahi sale que las curvas NO se cruzan: si S0 esta entre 0 y 1 y a < b,")
+print("entonces S0^a > S0^b en todo instante, sin excepcion")
+peor_orden = True
+for a, b in [(0.5, 1.0), (1.0, 2.0), (0.5, 4.0)]:
+    peor_orden = peor_orden and bool((S0 ** a >= S0 ** b - 1e-15).all())
+print("   comprobado en tres pares:", peor_orden)
+print()
+
+# Y ahora un caso donde la proporcionalidad NO se cumple: los riesgos se cruzan.
+hA = np.where(malla < 2.0, 0.8, 0.12)      # arranca peligroso y se calma
+hB = np.full_like(malla, 0.30)             # constante
+SA, SB = np.exp(-acumula(hA)), np.exp(-acumula(hB))
+# El cruce se busca lejos del origen: ahi las dos curvas valen casi 1 y la
+# diferencia es ruido numerico, no un cruce.
+lejos = malla > 0.1
+d = SA[lejos] - SB[lejos]
+cambios = np.flatnonzero(np.diff(np.sign(d)) != 0)
+print("dos grupos cuyos RIESGOS se cruzan en t = 2:")
+print("   cruces de las curvas de supervivencia, mirando a partir de t = 0.1: %d" % len(cambios))
+i = int(np.flatnonzero(lejos)[0] + cambios[0])
+print("   se cruzan en t = %.2f, donde las dos valen %.4f y %.4f"
+      % (malla[i], SA[i], SB[i]))
+print()
+print("   instante   S del grupo A   S del grupo B   cociente de riesgos")
+for t in [0.5, 1.5, 3.0, 6.0, 7.9]:
+    k = int(round((t - malla[0]) / paso))
+    print("%11.1f %15.4f %15.4f %19.4f" % (t, SA[k], SB[k], hA[k] / hB[k]))
+print()
+print("el cociente de riesgos pasa de 2.67 a 0.40: NO es constante, que es")
+print("justo lo que el modelo de Cox supone. Ajustarlo aqui devuelve un solo")
+print("numero, y ese numero es un promedio de dos situaciones opuestas")
+print()
+print("y aqui las curvas SI se cruzan, cosa que ningun ajuste de Cox puede")
+print("reproducir: sus curvas son potencias unas de otras y mantienen el orden.")
+print("Por eso comprobar la proporcionalidad no es un formalismo")
+```
+
+Los riesgos de los dos grupos se cruzan en $t=2$ y sus curvas de supervivencia se cruzan en $t=7{,}55$, donde las dos valen $0{,}1038$. Ningún ajuste de Cox puede reproducir eso, por bien que se estime su $\beta$: sus curvas son potencias unas de otras.
+
+```{=html}
+<div class="viz-riesgo">
+  <div class="controles">
+    <label>Forma del riesgo base
+      <select id="ri-f">
+        <option value="const" selected>constante</option>
+        <option value="sube">creciente</option>
+        <option value="banera">en bañera</option>
+      </select>
+    </label>
+    <label>Cociente de riesgos θ <input id="ri-t" type="range" min="0.25" max="4" step="0.05" value="2"> <span id="ri-t-v">2.00</span></label>
+  </div>
+  <svg id="ri-svg" viewBox="0 0 660 330" role="img" aria-label="Arriba el riesgo base y el del sujeto, que es el base multiplicado por theta; abajo las dos supervivencias, una potencia de la otra, sobre un eje fijo de cero a uno."></svg>
+  <p class="lectura" id="ri-lectura"></p>
+</div>
+<style>
+.viz-riesgo { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-riesgo .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-riesgo label { display: flex; align-items: center; gap: .4rem; }
+.viz-riesgo input[type=range] { width: 170px; padding: 0; }
+.viz-riesgo select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-riesgo svg { width: 100%; height: auto; display: block; }
+.viz-riesgo .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("ri-svg"), lec = document.getElementById("ri-lectura");
+  var cf = document.getElementById("ri-f"), ct = document.getElementById("ri-t");
+  var et = document.getElementById("ri-t-v");
+  // Marco anclado: t de 0 a 8; riesgo de 0 a 1.2; supervivencia de 0 a 1.
+  var X0 = 50, XW = 570, Y1 = 22, H1 = 106, Y2 = 166, H2 = 132, TMAX = 8, N = 801;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var px = function (t) { return X0 + t / TMAX * XW; };
+  var pyh = function (v) { return Y1 + (1.2 - Math.min(v, 1.2)) / 1.2 * H1; };
+  var pys = function (v) { return Y2 + (1 - v) * H2; };
+  function base(t, modo) {
+    if (modo === "const") return 0.25;
+    if (modo === "sube") return 0.06 * t;
+    return 0.55 - 0.24 * t + 0.042 * t * t;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var modo = cf.value, th = +ct.value;
+    et.textContent = th.toFixed(2);
+    var i, dt = TMAX / (N - 1), H = 0, Hs = 0, dh0 = "", dh1 = "", ds0 = "", ds1 = "";
+    var S0en2 = 0, Sen2 = 0;
+    for (i = 0; i < N; i++) {
+      var t = i * dt, h0 = Math.max(0, base(t, modo));
+      if (i > 0) { var hprev = Math.max(0, base(t - dt, modo)); H += (h0 + hprev) / 2 * dt; }
+      Hs = th * H;
+      dh0 += (i ? " L" : "M") + px(t).toFixed(1) + " " + pyh(h0).toFixed(1);
+      dh1 += (i ? " L" : "M") + px(t).toFixed(1) + " " + pyh(th * h0).toFixed(1);
+      ds0 += (i ? " L" : "M") + px(t).toFixed(1) + " " + pys(Math.exp(-H)).toFixed(1);
+      ds1 += (i ? " L" : "M") + px(t).toFixed(1) + " " + pys(Math.exp(-Hs)).toFixed(1);
+      if (Math.abs(t - 2) < dt / 2) { S0en2 = Math.exp(-H); Sen2 = Math.exp(-Hs); }
+    }
+    svg.appendChild(el("text", { x: X0, y: 14, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "riesgo: el base (verde) y el del sujeto (rojo), que es el base por θ"));
+    svg.appendChild(el("path", { d: dh0, stroke: C_A, "stroke-width": 2.2, fill: "none" }));
+    svg.appendChild(el("path", { d: dh1, stroke: C_B, "stroke-width": 2.2, fill: "none" }));
+    var g;
+    for (g = 0; g <= 1.001; g += 0.5) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + pys(g).toFixed(1) + " L" + (X0 + XW) + " " + pys(g).toFixed(1),
+        stroke: C_L, "stroke-width": 1, opacity: .5 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: pys(g) + 4, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .65 }, g.toFixed(1)));
+    }
+    svg.appendChild(el("text", { x: X0, y: Y2 - 8, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "supervivencia: S(t) = S₀(t)^θ, y por eso nunca se cruzan"));
+    svg.appendChild(el("path", { d: ds0, stroke: C_A, "stroke-width": 2.4, fill: "none" }));
+    svg.appendChild(el("path", { d: ds1, stroke: C_B, "stroke-width": 2.4, fill: "none" }));
+
+    lec.innerHTML = "Con θ = <strong>" + th.toFixed(2) + "</strong>, en t = 2 la supervivencia base vale <strong>" +
+      S0en2.toFixed(4) + "</strong> y la del sujeto <strong>" + Sen2.toFixed(4) + "</strong>, que es " +
+      S0en2.toFixed(4) + "<sup>" + th.toFixed(2) + "</sup> = <strong>" + Math.pow(S0en2, th).toFixed(4) +
+      "</strong> (Proposición 18.4b). " +
+      "Cambiando la forma del riesgo base se mueven las dos curvas a la vez, pero <strong>su relación no cambia</strong>: " +
+      (th > 1 ? "la roja queda siempre por debajo de la verde." : th < 1 ? "la roja queda siempre por encima de la verde." : "las dos coinciden, porque θ = 1.") +
+      " Eso es lo que el modelo promete, y lo que no puede dejar de prometer.";
+  }
+  cf.addEventListener("change", dibujar);
+  ct.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. La verosimilitud parcial, o cómo no estimar lo que no hace falta
+
+El riesgo base $h_0$ es una **función entera** sin forma fijada. Estimarla junto con $\beta$ sería un problema de dimensión infinita. La salida de Cox es no estimarla.
+
+::: {.proposicion}
+**Proposición 18.5 (el riesgo base se cancela).** Supóngase que en el instante $t$ ocurre exactamente un suceso, y considérese la probabilidad de que le tocara al sujeto $i$ **dado** que le tocó a alguien del conjunto en riesgo $R(t)$. Bajo la Definición 18.3 esa probabilidad vale
+$$\frac{h_0(t)e^{\beta^\top x_i}}{\sum_{j\in R(t)}h_0(t)e^{\beta^\top x_j}}=\frac{e^{\beta^\top x_i}}{\sum_{j\in R(t)}e^{\beta^\top x_j}},$$
+donde $h_0(t)$ **desaparece**. El producto de esos factores sobre todos los instantes con suceso es la verosimilitud parcial, y maximizarla estima $\beta$ sin tocar $h_0$.
+
+En consecuencia, la estimación **solo depende del orden de los tiempos**, no de sus valores: aplicar cualquier función estrictamente creciente a todos los tiempos deja el resultado intacto.
+:::
+
+::: {.demostracion}
+*Demostración.* Condicionando a que en $t$ hay un suceso entre los de $R(t)$, la probabilidad de que sea el sujeto $i$ es su riesgo instantáneo dividido entre la suma de los riesgos de todo el conjunto. Sustituyendo la Definición 18.3, el factor $h_0(t)$ aparece en el numerador y en cada sumando del denominador, y se cancela.
+
+Para la segunda afirmación: una función estrictamente creciente aplicada a todos los tiempos conserva las relaciones $Y_j\ge Y_i$, luego conserva **todos** los conjuntos en riesgo y el orden en que se recorren. La expresión anterior no usa los tiempos de ninguna otra forma, así que la verosimilitud parcial es literalmente la misma función de $\beta$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def verosimilitud_parcial(beta, X, Y, delta):
+    """log de la verosimilitud parcial de Cox, y sus dos derivadas."""
+    orden = np.argsort(Y, kind="mergesort")
+    X, Y, delta = X[orden], Y[orden], delta[orden]
+    eta = X @ beta
+    w = np.exp(eta)
+    logL, U, I = 0.0, np.zeros(len(beta)), np.zeros((len(beta), len(beta)))
+    for i in range(len(Y)):
+        if delta[i] == 0:
+            continue
+        riesgo = Y >= Y[i] - 1e-12          # el conjunto en riesgo
+        wr = w[riesgo]
+        Xr = X[riesgo]
+        s0 = float(wr.sum())
+        s1 = wr @ Xr
+        s2 = (Xr * wr[:, None]).T @ Xr
+        logL += float(eta[i]) - np.log(s0)
+        U += X[i] - s1 / s0
+        I += s2 / s0 - np.outer(s1 / s0, s1 / s0)
+    return logL, U, I
+
+def ajusta(X, Y, delta, pasos=30):
+    """Newton sobre la verosimilitud parcial. Sin sorteos ni tolerancias sueltas."""
+    beta = np.zeros(X.shape[1])
+    for _ in range(pasos):
+        _, U, I = verosimilitud_parcial(beta, X, Y, delta)
+        beta = beta + np.linalg.solve(I, U)
+    return beta
+
+# Los MISMOS sujetos y las MISMAS covariables, con dos riesgos base distintos.
+rng = np.random.default_rng(41)
+n = 300
+X = np.c_[rng.normal(0, 1, n), rng.integers(0, 2, n).astype(float)]
+beta_real = np.array([0.8, -0.5])
+u = rng.uniform(0, 1, n)
+riesgo_rel = np.exp(X @ beta_real)
+
+# riesgo base 1: constante (exponencial). H0(t) = 0.3 t
+T1 = -np.log(u) / (0.3 * riesgo_rel)
+# riesgo base 2: creciente (Weibull). H0(t) = 0.05 t^3
+T2 = (-np.log(u) / (0.05 * riesgo_rel)) ** (1 / 3)
+
+print("dos poblaciones con el MISMO efecto de las covariables y riesgos base")
+print("completamente distintos:")
+print("   base constante: mediana de los tiempos %.4f" % float(np.median(T1)))
+print("   base creciente: mediana de los tiempos %.4f" % float(np.median(T2)))
+print("   cociente entre las dos medianas: %.4f" % float(np.median(T1) / np.median(T2)))
+print()
+
+for nombre, T, tasa_cens in [("base constante", T1, 0.15), ("base creciente", T2, 0.5)]:
+    C = rng.exponential(1 / tasa_cens, n)
+    Y = np.minimum(T, C)
+    delta = (T <= C).astype(int)
+    beta = ajusta(X, Y, delta)
+    print("%-16s censurados %5.1f%%  beta estimado [%+.6f, %+.6f]"
+          % (nombre, 100 * (1 - delta.mean()), beta[0], beta[1]))
+print("   el real es                       [%+.6f, %+.6f]" % (beta_real[0], beta_real[1]))
+print()
+
+# Y la comprobacion fuerte: el riesgo base no aparece en la cuenta. Se reescalan
+# los tiempos con cualquier funcion creciente y el ajuste no se mueve.
+C = rng.exponential(1 / 0.15, n)
+Y = np.minimum(T1, C); delta = (T1 <= C).astype(int)
+beta_base = ajusta(X, Y, delta)
+print("el mismo conjunto, con los tiempos pasados por funciones crecientes:")
+for nombre, f in [("t -> t", lambda t: t), ("t -> t^3", lambda t: t ** 3),
+                  ("t -> log(1+t)", lambda t: np.log1p(t)), ("t -> exp(t)-1", lambda t: np.expm1(t))]:
+    b = ajusta(X, f(Y), delta)
+    print("   %-16s beta [%+.6f, %+.6f]  identico a 1e-10: %s"
+          % (nombre, b[0], b[1], bool(np.allclose(b, beta_base, atol=1e-10))))
+print()
+print("cualquier funcion creciente conserva el ORDEN de los tiempos, y la")
+print("verosimilitud parcial solo mira el orden: quien estaba en riesgo cuando")
+print("cada suceso ocurrio. Por eso el riesgo base se cancela sin estimarlo")
+```
+
+Cuatro transformaciones del tiempo tan distintas como $t^3$ y $\log(1+t)$, y el mismo $\beta$ hasta $10^{-10}$. La Proposición 18.5 lo predice exactamente, y explica por qué el modelo se lleva bien con escalas de tiempo discutibles —§11.7.2 del libro— siempre que el orden sea el correcto.
+
+```{=html}
+<div class="viz-parcial">
+  <div class="controles">
+    <label>Suceso número <input id="pa-k" type="range" min="1" max="6" step="1" value="1"> <span id="pa-k-v">1</span></label>
+    <label>Coeficiente β <input id="pa-b" type="range" min="-1.5" max="1.5" step="0.05" value="0.6"> <span id="pa-b-v">0.60</span></label>
+  </div>
+  <svg id="pa-svg" viewBox="0 0 660 320" role="img" aria-label="Una línea por sujeto con su tiempo observado; en el suceso elegido se resalta quién sigue en riesgo y con qué peso contribuye cada uno al denominador de la verosimilitud parcial."></svg>
+  <p class="lectura" id="pa-lectura"></p>
+</div>
+<style>
+.viz-parcial { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-parcial .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-parcial label { display: flex; align-items: center; gap: .4rem; }
+.viz-parcial input[type=range] { width: 170px; padding: 0; }
+.viz-parcial svg { width: 100%; height: auto; display: block; }
+.viz-parcial .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("pa-svg"), lec = document.getElementById("pa-lectura");
+  var ck = document.getElementById("pa-k"), cb = document.getElementById("pa-b");
+  var ek = document.getElementById("pa-k-v"), eb = document.getElementById("pa-b-v");
+  var X0 = 60, XW = 520, Y0 = 24, TMAX = 11;
+  // Diez sujetos fijos: tiempo, si fue suceso, y su covariable
+  var S = [
+    { t: 1.2, d: 1, x: 1.4 }, { t: 2.0, d: 0, x: -0.6 }, { t: 2.7, d: 1, x: 0.2 },
+    { t: 3.5, d: 1, x: -1.1 }, { t: 4.1, d: 0, x: 0.9 }, { t: 5.0, d: 1, x: 0.5 },
+    { t: 6.3, d: 1, x: -0.3 }, { t: 7.2, d: 0, x: 1.1 }, { t: 8.4, d: 1, x: -0.8 },
+    { t: 9.6, d: 0, x: 0.1 }
+  ];
+  var sucesos = [];
+  for (var q = 0; q < S.length; q++) if (S[q].d === 1) sucesos.push(q);
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var px = function (t) { return X0 + t / TMAX * XW; };
+  var py = function (i) { return Y0 + 14 + i * 27; };
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var k = +ck.value, beta = +cb.value;
+    ek.textContent = k; eb.textContent = beta.toFixed(2);
+    var idx = sucesos[Math.min(k - 1, sucesos.length - 1)];
+    var tk = S[idx].t, i;
+
+    svg.appendChild(el("text", { x: X0, y: 16, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "cada línea es un sujeto; en el suceso elegido, quién sigue en riesgo y con qué peso"));
+    var suma = 0;
+    for (i = 0; i < S.length; i++) if (S[i].t >= tk - 1e-9) suma += Math.exp(beta * S[i].x);
+
+    for (i = 0; i < S.length; i++) {
+      var enRiesgo = S[i].t >= tk - 1e-9;
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(i).toFixed(1) + " L" + px(S[i].t).toFixed(1) + " " + py(i).toFixed(1),
+        stroke: enRiesgo ? C_T : C_L, "stroke-width": enRiesgo ? 1.8 : 1.4, opacity: enRiesgo ? .8 : .35 }));
+      if (S[i].d === 1)
+        svg.appendChild(el("circle", { cx: px(S[i].t).toFixed(1), cy: py(i).toFixed(1), r: 3.6,
+          fill: i === idx ? C_B : C_A, "fill-opacity": enRiesgo ? .95 : .3 }));
+      else
+        svg.appendChild(el("path", { d: "M" + px(S[i].t).toFixed(1) + " " + (py(i) - 4).toFixed(1) +
+          " L" + px(S[i].t).toFixed(1) + " " + (py(i) + 4).toFixed(1), stroke: C_G, "stroke-width": 2.2,
+          opacity: enRiesgo ? .95 : .3 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(i) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 },
+        "x=" + S[i].x.toFixed(1)));
+      if (enRiesgo) {
+        var w = Math.exp(beta * S[i].x);
+        svg.appendChild(el("rect", { x: (X0 + XW + 10).toFixed(1), y: (py(i) - 6).toFixed(1),
+          width: (w / Math.exp(1.5 * Math.abs(beta)) * 52).toFixed(1), height: 12,
+          fill: i === idx ? C_B : C_A, "fill-opacity": .4 }));
+        svg.appendChild(el("text", { x: (X0 + XW + 66).toFixed(1), y: py(i) + 4, "font-size": 9.5, fill: C_T, opacity: .75 },
+          w.toFixed(2)));
+      }
+    }
+    svg.appendChild(el("path", { d: "M" + px(tk).toFixed(1) + " " + Y0 + " L" + px(tk).toFixed(1) + " " + (py(S.length - 1) + 12).toFixed(1),
+      stroke: C_B, "stroke-width": 1.4, "stroke-dasharray": "4 4", opacity: .8 }));
+
+    var aporte = Math.exp(beta * S[idx].x) / suma;
+    lec.innerHTML = "En el suceso <strong>" + k + "</strong>, en t = <strong>" + tk.toFixed(1) +
+      "</strong>, siguen en riesgo los sujetos con línea oscura. El aporte de este instante a la verosimilitud parcial es " +
+      "<strong>" + Math.exp(beta * S[idx].x).toFixed(3) + " / " + suma.toFixed(3) + " = " + aporte.toFixed(4) +
+      "</strong>. El riesgo base <strong>no aparece</strong>: se cancela entre el numerador y el denominador (Proposición 18.5). " +
+      "Los tiempos tampoco entran salvo por <strong>quién está a la derecha de la raya</strong>, y por eso estirar el eje del tiempo no cambia nada.";
+  }
+  ck.addEventListener("input", dibujar);
+  cb.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. El log-rank era esto
+
+::: {.proposicion}
+**Proposición 18.6 (log-rank = puntuación de Cox).** Con una única covariable binaria y **sin empates** entre los tiempos con suceso, el estadístico log-rank de la lección 17 coincide exactamente con $U(0)^2/I(0)$, donde $U$ e $I$ son la primera derivada y menos la segunda de la log-verosimilitud parcial, evaluadas en $\beta=0$.
+:::
+
+::: {.demostracion}
+*Demostración.* Derivando el logaritmo de la expresión de la Proposición 18.5 respecto de $\beta$ y evaluando en $\beta=0$ —donde todos los pesos $e^{\beta^\top x_j}$ valen $1$— el aporte de cada suceso es $x_i$ menos la **media** de la covariable en $R(t)$. Para una covariable binaria, esa media es $n_{1k}/n_k$, así que el aporte es $d_{1k}-d_k n_{1k}/n_k$: el observado menos el esperado del log-rank.
+
+La segunda derivada, con signo cambiado, es la **varianza** de la covariable en el conjunto en riesgo, que para una binaria vale $\frac{n_{1k}}{n_k}\big(1-\frac{n_{1k}}{n_k}\big)$. La varianza del log-rank lleva además el factor $\frac{n_k-d_k}{n_k-1}$, que vale exactamente $1$ cuando $d_k=1$. Sin empates las dos sumas coinciden término a término. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def log_rank(Y, delta, grupo):
+    OE, V = 0.0, 0.0
+    for t in np.unique(Y[delta == 1]):
+        nk = int((Y >= t).sum())
+        n1 = int(((Y >= t) & (grupo == 1)).sum())
+        dk = int(((Y == t) & (delta == 1)).sum())
+        d1 = int(((Y == t) & (delta == 1) & (grupo == 1)).sum())
+        OE += d1 - dk * n1 / nk
+        if nk > 1:
+            V += dk * (n1 / nk) * (1 - n1 / nk) * (nk - dk) / (nk - 1)
+    return OE, V
+
+def puntuacion_cox(X, Y, delta):
+    """La primera y la segunda derivada de la verosimilitud parcial EN beta = 0."""
+    U, I = 0.0, 0.0
+    for i in range(len(Y)):
+        if delta[i] == 0:
+            continue
+        riesgo = Y >= Y[i] - 1e-12
+        xr = X[riesgo]
+        media = float(xr.mean())
+        U += float(X[i]) - media
+        I += float((xr ** 2).mean()) - media ** 2
+    return U, I
+
+# Sin empates, las dos cuentas son la MISMA cuenta.
+rng = np.random.default_rng(19)
+print("conjuntos sin empates en los tiempos:")
+print("   n    log-rank    puntuacion de Cox   identicos a 1e-10")
+for n in [20, 40, 80, 160]:
+    T = rng.exponential(2.0, n) * np.exp(-0.4 * rng.integers(0, 2, n))
+    T = T + np.arange(n) * 1e-9          # rompe cualquier empate
+    C = rng.exponential(5.0, n)
+    Y = np.minimum(T, C); delta = (T <= C).astype(int)
+    g = rng.integers(0, 2, n).astype(float)
+    OE, V = log_rank(Y, delta, g)
+    U, I = puntuacion_cox(g, Y, delta)
+    lr = OE * OE / V
+    sc = U * U / I
+    print("%5d %11.6f %19.6f %19s" % (n, lr, sc, bool(abs(lr - sc) < 1e-10)))
+print()
+print("no es un parecido: es la misma suma. La puntuacion de Cox en beta = 0 es")
+print("sumar, en cada suceso, la covariable del que lo sufre menos la media del")
+print("conjunto en riesgo, que para una covariable binaria es observado menos")
+print("esperado. Y la segunda derivada es la varianza de esa misma binaria")
+print()
+
+# Con empates dejan de coincidir, y se ve por que.
+T = np.round(rng.exponential(2.0, 60), 1)        # redondear crea empates
+C = rng.exponential(5.0, 60)
+Y = np.minimum(T, C); delta = (T <= C).astype(int)
+g = rng.integers(0, 2, 60).astype(float)
+OE, V = log_rank(Y, delta, g)
+U, I = puntuacion_cox(g, Y, delta)
+empates = len(Y[delta == 1]) - len(np.unique(Y[delta == 1]))
+print("con los tiempos redondeados a un decimal hay %d empates entre sucesos:" % empates)
+print("   log-rank          %.6f" % (OE * OE / V))
+print("   puntuacion de Cox %.6f" % (U * U / I))
+print("   siguen identicos: %s" % bool(abs(OE * OE / V - U * U / I) < 1e-10))
+print("   la diferencia esta en el factor (n_k - d_k)/(n_k - 1) del log-rank,")
+print("   que vale 1 cuando d_k = 1 y menos que 1 en cuanto hay empates")
+```
+
+Con empates dejan de coincidir —$1{,}207554$ contra $1{,}160413$— y el culpable tiene nombre: el factor de población finita, que el log-rank lleva y la puntuación no. La lección práctica no es cuál es mejor, sino que **son el mismo estadístico con dos correcciones distintas para los empates**, y conviene saber cuál usa cada programa.
+
+## 5. Encogimiento, concordancia y lo que no se comprueba solo
+
+El capítulo cierra con dos añadidos que esta página trata de forma desigual, y conviene decir por qué.
+
+**El encogimiento (§11.6)** consiste en maximizar la verosimilitud parcial con un término $-\lambda\lVert\beta\rVert_1$ o $-\lambda\lVert\beta\rVert_2^2$, exactamente como en la lección 8. La monotonía del tamaño del modelo en $\lambda$ es el mismo argumento de intercambio de la Proposición 7.5, aplicado aquí sin cambios: **no se repite**.
+
+**El índice de concordancia (§11.7.1)** sí merece una cuenta, porque la censura lo toca de una manera que no es obvia.
+
+::: {.proposicion}
+**Proposición 18.7 (concordancia y pares perdidos).** El índice de concordancia es la fracción de **pares comparables** que el riesgo estimado ordena correctamente, donde un par $(i,j)$ es comparable si se sabe cuál de los dos falló antes. Entonces:
+
+(a) un par con $Y_i<Y_j$ es comparable si y solo si $\delta_i=1$: si el primero fue censurado, el otro pudo fallar antes o después y no hay forma de saberlo;
+
+(b) el índice **no depende de la escala del riesgo**, solo de su orden: aplicar cualquier función estrictamente creciente a los riesgos estimados lo deja intacto.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (a), si $\delta_i=1$ el sujeto $i$ falló en $Y_i<Y_j$, y $j$ seguía vivo entonces, así que el orden es conocido. Si $\delta_i=0$, lo único que se sabe es $T_i>Y_i$, compatible tanto con $T_i<T_j$ como con $T_i>T_j$.
+
+Para (b), el índice solo evalúa comparaciones $r_i>r_j$, $r_i=r_j$ o $r_i<r_j$, y una función estrictamente creciente conserva las tres. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+from math import comb
+
+def pares(Y, delta):
+    """Separa los pares en comparables y no comparables, y cuenta."""
+    n = len(Y)
+    comparables, ambiguos = 0, 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            if Y[i] == Y[j] and delta[i] == delta[j]:
+                ambiguos += 1
+            elif Y[i] < Y[j]:
+                # se sabe quien fallo antes solo si el primero fue un suceso
+                comparables += int(delta[i] == 1)
+                ambiguos += int(delta[i] == 0)
+            else:
+                comparables += int(delta[j] == 1)
+                ambiguos += int(delta[j] == 0)
+    return comparables, ambiguos
+
+def concordancia(riesgo, Y, delta):
+    """Fraccion de pares comparables que el riesgo ordena bien."""
+    n, bien, total = len(Y), 0.0, 0
+    for i in range(n):
+        for j in range(n):
+            if i == j or delta[i] == 0 or Y[i] >= Y[j]:
+                continue
+            total += 1
+            if riesgo[i] > riesgo[j]:
+                bien += 1
+            elif riesgo[i] == riesgo[j]:
+                bien += 0.5
+    return (bien / total if total else float("nan")), total
+
+rng = np.random.default_rng(29)
+n = 120
+x = rng.normal(0, 1, n)
+T = rng.exponential(1.0, n) / np.exp(0.9 * x)
+
+print("con %d sujetos, los pares posibles son %d" % (n, comb(n, 2)))
+print()
+print("   censura   pares comparables   se pierden   indice de concordancia")
+for tasa in [0.0, 0.3, 0.8, 2.0]:
+    C = np.full(n, np.inf) if tasa == 0 else rng.exponential(1 / tasa, n)
+    Y = np.minimum(T, C); delta = (T <= C).astype(int)
+    comp, amb = pares(Y, delta)
+    c, total = concordancia(x, Y, delta)
+    print("%10.1f %19d %12.1f%% %23.4f"
+          % (tasa, comp, 100 * (1 - comp / comb(n, 2)), c))
+print()
+print("la censura no solo quita informacion: quita PARES. Con la tasa mas alta")
+print("se pierde mas de la mitad de las comparaciones posibles, y el indice se")
+print("calcula sobre lo que queda")
+print()
+
+# El indice no depende de la escala del riesgo, solo de su orden.
+C = rng.exponential(1 / 0.3, n)
+Y = np.minimum(T, C); delta = (T <= C).astype(int)
+base, _ = concordancia(x, Y, delta)
+print("y el indice solo mira el ORDEN del riesgo, no su escala:")
+for nombre, r in [("x", x), ("10x", 10 * x), ("x^3", x ** 3), ("exp(x)", np.exp(x))]:
+    c, _ = concordancia(r, Y, delta)
+    print("   riesgo %-8s concordancia %.6f  identica a 1e-12: %s"
+          % (nombre, c, bool(abs(c - base) < 1e-12)))
+print()
+print("por eso sirve para comparar modelos que dan riesgos en unidades distintas,")
+print("y por eso no dice nada sobre si las probabilidades estan bien calibradas")
+```
+
+Con censura fuerte se pierde el $63{,}1\,\%$ de los pares posibles: de $7140$ quedan $2632$. El índice se sigue calculando, y sigue saliendo alrededor de $0{,}72$, pero **sobre una cuarta parte de las comparaciones**. Eso no lo dice el número, y conviene mirarlo antes de comparar dos modelos ajustados sobre conjuntos con censuras distintas.
+
+La parte (b) tiene una consecuencia que el libro no subraya: el índice **no dice nada sobre la calibración**. Un modelo que ordena perfectamente y se equivoca por un factor diez en todos los riesgos tiene concordancia $1$. Para la calibración hace falta mirar otra cosa, y esa es la Estadística 16.
+
+### Lo que esta lección no cubre del capítulo
+
+De §11.7 quedan fuera tres subsecciones, y se dice aquí para que la omisión sea explícita: **§11.7.2** *Choice of Time Scale* queda cubierta de refilón por la invariancia de la Proposición 18.5; **§11.7.3** *Time-Dependent Covariates* exige extender el conjunto en riesgo a covariables que cambian, que es un cambio de maquinaria y no un añadido; y **§11.7.5** *Survival Trees* combinaría esto con la lección 12 y no está en el plan de ninguna fase.
+
+## Ejercicios
+
+### Ejercicio 1, De riesgo a supervivencia
+
+Con riesgo constante $h(t)=0{,}35$, calcular el riesgo acumulado y la supervivencia en $t=4$.
+
+```{pyodide}
+#| exercise: ex_riesgo
+from math import exp
+
+h, t = 0.35, 4.0
+
+acumulado = ______
+supervivencia = ______
+
+print(round(acumulado, 6), round(supervivencia, 6))
+round(supervivencia, 6)
+```
+
+::: {.hint exercise="ex_riesgo"}
+Con riesgo constante, $H(t)=ht$, y la Proposición 18.2 da $S(t)=e^{-H(t)}$.
+:::
+
+::: {.solution exercise="ex_riesgo"}
+```{pyodide}
+from math import exp
+
+h, t = 0.35, 4.0
+
+acumulado = h * t
+supervivencia = exp(-acumulado)
+
+print(round(acumulado, 6), round(supervivencia, 6))
+round(supervivencia, 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_riesgo
+#| check: true
+if abs(result - 0.246597) < 1e-5:
+    feedback = {"correct": True, "message": "Correcto: 0,246597. Un riesgo constante da siempre una exponencial, y es el único que lo hace (Proposición 18.2).", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.246597 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Un aporte de la verosimilitud parcial
+
+En un instante con suceso hay cuatro sujetos en riesgo con covariables $x=(1{,}0,\ -0{,}5,\ 0{,}2,\ 0{,}8)$, y el suceso le toca al primero. Con $\beta=0{,}7$, calcular el aporte de ese instante.
+
+```{pyodide}
+#| exercise: ex_parcial
+from math import exp
+
+x = [1.0, -0.5, 0.2, 0.8]
+beta = 0.7
+
+pesos = ______
+aporte = ______
+
+print([round(p, 6) for p in pesos], round(aporte, 6))
+round(aporte, 6)
+```
+
+::: {.hint exercise="ex_parcial"}
+El peso de cada sujeto es $e^{\beta x}$ y el aporte es el del que sufre el suceso entre la suma de todos, por la Proposición 18.5.
+:::
+
+::: {.solution exercise="ex_parcial"}
+```{pyodide}
+from math import exp
+
+x = [1.0, -0.5, 0.2, 0.8]
+beta = 0.7
+
+pesos = [exp(beta * v) for v in x]
+aporte = pesos[0] / sum(pesos)
+
+print([round(p, 6) for p in pesos], round(aporte, 6))
+round(aporte, 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_parcial
+#| check: true
+if abs(result - 0.358358) < 1e-5:
+    feedback = {"correct": True, "message": "Correcto: 0,358358. Con β = 0 los cuatro pesarían igual y el aporte sería 0,25: el coeficiente es exactamente lo que separa a un sujeto del reparto uniforme.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.358358 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 18**:
+
+1. Ajustar el modelo sobre datos donde la proporcionalidad **no** se cumple, como los dos grupos que se cruzan de la sección 2, y comparar el $\beta$ estimado con los dos cocientes de riesgos verdaderos. Anotar hacia cuál de los dos tira y qué pasa cuando se cambia la duración del seguimiento.
+2. Comprobar la Proposición 18.6 al revés: partir del estadístico log-rank de la lección 17, calcular la puntuación de Cox sobre los mismos datos y verificar que coinciden; después introducir empates a propósito y medir cuánto se separan según cuántos haya.
+3. Calcular el índice de concordancia de dos modelos sobre el mismo conjunto —uno bien calibrado y otro con todos los riesgos multiplicados por diez— y anotar en `50-Errores/` que salen idénticos. Explicar qué pregunta responde entonces el índice y cuál no, y con qué medida de Estadística 16 se completa.
+
+## Del libro
+
+*An Introduction to Statistical Learning with Applications in Python* trata este material en §11.5 *Regression Models With a Survival Response*, con la función de riesgo en §11.5.1 *The Hazard Function* y el supuesto en §11.5.2 *Proportional Hazards*; el encogimiento en §11.6 *Shrinkage for the Cox Model*; y los añadidos en §11.7 *Additional Topics*, de los que esta página cubre §11.7.1 *Area Under the Curve for Survival Analysis* y §11.7.4 *Checking the Proportional Hazards Assumption*.
+
+**Con esta lección queda cubierto el capítulo 11**, que se repartió en dos porque tiene $17$ unidades enseñables y no reaparece en ninguna fase posterior. La lección 17 cubrió §11.1–11.4 y esta cubre §11.5–11.7, con tres subsecciones fuera que la sección 5 nombra una por una.
+
+**Dos diferencias con el libro que conviene tener presentes.** La primera: el libro introduce la verosimilitud parcial explicando que el riesgo base «se cancela». Esta página lo **demuestra** y, sobre todo, extrae la consecuencia que lo hace comprobable: si solo entra el orden de los tiempos, entonces **pasar todos los tiempos por cualquier función creciente tiene que dejar el ajuste intacto**. La celda lo verifica con cuatro transformaciones y el resultado coincide a $10^{-10}$.
+
+La segunda: el libro presenta el log-rank en §11.4 y el modelo de Cox en §11.5 como dos herramientas de un mismo capítulo. La Proposición 18.6 demuestra que, sin empates, **son el mismo estadístico**: el log-rank es la prueba de puntuación de Cox evaluada en $\beta=0$. Lo que los separa con empates es un único factor, el de población finita, y saber cuál usa cada programa evita sorpresas al comparar salidas.
+
+**Preguntas para leer §11.5–11.7 con lápiz:**
+
+1. §11.5.2 dice que el modelo de Cox no hace ningún supuesto sobre la forma de $h_0$. Con la Proposición 18.4c, ¿qué supuesto **sí** hace, y cómo se vería en un par de curvas de Kaplan-Meier?
+2. §11.6 aplica el lasso a la verosimilitud parcial. Con la Proposición 7.5 de Machine Learning 7, ¿qué se puede afirmar del número de coeficientes no nulos al subir la penalización, sin volver a demostrarlo?
+3. §11.7.1 propone el área bajo la curva como medida de calidad. Con la Proposición 18.7b, ¿qué dos modelos distintos tendrían forzosamente el mismo valor, y qué habría que mirar para distinguirlos?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/riesgos-proporcionales.md`, enlazada a [[censura-y-supervivencia]], [[maxima-verosimilitud]] y [[ridge-y-lasso]]. Conviene rehacer a mano la Proposición 18.5: ver cancelarse el $h_0(t)$ entre el numerador y cada sumando del denominador deja claro de una vez que **el modelo no ignora el riesgo base, lo esquiva**, y que el precio de esquivarlo es quedarse solo con el orden de los tiempos.
+
+```
+¿Qué es la función de riesgo?::La tasa de fallo instantánea entre los que llegan vivos
+¿Cómo se pasa de riesgo a supervivencia?::S(t) = exp(−∫h)
+¿Y de supervivencia a riesgo?::h(t) = −d/dt log S(t)
+¿Cuándo es constante el riesgo?::Si y solo si el tiempo es exponencial
+¿Qué supone el modelo de Cox?::h(t|x) = h₀(t)·exp(βᵀx)
+¿Qué implica sobre el cociente de riesgos?::Que no depende del tiempo
+¿Y sobre las curvas de supervivencia?::Que son potencias de la base: S = S₀^θ
+¿Pueden cruzarse dos curvas del modelo?::Nunca
+¿Qué hace la verosimilitud parcial con h₀?::Lo cancela: no hay que estimarlo
+¿De qué depende entonces la estimación?::Solo del orden de los tiempos
+¿Qué pasa si se transforman los tiempos con una función creciente?::Nada: el ajuste es idéntico
+¿Qué relación hay entre el log-rank y Cox?::Sin empates son el mismo estadístico
+¿Qué los separa con empates?::El factor (nₖ−dₖ)/(nₖ−1), que el log-rank lleva
+¿Qué es el índice de concordancia?::La fracción de pares comparables bien ordenados
+¿Cuándo es comparable un par?::Solo si el primero en fallar no fue censurado
+¿Depende de la escala del riesgo?::No, solo del orden
+¿Mide calibración?::No: un modelo con todos los riesgos por diez tiene el mismo índice
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 18.2 se demuestra con la definición de probabilidad condicionada y la derivada logarítmica; se comprueba integrando tres riesgos distintos y contrastando $S(2)$ contra la forma cerrada a $10^{-9}$, y reconstruyendo el riesgo desde la supervivencia en los tres casos por debajo de $10^{-6}$. La Proposición 18.4 se demuestra cancelando $h_0$ y usando la monotonía de $a\mapsto S_0^a$; se comprueba con cuatro cocientes de riesgos, donde $S=S_0^\theta$ coincide a $10^{-9}$ en toda la malla, y con un contraejemplo donde la proporcionalidad falla: dos grupos cuyo cociente de riesgos pasa de $2{,}6667$ a $0{,}4000$ y cuyas curvas se cruzan en $t=7{,}55$, las dos en $0{,}1038$. La Proposición 18.5 se demuestra por cancelación en la probabilidad condicionada; se comprueba de dos maneras, con dos riesgos base radicalmente distintos que dan estimaciones igualmente cercanas al valor real, y pasando los tiempos por cuatro funciones crecientes, que dejan $\beta$ idéntico a $10^{-10}$. La Proposición 18.6 se demuestra derivando la verosimilitud parcial en $\beta=0$; se comprueba en cuatro tamaños sin empates, con coincidencia a $10^{-10}$, y se exhibe la separación con $17$ empates: $1{,}207554$ contra $1{,}160413$. La Proposición 18.7 se demuestra por definición de par comparable y por invariancia del orden; se comprueba contando: con censura fuerte quedan $2632$ de $7140$ pares, y cuatro reescalados del riesgo dan el mismo índice a $10^{-12}$. Los dos visuales recalculan estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** El conjunto en riesgo, la censura y el estadístico log-rank son de Machine Learning 17. La máxima verosimilitud y el papel de la puntuación y la información son de Estadística 8. El método de Newton con el que se maximiza es de Álgebra 17. La monotonía del tamaño del modelo al subir la penalización, que §11.6 necesita, es la Proposición 7.5 de Machine Learning 7 y **no se vuelve a demostrar**.
+
+**Lo que se enuncia sin demostrar.** Que la verosimilitud parcial se comporta como una verosimilitud de verdad —que su máximo es consistente y asintóticamente normal, y que $I$ estima bien la varianza— **no se demuestra**: es el resultado de Cox y Tsiatis, y exige teoría de martingalas. La página lo usa al hablar de la prueba de puntuación y lo dice aquí. Que el estimador de Breslow reconstruye $h_0$ una vez estimado $\beta$ se menciona de pasada y no se desarrolla. Y de §11.7 quedan fuera tres subsecciones, nombradas una por una al final de la sección 5.
+
+**Lo que viene de los libros.**
+
+- [*An Introduction to Statistical Learning with Applications in Python*](https://www.statlearning.com/) (James, Witten, Hastie, Tibshirani, Taylor; Springer, 2023), §11.5 *Regression Models With a Survival Response* con sus dos primeras subsecciones, §11.6 *Shrinkage for the Cox Model* y §11.7 *Additional Topics*, de la que se cubren §11.7.1 y §11.7.4 — citadas por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La comprobación de la Proposición 18.5 **por invariancia**: en lugar de repetir que el riesgo base se cancela, se deduce que el ajuste tiene que sobrevivir a cualquier función creciente del tiempo y se verifica con cuatro. La Proposición 18.6 enunciada y demostrada como identidad entre dos capítulos del libro, con el factor de población finita señalado como única diferencia. El contraejemplo de la sección 2, con el cruce de las curvas localizado en $t=7{,}55$, que convierte «hay que comprobar la proporcionalidad» en algo que se ve. Y la Proposición 18.7a con su recuento de pares perdidos, que pone número a lo que la censura le quita al índice: del $63{,}1\,\%$ de las comparaciones posibles no queda nada que mirar.
+
+[Índice de ISLP verificado el 13-09-2026 contra los marcadores del PDF oficial.]{.sello}
+:::
