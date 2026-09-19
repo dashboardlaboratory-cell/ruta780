@@ -1,0 +1,834 @@
+---
+title: "Núcleos, varias clases y la pérdida bisagra"
+subtitle: "Machine Learning · Lección 15"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/14-margen-maximo, ml/03-regresion-logistica, matematica/10-diagonalizacion]
+siguientes: []
+libro: "ISLP §9.3 Support Vector Machines · §9.3.1 Classification with Non-Linear Decision Boundaries · §9.3.2 The Support Vector Machine · §9.4 SVMs with More than Two Classes · §9.4.1 One-Versus-One Classification · §9.4.2 One-Versus-All Classification · §9.5 Relationship to Logistic Regression"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="ml/15-nucleos-y-perdida-bisagra"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §9.3–9.5]{.item}
+[**Prereqs** [Margen máximo](14-margen-maximo.qmd) · [Regresión logística](03-regresion-logistica.qmd) · [Diagonalización](../matematica/10-diagonalizacion.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Demostrar que el vector $\beta$ del margen máximo está en el espacio generado por los datos, y deducir que la predicción solo necesita **productos internos**.
+2. Definir un [núcleo]{.g} y comprobar que uno polinómico calcula un producto interno en un espacio de dimensión mucho mayor **sin visitarlo**.
+3. Demostrar que no toda función simétrica es un núcleo, y decidirlo mirando los autovalores de su matriz de Gram.
+4. Explicar en qué sentido el [núcleo radial]{.g data-t="núcleo radial"} corresponde a un espacio de dimensión infinita.
+5. Contar lo que cuestan [uno contra uno]{.g data-t="uno contra uno"} y [uno contra todos]{.g data-t="uno contra todos"}, y decir cuál toca menos datos.
+6. Demostrar que la [pérdida bisagra]{.g} se anula exactamente y la logística no, y leer ahí por qué un método tiene vectores de soporte y el otro no.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 14**: el margen máximo y su hiperplano, que aquí se lleva a un espacio ampliado sin construirlo.
+- **Machine Learning 3**: la regresión logística y su verosimilitud, que en la sección 5 se compara con esta cara a cara.
+- **Álgebra 10**: la diagonalización de una matriz simétrica, que es lo que decide si una función puede ser un núcleo.
+- **Machine Learning 10**: las funciones base, que hacían explícito el espacio ampliado que aquí se deja implícito.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 16**: las redes neuronales, que también amplían el espacio pero **aprendiendo** el mapa en lugar de fijarlo.
+- **Machine Learning 18**: el PCA con núcleo, que aplica este mismo truco a un problema sin etiquetas.
+- **Machine Learning 25**: los métodos lineales de clasificación de ESL, donde la comparación de pérdidas de la sección 5 se extiende a cinco criterios.
+- **Machine Learning 30**: el impulso como descenso funcional, que es otra pérdida convexa sustituyendo al error 0-1.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $\langle x,z\rangle$ | producto interno de x y z | La suma de los productos coordenada a coordenada |
+| $\varphi$ | fi | El mapa que lleva un punto al espacio ampliado |
+| $K(x,z)$ | ka de x y z | El núcleo: el producto interno en el espacio ampliado |
+| $G$ | ge | La matriz de Gram, con $G_{ij}=K(x_i,x_j)$ |
+| $\Phi$ | fi mayúscula | La matriz cuyas filas son los $\varphi(x_i)$, usada solo en la demostración de 15.4 |
+| $\gamma$ | gamma | El parámetro de anchura del núcleo radial |
+| $d$ | de | El grado de un núcleo polinómico |
+| $p$ | pe | El número de predictores originales |
+| $n$ | ene | El número de observaciones |
+| $K$ | ka mayúscula | El número de clases, cuando hay más de dos |
+| $z$ | zeta | El margen $y\,f(x)$ de una observación, en el eje de las pérdidas |
+| $\beta$ | beta | El vector normal al hiperplano, como en la lección 14 |
+| $c_i$ | ce sub i | El coeficiente de la observación $i$ al escribir $\beta$ con los datos |
+:::
+
+## 1. La predicción solo necesita productos internos
+
+La lección 14 dejó el hiperplano óptimo escrito con $\beta$ y $\beta_0$. Antes de cambiar de espacio conviene mirar una propiedad de ese $\beta$ que no se usó allí.
+
+::: {.proposicion}
+**Proposición 15.1 (el óptimo vive donde los datos).** Sea $(\beta,\beta_0)$ una solución del problema de la Proposición 14.3. Entonces $\beta$ pertenece al subespacio generado por $x_1,\dots,x_n$, es decir $\beta=\sum_i c_i x_i$ para ciertos $c_i$. En consecuencia,
+$$f(x)=\beta_0+\sum_{i=1}^{n}c_i\,\langle x_i,x\rangle,$$
+y la predicción **no necesita las coordenadas de $x$, solo sus productos internos con los datos**.
+:::
+
+::: {.demostracion}
+*Demostración.* Descompóngase $\beta=\beta_{\parallel}+\beta_{\perp}$, con $\beta_{\parallel}$ en el subespacio generado por los datos y $\beta_{\perp}$ ortogonal a él. Para cada observación, $\langle\beta,x_i\rangle=\langle\beta_{\parallel},x_i\rangle$ porque $\langle\beta_{\perp},x_i\rangle=0$; por tanto **todas las restricciones $y_i f(x_i)\ge 1$ dan exactamente lo mismo** con $\beta$ que con $\beta_{\parallel}$. Pero por el teorema de Pitágoras $\lVert\beta\rVert^2=\lVert\beta_{\parallel}\rVert^2+\lVert\beta_{\perp}\rVert^2\ge\lVert\beta_{\parallel}\rVert^2$, con igualdad solo si $\beta_{\perp}=0$. Como el problema minimiza $\lVert\beta\rVert$, cualquier solución tiene $\beta_{\perp}=0$. Sustituyendo $\beta=\sum_i c_i x_i$ en $f$ y usando la linealidad del producto interno se obtiene la fórmula. [∎]{.fin-demo}
+:::
+
+Esa fórmula es la puerta de toda la lección. Si el ajuste y la predicción solo tocan los datos a través de $\langle x_i,x\rangle$, entonces **basta con saber calcular productos internos**: el espacio donde viven los puntos puede ser cualquiera, incluso uno que no quepa en la memoria.
+
+```{pyodide}
+import numpy as np
+
+def envolvente(P):
+    Q = sorted(set(map(tuple, P)))
+    if len(Q) <= 2:
+        return np.array(Q, dtype=float)
+    def cadena(pts):
+        salida = []
+        for p in pts:
+            while len(salida) >= 2:
+                (x1, y1), (x2, y2) = salida[-2], salida[-1]
+                if (x2 - x1) * (p[1] - y1) - (y2 - y1) * (p[0] - x1) <= 0:
+                    salida.pop()
+                else:
+                    break
+            salida.append(p)
+        return salida
+    return np.array(cadena(Q)[:-1] + cadena(Q[::-1])[:-1], dtype=float)
+
+def mas_corto(A, B):
+    EA, EB = envolvente(A), envolvente(B)
+    mejor = (np.inf, None, None)
+    for E, F, inv in [(EA, EB, False), (EB, EA, True)]:
+        for p in E:
+            for i in range(len(F)):
+                a, b = F[i], F[(i + 1) % len(F)]
+                ab = b - a
+                L = float(ab @ ab)
+                t = 0.0 if L == 0 else min(1.0, max(0.0, float((p - a) @ ab) / L))
+                q = a + t * ab
+                d = float(np.linalg.norm(p - q))
+                if d < mejor[0]:
+                    mejor = (d, (q, p) if inv else (p, q))
+    return mejor[0], mejor[1]
+
+rng = np.random.default_rng(4)
+A = rng.normal([-2.2, 0.4], 0.75, size=(14, 2))
+B = rng.normal([2.0, -0.3], 0.75, size=(14, 2))
+X = np.vstack([A, B]); y = np.r_[-np.ones(14), np.ones(14)]
+
+d, (a, b) = mas_corto(A, B)
+beta = b - a
+beta0 = -float(beta @ (a + b)) / 2.0
+escala = 2.0 / (d * float(np.linalg.norm(beta)))
+beta, beta0 = beta * escala, beta0 * escala
+
+# 1. beta esta en el espacio generado por los datos: aqui es todo el plano,
+# asi que para verlo se anade una tercera coordenada que nadie usa.
+X3 = np.hstack([X, np.zeros((len(X), 1))])
+beta3 = np.r_[beta, 0.0]
+print("con una coordenada que ningun dato usa, el espacio generado por los datos")
+print("tiene dimension %d de %d" % (np.linalg.matrix_rank(X3), X3.shape[1]))
+print()
+
+# Anadirle a beta una componente fuera de ese espacio no cambia NINGUN margen.
+fuera = np.array([0.0, 0.0, 1.0])
+for c in [0.0, 0.7, 3.0]:
+    bb = beta3 + c * fuera
+    margenes = y * (X3 @ bb + beta0)
+    print("con componente fuera del espacio c = %.1f: min(y*f) = %.6f  ||beta|| = %.6f"
+          % (c, margenes.min(), np.linalg.norm(bb)))
+print("los margenes no se mueven y la norma solo sube: la componente de fuera")
+print("es puro lastre, y el minimo de ||beta|| la pone a cero")
+print()
+
+# 2. Por tanto el ajuste se escribe con productos internos y nada mas.
+coef = np.linalg.lstsq(X.T, beta, rcond=None)[0]
+print("beta se escribe como combinacion de los datos:", bool(
+    np.allclose(X.T @ coef, beta, atol=1e-10)))
+puntos = rng.normal(0, 2, size=(5, 2))
+f_directo = puntos @ beta + beta0
+f_productos = (puntos @ X.T) @ coef + beta0
+print("y entonces f(x) sale solo de los productos internos <x_i, x>:")
+for k in range(5):
+    print("   punto %d: directo %+.6f   por productos %+.6f   iguales: %s"
+          % (k, f_directo[k], f_productos[k], bool(abs(f_directo[k] - f_productos[k]) < 1e-10)))
+print()
+print("esa es la puerta del truco: si f solo necesita productos internos,")
+print("basta con saber calcularlos, aunque el espacio no se pueda visitar")
+```
+
+La componente ortogonal no cambia ni un margen y solo engorda la norma: por eso el óptimo la pone a cero. Con eso, $f$ evaluada en cinco puntos nuevos da lo mismo por el camino directo que por el de los productos internos.
+
+## 2. Un producto interno que no hace falta calcular
+
+::: {.definicion}
+**Definición 15.2 (núcleo).** Una función $K(x,z)$ es un **núcleo** si existe un mapa $\varphi$ hacia algún espacio con producto interno tal que
+$$K(x,z)=\langle\varphi(x),\varphi(z)\rangle\qquad\text{para todo }x,z.$$
+Sustituir $\langle x_i,x\rangle$ por $K(x_i,x)$ en la fórmula de la Proposición 15.1 equivale a resolver el mismo problema sobre los puntos transformados $\varphi(x_i)$.
+:::
+
+::: {.proposicion}
+**Proposición 15.3 (el polinómico, y lo que ahorra).** Para $x,z\in\mathbb{R}^p$, la función $K(x,z)=(1+\langle x,z\rangle)^d$ es un núcleo: su mapa $\varphi$ recoge todos los monomios de grado a lo sumo $d$, convenientemente escalados, y por tanto vive en dimensión $\binom{p+d}{d}$. Evaluar $K$ cuesta $p$ multiplicaciones, una suma y una potencia, **sea cual sea $d$**.
+:::
+
+::: {.demostracion}
+*Demostración.* Desarrollando la potencia por el teorema multinomial,
+$$(1+\langle x,z\rangle)^d=\sum_{k_0+k_1+\dots+k_p=d}\binom{d}{k_0,\dots,k_p}\prod_{j=1}^{p}(x_jz_j)^{k_j},$$
+y cada sumando se factoriza como el producto de un monomio en $x$ por el mismo monomio en $z$, con el coeficiente multinomial repartido a partes iguales entre los dos. Definiendo $\varphi(x)$ como el vector de esos monomios escalados, se obtiene $K(x,z)=\langle\varphi(x),\varphi(z)\rangle$. El número de monomios de grado a lo sumo $d$ en $p$ variables es $\binom{p+d}{d}$, que es la dimensión del mapa. El coste de evaluar $K$ no depende de $d$ porque la potencia se aplica a un número, no a un vector. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+from math import comb, sqrt
+
+def fi(x):
+    """El mapa explicito del nucleo (1 + <x,x'>)^2 en el plano: seis coordenadas."""
+    x1, x2 = float(x[0]), float(x[1])
+    return np.array([1.0, sqrt(2) * x1, sqrt(2) * x2, x1 * x1, sqrt(2) * x1 * x2, x2 * x2])
+
+def nucleo(x, z):
+    return (1.0 + float(x @ z)) ** 2
+
+rng = np.random.default_rng(9)
+P = rng.normal(0, 1.5, size=(6, 2))
+
+print("el nucleo (1 + <x,z>)^2 contra el producto interno del mapa explicito:")
+peor = 0.0
+for i in range(len(P)):
+    for j in range(len(P)):
+        k = nucleo(P[i], P[j])
+        e = float(fi(P[i]) @ fi(P[j]))
+        peor = max(peor, abs(k - e))
+print("   %d pares, maxima diferencia menor que 1e-12: %s" % (len(P) ** 2, bool(peor < 1e-12)))
+print("   ejemplo: K(p0,p1) = %.6f  y  <fi(p0),fi(p1)> = %.6f"
+      % (nucleo(P[0], P[1]), float(fi(P[0]) @ fi(P[1]))))
+print("   el mapa vive en %d dimensiones y los datos en %d" % (len(fi(P[0])), P.shape[1]))
+print()
+
+# Lo que se ahorra no es una constante: es el tamano del espacio.
+print("dimension del espacio ampliado para grado d y p predictores, C(p+d, d):")
+print("      p     d=2       d=3        d=5")
+for p in [2, 10, 100, 1000]:
+    print("%7d %7d %9d %10d" % (p, comb(p + 2, 2), comb(p + 3, 3), comb(p + 5, 5)))
+print()
+print("calcular el nucleo cuesta siempre lo mismo: p multiplicaciones, una suma")
+print("y una potencia, sean cuales sean d y p. Con p = 1000 y d = 5, el espacio")
+print("ampliado tiene %d coordenadas y el nucleo sigue costando 1000 productos"
+      % comb(1005, 5))
+print()
+
+# Y la separabilidad que aparece: un circulo no es separable por una recta.
+ang = np.linspace(0, 2 * np.pi, 40, endpoint=False)
+dentro = np.c_[0.8 * np.cos(ang), 0.8 * np.sin(ang)]
+fuera = np.c_[2.2 * np.cos(ang), 2.2 * np.sin(ang)]
+X = np.vstack([dentro, fuera])
+y = np.r_[-np.ones(40), np.ones(40)]
+sem = np.random.default_rng(2)
+separa_recta = False
+for _ in range(20000):
+    v = sem.normal(size=2); b = sem.normal() * 3
+    if ((X @ v + b) * y > 0).all():
+        separa_recta = True
+        break
+print("un anillo dentro de otro: ¿lo separa alguna recta? probando 20000:", separa_recta)
+Z = np.array([fi(p) for p in X])
+w = np.zeros(6); w[3] = w[5] = 1.0          # x1^2 + x2^2
+umbral = -((0.8 ** 2 + 2.2 ** 2) / 2)
+print("en el espacio del nucleo, en cambio, basta con x1^2 + x2^2:")
+print("   ¿lo separa?", bool(((Z @ w + umbral) * y > 0).all()))
+print("   y esa es una funcion LINEAL de las seis coordenadas del mapa")
+```
+
+Con $p=1000$ y $d=5$ el espacio ampliado tiene más de ocho billones de coordenadas y el núcleo sigue costando mil productos. Ese es el truco entero: **no se ahorra una constante, se ahorra el tamaño del espacio**.
+
+El anillo dentro de otro lo dice del otro modo. Ninguna recta lo separa —en veinte mil intentos, ninguna—, pero en las seis coordenadas del mapa basta con $x_1^2+x_2^2$, que allí es una función lineal.
+
+```{=html}
+<div class="viz-nucleo">
+  <div class="controles">
+    <label>Radio del anillo exterior <input id="nu-r" type="range" min="1.2" max="3" step="0.05" value="2.2"> <span id="nu-r-v">2.20</span></label>
+    <label>Elevación <input id="nu-e" type="range" min="0" max="1" step="0.02" value="0"> <span id="nu-e-v">0.00</span></label>
+  </div>
+  <svg id="nu-svg" viewBox="0 0 660 320" role="img" aria-label="A la izquierda los dos anillos en el plano original, a la derecha los mismos puntos con la altura igual al cuadrado del radio, donde una recta horizontal los separa."></svg>
+  <p class="lectura" id="nu-lectura"></p>
+</div>
+<style>
+.viz-nucleo { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-nucleo .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-nucleo label { display: flex; align-items: center; gap: .4rem; }
+.viz-nucleo input[type=range] { width: 170px; padding: 0; }
+.viz-nucleo svg { width: 100%; height: auto; display: block; }
+.viz-nucleo .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("nu-svg"), lec = document.getElementById("nu-lectura");
+  var cr = document.getElementById("nu-r"), ce = document.getElementById("nu-e");
+  var er = document.getElementById("nu-r-v"), ee = document.getElementById("nu-e-v");
+  var X0 = 36, XW = 588, Y0 = 22, YH = 250;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var rExt = +cr.value, elev = +ce.value;
+    er.textContent = rExt.toFixed(2); ee.textContent = elev.toFixed(2);
+    var rInt = 0.9, i, N = 34;
+
+    // marco anclado: x de -3.2 a 3.2; el eje vertical va de 0 (plano) a la altura r^2
+    var px = function (v) { return X0 + (v + 3.2) / 6.4 * XW; };
+    var altoMax = 9.61;
+    var py = function (x2, alt) {
+      // al elevar, la coordenada vertical pasa de ser x2 a ser el radio al cuadrado
+      var v = (1 - elev) * x2 + elev * (alt / altoMax * 5.4 - 2.7);
+      return Y0 + (3.2 - v) / 6.4 * YH;
+    };
+    [-2, 0, 2].forEach(function (t) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(t, (t + 2.7) / 5.4 * altoMax) + " L" + (X0 + XW) + " " + py(t, (t + 2.7) / 5.4 * altoMax),
+        stroke: C_L, "stroke-width": 1, opacity: .35 }));
+    });
+    svg.appendChild(el("text", { x: X0, y: 14, "font-size": 11.5, fill: C_T, opacity: .75 },
+      elev < 0.02 ? "los datos como están: dos anillos concéntricos"
+      : elev > 0.98 ? "la altura es ahora x₁² + x₂², una de las seis coordenadas del mapa"
+      : "a medio camino entre las dos vistas"));
+
+    var separables = rInt * rInt !== rExt * rExt;
+    [[rInt, C_A, -1], [rExt, C_B, 1]].forEach(function (g) {
+      var rad = g[0], col = g[1];
+      for (i = 0; i < N; i++) {
+        var a = i / N * 2 * Math.PI;
+        var x1 = rad * Math.cos(a), x2 = rad * Math.sin(a);
+        svg.appendChild(el("circle", { cx: px(x1).toFixed(1), cy: py(x2, rad * rad).toFixed(1), r: 3.4,
+          fill: col, "fill-opacity": .6 }));
+      }
+    });
+    if (elev > 0.5) {
+      var corte = (rInt * rInt + rExt * rExt) / 2;
+      var yc = py(0, corte);
+      svg.appendChild(el("path", { d: "M" + X0 + " " + yc.toFixed(1) + " L" + (X0 + XW) + " " + yc.toFixed(1),
+        stroke: C_G, "stroke-width": 2.4, "stroke-dasharray": "6 4" }));
+      svg.appendChild(el("text", { x: X0 + XW - 4, y: yc - 7, "text-anchor": "end", "font-size": 11, fill: C_G },
+        "x₁² + x₂² = " + corte.toFixed(2)));
+    }
+
+    lec.innerHTML = "El anillo interior tiene radio <strong>0.90</strong> y el exterior <strong>" + rExt.toFixed(2) +
+      "</strong>. En el plano de partida <strong>ninguna recta</strong> los separa, por muy lejos que se pongan. " +
+      (elev > 0.5
+        ? "Con la altura puesta en x₁² + x₂² —que es una de las seis coordenadas del mapa de la Proposición 15.3— basta con la recta ámbar, y esa recta es una función <strong>lineal</strong> de las coordenadas del mapa."
+        : "Subiendo la elevación, los mismos puntos se colocan a la altura de su radio al cuadrado y el problema se vuelve separable sin haber tocado los datos.") +
+      (rExt < 1.0 ? " Con el radio exterior por debajo del interior los dos anillos se cruzan y ni el mapa arregla eso." : "");
+  }
+  cr.addEventListener("input", dibujar);
+  ce.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Qué puede ser un núcleo y qué no
+
+::: {.proposicion}
+**Proposición 15.4 (la matriz de Gram manda).** Si $K$ es un núcleo, entonces para cualesquiera puntos $x_1,\dots,x_m$ la matriz $G$ con $G_{ij}=K(x_i,x_j)$ es **simétrica y semidefinida positiva**. Por tanto, exhibir unos puntos cuya matriz de Gram tenga un autovalor negativo demuestra que $K$ **no** es un núcleo.
+:::
+
+::: {.demostracion}
+*Demostración.* Si $K(x,z)=\langle\varphi(x),\varphi(z)\rangle$, sea $\Phi$ la matriz cuyas filas son los $\varphi(x_i)$. Entonces $G=\Phi\Phi^\top$, que es simétrica, y para cualquier vector $v$,
+$$v^\top G v=v^\top\Phi\Phi^\top v=\lVert\Phi^\top v\rVert^2\ge 0.$$
+Una matriz simétrica es semidefinida positiva si y solo si todos sus autovalores son no negativos (Álgebra 10), así que un autovalor negativo contradice la existencia de $\varphi$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+from math import factorial
+
+rng = np.random.default_rng(15)
+P = rng.normal(0, 1.0, size=(9, 2))
+G = P @ P.T
+
+def menor_autovalor(M):
+    return float(np.linalg.eigvalsh((M + M.T) / 2).min())
+
+# Un nucleo tiene que dar matrices de Gram semidefinidas positivas, porque
+# si K(x,z) = <fi(x), fi(z)> entonces la matriz es Fi Fi^T.
+gamma = 0.5
+K_rbf = np.exp(-gamma * ((P[:, None, :] - P[None, :, :]) ** 2).sum(-1))
+K_pol = (1.0 + G) ** 2
+K_lin = G
+K_malo = G - 1.0                      # simetrica, pero no es un nucleo
+K_tanh = np.tanh(1.0 * G + 1.0)       # el "sigmoide", que tampoco lo es siempre
+
+print("matriz de Gram de 9 puntos: ¿tiene algun autovalor negativo?")
+print("   el umbral es -1e-9; por encima de el, el cero numerico no se cita")
+for nombre, M in [("lineal <x,z>", K_lin), ("polinomico (1+<x,z>)^2", K_pol),
+                  ("radial exp(-g|x-z|^2)", K_rbf), ("<x,z> - 1", K_malo),
+                  ("tanh(<x,z> + 1)", K_tanh)]:
+    v = menor_autovalor(M)
+    if v > -1e-9:
+        print("   %-24s sin autovalores negativos    -> puede ser un nucleo" % nombre)
+    else:
+        print("   %-24s menor autovalor %+.4f      -> NO es un nucleo" % (nombre, v))
+print()
+print("los dos ultimos tienen un autovalor negativo, asi que NO existe ningun")
+print("mapa fi que los reproduzca: si existiera, la matriz seria Fi Fi^T, que")
+print("nunca tiene autovalores negativos")
+print()
+
+# El radial como suma infinita de nucleos polinomicos.
+# exp(-g|x-z|^2) = exp(-g|x|^2) exp(-g|z|^2) suma_k (2g<x,z>)^k / k!
+pre = np.exp(-gamma * (P ** 2).sum(1))
+print("el nucleo radial, truncando la serie en k terminos:")
+print("    k   maxima diferencia contra el exacto   por debajo de")
+for k, cota in [(1, 1e0), (2, 1e0), (4, 1e0), (8, 2e-1), (16, 1e-4)]:
+    serie = sum((2 * gamma * G) ** j / factorial(j) for j in range(k))
+    aprox = pre[:, None] * pre[None, :] * serie
+    dif = float(np.abs(aprox - K_rbf).max())
+    print("%5d %36.2e %14.0e: %s" % (k, dif, cota, bool(dif < cota)))
+print()
+print("cada termino de la serie es un nucleo polinomico de grado k, asi que el")
+print("radial corresponde a un mapa con TODOS los grados a la vez: su espacio")
+print("no tiene dimension finita, y aun asi K se evalua con p restas y una")
+print("exponencial")
+```
+
+El llamado núcleo sigmoide, $\tanh(\langle x,z\rangle+1)$, aparece en la literatura y **no es un núcleo** con esos parámetros: nueve puntos bastan para encontrarle un autovalor de $-1{,}5777$. Que una función sea simétrica y parezca una medida de parecido no la convierte en producto interno de nada.
+
+La serie del radial explica en qué sentido su espacio es infinito: cada término es un núcleo polinómico de un grado, y están todos. Truncar en $16$ términos ya aproxima el valor exacto por debajo de $10^{-4}$.
+
+## 4. Más de dos clases, contando
+
+::: {.definicion}
+**Definición 15.5 (los dos planes).** Con $K$ clases, **uno contra uno** ajusta un clasificador por cada par y predice la clase más votada; **uno contra todos** ajusta un clasificador por clase, cada uno separándola del resto, y predice aquella cuyo $f$ sea mayor.
+:::
+
+::: {.proposicion}
+**Proposición 15.6 (lo que cuesta cada plan).** Con $n$ observaciones repartidas por igual entre $K$ clases:
+
+(a) uno contra uno ajusta $\binom{K}{2}$ clasificadores y uno contra todos ajusta $K$;
+
+(b) el total de observaciones que tocan los ajustes es $(K-1)\,n$ en el primer plan y $K\,n$ en el segundo, de modo que el primero toca una fracción $(K-1)/K$ del segundo **por muchos más clasificadores que entrene**;
+
+(c) el voto de uno contra uno puede empatar, y la regla de desempate no está determinada por el método.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (a), los pares no ordenados de $K$ clases son $\binom{K}{2}$, y uno contra todos hace uno por clase. Para (b), cada par junta las observaciones de dos clases, es decir $2n/K$, y hay $\binom{K}{2}=K(K-1)/2$ pares, luego el total es $\frac{K(K-1)}{2}\cdot\frac{2n}{K}=(K-1)n$. Uno contra todos usa las $n$ observaciones en cada uno de sus $K$ ajustes, o sea $Kn$. El cociente es $(K-1)/K<1$. Para (c) basta un ejemplo con dos clases empatadas a votos, y la celda mide con qué frecuencia ocurre cuando los duelos se deciden al azar. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+from math import comb
+
+# Dos maneras de pasar de dos clases a K, y lo que cuesta cada una.
+print("     K   uno contra uno   uno contra todos   observaciones que toca cada plan")
+print("          clasificadores    clasificadores    1-contra-1     1-contra-todos")
+n = 7800          # divisible por 2, 3, 5, 10 y 26: los pares salen exactos
+for K in [2, 3, 5, 10, 26]:
+    uno_uno = comb(K, 2)
+    uno_todos = K
+    # con clases equilibradas, cada par junta 2n/K observaciones
+    toca_uu = uno_uno * (2 * n // K)
+    toca_ut = uno_todos * n
+    print("%6d %16d %18d %13d %16d" % (K, uno_uno, uno_todos, toca_uu, toca_ut))
+print()
+print("uno contra uno entrena MAS clasificadores pero sobre MENOS datos en total:")
+for K in [3, 10, 26]:
+    uu = comb(K, 2) * (2 * n // K)
+    ut = K * n
+    print("   K = %2d: %d contra %d observaciones, o sea un factor %.2f"
+          % (K, uu, ut, uu / ut))
+print("y ese factor es exactamente (K-1)/K, que nunca llega a 1:")
+for K in [3, 10, 26]:
+    uu = comb(K, 2) * (2 * n // K)
+    print("   K = %2d -> observaciones %d = (K-1)*n = %d, y el factor %.4f"
+          % (K, uu, (K - 1) * n, (K - 1) / K))
+print()
+
+# El voto: con K clases hay empates posibles, y conviene saber cuantos.
+rng = np.random.default_rng(6)
+K = 5
+empates = 0
+for _ in range(20000):
+    votos = np.zeros(K, dtype=int)
+    for i in range(K):
+        for j in range(i + 1, K):
+            ganador = i if rng.random() < 0.5 else j
+            votos[ganador] += 1
+    empates += int((votos == votos.max()).sum() > 1)
+print("con K = 5 y duelos al azar, en %d ensayos hubo empate en la cima %d veces"
+      % (20000, empates))
+print("o sea un %.1f por ciento: el voto de uno contra uno necesita un desempate"
+      % (100.0 * empates / 20000))
+print("declarado, y el libro no lo fija. Aqui se deja dicho y no se elige uno")
+```
+
+Con $26$ clases, uno contra uno entrena $325$ clasificadores y uno contra todos solo $26$; y sin embargo el primero toca $195\,000$ observaciones y el segundo $202\,800$. La intuición de que «más clasificadores es más trabajo» falla porque cada uno de los $325$ es diminuto.
+
+El empate no es una rareza: con cinco clases y duelos decididos al azar aparece en el $41\,\%$ de los ensayos. Un empate no significa que el método esté mal, pero sí que **la regla de desempate forma parte del clasificador** y conviene declararla.
+
+## 5. La misma frontera, dos criterios distintos
+
+::: {.proposicion}
+**Proposición 15.7 (bisagra contra logística).** Escríbase $z=y\,f(x)$. Entonces:
+
+(a) el criterio del clasificador de soporte vectorial de la Definición 14.7 se escribe $\tfrac12\lVert\beta\rVert^2+C\sum_i \max(0,1-z_i)$, es decir **pérdida bisagra más penalización en $\lVert\beta\rVert^2$**;
+
+(b) la pérdida bisagra $\max(0,1-z)$ vale **exactamente cero** para todo $z\ge 1$, mientras que la logística $\log(1+e^{-z})$ es **estrictamente positiva para todo $z$**;
+
+(c) la bisagra acota por arriba al error $0$–$1$; la logística en base $e$ **no** lo hace, y sí lo hace dividida por $\log 2$.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (a), en el óptimo cada holgura toma el menor valor compatible con sus dos restricciones $\xi_i\ge 1-z_i$ y $\xi_i\ge 0$, o sea $\xi_i=\max(0,1-z_i)$; sustituyendo se obtiene la forma anunciada.
+
+Para (b), si $z\ge 1$ entonces $1-z\le 0$ y el máximo vale $0$. En cambio $e^{-z}>0$ para todo $z$ real, luego $1+e^{-z}>1$ y su logaritmo es estrictamente positivo.
+
+Para (c), el error $0$–$1$ vale $1$ si $z\le 0$ y $0$ si no. Para $z\le 0$ se tiene $\max(0,1-z)\ge 1$, y para $z>0$ la bisagra es no negativa: la cota se cumple. La logística en $z=0$ vale $\log 2=0{,}693\ldots<1$, así que ahí falla; dividida por $\log 2$ vale exactamente $1$ en $z=0$ y, por ser decreciente, al menos $1$ para $z\le 0$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def bisagra(z):
+    return np.maximum(0.0, 1.0 - z)
+
+def logistica(z):
+    # log(1 + e^-z), escrito para no desbordar con z muy negativo
+    return np.logaddexp(0.0, -z)
+
+def cero_uno(z):
+    return (z <= 0).astype(float)
+
+z = np.array([-3.0, -1.0, 0.0, 0.5, 1.0, 2.0, 5.0, 20.0])
+print("   y*f(x)    bisagra   logistica   error 0-1")
+for v in z:
+    print("%9.1f %10.4f %11.6f %11.0f"
+          % (v, float(bisagra(np.array([v]))[0]), float(logistica(np.array([v]))[0]),
+             float(cero_uno(np.array([v]))[0])))
+print()
+
+# Sirven de sustitutas del error 0-1 si lo acotan por arriba. Conviene mirarlo.
+malla = np.linspace(-6, 6, 24001)
+print("¿acotan por arriba al error 0-1 en toda la malla?")
+print("   bisagra                :", bool((bisagra(malla) >= cero_uno(malla) - 1e-12).all()))
+print("   logistica en base e    :", bool((logistica(malla) >= cero_uno(malla) - 1e-12).all()))
+print("   logistica en base 2    :", bool((logistica(malla) / np.log(2) >= cero_uno(malla) - 1e-12).all()))
+print()
+print("la logistica natural NO la acota: en y*f = 0 vale log 2 = %.6f, menos que 1."
+      % float(np.log(2)))
+print("Dividida por log 2 si la acota, y ademas la toca justo en el cero.")
+print("La bisagra la acota tal cual, y tambien la toca en el cero.")
+print("   bisagra en 0   : %.6f" % float(bisagra(np.array([0.0]))[0]))
+print("   logistica/log2 : %.6f" % float(logistica(np.array([0.0]))[0] / np.log(2)))
+print()
+
+# La diferencia estructural: una se anula, la otra no lo hace nunca.
+lejos = np.array([1.0, 2.0, 5.0, 20.0, 100.0])
+print("   y*f      bisagra    logistica")
+for v in lejos:
+    print("%7.0f %10.1f %14.3e" % (v, float(bisagra(np.array([v]))[0]),
+                                   float(logistica(np.array([v]))[0])))
+print("la bisagra vale CERO desde y*f = 1 en adelante; la logistica se acerca")
+print("a cero pero no lo alcanza nunca, porque log(1+e^-z) > 0 para todo z")
+print()
+print("bisagra exactamente cero en y*f >= 1:", bool((bisagra(lejos) == 0).all()))
+print("logistica estrictamente positiva ahi :", bool((logistica(lejos) > 0).all()))
+print()
+
+# La consecuencia: quien decide el ajuste.
+rng = np.random.default_rng(7)
+n = 200
+X = np.vstack([rng.normal([-1.6, 0.0], 0.9, size=(n // 2, 2)),
+               rng.normal([1.6, 0.0], 0.9, size=(n // 2, 2))])
+y = np.r_[-np.ones(n // 2), np.ones(n // 2)]
+beta, beta0 = np.array([1.1, 0.05]), 0.0
+m = y * (X @ beta + beta0)
+print("con un hiperplano cualquiera sobre %d puntos:" % n)
+print("   puntos con y*f >= 1, o sea fuera del margen : %d" % int((m >= 1).sum()))
+print("   de ellos, los que la bisagra ignora del todo: %d" % int((bisagra(m) == 0).sum()))
+print("   y los que la logistica sigue teniendo en cuenta: %d" % int((logistica(m) > 0).sum()))
+print()
+peso_bisagra = float(bisagra(m)[m >= 1].sum())
+peso_log = float(logistica(m)[m >= 1].sum())
+print("lo que aportan al criterio los %d puntos comodos:" % int((m >= 1).sum()))
+print("   con bisagra  : %.10f" % peso_bisagra)
+print("   con logistica: %.6f" % peso_log)
+print()
+print("por eso la maquina de soporte tiene vectores de soporte y la regresion")
+print("logistica no: en la bisagra, un punto comodo aporta exactamente cero al")
+print("criterio, y moverlo no cambia nada mientras siga comodo")
+```
+
+```{=html}
+<div class="viz-perdidas">
+  <div class="controles">
+    <label>Margen del punto <input id="pe-z" type="range" min="-3" max="4" step="0.05" value="0.4"> <span id="pe-z-v">0.40</span></label>
+    <label>Escala de la logística
+      <select id="pe-e">
+        <option value="1" selected>en base e</option>
+        <option value="0.6931471805599453">dividida por log 2</option>
+      </select>
+    </label>
+  </div>
+  <svg id="pe-svg" viewBox="0 0 660 320" role="img" aria-label="Las curvas de la pérdida bisagra, la logística y el error cero-uno sobre un eje fijo, con el punto elegido marcado en las tres y sus tres valores."></svg>
+  <p class="lectura" id="pe-lectura"></p>
+</div>
+<style>
+.viz-perdidas { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-perdidas .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-perdidas label { display: flex; align-items: center; gap: .4rem; }
+.viz-perdidas input[type=range] { width: 170px; padding: 0; }
+.viz-perdidas select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-perdidas svg { width: 100%; height: auto; display: block; }
+.viz-perdidas .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("pe-svg"), lec = document.getElementById("pe-lectura");
+  var cz = document.getElementById("pe-z"), ce = document.getElementById("pe-e");
+  var ez = document.getElementById("pe-z-v");
+  // Marco anclado: z de -3 a 4, pérdida de 0 a 4, siempre.
+  var X0 = 52, XW = 566, Y0 = 24, YH = 236;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var px = function (z) { return X0 + (z + 3) / 7 * XW; };
+  var py = function (v) { return Y0 + (4 - Math.min(v, 4)) / 4 * YH; };
+  function bisagra(z) { return Math.max(0, 1 - z); }
+  function logis(z, esc) { return Math.log(1 + Math.exp(-z)) / esc; }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var z = +cz.value, esc = +ce.value;
+    ez.textContent = z.toFixed(2);
+    var t;
+    for (t = 0; t <= 4.001; t += 1) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(t).toFixed(1) + " L" + (X0 + XW) + " " + py(t).toFixed(1),
+        stroke: C_L, "stroke-width": 1, opacity: .5 }));
+      svg.appendChild(el("text", { x: X0 - 9, y: py(t) + 4, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .65 }, t));
+    }
+    [-3, -1, 0, 1, 2, 4].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y0 + YH + 17, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .65 }, v));
+    });
+    svg.appendChild(el("text", { x: X0, y: 16, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "pérdida en función del margen z = y·f(x)"));
+
+    // error 0-1 como escalón
+    svg.appendChild(el("path", { d: "M" + px(-3) + " " + py(1) + " L" + px(0) + " " + py(1) +
+      " L" + px(0) + " " + py(0) + " L" + px(4) + " " + py(0),
+      stroke: C_T, "stroke-width": 1.6, fill: "none", opacity: .5 }));
+    var d1 = "", d2 = "", q;
+    for (q = -3; q <= 4.0001; q += 0.02) {
+      d1 += (d1 ? " L" : "M") + px(q).toFixed(1) + " " + py(bisagra(q)).toFixed(1);
+      d2 += (d2 ? " L" : "M") + px(q).toFixed(1) + " " + py(logis(q, esc)).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: d1, stroke: C_A, "stroke-width": 2.4, fill: "none" }));
+    svg.appendChild(el("path", { d: d2, stroke: C_B, "stroke-width": 2.4, fill: "none" }));
+    svg.appendChild(el("path", { d: "M" + px(1) + " " + Y0 + " L" + px(1) + " " + (Y0 + YH),
+      stroke: C_G, "stroke-width": 1.2, "stroke-dasharray": "4 4", opacity: .8 }));
+
+    var vb = bisagra(z), vl = logis(z, esc);
+    svg.appendChild(el("circle", { cx: px(z).toFixed(1), cy: py(vb).toFixed(1), r: 4.6, fill: C_A }));
+    svg.appendChild(el("circle", { cx: px(z).toFixed(1), cy: py(vl).toFixed(1), r: 4.6, fill: C_B }));
+    svg.appendChild(el("text", { x: px(1) + 5, y: Y0 + 14, "font-size": 11, fill: C_G }, "z = 1"));
+
+    lec.innerHTML = "Con un margen de <strong>" + z.toFixed(2) + "</strong>, la bisagra (verde) vale <strong>" +
+      vb.toFixed(4) + "</strong> y la logística (roja) <strong>" + vl.toFixed(4) + "</strong>. " +
+      (z >= 1
+        ? "Pasado z = 1 la bisagra es <strong>exactamente cero</strong>: ese punto ha dejado de contar y moverlo no cambia el ajuste. La logística sigue cobrando " + vl.toFixed(4) + ", poco pero nunca nada."
+        : "Por debajo de z = 1 las dos cobran, y a la izquierda de cero las dos crecen casi como una recta.") +
+      (esc > 0.9
+        ? " En base e la logística pasa por 0.6931 en z = 0, por debajo del escalón gris: así <strong>no</strong> acota al error 0-1."
+        : " Dividida por log 2 pasa exactamente por 1 en z = 0 y ya queda por encima del escalón en todo el eje.");
+  }
+  cz.addEventListener("input", dibujar);
+  ce.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+La parte (b) es la diferencia estructural entre los dos métodos, y explica el nombre de la lección 14. Con la bisagra, los $159$ puntos que ya están fuera del margen aportan **exactamente cero** al criterio: moverlos no lo cambia, y por eso el ajuste depende solo de los vectores de soporte. Con la logística esos mismos puntos aportan $21{,}008896$, una cantidad pequeña pero nunca nula, y por eso ahí **todas** las observaciones tiran de la frontera.
+
+Esa es también la razón de que la regresión logística dé probabilidades y la máquina de soporte no: la logística paga por estar segura de más, y la bisagra deja de mirar en cuanto el punto está cómodo.
+
+## Ejercicios
+
+### Ejercicio 1, El tamaño del espacio ampliado
+
+Calcular en cuántas dimensiones vive el mapa del núcleo polinómico de grado $3$ con $50$ predictores, y cuántas multiplicaciones cuesta evaluar el núcleo.
+
+```{pyodide}
+#| exercise: ex_dim
+from math import comb
+
+p, d = 50, 3
+
+dimension = ______
+multiplicaciones = ______
+
+print(dimension, multiplicaciones)
+int(dimension)
+```
+
+::: {.hint exercise="ex_dim"}
+La Proposición 15.3 da $\binom{p+d}{d}$ para la dimensión, y el coste de evaluar $K$ son $p$ multiplicaciones sea cual sea $d$.
+:::
+
+::: {.solution exercise="ex_dim"}
+```{pyodide}
+from math import comb
+
+p, d = 50, 3
+
+dimension = comb(p + d, d)
+multiplicaciones = p
+
+print(dimension, multiplicaciones)
+int(dimension)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_dim
+#| check: true
+if result == 23426:
+    feedback = {"correct": True, "message": "Correcto: 23 426 coordenadas contra 50 multiplicaciones. Subir el grado a 5 llevaría el espacio a más de tres millones y el coste seguiría siendo 50.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 23426 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Lo que cobra cada pérdida
+
+Una observación tiene margen $y\,f(x)=1{,}5$. Calcular cuánto le cobra la pérdida bisagra y cuánto la logística.
+
+```{pyodide}
+#| exercise: ex_perdida
+from math import log, exp
+
+z = 1.5
+
+bisagra = ______
+logistica = ______
+
+print(round(bisagra, 6), round(logistica, 6))
+round(logistica, 6)
+```
+
+::: {.hint exercise="ex_perdida"}
+La bisagra es $\max(0,1-z)$ y la logística es $\log(1+e^{-z})$. Con $z>1$ una de las dos vale cero.
+:::
+
+::: {.solution exercise="ex_perdida"}
+```{pyodide}
+from math import log, exp
+
+z = 1.5
+
+bisagra = max(0.0, 1.0 - z)
+logistica = log(1.0 + exp(-z))
+
+print(round(bisagra, 6), round(logistica, 6))
+round(logistica, 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_perdida
+#| check: true
+if abs(result - 0.201413) < 1e-5:
+    feedback = {"correct": True, "message": "Correcto: la bisagra cobra 0 y la logística 0,201413. Esa diferencia, repetida en cada punto cómodo, es la que separa a los dos métodos.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.201413 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 15**:
+
+1. Construir el mapa explícito del núcleo polinómico de grado $3$ en dimensión $2$, ajustar el margen máximo de la lección 14 sobre los puntos transformados y comprobar que la frontera obtenida coincide con la que da trabajar solo con el núcleo. Anotar cuántas coordenadas tuvo que construir el primer camino y cuántas el segundo.
+2. Barrer $\gamma$ del núcleo radial sobre datos con forma de anillo y registrar cuántos puntos quedan como vectores de soporte en cada valor. Anotar qué le pasa a ese número cuando $\gamma$ crece mucho, y qué relación tiene con el sobreajuste que describe §9.3.2.
+3. Tomar un conjunto con una observación mal etiquetada muy lejos de la frontera y ajustar los dos criterios de la sección 5. Anotar en `50-Errores/` cuánto mueve la frontera esa observación en cada uno, y por qué la anulación exacta de la bisagra no protege contra un error **lejano del lado equivocado**.
+
+## Del libro
+
+*An Introduction to Statistical Learning with Applications in Python* trata este material en §9.3 *Support Vector Machines*, con la motivación en §9.3.1 *Classification with Non-Linear Decision Boundaries* y el método en §9.3.2 *The Support Vector Machine*; las más de dos clases en §9.4 *SVMs with More than Two Classes*, con §9.4.1 *One-Versus-One Classification* y §9.4.2 *One-Versus-All Classification*; y la comparación final en §9.5 *Relationship to Logistic Regression*.
+
+Con esta lección queda cubierto el capítulo 9 entero: la lección 14 cubrió §9.1–9.2 y esta cubre §9.3–9.5.
+
+**Dos diferencias con el libro que conviene tener presentes.** La primera: el libro introduce el núcleo diciendo que el clasificador «se puede escribir» con productos internos, y lo da por sabido. Esta página lo **demuestra** —Proposición 15.1—, y la demostración es de cuatro líneas con el teorema de Pitágoras; sin ella, el truco del núcleo parece una casualidad afortunada en lugar de una consecuencia.
+
+La segunda: el libro presenta la logística y la bisagra como dos pérdidas «muy parecidas». Lo son en la forma, y la Proposición 15.7c añade una precisión que el libro no hace: **la logística en base $e$ no acota al error $0$–$1$**, porque en $z=0$ vale $\log 2=0{,}693\ldots$ En base $2$ sí lo acota, y con igualdad justo en el cero. La celda lo comprueba en una malla de $24\,001$ puntos.
+
+**Preguntas para leer §9.3–9.5 con lápiz:**
+
+1. §9.3.2 dice que con el núcleo radial una observación lejana «no tiene esencialmente ningún efecto» sobre la predicción en un punto dado. Con la Proposición 15.1, ¿qué término de la fórmula es el que se hace pequeño, y a qué velocidad?
+2. §9.4.2 describe uno contra todos y no compara su coste con el de uno contra uno. Con la Proposición 15.6, ¿cuál de los dos toca menos datos en total, y por qué la intuición dice lo contrario?
+3. §9.5 observa que la máquina de soporte y la regresión logística dan fronteras parecidas cuando las clases se separan bien. Con la Proposición 15.7b, ¿qué le pasa a cada criterio cuando la separación es muy amplia, y cuál de los dos deja de tener información que usar?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/nucleos.md`, enlazada a [[margen-maximo]], [[regresion-logistica]] y [[diagonalizacion]]. Conviene rehacer a mano la Proposición 15.1: la descomposición ortogonal más Pitágoras, en cuatro líneas, deja claro de una vez que el truco del núcleo **no es un truco**, sino lo único que puede pasar cuando se minimiza una norma sujeta a restricciones que solo ven productos internos.
+
+```
+¿Dónde vive el beta óptimo?::En el subespacio generado por los datos
+¿Por qué?::Porque la componente ortogonal no cambia ningún margen y solo sube la norma
+¿Cómo queda entonces f(x)?::β₀ + Σ c_i ⟨x_i, x⟩: solo productos internos
+¿Qué es un núcleo?::Una K(x,z) que es ⟨φ(x), φ(z)⟩ para algún mapa φ
+¿Cuál es el mapa del polinómico?::Todos los monomios de grado ≤ d, escalados
+¿En qué dimensión vive?::C(p+d, d)
+¿Cuánto cuesta evaluar el núcleo?::p multiplicaciones, sea cual sea d
+¿Qué condición cumple toda matriz de Gram de un núcleo?::Es simétrica y semidefinida positiva
+¿Cómo se demuestra que algo NO es núcleo?::Exhibiendo puntos cuya Gram tenga un autovalor negativo
+¿Es tanh(⟨x,z⟩+1) un núcleo?::No: nueve puntos le encuentran un autovalor de −1,58
+¿Por qué el radial es de dimensión infinita?::Su serie tiene un núcleo polinómico de cada grado
+¿Cuántos clasificadores usa uno contra uno?::K(K−1)/2
+¿Y cuántas observaciones toca en total?::(K−1)·n, menos que las K·n de uno contra todos
+¿Puede empatar el voto de uno contra uno?::Sí, y la regla de desempate no la fija el método
+¿Qué pérdida usa la máquina de soporte?::La bisagra, max(0, 1 − y·f)
+¿Cuándo vale cero la bisagra?::En cuanto y·f ≥ 1, exactamente
+¿Y la logística?::Nunca: log(1+e^−z) > 0 para todo z
+¿Qué se sigue de eso?::Que una tiene vectores de soporte y la otra usa todos los puntos
+¿Acota la logística al error 0-1?::En base e no; dividida por log 2 sí
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 15.1 se demuestra descomponiendo $\beta$ en su parte paralela al espacio de los datos y la ortogonal, y aplicando Pitágoras; se comprueba añadiendo una coordenada que ningún dato usa y viendo que meterle a $\beta$ una componente fuera del espacio deja el margen mínimo en $1{,}000000$ mientras la norma sube de $1{,}071113$ a $3{,}185480$, y que $f$ evaluada en cinco puntos nuevos coincide a $10^{-10}$ por los dos caminos. La Proposición 15.3 se demuestra con el teorema multinomial; se comprueba en los $36$ pares de seis puntos, donde el núcleo y el producto interno del mapa explícito de seis coordenadas coinciden por debajo de $10^{-12}$, y con la tabla de dimensiones, donde $p=1000$ y $d=5$ dan $8\,459\,043\,543\,951$ coordenadas contra mil multiplicaciones. La Proposición 15.4 se demuestra escribiendo $G=\Phi\Phi^\top$; se comprueba con cinco funciones, de las que dos —$\langle x,z\rangle-1$ y $\tanh(\langle x,z\rangle+1)$— tienen autovalores de $-7{,}6074$ y $-1{,}5777$ y quedan descartadas. La Proposición 15.6 se demuestra contando pares y observaciones; se comprueba con cinco valores de $K$, donde $K=26$ da $325$ clasificadores contra $26$ y sin embargo $195\,000$ observaciones contra $202\,800$, y con $20\,000$ ensayos donde el voto empata el $41{,}0\,\%$ de las veces. La Proposición 15.7 se demuestra sustituyendo la holgura óptima y comparando las dos funciones; se comprueba en una malla de $24\,001$ puntos y sobre $200$ observaciones, donde los $159$ puntos cómodos aportan $0$ con la bisagra y $21{,}008896$ con la logística. Los dos visuales recalculan estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** El problema del margen máximo en su forma normalizada es la Proposición 14.3 de Machine Learning 14, y el hiperplano concreto que se usa en la sección 1 sale de la construcción por envolventes convexas de la 14.4. Que una matriz simétrica es semidefinida positiva si y solo si sus autovalores son no negativos es de Álgebra 10. La pérdida logística y su origen en la verosimilitud son de Machine Learning 3.
+
+**Lo que se enuncia sin demostrar.** El **teorema de Mercer** —que la condición de semidefinición positiva no solo es necesaria sino también **suficiente** para que exista el mapa $\varphi$— se usa implícitamente al llamar núcleos al radial y al polinómico, y **no se demuestra**: exige teoría de operadores. Lo que sí queda demostrado aquí es la dirección necesaria, que es la que permite **descartar** candidatos, y para el polinómico el mapa se construye explícitamente, de modo que no hace falta el teorema. Que el desarrollo en serie del radial converge uniformemente sobre conjuntos acotados se comprueba numéricamente y no se demuestra.
+
+**Lo que viene de los libros.**
+
+- [*An Introduction to Statistical Learning with Applications in Python*](https://www.statlearning.com/) (James, Witten, Hastie, Tibshirani, Taylor; Springer, 2023), §9.3 *Support Vector Machines* con sus subsecciones, §9.4 *SVMs with More than Two Classes* con las suyas y §9.5 *Relationship to Logistic Regression* — citadas por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La Proposición 15.1 demostrada en lugar de enunciada, que convierte el truco del núcleo en una consecuencia inevitable de minimizar una norma. La comprobación de la Proposición 15.4 como **manera de descartar**, con dos funciones que circulan como núcleos y no lo son. La Proposición 15.6b y su cuenta exacta $(K-1)n$ contra $Kn$, que corrige la intuición de que más clasificadores es más trabajo, junto con la medición de la frecuencia de empates, que el libro no menciona. Y la Proposición 15.7c, que precisa que la logística **no** acota al error $0$–$1$ sin dividir por $\log 2$: el libro las dibuja juntas y las llama parecidas, y la diferencia es exactamente la que explica por qué solo una tiene vectores de soporte.
+
+[Índice de ISLP verificado el 13-09-2026 contra los marcadores del PDF oficial.]{.sello}
+:::
