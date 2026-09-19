@@ -1,7 +1,7 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **19-09-2026**, tras una sesión larga que publicó **veinte
-lecciones** y cerró **tres deudas**.
+Última actualización: **19-09-2026**, tras una sesión larga que publicó **veintiuna
+lecciones** y cerró **cuatro deudas**.
 
 Las lecciones: **ML 7** (selección de subconjuntos, ISLP §6.1), **ML 8**
 (encogimiento, §6.2), **ML 9** (alta dimensión, §6.4), **ML 10** (bases y
@@ -9,30 +9,32 @@ splines, §7.1–7.4), **ML 11** (suavizado y GAMs, §7.5–7.7), **ML 12** (ár
 decisión, §8.1), **ML 13** (bagging, bosques e impulso, §8.2), **ML 14** (margen
 máximo, §9.1–9.2), **ML 15** (núcleos y pérdida bisagra, §9.3–9.5), **ML 16** (redes neuronales,
 §10.1–10.2, §10.6 y §10.8), **ML 17** (censura y Kaplan-Meier, §11.1–11.4), **ML 18** (riesgos proporcionales
-y Cox, §11.5–11.7), **ML 19** (PCA, §12.1–12.3), y **Python 10** a **16** (carga y limpieza, uniones y reshape,
+y Cox, §11.5–11.7), **ML 19** (PCA, §12.1–12.3), **ML 20** (PCR y PLS, §6.3), y **Python 10** a **16** (carga y limpieza, uniones y reshape,
 groupby, visualización, series de tiempo, rendimiento y anatomía de un proyecto).
 
-**Las 78 publicadas cumplen el molde: 78 de 78.**
+**Las 79 publicadas cumplen el molde: 79 de 79.**
 
 Tres hitos de esta sesión:
 
 - **El módulo de Python queda CERRADO en 16 de 16**, el tercero tras Estadística
   y Álgebra.
-- **ISLP capítulos 6 y 7 quedan cubiertos enteros**, salvo §6.3, que espera a la
-  lección de componentes principales; **el capítulo 8 queda cubierto entero**
-  —§8.1 en ML 12 y §8.2 en ML 13— y **el 9 también entero**: §9.1–9.2 en ML 14 y
-  §9.3–9.5 en ML 15. Del **capítulo 10**, ML 16 cubre §10.1–10.2, §10.6 y §10.8;
-  el resto está repartido entre las lecciones 36 a 41 de la Fase 4, salvo §10.4 y
-  §10.5, que **no están en el plan** y quedan anotadas como omisión deliberada. Del
-  **capítulo 11 queda cubierto entero**: §11.1–11.4 en ML 17 y §11.5–11.7 en ML 18,
-  con tres subsecciones de §11.7 nombradas como omisión deliberada. Del **12**,
-  ML 19 cubre §12.1–12.3 y ML 21 cubrirá §12.4. **ML 19 desbloquea §6.3**, el
-  último hueco de los capítulos 2 a 9, que será la lección 20.
+- **ISLP: los capítulos 2 a 9 quedan cubiertos SIN NINGÚN HUECO** desde el
+  19-09-2026. El último que faltaba era §6.3, pendiente desde ML 8 porque
+  necesitaba componentes principales, y lo cubre **ML 20**. El reparto: el 2 en
+  ML 1, el 3 en ML 2, el 4 en ML 3, 4 y 5, el 5 en ML 6, el **6 en ML 7, 8, 9 y
+  20**, el 7 en ML 10 y 11, el 8 en ML 12 y 13, y el 9 en ML 14 y 15.
+- Del **capítulo 10**, ML 16 cubre §10.1–10.2, §10.6 y §10.8; el resto está
+  repartido entre las lecciones 36 a 41 de la Fase 4, salvo §10.4 y §10.5, que
+  **no están en el plan** y quedan anotadas como omisión deliberada. El
+  **capítulo 11 queda cubierto entero**: §11.1–11.4 en ML 17 y §11.5–11.7 en
+  ML 18, con tres subsecciones de §11.7 nombradas como omisión deliberada. Del
+  **12**, ML 19 cubre §12.1–12.3 y ML 21 cubrirá §12.4. Queda el **13**, que es
+  la lección 22.
 - **Las tres deudas abiertas se cerraron**: las colisiones del glosario (punto 6),
   las 33 secciones de retos y los 106 símbolos sin declarar.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
-faltando lecciones por escribir: **ML va por 19 de 90**, y **Series de tiempo e
+faltando lecciones por escribir: **ML va por 20 de 90**, y **Series de tiempo e
 Inferencia causal están vacíos**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -102,15 +104,15 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 0 | 11 | — | todas |
-| Machine Learning | 19 | 90 | **19 de 19** | 20 a 22 de la Fase 2, y el resto |
+| Machine Learning | 20 | 90 | **20 de 20** | 21 y 22 de la Fase 2, y el resto |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **78 lecciones** publicadas, **78** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 100 según el plan.
+- **79 lecciones** publicadas, **79** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 99 según el plan.
 - **Tres módulos cerrados**: Estadística 25/25, Álgebra 18/18 y **Python 16/16**.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
@@ -137,15 +139,15 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   marginales exactas, que es más fuerte que cualquier librería; y `np.trapz` se
   retiró del espacio de nombres en NumPy 2.0, así que las celdas nuevas no lo
   usan.
-- **165 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
+- **167 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
   Siguen los mismos cuatro avisos, todos anteriores: tres de no idempotencia
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. Los visuales de esta tanda no añaden ninguno.
-- **1796 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **422 celdas** que el gate ejecuta en cada build, y comprobadas **con las
+- **1822 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **427 celdas** que el gate ejecuta en cada build, y comprobadas **con las
   dos parejas de versiones** (ver el punto 5).
-- Glosario: **383 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **385 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -1515,6 +1517,64 @@ afirmación en el gate meses después.
 *Dimension Reduction Methods* quedó fuera de ML 8 porque necesitaba componentes
 principales. Con ML 19 ya se puede escribir **ML 20**, y con ella los capítulos
 del 2 al 9 de ISLP quedarán cubiertos **sin ningún hueco**.
+
+### 3.24 ML 20: §6.3 cerrado y los capítulos 2 a 9 sin huecos (19-09-2026)
+
+**Se cierra una deuda de hace once lecciones.** §6.3 quedó fuera de ML 8 porque
+necesitaba componentes principales; con ML 19 publicada, ML 20 la cubre y **los
+capítulos 2 a 9 de ISLP quedan cubiertos sin ningún hueco**. El reparto completo
+está en el punto 2 y en la sección 4 de la propia lección.
+
+El resultado que ordena la lección es la **Proposición 20.2**: los tres métodos
+se escriben con el mismo molde, $\hat{y}=\sum_j u_j f_j u_j^\top y$, y lo único
+que cambia es $f_j$:
+
+| método | $f_j$ |
+|---|---|
+| mínimos cuadrados | $1$ |
+| ridge | $d_j^2/(d_j^2+\lambda)$ |
+| PCR con $M$ | $1$ si $j\le M$, $0$ si no |
+
+Dicho así, **PCR es ridge con el mando en dos posiciones**. El libro lo presenta
+como método aparte con su propia motivación, y esa lectura ahorra memorizar dos
+historias. El visual los pone lado a lado sobre el mismo eje.
+
+Lo demás:
+
+- la **20.3**: PCR elige sin mirar $y$, con el conjunto que lo hace caro —seis
+  variables con un factor común y una respuesta que depende de un contraste—.
+  La primera componente se lleva el $88{,}70\,\%$ de la varianza con correlación
+  $-0{,}0800$; la segunda, el $3{,}15\,\%$ con $0{,}9714$. PLS se queda a un $5\,\%$
+  de mínimos cuadrados con **3** componentes y PCR necesita las **6**;
+- la **20.5**: la primera dirección de PLS es $X^\top y$ normalizado, comprobado a
+  $10^{-10}$, y con todas las componentes los dos métodos coinciden con mínimos
+  cuadrados;
+- la sección 3 mide **los dos regímenes con el mismo código**: con la señal en la
+  dirección de máxima varianza los dos dan $0{,}0918$ fuera de la muestra; con la
+  señal en un contraste, PCR se queda en $3{,}0658$ y PLS baja a $0{,}0931$. El
+  libro dice que PLS «no suele ser mejor»; aquí se ve **de qué depende**.
+
+#### La advertencia de ML 19 mordiendo en ML 20
+
+La primera versión de la celda de la sección 2 **falló el contraste de versiones**:
+las correlaciones de cada componente con $y$ salían con signos opuestos en los dos
+entornos. Causa: el signo de un vector singular es arbitrario, que es exactamente
+lo que ML 19 acababa de anotar. Se aplicó la misma convención —coordenada de mayor
+magnitud positiva, fijando también la columna de $U$— y quedó estable.
+
+Sirve de confirmación de que la advertencia valía la pena: **apareció en la
+lección siguiente**.
+
+#### El mismo descuido, por cuarta vez
+
+El ejercicio 1 llevaba $3{,}743017$ y el intérprete daba $3{,}495813$. Y esta vez
+con agravante: el valor correcto se había calculado **en la misma orden** que
+escribía el bloque, de modo que estaba a la vista y aun así se escribió el otro.
+
+La costumbre que hay que adoptar, y que no basta con anotar: **calcular primero en
+una orden aparte, leer el resultado, y solo entonces escribir el bloque**. Las
+cuatro veces las cazó el procedimiento antes de publicar, pero el procedimiento no
+debería tener que cazarlas.
 
 ---
 
