@@ -1,16 +1,16 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **18-09-2026**, tras una sesión larga que publicó **quince
+Última actualización: **18-09-2026**, tras una sesión larga que publicó **dieciséis
 lecciones** y cerró **tres deudas**.
 
 Las lecciones: **ML 7** (selección de subconjuntos, ISLP §6.1), **ML 8**
 (encogimiento, §6.2), **ML 9** (alta dimensión, §6.4), **ML 10** (bases y
 splines, §7.1–7.4), **ML 11** (suavizado y GAMs, §7.5–7.7), **ML 12** (árboles de
 decisión, §8.1), **ML 13** (bagging, bosques e impulso, §8.2), **ML 14** (margen
-máximo, §9.1–9.2), y **Python 10** a **16** (carga y limpieza, uniones y reshape,
+máximo, §9.1–9.2), **ML 15** (núcleos y pérdida bisagra, §9.3–9.5), y **Python 10** a **16** (carga y limpieza, uniones y reshape,
 groupby, visualización, series de tiempo, rendimiento y anatomía de un proyecto).
 
-**Las 73 publicadas cumplen el molde: 73 de 73.**
+**Las 74 publicadas cumplen el molde: 74 de 74.**
 
 Tres hitos de esta sesión:
 
@@ -18,12 +18,13 @@ Tres hitos de esta sesión:
   y Álgebra.
 - **ISLP capítulos 6 y 7 quedan cubiertos enteros**, salvo §6.3, que espera a la
   lección de componentes principales; **el capítulo 8 queda cubierto entero**
-  —§8.1 en ML 12 y §8.2 en ML 13— y **el 9 queda empezado** con §9.1–9.2 en ML 14.
+  —§8.1 en ML 12 y §8.2 en ML 13— y **el 9 también entero**: §9.1–9.2 en ML 14 y
+  §9.3–9.5 en ML 15.
 - **Las tres deudas abiertas se cerraron**: las colisiones del glosario (punto 6),
   las 33 secciones de retos y los 106 símbolos sin declarar.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
-faltando lecciones por escribir: **ML va por 14 de 90**, y **Series de tiempo e
+faltando lecciones por escribir: **ML va por 15 de 90**, y **Series de tiempo e
 Inferencia causal están vacíos**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -93,15 +94,15 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 0 | 11 | — | todas |
-| Machine Learning | 14 | 90 | **14 de 14** | 15 a 21 de la Fase 2, y el resto |
+| Machine Learning | 15 | 90 | **15 de 15** | 16 a 21 de la Fase 2, y el resto |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **73 lecciones** publicadas, **73** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 105 según el plan.
+- **74 lecciones** publicadas, **74** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 104 según el plan.
 - **Tres módulos cerrados**: Estadística 25/25, Álgebra 18/18 y **Python 16/16**.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
@@ -128,15 +129,15 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   marginales exactas, que es más fuerte que cualquier librería; y `np.trapz` se
   retiró del espacio de nombres en NumPy 2.0, así que las celdas nuevas no lo
   usan.
-- **155 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
+- **157 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
   Siguen los mismos cuatro avisos, todos anteriores: tres de no idempotencia
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. Los visuales de esta tanda no añaden ninguno.
-- **1616 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **391 celdas** que el gate ejecuta en cada build, y comprobadas **con las
+- **1655 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **398 celdas** que el gate ejecuta en cada build, y comprobadas **con las
   dos parejas de versiones** (ver el punto 5).
-- Glosario: **363 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **369 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -1236,6 +1237,63 @@ problema continuo.
 **La lección de método**: cuando un cálculo se resiste, conviene mirar si el
 enunciado que hay que comprobar necesita de verdad ese cálculo. Aquí no lo
 necesitaba, y el enunciado sale reforzado por ser más general.
+
+### 3.19 ML 15, y dos afirmaciones del libro precisadas (18-09-2026)
+
+**Con ML 15 queda cubierto el capítulo 9 entero**, y con él todo ISLP de la 2 a
+la 9 salvo §6.3, que sigue esperando a la lección de componentes principales.
+
+El resultado que sostiene la lección es la **Proposición 15.1**: el $\beta$ óptimo
+está en el subespacio generado por los datos, porque la componente ortogonal no
+cambia ninguna restricción y solo engorda la norma. Sale en cuatro líneas con
+Pitágoras, y de ahí se deduce que $f(x)=\beta_0+\sum_i c_i\langle x_i,x\rangle$.
+**El libro da eso por sabido**, y sin la demostración el truco del núcleo parece
+una casualidad afortunada en lugar de lo único que puede pasar.
+
+Lo demás de la lección:
+
+- la **15.3**: el núcleo polinómico y su mapa explícito, con la cuenta que enseña
+  el tamaño del ahorro: con $p=1000$ y $d=5$ el espacio ampliado tiene
+  $8\,459\,043\,543\,951$ coordenadas y evaluar el núcleo sigue costando mil
+  multiplicaciones;
+- la **15.4**: la matriz de Gram como criterio de descarte, con dos funciones que
+  circulan como núcleos y **no lo son** —$\langle x,z\rangle-1$ y el «sigmoide»
+  $\tanh(\langle x,z\rangle+1)$, con autovalores de $-7{,}61$ y $-1{,}58$—;
+- la **15.6**: uno contra uno entrena $\binom{K}{2}$ clasificadores y uno contra
+  todos $K$, pero el primero toca $(K-1)n$ observaciones y el segundo $Kn$. Con
+  $K=26$: $325$ clasificadores contra $26$, y sin embargo $195\,000$
+  observaciones contra $202\,800$. La intuición de que más clasificadores es más
+  trabajo falla, y el libro no hace la cuenta;
+- la **15.7**: la bisagra se anula exactamente en $y f\ge 1$ y la logística no lo
+  hace nunca. Medido sobre $200$ puntos: los $159$ cómodos aportan $0$ al criterio
+  con la bisagra y $21{,}008896$ con la logística. Ahí está, en una línea, por qué
+  un método tiene vectores de soporte y el otro no.
+
+#### Dos precisiones que la medición obligó a hacer
+
+**La primera.** El libro presenta la bisagra y la logística como dos pérdidas muy
+parecidas, las dibuja juntas y las llama sustitutas del error $0$–$1$. Al
+comprobarlo sobre una malla de $24\,001$ puntos sale que **la logística en base
+$e$ no acota al error $0$–$1$**: en $y f=0$ vale $\log 2=0{,}693\ldots$, por debajo
+del escalón. Dividida por $\log 2$ sí lo acota, y con igualdad justo en el cero.
+La página lo enuncia como Proposición 15.7c y lo dice en «Del libro».
+
+**La segunda.** El término «núcleo» ya estaba en el glosario con el sentido de
+Álgebra 3 —el espacio nulo de una matriz—. Un tooltip que dijera eso al pasar por
+encima de «núcleo» en ML 15 sería falso. Se aplicó la **regla 21b**, que hasta
+ahora solo se había usado con símbolos: la entrada global dice que el término está
+sobrecargado, nombra los dos sentidos y remite a la lección. Es el primer caso de
+21b aplicada a un término y no a un símbolo, y conviene recordar que la regla
+cubre los dos.
+
+#### Lo que no se demuestra, dicho donde toca
+
+El **teorema de Mercer** —que la semidefinición positiva es también **suficiente**
+para que exista el mapa— se usa implícitamente al llamar núcleos al radial y al
+polinómico, y no se demuestra: exige teoría de operadores. Lo que sí queda
+demostrado es la dirección necesaria, que es la que permite **descartar**, y para
+el polinómico el mapa se construye a mano, así que ahí el teorema no hace falta.
+Queda escrito en Fuentes.
 
 ---
 
