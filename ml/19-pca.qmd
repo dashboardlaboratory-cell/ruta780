@@ -1,0 +1,810 @@
+---
+title: "Aprendizaje no supervisado: PCA"
+subtitle: "Machine Learning · Lección 19"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [matematica/11-svd, matematica/10-diagonalizacion, ml/09-alta-dimension]
+siguientes: []
+libro: "ISLP §12.1 The Challenge of Unsupervised Learning · §12.2 Principal Components Analysis · §12.2.1 What Are Principal Components? · §12.2.2 Another Interpretation of Principal Components · §12.2.3 The Proportion of Variance Explained · §12.2.4 More on PCA · §12.3 Missing Values and Matrix Completion"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="ml/19-pca"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §12.1–12.3]{.item}
+[**Prereqs** [SVD](../matematica/11-svd.qmd) · [Diagonalización](../matematica/10-diagonalizacion.qmd) · [Alta dimensión](09-alta-dimension.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir una [componente principal]{.g} y demostrar que es el eigenvector de la covarianza con mayor eigenvalor.
+2. Demostrar que las $k$ primeras componentes dan la **mejor** aproximación de rango $k$, y que el error es la suma de los valores singulares descartados al cuadrado.
+3. Definir la [proporción de varianza explicada]{.g} y demostrar que la acumulada es el complemento del error relativo.
+4. **Demostrar que cambiar las unidades de una columna cambia las componentes**, y qué hace [estandarizar]{.g data-t="estandarizar"}.
+5. Explicar el algoritmo de [completado de matrices]{.g} y demostrar que su criterio nunca sube.
+6. Fijar el signo de un eigenvector para poder citar sus cifras.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Álgebra 11**: la descomposición en valores singulares, que es la herramienta entera de esta lección.
+- **Álgebra 10**: la diagonalización de una matriz simétrica, de donde salen las componentes.
+- **Machine Learning 9**: la alta dimensión, donde la reducción deja de ser un lujo.
+- **Estadística 5**: la covarianza y la correlación, que son la matriz que aquí se diagonaliza.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 20**: la regresión sobre componentes principales y PLS, que usan estas componentes como predictores.
+- **Machine Learning 21**: el clustering, la otra mitad del capítulo 12.
+- **Machine Learning 33**: el clustering avanzado de ESL, donde reaparecen la descomposición espectral y la factorización no negativa.
+- **Series de tiempo**: el análisis de componentes sobre matrices de series, para separar factores comunes.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $X$ | equis | La matriz de datos, con las columnas ya centradas |
+| $n$, $p$ | ene, pe | El número de observaciones y de variables |
+| $S$ | ese | La matriz de covarianzas muestral, $X^\top X/(n-1)$ |
+| $\varphi_j$ | fi sub jota | La $j$-ésima componente principal: un vector de norma uno |
+| $\lambda_j$ | lambda sub jota | El $j$-ésimo eigenvalor de $S$, de mayor a menor |
+| $\sigma_j$ | sigma sub jota | El $j$-ésimo valor singular de $X$ |
+| $Z$ | zeta | Las puntuaciones: las proyecciones $X\varphi$ |
+| $X_k$ | equis sub ka | La mejor aproximación de rango $k$ a $X$ |
+| $k$ | ka | El número de componentes que se conservan |
+| $\text{PVE}$ | pe uve e | La proporción de varianza explicada |
+| $\Sigma$ | sigma mayúscula | La matriz diagonal de valores singulares de la SVD, no un sumatorio |
+| $\lVert\cdot\rVert_F$ | norma de Frobenius | La raíz de la suma de todos los cuadrados de una matriz |
+| $z_{ij}$ | zeta sub i jota | El valor que el algoritmo de la sección 4 pone en la casilla $(i,j)$ |
+:::
+
+## 1. La dirección que más varianza captura
+
+::: {.definicion}
+**Definición 19.1 (componente principal).** Con las columnas de $X$ centradas, la **primera componente principal** es el vector $\varphi_1$ de norma uno que maximiza la varianza de la proyección $X\varphi$. La $j$-ésima es la que maximiza esa varianza entre los vectores de norma uno **ortogonales a las $j-1$ anteriores**.
+:::
+
+::: {.proposicion}
+**Proposición 19.2 (las componentes son los eigenvectores).** Sea $S=X^\top X/(n-1)$ con eigenvalores $\lambda_1\ge\dots\ge\lambda_p\ge 0$ y eigenvectores ortonormales $v_1,\dots,v_p$. Entonces $\varphi_j=v_j$, la varianza de la $j$-ésima proyección vale $\lambda_j$, y las proyecciones están **incorreladas** entre sí. Además $\sum_j\lambda_j=\operatorname{tr}(S)$, la varianza total.
+:::
+
+::: {.demostracion}
+*Demostración.* La varianza de $X\varphi$ es $\varphi^\top S\varphi$. Escribiendo $\varphi=\sum_j c_j v_j$ con $\sum_j c_j^2=1$ —la base es ortonormal por el teorema espectral, Álgebra 10—, se tiene $\varphi^\top S\varphi=\sum_j\lambda_j c_j^2$, que es un promedio ponderado de los eigenvalores y por tanto no supera a $\lambda_1$, con igualdad si y solo si toda la masa está en los eigenvectores de eigenvalor máximo. Eso da $\varphi_1=v_1$. Restringiendo a los ortogonales a $v_1$ se anula $c_1$ y el mismo argumento da $v_2$, y así sucesivamente.
+
+Para la incorrelación, la covarianza entre las proyecciones $j$ y $l$ es $v_j^\top S v_l=\lambda_l\,v_j^\top v_l=0$ si $j\ne l$. La última afirmación es que la traza de una matriz simétrica es la suma de sus eigenvalores. [∎]{.fin-demo}
+:::
+
+**Una cautela antes de imprimir nada.** Si $v$ es un eigenvector, $-v$ también lo es, con el mismo eigenvalor: el signo **no está determinado**. Dos versiones de la misma biblioteca pueden devolver uno u otro, las dos correctas. Cualquier cifra que se publique de una componente exige fijar el signo primero, y la celda lo hace.
+
+```{pyodide}
+import numpy as np
+
+def signo_fijo(V):
+    """El signo de un eigenvector es arbitrario: se fija para poder citarlo.
+
+    Sin esto, dos versiones de la biblioteca pueden devolver v y -v, las dos
+    correctas, y cualquier cifra que se publique dejaria de cuadrar.
+    """
+    for j in range(V.shape[1]):
+        k = int(np.argmax(np.abs(V[:, j])))
+        if V[k, j] < 0:
+            V[:, j] = -V[:, j]
+    return V
+
+rng = np.random.default_rng(13)
+n, p = 300, 4
+A = np.array([[2.0, 0.9, 0.1, 0.0],
+              [0.0, 1.4, 0.6, 0.2],
+              [0.0, 0.0, 0.8, 0.5],
+              [0.0, 0.0, 0.0, 0.4]])
+X = rng.normal(size=(n, p)) @ A
+X = X - X.mean(0)                     # centrar: PCA siempre parte de ahi
+
+S = X.T @ X / (n - 1)
+val, vec = np.linalg.eigh(S)
+orden = np.argsort(val)[::-1]
+val, vec = val[orden], signo_fijo(vec[:, orden])
+
+print("eigenvalores de la matriz de covarianzas, de mayor a menor:")
+print("   " + "  ".join("%.6f" % v for v in val))
+print("su suma es la varianza total: %.6f" % float(val.sum()))
+print("y la traza de la covarianza vale lo mismo: %.6f" % float(np.trace(S)))
+print("coinciden a 1e-10:", bool(abs(val.sum() - np.trace(S)) < 1e-10))
+print()
+
+# La primera componente es la direccion de MAXIMA varianza proyectada.
+# Se comprueba contra una busqueda directa sobre muchas direcciones.
+mejor_azar, arg_azar = -1.0, None
+sem = np.random.default_rng(2)
+for _ in range(20):                      # 20 tandas de 10000 direcciones
+    U = sem.normal(size=(10000, p))
+    U /= np.linalg.norm(U, axis=1, keepdims=True)
+    varianzas = (X @ U.T).var(axis=0, ddof=1)
+    k = int(np.argmax(varianzas))
+    if varianzas[k] > mejor_azar:
+        mejor_azar, arg_azar = float(varianzas[k]), U[k]
+print("varianza proyectada sobre la primera componente: %.6f" % float(np.var(X @ vec[:, 0], ddof=1)))
+print("que es exactamente el primer eigenvalor       : %.6f" % val[0])
+print("coinciden a 1e-10:", bool(abs(np.var(X @ vec[:, 0], ddof=1) - val[0]) < 1e-10))
+print()
+print("la mejor de 200000 direcciones al azar da     : %.6f" % mejor_azar)
+print("nunca supera a la componente:", bool(mejor_azar <= val[0] + 1e-12))
+print("y el angulo entre esa direccion y la componente es de %.2f grados"
+      % float(np.degrees(np.arccos(min(1.0, abs(float(arg_azar @ vec[:, 0])))))))
+print()
+
+# Las componentes son ortogonales y las proyecciones, incorreladas.
+Z = X @ vec
+C = np.corrcoef(Z.T)
+print("las cuatro componentes son ortonormales:",
+      bool(np.allclose(vec.T @ vec, np.eye(p), atol=1e-10)))
+print("y sus proyecciones estan incorreladas   :",
+      bool(np.allclose(C - np.diag(np.diag(C)), 0.0, atol=1e-10)))
+print("varianza de cada proyeccion, que son los eigenvalores:")
+print("   " + "  ".join("%.6f" % float(np.var(Z[:, j], ddof=1)) for j in range(p)))
+```
+
+La mejor de doscientas mil direcciones al azar alcanza $5{,}651898$ contra los $5{,}653235$ de la componente, y se queda a $1{,}09$ grados de ella. Nunca la supera, que es lo que la demostración garantiza.
+
+```{=html}
+<div class="viz-direccion">
+  <div class="controles">
+    <label>Dirección (grados) <input id="di-a" type="range" min="0" max="180" step="1" value="20"> <span id="di-a-v">20°</span></label>
+    <label>Forma de la nube <input id="di-r" type="range" min="-0.95" max="0.95" step="0.05" value="0.8"> <span id="di-r-v">0.80</span></label>
+  </div>
+  <svg id="di-svg" viewBox="0 0 660 330" role="img" aria-label="A la izquierda la nube de puntos con la dirección elegida y las proyecciones sobre ella; a la derecha la varianza proyectada en función del ángulo, con el máximo marcado en la primera componente."></svg>
+  <p class="lectura" id="di-lectura"></p>
+</div>
+<style>
+.viz-direccion { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-direccion .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-direccion label { display: flex; align-items: center; gap: .4rem; }
+.viz-direccion input[type=range] { width: 170px; padding: 0; }
+.viz-direccion svg { width: 100%; height: auto; display: block; }
+.viz-direccion .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("di-svg"), lec = document.getElementById("di-lectura");
+  var ca = document.getElementById("di-a"), cr = document.getElementById("di-r");
+  var ea = document.getElementById("di-a-v"), er = document.getElementById("di-r-v");
+  // Dos paneles anclados: la nube en [-4,4]^2 y la curva con el ángulo de 0 a 180.
+  var PX = 30, PW = 280, PY = 26, PH = 260, QX = 360, QW = 280, QY = 40, QH = 210;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // 90 puntos deterministas con dos coordenadas normales independientes
+  var z = [], s = 5;
+  function r() { s = (s * 48271) % 2147483647; return s / 2147483647; }
+  for (var i = 0; i < 90; i++) {
+    var u1 = Math.max(1e-9, r()), u2 = r();
+    var g1 = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    var g2 = Math.sqrt(-2 * Math.log(u1)) * Math.sin(2 * Math.PI * u2);
+    z.push([g1, g2]);
+  }
+  function nube(rho) {
+    var a = Math.sqrt((1 + rho) / 2), b = Math.sqrt((1 - rho) / 2), P = [], mx = 0, my = 0, i;
+    for (i = 0; i < z.length; i++) {
+      var x = 1.9 * (a * z[i][0] + b * z[i][1]), y = 1.9 * (a * z[i][0] - b * z[i][1]);
+      P.push([x, y]); mx += x; my += y;
+    }
+    mx /= P.length; my /= P.length;
+    for (i = 0; i < P.length; i++) { P[i][0] -= mx; P[i][1] -= my; }
+    return P;
+  }
+  function varianza(P, ang) {
+    var ux = Math.cos(ang), uy = Math.sin(ang), m = 0, i, v = [];
+    for (i = 0; i < P.length; i++) { var t = P[i][0] * ux + P[i][1] * uy; v.push(t); m += t; }
+    m /= v.length;
+    var s2 = 0;
+    for (i = 0; i < v.length; i++) s2 += (v[i] - m) * (v[i] - m);
+    return s2 / (v.length - 1);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var gra = +ca.value, rho = +cr.value, ang = gra * Math.PI / 180;
+    ea.textContent = gra + "°"; er.textContent = rho.toFixed(2);
+    var P = nube(rho);
+    var px = function (v) { return PX + (v + 4) / 8 * PW; };
+    var py = function (v) { return PY + (4 - v) / 8 * PH; };
+    svg.appendChild(el("rect", { x: PX, y: PY, width: PW, height: PH, fill: "none", stroke: C_L, "stroke-width": 1 }));
+    svg.appendChild(el("text", { x: PX, y: 18, "font-size": 11.5, fill: C_T, opacity: .75 }, "la nube y la dirección elegida"));
+    var ux = Math.cos(ang), uy = Math.sin(ang), i;
+    svg.appendChild(el("path", { d: "M" + px(-4 * ux).toFixed(1) + " " + py(-4 * uy).toFixed(1) +
+      " L" + px(4 * ux).toFixed(1) + " " + py(4 * uy).toFixed(1), stroke: C_G, "stroke-width": 2 }));
+    for (i = 0; i < P.length; i++) {
+      var t = P[i][0] * ux + P[i][1] * uy;
+      svg.appendChild(el("path", { d: "M" + px(P[i][0]).toFixed(1) + " " + py(P[i][1]).toFixed(1) +
+        " L" + px(t * ux).toFixed(1) + " " + py(t * uy).toFixed(1), stroke: C_L, "stroke-width": .8, opacity: .8 }));
+      svg.appendChild(el("circle", { cx: px(P[i][0]).toFixed(1), cy: py(P[i][1]).toFixed(1), r: 2.4, fill: C_A, "fill-opacity": .55 }));
+      svg.appendChild(el("circle", { cx: px(t * ux).toFixed(1), cy: py(t * uy).toFixed(1), r: 2, fill: C_G, "fill-opacity": .8 }));
+    }
+
+    // panel derecho: varianza en funcion del angulo, con escala fija
+    var VMAX = 9;
+    var qx = function (g) { return QX + g / 180 * QW; };
+    var qy = function (v) { return QY + (VMAX - Math.min(v, VMAX)) / VMAX * QH; };
+    var t2;
+    for (t2 = 0; t2 <= VMAX + 0.001; t2 += 3) {
+      svg.appendChild(el("path", { d: "M" + QX + " " + qy(t2).toFixed(1) + " L" + (QX + QW) + " " + qy(t2).toFixed(1),
+        stroke: C_L, "stroke-width": 1, opacity: .5 }));
+      svg.appendChild(el("text", { x: QX - 7, y: qy(t2) + 4, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .65 }, t2));
+    }
+    svg.appendChild(el("text", { x: QX, y: 18, "font-size": 11.5, fill: C_T, opacity: .75 }, "varianza proyectada según el ángulo"));
+    var d = "", mejor = -1, mejorG = 0, g;
+    for (g = 0; g <= 180; g += 1) {
+      var v = varianza(P, g * Math.PI / 180);
+      if (v > mejor) { mejor = v; mejorG = g; }
+      d += (d ? " L" : "M") + qx(g).toFixed(1) + " " + qy(v).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: d, stroke: C_B, "stroke-width": 2.2, fill: "none" }));
+    var actual = varianza(P, ang);
+    svg.appendChild(el("circle", { cx: qx(gra).toFixed(1), cy: qy(actual).toFixed(1), r: 4.4, fill: C_G }));
+    svg.appendChild(el("path", { d: "M" + qx(mejorG).toFixed(1) + " " + QY + " L" + qx(mejorG).toFixed(1) + " " + (QY + QH),
+      stroke: C_B, "stroke-width": 1.2, "stroke-dasharray": "4 4", opacity: .7 }));
+    svg.appendChild(el("text", { x: qx(mejorG) + 5, y: QY + 13, "font-size": 11, fill: C_B }, "PC1: " + mejorG + "°"));
+
+    lec.innerHTML = "En la dirección de <strong>" + gra + "°</strong> la varianza proyectada vale <strong>" +
+      actual.toFixed(4) + "</strong>; el máximo está en <strong>" + mejorG + "°</strong> con <strong>" +
+      mejor.toFixed(4) + "</strong>, y esa dirección <strong>es</strong> la primera componente (Proposición 19.2). " +
+      "La curva de la derecha tiene un solo máximo en 180°, y su mínimo está justo a 90° de él: la segunda componente. " +
+      (Math.abs(rho) < 0.1 ? "Con la nube casi redonda la curva es casi plana: no hay una dirección privilegiada, y la primera componente deja de significar gran cosa."
+                           : "Cuanto más alargada la nube, más pronunciado el máximo y más se gana al quedarse con una sola dirección.");
+  }
+  ca.addEventListener("input", dibujar);
+  cr.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Lo mismo dicho como aproximación
+
+::: {.proposicion}
+**Proposición 19.3 (la mejor aproximación de rango $k$).** Sea $X=U\Sigma V^\top$ la descomposición en valores singulares y sea $X_k=U_{:k}\Sigma_{:k}V_{:k}^\top$. Entonces, entre **todas** las matrices de rango a lo sumo $k$, $X_k$ minimiza $\lVert X-M\rVert_F^2$, y el mínimo vale
+$$\lVert X-X_k\rVert_F^2=\sum_{j>k}\sigma_j^2.$$
+Las columnas de $V_{:k}$ son las $k$ primeras componentes principales.
+:::
+
+::: {.demostracion}
+*Demostración.* Que las columnas de $V$ son los eigenvectores de $S$ se sigue de $X^\top X=V\Sigma^2V^\top$ (Álgebra 11), con $\lambda_j=\sigma_j^2/(n-1)$. Para la aproximación, cualquier matriz de rango $\le k$ se escribe $M=XBB^\top$ con $B$ de columnas ortonormales cuando el mínimo se busca dentro del subespacio generado por $B$; el error es entonces $\lVert X\rVert_F^2-\lVert XB\rVert_F^2$, así que minimizar el error equivale a **maximizar la varianza proyectada sobre el subespacio**, que es la Definición 19.1 extendida a $k$ direcciones. El máximo se alcanza en los $k$ primeros eigenvectores y vale $\sum_{j\le k}\sigma_j^2$; restando, el error es $\sum_{j>k}\sigma_j^2$. [∎]{.fin-demo}
+:::
+
+::: {.proposicion}
+**Proposición 19.4 (la varianza explicada).** Con $\text{PVE}_j=\sigma_j^2/\sum_l\sigma_l^2$ se tiene $\sum_j\text{PVE}_j=1$, y la acumulada hasta $k$ cumple
+$$\sum_{j\le k}\text{PVE}_j=1-\frac{\lVert X-X_k\rVert_F^2}{\lVert X\rVert_F^2}.$$
+Es decir, **la varianza explicada y el error de aproximación son la misma cuenta escrita al revés**.
+:::
+
+::: {.demostracion}
+*Demostración.* La suma es $1$ por construcción. Para la segunda, $\lVert X\rVert_F^2=\sum_j\sigma_j^2$ y, por la Proposición 19.3, $\lVert X-X_k\rVert_F^2=\sum_{j>k}\sigma_j^2$; el cociente es la cola, y su complemento la cabeza. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(13)
+n, p = 300, 4
+A = np.array([[2.0, 0.9, 0.1, 0.0],
+              [0.0, 1.4, 0.6, 0.2],
+              [0.0, 0.0, 0.8, 0.5],
+              [0.0, 0.0, 0.0, 0.4]])
+X = rng.normal(size=(n, p)) @ A
+X = X - X.mean(0)
+
+U, sig, Vt = np.linalg.svd(X, full_matrices=False)
+print("valores singulares de la matriz centrada:")
+print("   " + "  ".join("%.6f" % v for v in sig))
+print()
+
+# La aproximacion de rango k por las k primeras componentes.
+def rango_k(k):
+    return (U[:, :k] * sig[:k]) @ Vt[:k]
+
+print("   k   error cuadratico  suma de los sigma^2 descartados   coinciden a 1e-8")
+for k in range(0, p + 1):
+    Xk = rango_k(k) if k else np.zeros_like(X)
+    err = float(((X - Xk) ** 2).sum())
+    cola = float((sig[k:] ** 2).sum())
+    print("%4d %18.6f %33.6f %18s" % (k, err, cola, bool(abs(err - cola) < 1e-8)))
+print()
+
+# Y ninguna otra matriz de rango k lo hace mejor. Se prueba contra muchas.
+for k in [1, 2]:
+    mejor = float(((X - rango_k(k)) ** 2).sum())
+    sem = np.random.default_rng(5)
+    ganadores = 0
+    mejor_azar = np.inf
+    for _ in range(3000):
+        B = sem.normal(size=(p, k))
+        B, _ = np.linalg.qr(B)                 # una base ortonormal cualquiera
+        Xb = X @ B @ B.T                       # la mejor de rango k en ESE subespacio
+        e = float(((X - Xb) ** 2).sum())
+        mejor_azar = min(mejor_azar, e)
+        ganadores += int(e < mejor - 1e-9)
+    print("rango %d: error de las componentes %.6f | mejor de 3000 subespacios al azar %.6f"
+          % (k, mejor, mejor_azar))
+    print("         subespacios que la superan: %d" % ganadores)
+print()
+
+# La proporcion de varianza explicada.
+pve = sig ** 2 / float((sig ** 2).sum())
+print("proporcion de varianza explicada por cada componente:")
+print("   " + "  ".join("%.6f" % v for v in pve))
+print("acumulada                                          :")
+print("   " + "  ".join("%.6f" % v for v in np.cumsum(pve)))
+print("suma exactamente uno:", bool(abs(pve.sum() - 1.0) < 1e-12))
+print()
+print("y la proporcion acumulada hasta k es 1 menos el error relativo de la")
+print("aproximacion de rango k, que es la misma cuenta escrita al reves:")
+total = float((X ** 2).sum())
+for k in [1, 2, 3]:
+    err = float(((X - rango_k(k)) ** 2).sum())
+    print("   k = %d -> acumulada %.6f   1 - error/total %.6f   iguales: %s"
+          % (k, float(np.cumsum(pve)[k - 1]), 1 - err / total,
+             bool(abs(np.cumsum(pve)[k - 1] - (1 - err / total)) < 1e-10)))
+```
+
+Tres mil subespacios al azar y **ninguno** mejora a las componentes, ni en rango uno ni en rango dos. Y la identidad de la Proposición 19.4 se cumple a $10^{-10}$ en los tres valores de $k$: el $90{,}9679\,\%$ de varianza explicada con dos componentes es exactamente el complemento del error relativo que dejan.
+
+## 3. La trampa de las unidades
+
+::: {.proposicion}
+**Proposición 19.5 (la escala manda).** Multiplicar una columna de $X$ por una constante $c>0$ —esto es, medirla en otra unidad— **cambia las componentes principales**, y con $c$ grande la primera componente tiende a esa columna sola. Si en cambio se estandariza cada columna antes, la respuesta es **invariante** ante cualquier cambio de unidades, y la varianza total pasa a valer exactamente $p$.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $D$ diagonal con la constante en la posición que toca. La covarianza pasa de $S$ a $DSD$, cuyos eigenvectores no son los de $S$ salvo casos degenerados. Cuando $c\to\infty$, la entrada $(j,j)$ de $DSD$ domina a todas las demás, y el eigenvector principal tiende al $j$-ésimo vector de la base canónica.
+
+Si se estandariza, la matriz que se diagonaliza es la de **correlaciones**, que no cambia al reescalar columnas: la correlación es invariante ante transformaciones afines positivas de cada variable. Su diagonal es de unos, así que su traza vale $p$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def signo_fijo(V):
+    for j in range(V.shape[1]):
+        k = int(np.argmax(np.abs(V[:, j])))
+        if V[k, j] < 0:
+            V[:, j] = -V[:, j]
+    return V
+
+def componentes(X):
+    X = X - X.mean(0)
+    S = X.T @ X / (len(X) - 1)
+    val, vec = np.linalg.eigh(S)
+    o = np.argsort(val)[::-1]
+    return val[o], signo_fijo(vec[:, o])
+
+rng = np.random.default_rng(21)
+n = 400
+# Tres variables con la MISMA estructura, medidas en unidades distintas.
+z = rng.normal(size=(n, 2))
+X = np.c_[z[:, 0] + 0.2 * rng.normal(size=n),
+          z[:, 0] * 0.8 + z[:, 1] * 0.5 + 0.2 * rng.normal(size=n),
+          z[:, 1] + 0.2 * rng.normal(size=n)]
+
+print("primera componente segun en que unidades este la tercera variable:")
+print("   factor    primera componente                 varianza explicada")
+for factor in [1.0, 10.0, 100.0, 1000.0]:
+    Y = X.copy()
+    Y[:, 2] = Y[:, 2] * factor
+    val, vec = componentes(Y)
+    print("%9.0f   [%+.4f, %+.4f, %+.4f] %20.4f%%"
+          % (factor, vec[0, 0], vec[1, 0], vec[2, 0], 100 * val[0] / val.sum()))
+print()
+print("multiplicar una columna por mil no cambia NADA de los datos: es la misma")
+print("medida en otra unidad. Y la primera componente pasa a ser esa columna y")
+print("casi nada mas, con el 99 por ciento de la varianza")
+print()
+
+# Estandarizar deja la respuesta invariante ante cambios de unidad.
+print("estandarizando cada columna antes, la componente ya no se mueve:")
+base = None
+for factor in [1.0, 10.0, 1000.0]:
+    Y = X.copy()
+    Y[:, 2] = Y[:, 2] * factor
+    Y = (Y - Y.mean(0)) / Y.std(0, ddof=1)
+    val, vec = componentes(Y)
+    if base is None:
+        base = vec[:, 0]
+    print("%9.0f   [%+.4f, %+.4f, %+.4f]   identica a 1e-10: %s"
+          % (factor, vec[0, 0], vec[1, 0], vec[2, 0], bool(np.allclose(vec[:, 0], base, atol=1e-10))))
+print()
+print("por eso la pregunta «¿hay que estandarizar?» no tiene respuesta general:")
+print("la tiene la pregunta «¿significan lo mismo las unidades de mis columnas?»")
+print()
+
+# Y una cifra que SI es invariante: la varianza explicada de datos ya estandarizados
+Y = (X - X.mean(0)) / X.std(0, ddof=1)
+val, vec = componentes(Y)
+print("con las tres columnas estandarizadas, la varianza total vale %.6f" % float(val.sum()))
+print("que son las 3 columnas: la traza de una matriz de correlaciones es p")
+print("y las proporciones son " + "  ".join("%.6f" % v for v in val / val.sum()))
+```
+
+Multiplicar una columna por mil no cambia **nada** de los datos —es la misma medida en otra unidad— y la primera componente pasa de repartirse entre las tres variables a ser esa columna sola, con el $99{,}9998\,\%$ de la varianza.
+
+De ahí que «¿hay que estandarizar?» no tenga respuesta general. La que sí la tiene es otra: **¿significan lo mismo las unidades de mis columnas?** Si son todas euros, no hace falta; si una son euros y otra kilómetros, la comparación de varianzas no quiere decir nada.
+
+```{=html}
+<div class="viz-escala">
+  <div class="controles">
+    <label>Unidad de la variable vertical <input id="es-c" type="range" min="0" max="2" step="0.02" value="0"> <span id="es-c-v">×1</span></label>
+    <label>
+      <input id="es-z" type="checkbox"> estandarizar antes
+    </label>
+  </div>
+  <svg id="es-svg" viewBox="0 0 660 330" role="img" aria-label="La nube de puntos con la primera componente dibujada, y debajo dos barras con el reparto de la varianza entre las dos componentes."></svg>
+  <p class="lectura" id="es-lectura"></p>
+</div>
+<style>
+.viz-escala { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-escala .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-escala label { display: flex; align-items: center; gap: .4rem; }
+.viz-escala input[type=range] { width: 190px; padding: 0; }
+.viz-escala svg { width: 100%; height: auto; display: block; }
+.viz-escala .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("es-svg"), lec = document.getElementById("es-lectura");
+  var cc = document.getElementById("es-c"), cz = document.getElementById("es-z");
+  var ec = document.getElementById("es-c-v");
+  var PX = 40, PW = 300, PY = 26, PH = 244, BX = 380, BW = 250, BY = 70, BH = 30;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var z = [], s = 9;
+  function r() { s = (s * 48271) % 2147483647; return s / 2147483647; }
+  for (var i = 0; i < 80; i++) {
+    var u1 = Math.max(1e-9, r()), u2 = r();
+    z.push([Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2),
+            Math.sqrt(-2 * Math.log(u1)) * Math.sin(2 * Math.PI * u2)]);
+  }
+  // nube con correlacion moderada, la misma siempre
+  var base = z.map(function (g) { return [1.4 * g[0], 1.4 * (0.7 * g[0] + 0.71 * g[1])]; });
+
+  function pca2(P) {
+    var n = P.length, mx = 0, my = 0, i;
+    for (i = 0; i < n; i++) { mx += P[i][0]; my += P[i][1]; }
+    mx /= n; my /= n;
+    var sxx = 0, syy = 0, sxy = 0;
+    for (i = 0; i < n; i++) {
+      var a = P[i][0] - mx, b = P[i][1] - my;
+      sxx += a * a; syy += b * b; sxy += a * b;
+    }
+    sxx /= n - 1; syy /= n - 1; sxy /= n - 1;
+    var tr = sxx + syy, det = sxx * syy - sxy * sxy;
+    var disc = Math.sqrt(Math.max(0, tr * tr / 4 - det));
+    var l1 = tr / 2 + disc, l2 = tr / 2 - disc;
+    var vx = (Math.abs(sxy) < 1e-12) ? (sxx >= syy ? 1 : 0) : l1 - syy;
+    var vy = (Math.abs(sxy) < 1e-12) ? (sxx >= syy ? 0 : 1) : sxy;
+    var nn = Math.hypot(vx, vy) || 1;
+    if (vx < 0) { vx = -vx; vy = -vy; }
+    return { l1: l1, l2: l2, vx: vx / nn, vy: vy / nn, mx: mx, my: my };
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var exp = +cc.value, c = Math.pow(10, exp), estand = cz.checked;
+    ec.textContent = "×" + (c >= 10 ? c.toFixed(0) : c.toFixed(1));
+    var P = base.map(function (q) { return [q[0], q[1] * c]; }), i;
+    if (estand) {
+      var n = P.length, mx = 0, my = 0;
+      for (i = 0; i < n; i++) { mx += P[i][0]; my += P[i][1]; }
+      mx /= n; my /= n;
+      var sx = 0, sy = 0;
+      for (i = 0; i < n; i++) { sx += (P[i][0] - mx) * (P[i][0] - mx); sy += (P[i][1] - my) * (P[i][1] - my); }
+      sx = Math.sqrt(sx / (n - 1)); sy = Math.sqrt(sy / (n - 1));
+      P = P.map(function (q) { return [(q[0] - mx) / sx, (q[1] - my) / sy]; });
+    }
+    var R = pca2(P);
+    // el dibujo se reescala para que la nube siempre se vea: el eje NO es fijo,
+    // y por eso lo que hay que mirar es la DIRECCION de la recta, no su tamano
+    var lim = 0;
+    for (i = 0; i < P.length; i++) lim = Math.max(lim, Math.abs(P[i][0] - R.mx), Math.abs(P[i][1] - R.my));
+    lim *= 1.15;
+    var px = function (v) { return PX + (v - R.mx + lim) / (2 * lim) * PW; };
+    var py = function (v) { return PY + (lim - (v - R.my)) / (2 * lim) * PH; };
+    svg.appendChild(el("rect", { x: PX, y: PY, width: PW, height: PH, fill: "none", stroke: C_L, "stroke-width": 1 }));
+    svg.appendChild(el("text", { x: PX, y: 18, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "la nube, reescalada para que siempre se vea"));
+    for (i = 0; i < P.length; i++)
+      svg.appendChild(el("circle", { cx: px(P[i][0]).toFixed(1), cy: py(P[i][1]).toFixed(1), r: 2.6, fill: C_A, "fill-opacity": .55 }));
+    svg.appendChild(el("path", { d: "M" + px(R.mx - lim * R.vx).toFixed(1) + " " + py(R.my - lim * R.vy).toFixed(1) +
+      " L" + px(R.mx + lim * R.vx).toFixed(1) + " " + py(R.my + lim * R.vy).toFixed(1),
+      stroke: C_B, "stroke-width": 2.6 }));
+
+    var p1 = R.l1 / (R.l1 + R.l2);
+    svg.appendChild(el("text", { x: BX, y: BY - 12, "font-size": 11.5, fill: C_T, opacity: .75 }, "reparto de la varianza"));
+    svg.appendChild(el("rect", { x: BX, y: BY, width: (BW * p1).toFixed(1), height: BH, fill: C_B, "fill-opacity": .45 }));
+    svg.appendChild(el("rect", { x: (BX + BW * p1).toFixed(1), y: BY, width: (BW * (1 - p1)).toFixed(1), height: BH, fill: C_A, "fill-opacity": .35 }));
+    svg.appendChild(el("text", { x: BX, y: BY + BH + 16, "font-size": 11, fill: C_B }, "PC1: " + (100 * p1).toFixed(2) + " %"));
+    svg.appendChild(el("text", { x: BX + BW, y: BY + BH + 16, "text-anchor": "end", "font-size": 11, fill: C_A }, "PC2: " + (100 * (1 - p1)).toFixed(2) + " %"));
+    var ang = Math.atan2(R.vy, R.vx) * 180 / Math.PI;
+    svg.appendChild(el("text", { x: BX, y: BY + BH + 46, "font-size": 11.5, fill: C_T },
+      "ángulo de la PC1: " + ang.toFixed(2) + "°"));
+    svg.appendChild(el("text", { x: BX, y: BY + BH + 66, "font-size": 11.5, fill: C_T },
+      "componente: [" + R.vx.toFixed(4) + ", " + R.vy.toFixed(4) + "]"));
+
+    lec.innerHTML = estand
+      ? "Con las dos columnas <strong>estandarizadas</strong>, mover la unidad no cambia nada: la componente se queda en [" +
+        R.vx.toFixed(4) + ", " + R.vy.toFixed(4) + "] y el reparto en " + (100 * p1).toFixed(2) +
+        " %. Eso es la Proposición 19.5: la matriz de correlaciones no ve los cambios de unidad."
+      : "Multiplicando la variable vertical por <strong>" + (c >= 10 ? c.toFixed(0) : c.toFixed(1)) +
+        "</strong>, la primera componente apunta a <strong>" + ang.toFixed(2) + "°</strong> y se lleva el <strong>" +
+        (100 * p1).toFixed(2) + " %</strong> de la varianza. Los datos son los mismos —solo cambió la unidad— y la respuesta de PCA no. " +
+        (c > 20 ? "Con el factor tan alto, la componente es prácticamente la variable vertical sola." : "Marcando la casilla, la respuesta deja de moverse.");
+  }
+  cc.addEventListener("input", dibujar);
+  cz.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Huecos en la matriz
+
+La misma aproximación de rango $k$ sirve para rellenar lo que falta, y el libro lo trata en §12.3.
+
+::: {.proposicion}
+**Proposición 19.6 (el criterio no sube).** Considérese el algoritmo que (i) rellena los huecos con algún valor, (ii) calcula la mejor aproximación de rango $k$ de la matriz completa, (iii) sustituye los huecos por sus valores en esa aproximación, y repite. Entonces el criterio
+$$\sum_{(i,j)\ \text{observados}}\big(x_{ij}-z_{ij}\big)^2$$
+**no aumenta** de una iteración a la siguiente.
+:::
+
+::: {.demostracion}
+*Demostración.* Cada iteración es una minimización alternada de un mismo criterio sobre dos bloques de variables: los valores de los huecos y la matriz de rango $k$. El paso (ii) minimiza sobre las matrices de rango $k$ con los huecos fijos —es la Proposición 19.3—, y el paso (iii) minimiza sobre los huecos con la matriz de rango $k$ fija, porque el criterio no depende de ellos salvo por la aproximación. Una sucesión de minimizaciones parciales de un mismo criterio no puede aumentarlo. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def rango_k(M, k):
+    U, s, Vt = np.linalg.svd(M, full_matrices=False)
+    return (U[:, :k] * s[:k]) @ Vt[:k]
+
+rng = np.random.default_rng(33)
+n, p, k_real = 120, 8, 2
+X = rng.normal(size=(n, k_real)) @ rng.normal(size=(k_real, p)) + 0.25 * rng.normal(size=(n, p))
+X = X - X.mean(0)
+
+falta = rng.random((n, p)) < 0.30
+print("matriz de %d x %d con estructura de rango %d y ruido" % (n, p, k_real))
+print("huecos: %d de %d, o sea el %.1f%%"
+      % (int(falta.sum()), n * p, 100 * falta.mean()))
+print()
+
+# El algoritmo: rellenar con la media, aproximar por rango k, repetir.
+Y = X.copy()
+Y[falta] = 0.0                       # la media de cada columna ya es cero
+objetivos = []
+for paso in range(40):
+    Z = rango_k(Y, k_real)
+    objetivo = float(((Y[~falta] - Z[~falta]) ** 2).sum())
+    objetivos.append(objetivo)
+    Y = np.where(falta, Z, X)
+
+print("el criterio que se minimiza es el error sobre las casillas OBSERVADAS:")
+print("   paso    criterio")
+for i in [0, 1, 2, 5, 10, 20, 39]:
+    print("%7d %11.6f" % (i, objetivos[i]))
+print()
+baja = all(a >= b - 1e-10 for a, b in zip(objetivos, objetivos[1:]))
+print("nunca sube a lo largo de los 40 pasos:", bool(baja))
+print("y la bajada total va de %.6f a %.6f" % (objetivos[0], objetivos[-1]))
+print()
+
+# Lo que importa: el error en las casillas que NO se vieron.
+error_relleno = float(((X[falta] - Y[falta]) ** 2).mean())
+error_media = float((X[falta] ** 2).mean())
+print("error cuadratico medio en las casillas que faltaban:")
+print("   rellenando con la media de la columna : %.6f" % error_media)
+print("   con el algoritmo de rango %d           : %.6f" % (k_real, error_relleno))
+print("   la mejora es de un %.1f por ciento" % (100 * (1 - error_relleno / error_media)))
+print()
+
+# Y el rango elegido importa: demasiado alto memoriza el ruido.
+print("   rango   error en las casillas ocultas")
+for k in [1, 2, 3, 5, 8]:
+    Y2 = X.copy(); Y2[falta] = 0.0
+    for _ in range(40):
+        Z = rango_k(Y2, k)
+        Y2 = np.where(falta, Z, X)
+    print("%8d %27.6f" % (k, float(((X[falta] - Y2[falta]) ** 2).mean())))
+print()
+print("con rango 8 no queda nada que aproximar —la matriz tiene 8 columnas— y")
+print("el algoritmo reproduce lo que le pongas en los huecos: el error se queda")
+print("en el de partida. El rango es el mando, y se elige como cualquier otro")
+```
+
+El criterio baja de $96{,}938400$ a $23{,}290645$ sin subir nunca, y el error en las casillas ocultas mejora un $91{,}5\,\%$ frente a rellenar con la media.
+
+La última tabla es la advertencia: **el rango es un mando y hay que elegirlo**. Con rango $8$ sobre una matriz de $8$ columnas no queda nada que aproximar, el algoritmo devuelve lo que se le puso en los huecos y el error se queda en el de partida, $1{,}225331$. La Proposición 19.6 garantiza que el criterio de entrenamiento baja; **no** garantiza nada sobre las casillas que no se vieron.
+
+## 5. Lo que esta lección desbloquea
+
+El capítulo 12 se reparte en dos: esta lección cubre §12.1–12.3 y la **lección 21** cubre §12.4, el clustering. Pero PCA desbloquea además algo que llevaba pendiente:
+
+**§6.3 *Dimension Reduction Methods*** quedó fuera de la lección 8 porque necesita componentes principales. Con esta lección ya se puede escribir la **lección 20**, que cubre §6.3.1 *Principal Components Regression* y §6.3.2 *Partial Least Squares*. Con ella, los capítulos del 2 al 9 de ISLP quedarán cubiertos sin ningún hueco.
+
+De §12.2 queda fuera **§12.2.5** *Other Uses for Principal Components*, que es un repaso de aplicaciones sin resultados propios.
+
+## Ejercicios
+
+### Ejercicio 1, Varianza explicada desde los valores singulares
+
+Una matriz centrada tiene valores singulares $(20,\ 12,\ 6,\ 3)$. Calcular la proporción de varianza que explican las dos primeras componentes.
+
+```{pyodide}
+#| exercise: ex_pve
+sigmas = [20.0, 12.0, 6.0, 3.0]
+
+total = ______
+dos_primeras = ______
+proporcion = ______
+
+print(round(total, 4), round(dos_primeras, 4), round(proporcion, 6))
+round(proporcion, 6)
+```
+
+::: {.hint exercise="ex_pve"}
+La varianza total es la suma de los $\sigma_j^2$, y la explicada por las dos primeras es la suma de los dos primeros al cuadrado.
+:::
+
+::: {.solution exercise="ex_pve"}
+```{pyodide}
+sigmas = [20.0, 12.0, 6.0, 3.0]
+
+total = sum(s ** 2 for s in sigmas)
+dos_primeras = sum(s ** 2 for s in sigmas[:2])
+proporcion = dos_primeras / total
+
+print(round(total, 4), round(dos_primeras, 4), round(proporcion, 6))
+round(proporcion, 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_pve
+#| check: true
+if abs(result - 0.923599) < 1e-5:
+    feedback = {"correct": True, "message": "Correcto: 0,923599. El error de la aproximación de rango 2 es entonces el 7,6401 % de la norma al cuadrado, que es la misma cuenta al revés (Proposición 19.4).", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.923599 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, El error de la aproximación
+
+Con los mismos valores singulares, calcular el error cuadrático de la mejor aproximación de rango $2$.
+
+```{pyodide}
+#| exercise: ex_error
+sigmas = [20.0, 12.0, 6.0, 3.0]
+k = 2
+
+error = ______
+
+print(round(error, 4))
+round(error, 4)
+```
+
+::: {.hint exercise="ex_error"}
+La Proposición 19.3 dice que el error es la suma de los $\sigma_j^2$ **descartados**, es decir los que van del $k+1$ en adelante.
+:::
+
+::: {.solution exercise="ex_error"}
+```{pyodide}
+sigmas = [20.0, 12.0, 6.0, 3.0]
+k = 2
+
+error = sum(s ** 2 for s in sigmas[k:])
+
+print(round(error, 4))
+round(error, 4)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_error
+#| check: true
+if abs(result - 45.0) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: 45, que son 36 + 9. No hace falta calcular ninguna matriz: el error de la mejor aproximación de rango k se lee directamente de los valores singulares que se tiran.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 45.0 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 19**:
+
+1. Comprobar la Proposición 19.3 en dimensión alta: generar una matriz con estructura de rango bajo más ruido, y contrastar el error de la aproximación de rango $k$ contra la suma de los valores singulares descartados para todos los $k$. Anotar dónde se ve el rango verdadero en la lista de valores singulares y con cuánto ruido deja de verse.
+2. Repetir el experimento de la escala con datos reales de columnas en unidades distintas, y calcular las componentes con y sin estandarizar. Anotar cuál de las dos respuestas tiene sentido en ese caso concreto y por qué, sin apelar a una regla general.
+3. Ocultar casillas de una matriz **no al azar** —por ejemplo, ocultar preferentemente los valores altos— y medir cuánto empeora el completado frente a ocultarlas al azar. Anotar en `50-Errores/` por qué el algoritmo no puede detectar esa diferencia mirando solo lo que ve, y con qué supuesto de la lección 17 se emparenta.
+
+## Del libro
+
+*An Introduction to Statistical Learning with Applications in Python* trata este material en §12.1 *The Challenge of Unsupervised Learning*, §12.2 *Principal Components Analysis* con sus subsecciones §12.2.1 a §12.2.4, y §12.3 *Missing Values and Matrix Completion*.
+
+**El capítulo 12 se reparte en dos lecciones**: esta cubre §12.1–12.3 y la **lección 21** cubre §12.4, el clustering. De §12.2 queda fuera §12.2.5 *Other Uses for Principal Components*, un repaso de aplicaciones sin resultados propios.
+
+**Y esta lección desbloquea §6.3.** La *Dimension Reduction* del capítulo 6 quedó pendiente en la lección 8 porque necesitaba componentes principales; con esto ya se puede escribir la **lección 20**, y con ella los capítulos del 2 al 9 quedarán cubiertos sin ningún hueco.
+
+**Dos diferencias con el libro que conviene tener presentes.** La primera: el libro presenta la interpretación por varianza y la interpretación por aproximación como dos puntos de vista, y dice que llevan a lo mismo. Esta página lo **demuestra** —la Proposición 19.3 sale de maximizar la varianza proyectada sobre un subespacio— y, sobre todo, exhibe la identidad exacta de la Proposición 19.4: la varianza acumulada **es** el complemento del error relativo, no algo parecido.
+
+La segunda es una advertencia que el libro no hace y que estropea cifras publicadas: **el signo de una componente es arbitrario**. Si $\varphi$ es una componente, $-\varphi$ también, con la misma varianza explicada. Dos bibliotecas, o dos versiones de la misma, pueden devolver una u otra. Antes de citar cualquier coeficiente hay que fijar una convención, y esta página fija que la coordenada de mayor magnitud sea positiva.
+
+**Preguntas para leer §12.1–12.3 con lápiz:**
+
+1. §12.2.2 obtiene las componentes minimizando la distancia al subespacio en vez de maximizando la varianza. Con la Proposición 19.3, ¿por qué las dos formulaciones tienen forzosamente la misma solución?
+2. §12.2.3 propone mirar el codo de la curva de varianza explicada para elegir $k$. Con la Proposición 19.4, ¿qué otra curva es exactamente la misma información, y en cuál de las dos es más fácil ver el codo?
+3. §12.3 describe el algoritmo de completado. Con la Proposición 19.6, ¿qué garantiza exactamente la convergencia del criterio, y qué **no** garantiza sobre los valores que se acaban de rellenar?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/pca.md`, enlazada a [[svd]], [[diagonalizacion]] y [[alta-dimension]]. Conviene rehacer a mano la Proposición 19.2: escribir $\varphi$ en la base de eigenvectores y ver la varianza convertirse en un promedio ponderado de eigenvalores deja claro de una vez que **PCA es el teorema espectral aplicado a una matriz de covarianzas**, y no un algoritmo con vida propia.
+
+```
+¿Qué es la primera componente principal?::La dirección de norma uno que maximiza la varianza proyectada
+¿Qué resulta ser?::El eigenvector de mayor eigenvalor de la covarianza
+¿Cuánto vale esa varianza?::Exactamente ese eigenvalor
+¿Están correlacionadas las proyecciones?::No: son incorreladas por construcción
+¿Cuánto suman los eigenvalores?::La traza de la covarianza, o sea la varianza total
+¿Qué da la aproximación de rango k?::Las k primeras componentes, y es la mejor posible
+¿Cuánto vale su error?::La suma de los σ² descartados
+¿Qué es la proporción de varianza explicada?::σ_j² entre la suma de todos
+¿Y la acumulada hasta k?::Uno menos el error relativo de la aproximación de rango k
+¿Cambia PCA si cambio las unidades de una columna?::Sí, y mucho
+¿Qué hace estandarizar?::Diagonaliza la correlación en vez de la covarianza, y eso es invariante
+¿Cuánto vale la varianza total tras estandarizar?::Exactamente p
+¿Cuándo conviene estandarizar?::Cuando las unidades de las columnas no significan lo mismo
+¿Está determinado el signo de una componente?::No: φ y −φ son la misma componente
+¿Qué hay que hacer antes de publicar sus cifras?::Fijar una convención de signo
+¿Qué garantiza el algoritmo de completado?::Que el criterio sobre las casillas observadas no sube
+¿Y sobre las ocultas?::Nada: el rango es un mando que hay que elegir
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 19.2 se demuestra escribiendo el vector en la base de eigenvectores y acotando el promedio ponderado; se comprueba con $200\,000$ direcciones al azar, cuya mejor varianza es $5{,}651898$ contra los $5{,}653235$ de la componente —a $1{,}09$ grados de ella y sin superarla nunca—, y verificando ortonormalidad e incorrelación a $10^{-10}$. La Proposición 19.3 se demuestra reduciendo el error a la varianza proyectada sobre el subespacio; se comprueba en los cinco valores de $k$, donde el error coincide con la suma de los $\sigma^2$ descartados a $10^{-8}$, y contra $3000$ subespacios al azar en rango uno y dos, de los que **ninguno** mejora a las componentes. La Proposición 19.4 se demuestra por complementariedad de las dos sumas; se comprueba en tres valores de $k$ a $10^{-10}$. La Proposición 19.5 se demuestra observando que la covarianza pasa a $DSD$ y que la correlación es invariante; se comprueba con cuatro factores, donde la primera componente pasa de $[0{,}6165,\ 0{,}6836,\ 0{,}3906]$ a ser prácticamente la tercera variable sola con el $99{,}9998\,\%$ de la varianza, y estandarizando, donde tres factores dan la misma componente a $10^{-10}$ y la varianza total vale exactamente $3$. La Proposición 19.6 se demuestra por minimización alternada; se comprueba en $40$ iteraciones donde el criterio baja de $96{,}938400$ a $23{,}290645$ sin subir nunca. Los dos visuales recalculan estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** La descomposición en valores singulares, la relación $X^\top X=V\Sigma^2V^\top$ y el condicionamiento son de Álgebra 11. El teorema espectral para matrices simétricas es de Álgebra 10. La covarianza y la correlación muestrales son de Estadística 5.
+
+**Lo que se enuncia sin demostrar.** El teorema de **Eckart–Young** en su forma general —que la mejor aproximación de rango $k$ en norma de Frobenius **y en norma espectral** es la truncada— se demuestra aquí solo para la de Frobenius, y por la vía de la varianza proyectada; la versión en norma espectral se menciona en Álgebra 11 y no se usa. Que el algoritmo de completado converge a un mínimo **global** **no se afirma**: la Proposición 19.6 garantiza que el criterio no sube, que es bastante menos. Y que el criterio sobre las casillas observadas baje no dice nada sobre las ocultas, cosa que la última tabla de la sección 4 mide.
+
+**Lo que viene de los libros.**
+
+- [*An Introduction to Statistical Learning with Applications in Python*](https://www.statlearning.com/) (James, Witten, Hastie, Tibshirani, Taylor; Springer, 2023), §12.1 *The Challenge of Unsupervised Learning*, §12.2 *Principal Components Analysis* con §12.2.1 a §12.2.4, y §12.3 *Missing Values and Matrix Completion* — citadas por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La verificación de la Proposición 19.2 **contra una búsqueda directa**, que convierte «es la dirección de máxima varianza» en algo comprobable y da además el ángulo que le falta a la mejor de doscientas mil direcciones. La identidad de la Proposición 19.4 enunciada como igualdad exacta entre la varianza acumulada y el complemento del error, en lugar de como dos lecturas del mismo gráfico. El aviso sobre el **signo arbitrario** de las componentes, con la convención fijada en el código: es el tipo de detalle que rompe una cifra publicada y que ningún libro menciona. Y la última tabla de la sección 4, que mide el error en las casillas ocultas para varios rangos y deja claro que la garantía de la Proposición 19.6 no cubre lo que de verdad importa.
+
+[Índice de ISLP verificado el 13-09-2026 contra los marcadores del PDF oficial.]{.sello}
+:::

@@ -107,6 +107,7 @@ MIGRADAS = {
     "ml/16-redes-neuronales.qmd",
     "ml/17-censura-y-kaplan-meier.qmd",
     "ml/18-riesgos-proporcionales-y-cox.qmd",
+    "ml/19-pca.qmd",
     "python/01-tipos-y-estructuras.qmd",
     "python/02-funciones-y-scope.qmd",
     "python/03-comprehensions.qmd",
