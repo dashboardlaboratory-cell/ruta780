@@ -108,10 +108,11 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
     `glosario/glosario.json` con `"tipo": "simbolo"`.** El tooltip se engancha
     solo sobre lo que KaTeX renderiza; basta con que la entrada exista.
 
-21b. **Un símbolo del glosario global no puede afirmar un significado que sea
-    falso en otra lección.** El enganche de `encabezado.html` es **global por
-    carácter**, sin alcance por lección: lo que diga la entrada se muestra en
-    todo el sitio. De ahí dos conductas, según el caso:
+21b. **Una entrada del glosario global no puede afirmar un significado que sea
+    falso en otra lección.** Vale igual para **símbolos y para términos**: el
+    enganche de `encabezado.html` es **global**, sin alcance por lección, así
+    que lo que diga la entrada se muestra en todo el sitio. De ahí dos
+    conductas, según el caso:
 
     · Si el símbolo significa **lo mismo en todas partes**, se define normal.
 
@@ -123,6 +124,14 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
     · Si ni siquiera eso sirve —porque la entrada tendría que enumerar media
       docena de sentidos sin ninguno dominante—, **el símbolo sale del glosario
       global** y vive solo en la tabla `::: {.notacion}` de cada lección.
+
+    **Los términos entran en la misma regla.** El 18-09-2026, al escribir ML 15,
+    «núcleo» ya estaba en el glosario con el sentido de Álgebra 3 —el espacio
+    nulo de una matriz— y en esa lección significa una función de producto
+    interno. La entrada global pasó a decir que está sobrecargado, nombra los
+    dos sentidos y remata con **«la lección que se esté leyendo es la que
+    manda»**. Antes de añadir un término al glosario conviene comprobar si ya
+    existe con otro sentido.
 
     El 18-09-2026 salieron `T`, `Q` y `B` por esa vía: `T` decía «variable con
     distribución t de Student» y se enganchaba a los **67** superíndices de
