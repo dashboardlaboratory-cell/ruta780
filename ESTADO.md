@@ -1,16 +1,17 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **18-09-2026**, tras una sesión larga que publicó **dieciséis
+Última actualización: **18-09-2026**, tras una sesión larga que publicó **diecisiete
 lecciones** y cerró **tres deudas**.
 
 Las lecciones: **ML 7** (selección de subconjuntos, ISLP §6.1), **ML 8**
 (encogimiento, §6.2), **ML 9** (alta dimensión, §6.4), **ML 10** (bases y
 splines, §7.1–7.4), **ML 11** (suavizado y GAMs, §7.5–7.7), **ML 12** (árboles de
 decisión, §8.1), **ML 13** (bagging, bosques e impulso, §8.2), **ML 14** (margen
-máximo, §9.1–9.2), **ML 15** (núcleos y pérdida bisagra, §9.3–9.5), y **Python 10** a **16** (carga y limpieza, uniones y reshape,
+máximo, §9.1–9.2), **ML 15** (núcleos y pérdida bisagra, §9.3–9.5), **ML 16** (redes neuronales,
+§10.1–10.2, §10.6 y §10.8), y **Python 10** a **16** (carga y limpieza, uniones y reshape,
 groupby, visualización, series de tiempo, rendimiento y anatomía de un proyecto).
 
-**Las 74 publicadas cumplen el molde: 74 de 74.**
+**Las 75 publicadas cumplen el molde: 75 de 75.**
 
 Tres hitos de esta sesión:
 
@@ -19,12 +20,14 @@ Tres hitos de esta sesión:
 - **ISLP capítulos 6 y 7 quedan cubiertos enteros**, salvo §6.3, que espera a la
   lección de componentes principales; **el capítulo 8 queda cubierto entero**
   —§8.1 en ML 12 y §8.2 en ML 13— y **el 9 también entero**: §9.1–9.2 en ML 14 y
-  §9.3–9.5 en ML 15.
+  §9.3–9.5 en ML 15. Del **capítulo 10**, ML 16 cubre §10.1–10.2, §10.6 y §10.8;
+  el resto está repartido entre las lecciones 35 a 40 de la Fase 4, salvo §10.4 y
+  §10.5, que **no están en el plan** y quedan anotadas como omisión deliberada.
 - **Las tres deudas abiertas se cerraron**: las colisiones del glosario (punto 6),
   las 33 secciones de retos y los 106 símbolos sin declarar.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
-faltando lecciones por escribir: **ML va por 15 de 90**, y **Series de tiempo e
+faltando lecciones por escribir: **ML va por 16 de 90**, y **Series de tiempo e
 Inferencia causal están vacíos**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -94,15 +97,15 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 0 | 11 | — | todas |
-| Machine Learning | 15 | 90 | **15 de 15** | 16 a 21 de la Fase 2, y el resto |
+| Machine Learning | 16 | 90 | **16 de 16** | 17 a 21 de la Fase 2, y el resto |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **74 lecciones** publicadas, **74** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 104 según el plan.
+- **75 lecciones** publicadas, **75** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 103 según el plan.
 - **Tres módulos cerrados**: Estadística 25/25, Álgebra 18/18 y **Python 16/16**.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
@@ -129,15 +132,15 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   marginales exactas, que es más fuerte que cualquier librería; y `np.trapz` se
   retiró del espacio de nombres en NumPy 2.0, así que las celdas nuevas no lo
   usan.
-- **157 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
+- **159 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
   Siguen los mismos cuatro avisos, todos anteriores: tres de no idempotencia
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. Los visuales de esta tanda no añaden ninguno.
-- **1655 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **398 celdas** que el gate ejecuta en cada build, y comprobadas **con las
+- **1691 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **404 celdas** que el gate ejecuta en cada build, y comprobadas **con las
   dos parejas de versiones** (ver el punto 5).
-- Glosario: **369 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **372 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -1294,6 +1297,73 @@ polinómico, y no se demuestra: exige teoría de operadores. Lo que sí queda
 demostrado es la dirección necesaria, que es la que permite **descartar**, y para
 el polinómico el mapa se construye a mano, así que ahí el teorema no hace falta.
 Queda escrito en Fuentes.
+
+### 3.20 ML 16, el capítulo más largo y la regla 7 aplicada a un pico (18-09-2026)
+
+**El capítulo 10 no se desglosa: ya estaba repartido.** Tiene $18$ unidades
+enseñables y el plan ya reservaba seis lecciones de Fase 4 para deep learning
+(filas 35 a 40). Así que ML 16 cubre lo que **no** está ahí —§10.1, §10.2, §10.6
+y §10.8— y la sección 5 de la lección dice en voz alta dónde va el resto:
+
+- §10.3 *Convolutional Neural Networks* → ML 40;
+- §10.7 *Fitting a Neural Network* → ML 35 a 39;
+- §10.4 *Document Classification* y §10.5 *Recurrent Neural Networks* → **no
+  están en el plan de ninguna fase**. Queda escrito en la lección para que la
+  omisión sea una decisión y no un olvido.
+
+No hizo falta renumerar nada.
+
+#### Los cuatro resultados
+
+- la **16.2**: con activación afín, una red de cualquier profundidad calcula una
+  función afín. Medido: $88$ parámetros que se reducen a $4$. El libro dice que
+  «colapsa»; aquí se demuestra por composición y se comprueba a $10^{-10}$;
+- la **16.3**: en una variable, una capa de $K$ unidades ReLU es **exactamente**
+  la familia de funciones lineales a trozos con a lo sumo $K$ quiebres. Las dos
+  direcciones: la cota, porque cada unidad aporta un quiebre; y la
+  representación, con la fórmula de reconstrucción por bisagras y $K+2$ unidades.
+  Eso es más fuerte que «aproxima cualquier función» en este caso, y enlaza con
+  los splines de ML 10: **la misma base, con los nudos aprendidos**;
+- la **16.4**: el **pliegue** $P(x)=2\max(0,x)-4\max(0,x-\tfrac12)$ compuesto
+  $d$ veces da exactamente $2^d$ trozos con $2d$ unidades; una sola capa
+  necesitaría $2^d-1$. Con $16$ unidades en $8$ capas, $256$ trozos. En
+  parámetros: $2^{20}$ trozos cuestan $120$ en profundidad y $3\,145\,726$ en
+  anchura. La lección **avisa explícitamente** de que de ahí no se sigue que lo
+  profundo sea mejor, solo que hay funciones baratas en profundidad;
+- la **16.5**: el doble descenso, medido y declarado como medición.
+
+#### La regla 7 aplicada al pico, que es el caso interesante
+
+El error de prueba del ajuste de norma mínima **revienta** cerca de $d=n$: llega
+al orden de $10^{12}$. La primera versión de la celda imprimía esas cifras con
+cuatro decimales y **el contraste de versiones la cazó**: en $d=42$ salía
+$9\,013\,768{,}3690$ en una y $9\,013\,768{,}3692$ en la otra.
+
+Lo importante es *por qué*, porque no es un accidente: **el pico y el mal
+condicionamiento son el mismo fenómeno**. La matriz llega a condición
+$1{,}1\times10^{8}$ justo donde el error se dispara. Pedirle dígitos ahí es
+pedirle precisión exactamente a lo que no la tiene.
+
+La celda quedó así: **mide el condicionamiento antes de decidir cuántos dígitos
+tiene derecho a imprimir**. Con condición por debajo de $10^3$ publica cuatro
+decimales; por encima, solo el orden de magnitud. Y las afirmaciones fuertes son
+comparaciones, que sí son reproducibles. Eso convierte la advertencia de ML 9 en
+una práctica dentro de la celda, y no en algo que haya que recordar.
+
+**Y una comparación que salió `False` y se quedó.** El segundo descenso baja
+mucho —de $10^{12}$ a $0{,}6484$— pero **no** por debajo del mejor modelo
+pequeño, que es el de $d=10$ con $0{,}0498$. La celda lo imprime y la prosa lo
+dice: el doble descenso explica por qué un modelo enorme no es un desastre, no
+por qué sería la mejor opción.
+
+#### Un falso positivo de la regla 15 que valió la pena
+
+`formato.py` rechazó la lección por **contexto de empresa**: la palabra
+«tienda». Era la *tienda de campaña*, el nombre habitual de $T(x)$ en español. En
+lugar de añadir una excepción al filtro, la función pasó a llamarse **pliegue**,
+que además describe mejor lo que hace —dobla $[0,1]$ por la mitad— y encaja con
+el verbo que la prosa ya usaba. El filtro se queda tal cual: un falso positivo
+que se arregla con una palabra mejor no justifica debilitar la regla.
 
 ---
 
