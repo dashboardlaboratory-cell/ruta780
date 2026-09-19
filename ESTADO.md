@@ -1,6 +1,6 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **19-09-2026**, tras una sesión larga que publicó **veintiuna
+Última actualización: **19-09-2026**, tras una sesión larga que publicó **veintidós
 lecciones** y cerró **cuatro deudas**.
 
 Las lecciones: **ML 7** (selección de subconjuntos, ISLP §6.1), **ML 8**
@@ -9,10 +9,10 @@ splines, §7.1–7.4), **ML 11** (suavizado y GAMs, §7.5–7.7), **ML 12** (ár
 decisión, §8.1), **ML 13** (bagging, bosques e impulso, §8.2), **ML 14** (margen
 máximo, §9.1–9.2), **ML 15** (núcleos y pérdida bisagra, §9.3–9.5), **ML 16** (redes neuronales,
 §10.1–10.2, §10.6 y §10.8), **ML 17** (censura y Kaplan-Meier, §11.1–11.4), **ML 18** (riesgos proporcionales
-y Cox, §11.5–11.7), **ML 19** (PCA, §12.1–12.3), **ML 20** (PCR y PLS, §6.3), y **Python 10** a **16** (carga y limpieza, uniones y reshape,
+y Cox, §11.5–11.7), **ML 19** (PCA, §12.1–12.3), **ML 20** (PCR y PLS, §6.3), **ML 21** (clustering, §12.4), y **Python 10** a **16** (carga y limpieza, uniones y reshape,
 groupby, visualización, series de tiempo, rendimiento y anatomía de un proyecto).
 
-**Las 79 publicadas cumplen el molde: 79 de 79.**
+**Las 80 publicadas cumplen el molde: 80 de 80.**
 
 Tres hitos de esta sesión:
 
@@ -28,13 +28,13 @@ Tres hitos de esta sesión:
   **no están en el plan** y quedan anotadas como omisión deliberada. El
   **capítulo 11 queda cubierto entero**: §11.1–11.4 en ML 17 y §11.5–11.7 en
   ML 18, con tres subsecciones de §11.7 nombradas como omisión deliberada. Del
-  **12**, ML 19 cubre §12.1–12.3 y ML 21 cubrirá §12.4. Queda el **13**, que es
-  la lección 22.
+  **12 queda cubierto entero**: §12.1–12.3 en ML 19 y §12.4 en ML 21. Queda solo
+  el **13**, que es la lección 22 y cierra la Fase 2 de ISLP.
 - **Las tres deudas abiertas se cerraron**: las colisiones del glosario (punto 6),
   las 33 secciones de retos y los 106 símbolos sin declarar.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
-faltando lecciones por escribir: **ML va por 20 de 90**, y **Series de tiempo e
+faltando lecciones por escribir: **ML va por 21 de 90**, y **Series de tiempo e
 Inferencia causal están vacíos**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -104,15 +104,15 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 0 | 11 | — | todas |
-| Machine Learning | 20 | 90 | **20 de 20** | 21 y 22 de la Fase 2, y el resto |
+| Machine Learning | 21 | 90 | **21 de 21** | la 22 de la Fase 2, y el resto |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **79 lecciones** publicadas, **79** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 99 según el plan.
+- **80 lecciones** publicadas, **80** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 98 según el plan.
 - **Tres módulos cerrados**: Estadística 25/25, Álgebra 18/18 y **Python 16/16**.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
@@ -139,15 +139,15 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   marginales exactas, que es más fuerte que cualquier librería; y `np.trapz` se
   retiró del espacio de nombres en NumPy 2.0, así que las celdas nuevas no lo
   usan.
-- **167 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
+- **169 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
   Siguen los mismos cuatro avisos, todos anteriores: tres de no idempotencia
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. Los visuales de esta tanda no añaden ninguno.
-- **1822 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **427 celdas** que el gate ejecuta en cada build, y comprobadas **con las
+- **1853 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **433 celdas** que el gate ejecuta en cada build, y comprobadas **con las
   dos parejas de versiones** (ver el punto 5).
-- Glosario: **385 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **388 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -1575,6 +1575,50 @@ La costumbre que hay que adoptar, y que no basta con anotar: **calcular primero 
 una orden aparte, leer el resultado, y solo entonces escribir el bloque**. Las
 cuatro veces las cazó el procedimiento antes de publicar, pero el procedimiento no
 debería tener que cazarlas.
+
+### 3.25 ML 21: el capítulo 12 cerrado, y la costumbre que sí funcionó (19-09-2026)
+
+Cuatro resultados, y dos de ellos convierten advertencias del libro en números:
+
+- la **21.2**: las dos formas del criterio de K-means son la misma suma. El libro
+  la da como ecuación sin demostrar, y de ella depende que el algoritmo tenga
+  sentido: sin ella, recalcular centros no tendría por qué bajar nada. Aquí sale
+  en cuatro líneas;
+- la **21.3**: baja en cada paso y termina;
+- la **21.4**: termina en un óptimo **local**, y esta vez **medido contra la
+  verdad**. Sobre nueve puntos se enumeran las $18\,150$ asignaciones sin grupos
+  vacíos —$3025$ particiones, que coincide con $S(9,3)$— y se obtiene el mínimo
+  exacto $1{,}54666667$. Un arranque concreto termina en $77{,}70333333$: **un
+  factor de cincuenta**. La advertencia del libro deja de ser un consejo;
+- la **21.6**: dos núcleos unidos por un puente, donde el enlace simple y el
+  completo dan particiones distintas en $K=2$ **y** en $K=3$.
+
+Y la sección 4 pone **la misma tabla sobre ruido puro y sobre grupos reales**: las
+bajadas del criterio son $39{,}8$, $27{,}9$, $21{,}1$, $18{,}4$, $15{,}2$ por
+ciento cuando no hay nada, y $52{,}8$, **$84{,}5$**, $14{,}7$ cuando hay tres
+grupos. Esa diferencia es todo lo que hay para elegir $K$, y es un juicio sobre
+una curva.
+
+#### La costumbre nueva funcionó a la primera
+
+Tras cuatro números escritos de cabeza, esta lección se hizo al revés:
+**calcular los valores de los ejercicios en una orden aparte, leerlos, y después
+escribir el bloque `check`**. Los dos ejercicios cuadraron a la primera —$32{,}0$
+y $9330$— y el auditor de símbolos tampoco encontró descuadres.
+
+Merece quedar escrito porque el coste es cero: una orden más, antes en lugar de
+después.
+
+#### El primer intento de la 21.6 no discriminaba
+
+La primera versión del contraejemplo —una cadena de cinco puntos y un par
+apartado— daba **la misma partición con los tres enlaces**, y la celda lo dijo
+con un `False`. Hubo que buscar el diseño: dos núcleos compactos unidos por un
+puente de dos puntos sueltos, que separa simple de completo en dos valores de $K$
+a la vez.
+
+Es el mismo patrón de ML 13 y ML 17: **la conclusión se escribe después de mirar
+la tabla, no antes**.
 
 ---
 
