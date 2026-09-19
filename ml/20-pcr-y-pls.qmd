@@ -1,0 +1,745 @@
+---
+title: "Regresión sobre componentes principales y PLS"
+subtitle: "Machine Learning · Lección 20"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/19-pca, ml/08-ridge-y-lasso, matematica/11-svd]
+siguientes: []
+libro: "ISLP §6.3 Dimension Reduction Methods · §6.3.1 Principal Components Regression · §6.3.2 Partial Least Squares"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="ml/20-pcr-y-pls"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §6.3]{.item}
+[**Prereqs** [PCA](19-pca.qmd) · [Ridge y lasso](08-ridge-y-lasso.qmd) · [SVD](../matematica/11-svd.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir la [regresión sobre componentes principales]{.g data-t="regresión sobre componentes principales"} y escribirla con el mismo molde que ridge.
+2. **Demostrar que PCR es ridge con el mando en modo discreto**: cero o uno por dirección, donde ridge pone un número entre cero y uno.
+3. Demostrar que con todas las componentes, PCR y PLS coinciden exactamente con mínimos cuadrados.
+4. Exhibir datos donde **PCR gasta componentes en direcciones inútiles**, y explicar por qué no puede evitarlo.
+5. Definir los [mínimos cuadrados parciales]{.g data-t="mínimos cuadrados parciales"} y demostrar que su primera dirección es proporcional a $X^\top y$.
+6. Decir en qué situación gana cada uno, con la apuesta que cada método hace escrita explícitamente.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 19**: las componentes principales, que son las direcciones que PCR usa como predictores.
+- **Machine Learning 8**: ridge y su perfil de encogimiento $d_j^2/(d_j^2+\lambda)$, del que esta lección da la versión discreta.
+- **Álgebra 11**: la descomposición en valores singulares, que es la base común de los tres métodos.
+- **Machine Learning 6**: la validación cruzada, que es como se elige el número de componentes.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 21**: el clustering, que cierra el capítulo 12.
+- **Machine Learning 24**: *Least Angle Regression*, otra forma de recorrer un camino de modelos.
+- **Machine Learning 31**: el impulso como descenso funcional, que también construye direcciones mirando el residuo.
+- **Series de tiempo**: la regresión sobre factores comunes, que es PCR con series en las columnas.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $X$ | equis | La matriz de diseño, centrada y normalmente estandarizada |
+| $y$ | y griega | La respuesta, centrada |
+| $n$, $p$ | ene, pe | El número de observaciones y de predictores |
+| $M$ | eme | El número de componentes que se conservan |
+| $d_j$ | de sub jota | El $j$-ésimo valor singular de $X$ |
+| $u_j$, $v_j$ | u sub jota, ve sub jota | Los vectores singulares por la izquierda y por la derecha |
+| $f_j$ | efe sub jota | El factor de encogimiento de la dirección $j$ |
+| $\lambda$ | lambda | La penalización de ridge, para comparar |
+| $Z$ | zeta | Las puntuaciones: las proyecciones de $X$ sobre las direcciones elegidas |
+| $w$ | doble ve | La primera dirección de PLS, de norma uno |
+| $\beta$ | beta | Los coeficientes en las variables originales |
+| $\theta$ | theta | Los coeficientes en las componentes, antes de volver a las variables |
+:::
+
+## 1. PCR, o ridge con el mando en dos posiciones
+
+::: {.definicion}
+**Definición 20.1 (regresión sobre componentes principales).** Se calculan las componentes principales de $X$, se toman las $M$ primeras, se forman las puntuaciones $Z=XV_{:M}$ y se ajusta $y$ sobre $Z$ por mínimos cuadrados. El coeficiente en las variables originales es $\hat\beta=V_{:M}\hat\theta$.
+:::
+
+La Proposición 8.5 escribió ridge como un factor por dirección. PCR admite exactamente la misma escritura, y ahí se ve qué los separa.
+
+::: {.proposicion}
+**Proposición 20.2 (los tres perfiles).** Sea $X=UDV^\top$. El ajuste de los tres métodos se escribe
+$$\hat{y}=\sum_{j=1}^{p}u_j\,f_j\,u_j^\top y,$$
+con el mismo $u_j$ y distinto $f_j$:
+
+| método | $f_j$ |
+|---|---|
+| mínimos cuadrados | $1$ para todo $j$ |
+| ridge | $d_j^2/(d_j^2+\lambda)$ |
+| PCR con $M$ | $1$ si $j\le M$, $0$ si no |
+
+En particular, **con $M=\operatorname{rango}(X)$ el ajuste de PCR es exactamente el de mínimos cuadrados**.
+:::
+
+::: {.demostracion}
+*Demostración.* Para mínimos cuadrados, el ajuste es la proyección de $y$ sobre el espacio columna de $X$, que es el generado por $u_1,\dots,u_r$ con $r$ el rango; esa proyección es $\sum_{j\le r}u_ju_j^\top y$. La fórmula de ridge es la Proposición 8.5.
+
+Para PCR, las puntuaciones son $Z=XV_{:M}=UDV^\top V_{:M}=U_{:M}D_{:M}$, cuyas columnas son ortogonales. El ajuste por mínimos cuadrados sobre columnas ortogonales es la suma de las proyecciones una a una, y la proyección sobre $u_jd_j$ es $u_ju_j^\top y$. Sumando para $j\le M$ se obtiene el factor anunciado. Con $M=r$ las dos sumas son la misma. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(23)
+n, p = 80, 6
+A = np.diag([3.0, 2.0, 1.2, 0.7, 0.35, 0.12])
+X = rng.normal(size=(n, p)) @ A
+X = X - X.mean(0)
+beta_real = np.array([1.0, -0.8, 0.5, 0.0, 0.0, 0.0])
+y = X @ beta_real + rng.normal(0, 1.0, n)
+y = y - y.mean()
+
+U, d, Vt = np.linalg.svd(X, full_matrices=False)
+c = U.T @ y                      # las coordenadas de y en la base de la SVD
+
+print("valores singulares de la matriz de diseno:")
+print("   " + "  ".join("%.4f" % v for v in d))
+print()
+
+def ajuste(factores):
+    """El ajuste con un factor de encogimiento por direccion: suma f_j u_j (u_j'y)."""
+    return U @ (factores * c)
+
+# Los tres metodos, escritos con el MISMO molde: un factor por direccion.
+print("factor de encogimiento de cada direccion, por metodo:")
+print("   metodo            " + "".join("   dir %d" % (j + 1) for j in range(p)))
+f_ols = np.ones(p)
+print("   minimos cuadrados " + "".join("%8.4f" % v for v in f_ols))
+for lam in [1.0, 20.0]:
+    f = d ** 2 / (d ** 2 + lam)
+    print("   ridge lambda=%-5.0f " % lam + "".join("%8.4f" % v for v in f))
+for M in [2, 4]:
+    f = np.array([1.0] * M + [0.0] * (p - M))
+    print("   PCR con M=%-8d" % M + "".join("%8.4f" % v for v in f))
+print()
+
+# Y se comprueba que PCR ajustado como una regresion da exactamente eso.
+print("   M   ajuste por regresion contra las componentes   igual al de los factores")
+for M in range(1, p + 1):
+    Z = X @ Vt[:M].T                       # las puntuaciones de las M primeras
+    theta = np.linalg.lstsq(Z, y, rcond=None)[0]
+    directo = Z @ theta
+    porfactores = ajuste(np.array([1.0] * M + [0.0] * (p - M)))
+    print("%4d %30.6f %30s"
+          % (M, float(np.linalg.norm(directo)), bool(np.allclose(directo, porfactores, atol=1e-10))))
+print()
+print("por eso PCR es ridge con el mando en modo discreto: donde ridge pone")
+print("d^2/(d^2+lambda), un numero entre cero y uno, PCR pone cero o uno")
+print()
+
+# Con M igual al rango, PCR es exactamente minimos cuadrados.
+ols = np.linalg.lstsq(X, y, rcond=None)[0]
+Z = X @ Vt.T
+theta = np.linalg.lstsq(Z, y, rcond=None)[0]
+beta_pcr = Vt.T @ theta
+print("con M = p, el coeficiente de PCR coincide con el de minimos cuadrados:")
+print("   PCR " + "  ".join("%+.6f" % v for v in beta_pcr))
+print("   OLS " + "  ".join("%+.6f" % v for v in ols))
+print("   iguales a 1e-10:", bool(np.allclose(beta_pcr, ols, atol=1e-10)))
+```
+
+Los dos perfiles puestos uno debajo del otro dicen lo mismo de dos maneras: ridge **gradúa** el encogimiento según $d_j$, y PCR **corta**. Con $\lambda=20$ la sexta dirección conserva un $0{,}0488$ de su coeficiente; con $M=4$ conserva un $0$ exacto. Ninguna de las dos es más suave por casualidad: ridge tiene un mando continuo y PCR uno entero.
+
+```{=html}
+<div class="viz-perfiles">
+  <div class="controles">
+    <label>Penalización de ridge λ <input id="pf-l" type="range" min="-2" max="3" step="0.05" value="1"> <span id="pf-l-v">10^1.00</span></label>
+    <label>Componentes de PCR M <input id="pf-m" type="range" min="0" max="8" step="1" value="4"> <span id="pf-m-v">4</span></label>
+  </div>
+  <svg id="pf-svg" viewBox="0 0 660 300" role="img" aria-label="Una barra por dirección con el factor de encogimiento, sobre un eje fijo de cero a uno: en verde el perfil continuo de ridge y en ámbar el escalón de PCR."></svg>
+  <p class="lectura" id="pf-lectura"></p>
+</div>
+<style>
+.viz-perfiles { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-perfiles .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-perfiles label { display: flex; align-items: center; gap: .4rem; }
+.viz-perfiles input[type=range] { width: 180px; padding: 0; }
+.viz-perfiles svg { width: 100%; height: auto; display: block; }
+.viz-perfiles .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_G = "#8A6D1F";
+  var svg = document.getElementById("pf-svg"), lec = document.getElementById("pf-lectura");
+  var cl = document.getElementById("pf-l"), cm = document.getElementById("pf-m");
+  var el_ = document.getElementById("pf-l-v"), em = document.getElementById("pf-m-v");
+  // Marco anclado: 8 direcciones y eje vertical de 0 a 1, siempre.
+  var N = 8, X0 = 56, XW = 562, Y0 = 46, YH = 190;
+  var d = [26.0, 18.5, 11.0, 7.2, 4.4, 2.6, 1.4, 0.6];   // valores singulares fijos
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var py = function (v) { return Y0 + (1 - v) * YH; };
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var lam = Math.pow(10, +cl.value), M = +cm.value;
+    el_.textContent = "10^" + (+cl.value).toFixed(2); em.textContent = M;
+    var t, j;
+    for (t = 0; t <= 1.0001; t += 0.25) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(t).toFixed(1) + " L" + (X0 + XW) + " " + py(t).toFixed(1),
+        stroke: C_L, "stroke-width": 1, opacity: .5 }));
+      svg.appendChild(el("text", { x: X0 - 9, y: py(t) + 4, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .65 }, t.toFixed(2)));
+    }
+    svg.appendChild(el("text", { x: X0, y: 20, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "factor de encogimiento por dirección: ridge en verde, PCR en ámbar"));
+    var an = XW / N, glR = 0, glP = 0;
+    for (j = 0; j < N; j++) {
+      var fr = d[j] * d[j] / (d[j] * d[j] + lam);
+      var fp = j < M ? 1 : 0;
+      glR += fr; glP += fp;
+      var x = X0 + j * an;
+      svg.appendChild(el("rect", { x: (x + an * 0.12).toFixed(1), y: py(fr).toFixed(1),
+        width: (an * 0.38).toFixed(1), height: (YH - (py(fr) - Y0)).toFixed(1),
+        fill: C_A, "fill-opacity": .3, stroke: C_A, "stroke-width": 1.2 }));
+      svg.appendChild(el("rect", { x: (x + an * 0.52).toFixed(1), y: py(fp).toFixed(1),
+        width: (an * 0.36).toFixed(1), height: (YH - (py(fp) - Y0)).toFixed(1),
+        fill: C_G, "fill-opacity": .35, stroke: C_G, "stroke-width": 1.2 }));
+      svg.appendChild(el("text", { x: (x + an / 2).toFixed(1), y: Y0 + YH + 17, "text-anchor": "middle",
+        "font-size": 10, fill: C_T, opacity: .6 }, "d=" + d[j].toFixed(1)));
+    }
+    lec.innerHTML = "Con λ = <strong>10^" + (+cl.value).toFixed(2) + "</strong>, ridge deja factores entre <strong>" +
+      (d[N - 1] * d[N - 1] / (d[N - 1] * d[N - 1] + lam)).toFixed(4) + "</strong> y <strong>" +
+      (d[0] * d[0] / (d[0] * d[0] + lam)).toFixed(4) + "</strong>, y sus grados de libertad efectivos suman <strong>" +
+      glR.toFixed(3) + "</strong>. PCR con M = <strong>" + M + "</strong> pone <strong>" + M +
+      "</strong> unos y <strong>" + (N - M) + "</strong> ceros, y sus grados de libertad son <strong>" + glP.toFixed(0) +
+      "</strong> exactos. " +
+      "Los dos encogen las direcciones de menos varianza, que son las de la derecha; lo que cambia es que ridge lo hace <strong>por grados</strong> y PCR <strong>de golpe</strong> (Proposición 20.2).";
+  }
+  cl.addEventListener("input", dibujar);
+  cm.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Lo que PCR no mira
+
+::: {.proposicion}
+**Proposición 20.3 (PCR elige sin ver la respuesta).** Las direcciones que PCR usa dependen **únicamente de $X$**. En consecuencia, existen conjuntos de datos donde las primeras componentes son casi ortogonales a la señal y PCR necesita todas las componentes para igualar a mínimos cuadrados, mientras que un método que mire $y$ lo consigue con muy pocas.
+:::
+
+::: {.demostracion}
+*Demostración.* La primera parte es la Definición 20.1: las componentes salen de la Proposición 19.2, que solo involucra $X^\top X$. Para la segunda basta exhibir el conjunto, y la celda lo hace: seis variables que miden casi lo mismo, de modo que la dirección de más varianza es el promedio de todas, y una respuesta que depende de un **contraste** entre dos de ellas, que es una dirección de poca varianza. [∎]{.fin-demo}
+:::
+
+La alternativa del libro es construir las direcciones mirando también la respuesta.
+
+::: {.definicion}
+**Definición 20.4 (mínimos cuadrados parciales).** La primera dirección es la $w$ de norma uno que maximiza la covarianza entre $Xw$ e $y$. Se calcula la puntuación $t=Xw$, se **desinfla** $X$ e $y$ quitándoles lo que $t$ explica, y se repite sobre el residuo.
+:::
+
+::: {.proposicion}
+**Proposición 20.5 (la primera dirección de PLS).** La dirección que maximiza $\lvert\operatorname{Cov}(Xw,y)\rvert$ sujeta a $\lVert w\rVert=1$ es
+$$w=\frac{X^\top y}{\lVert X^\top y\rVert},$$
+es decir, el vector de covarianzas de cada predictor con la respuesta. Y al igual que PCR, **con $M=\operatorname{rango}(X)$ el ajuste de PLS coincide con el de mínimos cuadrados**.
+:::
+
+::: {.demostracion}
+*Demostración.* Con las columnas centradas, $\operatorname{Cov}(Xw,y)$ es proporcional a $w^\top X^\top y$, una forma lineal en $w$. Por Cauchy-Schwarz, $\lvert w^\top X^\top y\rvert\le\lVert w\rVert\,\lVert X^\top y\rVert$ con igualdad si y solo si $w$ es paralelo a $X^\top y$; imponiendo norma uno se obtiene la fórmula.
+
+Para la segunda parte, cada paso de desinflado quita a $X$ la componente explicada por $t$, así que tras $r$ pasos el residuo de $X$ es cero y el de $y$ está en el complemento ortogonal del espacio columna. El ajuste acumulado es entonces la proyección de $y$ sobre ese espacio columna, que es el de mínimos cuadrados. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def pcr(X, y, M):
+    U, d, Vt = np.linalg.svd(X, full_matrices=False)
+    Z = X @ Vt[:M].T
+    theta = np.linalg.lstsq(Z, y, rcond=None)[0]
+    return Vt[:M].T @ theta
+
+def pls(X, y, M):
+    """Minimos cuadrados parciales: cada direccion apunta a la covarianza con y."""
+    Xr, yr = X.copy(), y.copy()
+    T, P = [], []
+    for _ in range(M):
+        w = Xr.T @ yr
+        nw = np.linalg.norm(w)
+        if nw < 1e-12:
+            break
+        w = w / nw
+        t = Xr @ w
+        tt = float(t @ t)
+        if tt < 1e-12:
+            break
+        T.append(t)
+        P.append((w, Xr.T @ t / tt))
+        Xr = Xr - np.outer(t, Xr.T @ t / tt)
+        yr = yr - t * float(t @ y) / tt
+    if not T:
+        return np.zeros(X.shape[1])
+    Tm = np.stack(T, axis=1)
+    coef = np.linalg.lstsq(Tm, y, rcond=None)[0]
+    # se rehace el coeficiente en las variables originales
+    W = np.stack([w for w, _ in P], axis=1)
+    Pm = np.stack([q for _, q in P], axis=1)
+    R = W @ np.linalg.inv(Pm.T @ W)
+    return R @ coef
+
+rng = np.random.default_rng(31)
+n, p = 300, 6
+# Seis variables que miden casi lo mismo: un factor comun mas ruido pequeno.
+# Tras estandarizar, la direccion de mas varianza es el promedio de todas.
+z = rng.normal(size=n)
+X = np.stack([z + rng.normal(0, 0.35, n) for _ in range(p)], axis=1)
+# Y la respuesta depende de un CONTRASTE entre dos de ellas, que es justo una
+# direccion de poca varianza.
+y = 4.0 * (X[:, 0] - X[:, 1]) + rng.normal(0, 0.3, n)
+
+X = (X - X.mean(0)) / X.std(0, ddof=1)      # estandarizar, como manda la practica
+y = y - y.mean()
+
+U, d, Vt = np.linalg.svd(X, full_matrices=False)
+# El signo de cada componente es arbitrario (ML 19): se fija antes de citar nada,
+# porque de el depende el SIGNO de la correlacion que se imprime mas abajo.
+for j in range(len(d)):
+    k = int(np.argmax(np.abs(Vt[j])))
+    if Vt[j, k] < 0:
+        Vt[j] = -Vt[j]
+        U[:, j] = -U[:, j]
+print("valores singulares tras estandarizar:")
+print("   " + "  ".join("%.4f" % v for v in d))
+print("la primera componente reparte casi por igual las seis variables:")
+print("   [" + ", ".join("%+.4f" % v for v in Vt[0]) + "]")
+print("y explica el %.2f%% de la varianza" % (100 * d[0] ** 2 / (d ** 2).sum()))
+print()
+print("correlacion de cada componente con y:")
+Z = X @ Vt.T
+for j in range(p):
+    print("   componente %d (varianza %6.2f%%): %+.4f"
+          % (j + 1, 100 * d[j] ** 2 / (d ** 2).sum(), float(np.corrcoef(Z[:, j], y)[0, 1])))
+print()
+print("la direccion que mas varianza tiene casi no se relaciona con y, y la que")
+print("se relaciona esta entre las de menos varianza. PCR ordena por varianza,")
+print("asi que las primeras componentes que mete son las que no sirven")
+print()
+
+ols = np.linalg.lstsq(X, y, rcond=None)[0]
+emc = lambda b: float(((y - X @ b) ** 2).mean())
+print("   M    PCR      PLS     cociente PCR/PLS")
+filas = []
+for M in [1, 2, 3, 4, 5, 6]:
+    a, b = emc(pcr(X, y, M)), emc(pls(X, y, M))
+    filas.append((M, a, b))
+    print("%4d %8.4f %8.4f %16.2f" % (M, a, b, a / b))
+print()
+print("PLS gana en todos los M salvo cuando ya no queda nada que elegir:",
+      bool(all(b <= a + 1e-12 for M, a, b in filas)))
+ols_emc = emc(ols)
+mpls = min(M for M, a, b in filas if b < 1.05 * ols_emc)
+mpcr = min(M for M, a, b in filas if a < 1.05 * ols_emc)
+print("componentes que necesita cada uno para quedarse a un 5 por ciento de OLS:")
+print("   PLS: %d     PCR: %d" % (mpls, mpcr))
+print("y la mayor ventaja de PLS esta en M = %d, con un cociente de %.2f"
+      % max(((M, a / b) for M, a, b in filas), key=lambda t: t[1]))
+print()
+print("con todas las componentes los dos coinciden con minimos cuadrados:")
+print("   OLS %.6f   PCR %.6f   PLS %.6f" % (emc(ols), emc(pcr(X, y, p)), emc(pls(X, y, p))))
+print("   iguales a 1e-8:", bool(abs(emc(pcr(X, y, p)) - emc(ols)) < 1e-8
+                                 and abs(emc(pls(X, y, p)) - emc(ols)) < 1e-8))
+print()
+print("la primera direccion de PLS es proporcional a X'y, la covarianza con y:")
+w = X.T @ y
+w = w / np.linalg.norm(w)
+b1 = pls(X, y, 1)
+b1n = b1 / np.linalg.norm(b1)
+print("   X'y normalizado : [" + ", ".join("%+.4f" % v for v in w) + "]")
+print("   direccion de PLS: [" + ", ".join("%+.4f" % v for v in b1n) + "]")
+print("   coinciden a 1e-10:", bool(np.allclose(np.abs(w), np.abs(b1n), atol=1e-10)))
+```
+
+La primera componente se lleva el $88{,}70\,\%$ de la varianza y su correlación con $y$ es $-0{,}0800$; la segunda tiene el $3{,}15\,\%$ y correlación $0{,}9714$. PCR ordena por la primera columna y entra por la puerta equivocada.
+
+El resultado en números: **PLS se queda a un $5\,\%$ de mínimos cuadrados con $3$ componentes y PCR necesita las $6$**, y PLS gana en todos los valores de $M$, con la mayor ventaja en $M=3$, donde su error es $2{,}78$ veces menor.
+
+Y la Proposición 20.5 se comprueba al final: la dirección de PLS y $X^\top y$ normalizado coinciden a $10^{-10}$.
+
+## 3. Qué apuesta hace cada uno
+
+Sería cómodo concluir que PLS es mejor. La celda siguiente mide el mismo experimento con la señal en dos sitios distintos, y la conclusión es otra.
+
+```{pyodide}
+import numpy as np
+
+def pcr(X, y, M):
+    U, d, Vt = np.linalg.svd(X, full_matrices=False)
+    Z = X @ Vt[:M].T
+    return Vt[:M].T @ np.linalg.lstsq(Z, y, rcond=None)[0]
+
+def pls(X, y, M):
+    Xr, yr = X.copy(), y.copy()
+    T, W, P = [], [], []
+    for _ in range(M):
+        w = Xr.T @ yr
+        nw = np.linalg.norm(w)
+        if nw < 1e-12:
+            break
+        w = w / nw
+        t = Xr @ w
+        tt = float(t @ t)
+        if tt < 1e-12:
+            break
+        q = Xr.T @ t / tt
+        T.append(t); W.append(w); P.append(q)
+        Xr = Xr - np.outer(t, q)
+        yr = yr - t * float(t @ y) / tt
+    if not T:
+        return np.zeros(X.shape[1])
+    Tm = np.stack(T, axis=1)
+    coef = np.linalg.lstsq(Tm, y, rcond=None)[0]
+    Wm, Pm = np.stack(W, axis=1), np.stack(P, axis=1)
+    return Wm @ np.linalg.inv(Pm.T @ Wm) @ coef
+
+def genera(rng, n, donde):
+    """Seis variables con un factor comun; la senal va donde se pida."""
+    z = rng.normal(size=n)
+    X = np.stack([z + rng.normal(0, 0.35, n) for _ in range(6)], axis=1)
+    X = (X - X.mean(0)) / X.std(0, ddof=1)
+    if donde == "factor":
+        senal = X.mean(1)                 # la direccion de mas varianza
+    else:
+        senal = X[:, 0] - X[:, 1]         # un contraste, de poca varianza
+    y = 4.0 * senal + rng.normal(0, 0.3, n)
+    return X, y - y.mean()
+
+print("el mismo experimento con la senal en dos sitios distintos:")
+print()
+for donde, etiqueta in [("factor", "la senal ESTA en la direccion de mas varianza"),
+                        ("contraste", "la senal esta en una direccion de poca varianza")]:
+    rng = np.random.default_rng(47)
+    X, y = genera(rng, 300, donde)
+    Xp, yp = genera(rng, 3000, donde)      # datos nuevos, misma estructura
+    print(etiqueta)
+    print("      M     PCR fuera     PLS fuera")
+    for M in [1, 2, 3, 6]:
+        a = float(((yp - Xp @ pcr(X, y, M)) ** 2).mean())
+        b = float(((yp - Xp @ pls(X, y, M)) ** 2).mean())
+        print("%7d %13.4f %13.4f" % (M, a, b))
+    print()
+
+print("cuando la senal coincide con la direccion de mas varianza, una sola")
+print("componente le basta a los dos y PCR no pierde nada por no mirar y.")
+print("Cuando no coincide, PCR gasta componentes en direcciones inutiles")
+print()
+print("PCR apuesta a que la varianza de X y la relacion con y van juntas. Esa")
+print("apuesta no es gratis ni es absurda: cuando se cumple, no mirar y evita")
+print("una forma de sobreajuste. Cuando no, cuesta caro")
+```
+
+Cuando la señal **está** en la dirección de más varianza, a los dos les basta una componente y los dos dan $0{,}0918$ fuera de la muestra —mejor incluso que usar las seis, que dan $0{,}0927$: ahí el recorte actúa de regularización—. Cuando no está, PCR se queda en $3{,}0658$ con tres componentes y PLS baja a $0{,}0931$.
+
+**PCR apuesta a que la varianza de $X$ y la relación con $y$ van juntas.** No es una apuesta absurda: cuando se cumple, no mirar la respuesta evita una forma de sobreajuste, porque las direcciones se eligen sin gastar información de $y$. Cuando no se cumple, cuesta caro. Como siempre en este módulo, el que decide es un conjunto apartado y no un argumento.
+
+**Una condición previa a todo esto.** Los dos métodos eligen direcciones comparando varianzas y covarianzas entre columnas, así que los dos son sensibles a las unidades, por la misma razón que la Proposición 19.5. Por eso ambos se aplican sobre datos **estandarizados**, y la celda de la sección 2 lo hace antes de nada.
+
+```{=html}
+<div class="viz-apuesta">
+  <div class="controles">
+    <label>Dónde está la señal <input id="ap-a" type="range" min="0" max="90" step="1" value="70"> <span id="ap-a-v">70°</span></label>
+    <label>Componentes M <input id="ap-m" type="range" min="1" max="2" step="1" value="1"> <span id="ap-m-v">1</span></label>
+  </div>
+  <svg id="ap-svg" viewBox="0 0 660 320" role="img" aria-label="La nube de puntos con la dirección de máxima varianza, la dirección de la señal y la que elige cada método; a la derecha, el error de ajuste de los dos."></svg>
+  <p class="lectura" id="ap-lectura"></p>
+</div>
+<style>
+.viz-apuesta { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-apuesta .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-apuesta label { display: flex; align-items: center; gap: .4rem; }
+.viz-apuesta input[type=range] { width: 180px; padding: 0; }
+.viz-apuesta svg { width: 100%; height: auto; display: block; }
+.viz-apuesta .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("ap-svg"), lec = document.getElementById("ap-lectura");
+  var ca = document.getElementById("ap-a"), cm = document.getElementById("ap-m");
+  var ea = document.getElementById("ap-a-v"), em = document.getElementById("ap-m-v");
+  var PX = 36, PW = 268, PY = 26, PH = 250, BX = 360, BW = 250, BY = 90, BH = 34;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // nube fija: mucha varianza en x, poca en y
+  var P = [], s = 17;
+  function r() { s = (s * 48271) % 2147483647; return s / 2147483647; }
+  for (var i = 0; i < 120; i++) {
+    var u1 = Math.max(1e-9, r()), u2 = r();
+    var g1 = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    var g2 = Math.sqrt(-2 * Math.log(u1)) * Math.sin(2 * Math.PI * u2);
+    P.push([3.0 * g1, 0.7 * g2]);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var ang = +ca.value * Math.PI / 180, M = +cm.value;
+    ea.textContent = (+ca.value) + "°"; em.textContent = M;
+    var sx = Math.cos(ang), sy = Math.sin(ang), i;
+    // la respuesta: proyeccion sobre la direccion de la senal, con ruido
+    var yv = [], ss = 3;
+    function rr() { ss = (ss * 48271) % 2147483647; return ss / 2147483647 - 0.5; }
+    for (i = 0; i < P.length; i++) yv.push(2 * (P[i][0] * sx + P[i][1] * sy) + rr() * 1.2);
+    var my = 0; for (i = 0; i < yv.length; i++) my += yv[i]; my /= yv.length;
+    for (i = 0; i < yv.length; i++) yv[i] -= my;
+
+    // PC1 es el eje x por construccion; PLS elige X'y normalizado
+    var wx = 0, wy = 0;
+    for (i = 0; i < P.length; i++) { wx += P[i][0] * yv[i]; wy += P[i][1] * yv[i]; }
+    var nw = Math.hypot(wx, wy) || 1; wx /= nw; wy /= nw;
+
+    var px = function (v) { return PX + (v + 9) / 18 * PW; };
+    var py = function (v) { return PY + (9 - v) / 18 * PH; };
+    svg.appendChild(el("rect", { x: PX, y: PY, width: PW, height: PH, fill: "none", stroke: C_L, "stroke-width": 1 }));
+    svg.appendChild(el("text", { x: PX, y: 18, "font-size": 11.5, fill: C_T, opacity: .75 }, "la nube y las tres direcciones"));
+    for (i = 0; i < P.length; i++)
+      svg.appendChild(el("circle", { cx: px(P[i][0]).toFixed(1), cy: py(P[i][1]).toFixed(1), r: 2.2, fill: C_T, "fill-opacity": .32 }));
+    function raya(ux, uy, color, ancho, guion) {
+      svg.appendChild(el("path", { d: "M" + px(-9 * ux).toFixed(1) + " " + py(-9 * uy).toFixed(1) +
+        " L" + px(9 * ux).toFixed(1) + " " + py(9 * uy).toFixed(1),
+        stroke: color, "stroke-width": ancho, "stroke-dasharray": guion || "none" }));
+    }
+    raya(1, 0, C_A, 2.6);                 // PC1: la que elige PCR
+    raya(sx, sy, C_B, 2.2, "6 4");        // la senal verdadera
+    raya(wx, wy, C_G, 2.2);               // la que elige PLS
+
+    // errores: ajuste con M direcciones de cada metodo
+    function error(dirs) {
+      var e = 0;
+      // proyeccion de y sobre el espacio generado por las direcciones (ortonormalizadas)
+      var B = [];
+      for (var k = 0; k < dirs.length; k++) {
+        var vx = dirs[k][0], vy = dirs[k][1];
+        for (var q = 0; q < B.length; q++) {
+          var dp = vx * B[q][0] + vy * B[q][1];
+          vx -= dp * B[q][0]; vy -= dp * B[q][1];
+        }
+        var nn = Math.hypot(vx, vy);
+        if (nn > 1e-9) B.push([vx / nn, vy / nn]);
+      }
+      var fit = new Array(P.length).fill(0);
+      for (var b = 0; b < B.length; b++) {
+        var t = [], num = 0, den = 0;
+        for (i = 0; i < P.length; i++) { t.push(P[i][0] * B[b][0] + P[i][1] * B[b][1]); }
+        for (i = 0; i < P.length; i++) { num += t[i] * yv[i]; den += t[i] * t[i]; }
+        var co = den > 1e-12 ? num / den : 0;
+        for (i = 0; i < P.length; i++) fit[i] += co * t[i];
+      }
+      for (i = 0; i < P.length; i++) e += (yv[i] - fit[i]) * (yv[i] - fit[i]);
+      return e / P.length;
+    }
+    var ePCR = error(M === 1 ? [[1, 0]] : [[1, 0], [0, 1]]);
+    var ePLS = error(M === 1 ? [[wx, wy]] : [[wx, wy], [-wy, wx]]);
+    var ESC = 200 / Math.max(ePCR, ePLS, 1e-9);
+    svg.appendChild(el("text", { x: BX, y: BY - 14, "font-size": 11.5, fill: C_T, opacity: .75 }, "error cuadrático medio"));
+    svg.appendChild(el("rect", { x: BX, y: BY, width: Math.min(BW, ePCR * ESC).toFixed(1), height: BH, fill: C_A, "fill-opacity": .4 }));
+    svg.appendChild(el("text", { x: BX, y: BY + BH + 15, "font-size": 11, fill: C_A }, "PCR: " + ePCR.toFixed(4)));
+    svg.appendChild(el("rect", { x: BX, y: BY + 58, width: Math.min(BW, ePLS * ESC).toFixed(1), height: BH, fill: C_G, "fill-opacity": .45 }));
+    svg.appendChild(el("text", { x: BX, y: BY + 58 + BH + 15, "font-size": 11, fill: C_G }, "PLS: " + ePLS.toFixed(4)));
+
+    lec.innerHTML = "La señal apunta a <strong>" + (+ca.value) + "°</strong> y la dirección de más varianza está en <strong>0°</strong> (verde). " +
+      "Con <strong>" + M + "</strong> componente" + (M > 1 ? "s" : "") + ", PCR deja un error de <strong>" + ePCR.toFixed(4) +
+      "</strong> y PLS de <strong>" + ePLS.toFixed(4) + "</strong>. " +
+      (M === 2 ? "Con las dos componentes los dos métodos coinciden con mínimos cuadrados (Proposición 20.2)."
+       : (+ca.value) < 20 ? "Con la señal casi alineada con la máxima varianza, PCR no pierde nada: su apuesta se cumple."
+       : "Cuanto más se aparta la señal de la dirección de máxima varianza, más cara sale la apuesta de PCR de no mirar y.");
+  }
+  ca.addEventListener("input", dibujar);
+  cm.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Lo que esta lección cierra
+
+§6.3 quedó pendiente en la lección 8 porque necesitaba componentes principales. Con esta lección, **los capítulos del 2 al 9 de ISLP quedan cubiertos sin ningún hueco**:
+
+- el **2** en Machine Learning 1, el **3** en la 2, el **4** en las 3, 4 y 5, el **5** en la 6;
+- el **6** en las 7, 8, 9 y esta;
+- el **7** en las 10 y 11, el **8** en las 12 y 13, y el **9** en las 14 y 15.
+
+Del capítulo 10 quedan las secciones repartidas entre las lecciones 36 a 41 de la Fase 4; del 11, tres subsecciones nombradas en la lección 18; y del 12, el clustering, que es la **lección 21**.
+
+## Ejercicios
+
+### Ejercicio 1, Los dos perfiles, lado a lado
+
+Con valores singulares $(26,\ 18{,}5,\ 11,\ 7{,}2)$ y $\lambda=20$, calcular los factores de encogimiento de ridge y sus grados de libertad efectivos.
+
+```{pyodide}
+#| exercise: ex_perfil
+d = [26.0, 18.5, 11.0, 7.2]
+lam = 20.0
+
+factores = ______
+grados = ______
+
+print([round(f, 6) for f in factores], round(grados, 6))
+round(grados, 6)
+```
+
+::: {.hint exercise="ex_perfil"}
+El factor de la dirección $j$ es $d_j^2/(d_j^2+\lambda)$, y los grados de libertad efectivos son su suma (Proposición 8.5).
+:::
+
+::: {.solution exercise="ex_perfil"}
+```{pyodide}
+d = [26.0, 18.5, 11.0, 7.2]
+lam = 20.0
+
+factores = [v ** 2 / (v ** 2 + lam) for v in d]
+grados = sum(factores)
+
+print([round(f, 6) for f in factores], round(grados, 6))
+round(grados, 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_perfil
+#| check: true
+if abs(result - 3.495813) < 1e-5:
+    feedback = {"correct": True, "message": "Correcto: 3,495813 grados de libertad. PCR con M = 4 daría exactamente 4, y con M = 3 exactamente 3: ahí está la diferencia entre graduar y cortar.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 3.495813 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, La primera dirección de PLS
+
+Con $X^\top y = (3,\ -4,\ 12)$, calcular la primera dirección de PLS.
+
+```{pyodide}
+#| exercise: ex_pls
+from math import sqrt
+
+xty = [3.0, -4.0, 12.0]
+
+norma = ______
+w = ______
+
+print(round(norma, 6), [round(v, 6) for v in w])
+round(norma, 6)
+```
+
+::: {.hint exercise="ex_pls"}
+La Proposición 20.5 dice que $w$ es $X^\top y$ dividido entre su norma euclídea.
+:::
+
+::: {.solution exercise="ex_pls"}
+```{pyodide}
+from math import sqrt
+
+xty = [3.0, -4.0, 12.0]
+
+norma = sqrt(sum(v ** 2 for v in xty))
+w = [v / norma for v in xty]
+
+print(round(norma, 6), [round(v, 6) for v in w])
+round(norma, 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_pls
+#| check: true
+if abs(result - 13.0) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: la norma es 13, así que w = (3/13, −4/13, 12/13). La tercera variable manda porque es la de mayor covarianza con la respuesta, no la de mayor varianza.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 13.0 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 20**:
+
+1. Recorrer $M$ de $1$ a $p$ con validación cruzada sobre los datos de la sección 2 y anotar qué $M$ elige cada método. Contrastar con el $M$ que minimiza el error fuera de la muestra y anotar cuánto se parecen las dos elecciones.
+2. Construir el perfil de encogimiento de PLS —el factor que aplica a cada dirección de la SVD— y compararlo con los de ridge y PCR. Anotar que **no** está acotado por uno, y qué significa que un método amplifique una dirección en lugar de encogerla.
+3. Repetir el experimento de la sección 3 **sin estandarizar** las columnas y anotar en `50-Errores/` cuánto cambian las conclusiones. Relacionarlo con la Proposición 19.5 y decir cuál de los dos métodos se ve más afectado y por qué.
+
+## Del libro
+
+*An Introduction to Statistical Learning with Applications in Python* trata este material en §6.3 *Dimension Reduction Methods*, con §6.3.1 *Principal Components Regression* y §6.3.2 *Partial Least Squares*.
+
+**Con esta lección se cierra el capítulo 6**, que quedó a medias en la lección 8 porque §6.3 necesitaba componentes principales. Y con él, **los capítulos del 2 al 9 quedan cubiertos sin ningún hueco**; el reparto completo está en la sección 4.
+
+**Dos diferencias con el libro que conviene tener presentes.** La primera: el libro presenta PCR como un método aparte, con su propia motivación. Esta página lo pone en **el mismo molde que ridge** —Proposición 20.2— y de ahí sale que la diferencia entera es el perfil de encogimiento: continuo en uno, de cero o uno en el otro. Esa lectura no está en §6.3 y hace innecesario memorizar dos historias.
+
+La segunda: el libro dice que PLS «no suele ser mejor» que PCR o ridge en la práctica, y lo deja ahí. Esta página **mide cuándo lo es y cuándo no**, con el mismo experimento y la señal puesta en dos sitios: cuando la señal coincide con la dirección de máxima varianza los dos empatan en $0{,}0918$; cuando no, PCR se queda en $3{,}0658$ con tres componentes y PLS baja a $0{,}0931$. La afirmación del libro es una media sobre problemas, y aquí se ve de qué depende.
+
+**Preguntas para leer §6.3 con lápiz:**
+
+1. §6.3.1 dice que PCR funciona bien cuando pocas componentes capturan la mayor parte de la variación **y** de la relación con la respuesta. Con la Proposición 20.3, ¿cuál de las dos condiciones puede comprobarse antes de mirar $y$, y cuál no?
+2. §6.3.1 insiste en estandarizar antes. Con la Proposición 19.5, ¿qué pasaría exactamente con la primera componente si una columna se midiera en gramos en lugar de kilos?
+3. §6.3.2 describe PLS como supervisado frente a PCR. Con la Proposición 20.5, ¿en qué punto exacto del algoritmo entra la respuesta, y qué queda igual que en PCR?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/pcr-y-pls.md`, enlazada a [[pca]], [[ridge-y-lasso]] y [[svd]]. Conviene rehacer a mano la Proposición 20.2: ver que las puntuaciones $Z=XV_{:M}$ son $U_{:M}D_{:M}$, con columnas ortogonales, deja claro de una vez que **PCR es una proyección sobre los primeros $u_j$**, y que ridge, PCR y mínimos cuadrados son el mismo objeto con tres perfiles distintos.
+
+```
+¿Qué es PCR?::Regresión de y sobre las M primeras componentes principales de X
+¿Cuál es su factor de encogimiento?::1 en las M primeras direcciones y 0 en el resto
+¿Y el de ridge?::d_j²/(d_j²+λ), entre cero y uno
+¿Y el de mínimos cuadrados?::1 en todas
+¿Qué pasa con PCR si M es el rango?::Coincide exactamente con mínimos cuadrados
+¿Mira PCR la respuesta al elegir direcciones?::No: solo depende de X
+¿Qué problema trae eso?::Si la señal está en una dirección de poca varianza, entra tarde
+¿Qué hace PLS distinto?::Elige cada dirección mirando la covarianza con y
+¿Cuál es su primera dirección?::Xᵀy dividido entre su norma
+¿Y PLS con todas las componentes?::También coincide con mínimos cuadrados
+¿Cuál gana siempre?::Ninguno: depende de dónde esté la señal
+¿Qué apuesta hace PCR?::Que la varianza de X y la relación con y van juntas
+¿Cuándo le sale bien?::Cuando se cumple; y entonces no mirar y evita sobreajuste
+¿Hay que estandarizar antes?::Sí, los dos: eligen comparando varianzas y covarianzas
+¿Cómo se elige M?::Midiendo fuera de la muestra, como cualquier otro parámetro
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 20.2 se demuestra viendo que $Z=XV_{:M}=U_{:M}D_{:M}$ tiene columnas ortogonales y que la proyección se reparte dirección a dirección; se comprueba en los seis valores de $M$, donde el ajuste por regresión sobre las componentes coincide con el de los factores a $10^{-10}$, y con $M=p$ el coeficiente de PCR iguala al de mínimos cuadrados a $10^{-10}$. La Proposición 20.3 se demuestra por la Definición 20.1 y se comprueba exhibiendo el conjunto: seis variables con un factor común, donde la primera componente se lleva el $88{,}70\,\%$ de la varianza con correlación $-0{,}0800$ con la respuesta, y la segunda tiene el $3{,}15\,\%$ con correlación $0{,}9714$. La Proposición 20.5 se demuestra por Cauchy-Schwarz y por el desinflado sucesivo; se comprueba a $10^{-10}$ contra $X^\top y$ normalizado, y con $M=p$ los dos métodos coinciden con mínimos cuadrados a $10^{-8}$. El experimento de la sección 3 mide los dos regímenes sobre $3000$ datos nuevos. Los dos visuales recalculan estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** El perfil de encogimiento de ridge en la base de la SVD es la Proposición 8.5 de Machine Learning 8. Las componentes principales como eigenvectores de la covarianza, y su dependencia de las unidades, son las Proposiciones 19.2 y 19.5 de Machine Learning 19. La descomposición en valores singulares es de Álgebra 11. La elección de $M$ por validación cruzada es de Machine Learning 6.
+
+**Lo que se enuncia sin demostrar.** Que el perfil de encogimiento **de PLS** existe y qué forma tiene **no se demuestra**: a diferencia de PCR y ridge, sus factores dependen de $y$ y pueden ser mayores que uno, de modo que PLS no es un suavizador lineal en el sentido de la Definición 11.1. El reto 2 pide construirlo y mirarlo. Que PLS no suele batir a ridge en problemas reales es una afirmación del libro sobre una población de problemas, y esta página **no la comprueba ni la contradice**: mide dos casos concretos y dice de qué depende cada uno.
+
+**Lo que viene de los libros.**
+
+- [*An Introduction to Statistical Learning with Applications in Python*](https://www.statlearning.com/) (James, Witten, Hastie, Tibshirani, Taylor; Springer, 2023), §6.3 *Dimension Reduction Methods*, §6.3.1 *Principal Components Regression* y §6.3.2 *Partial Least Squares* — citadas por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La Proposición 20.2 con la tabla de los tres perfiles en una sola fórmula, que convierte PCR de método aparte en un caso del mismo objeto que ridge, y el visual que los pone lado a lado con el mismo eje. El conjunto de datos de la Proposición 20.3, construido para que la señal viva en un contraste de poca varianza, con la correlación de cada componente con la respuesta impresa al lado de su porcentaje de varianza. Y el experimento de la sección 3, que mide **los dos regímenes con el mismo código** y convierte «depende del problema» en dos números: $0{,}0918$ contra $0{,}0918$ cuando la apuesta se cumple, y $3{,}0658$ contra $0{,}0931$ cuando no.
+
+[Índice de ISLP verificado el 13-09-2026 contra los marcadores del PDF oficial.]{.sello}
+:::
