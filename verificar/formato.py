@@ -114,6 +114,7 @@ MIGRADAS = {
     "series/01-descomposicion.qmd",
     "series/02-estacionariedad.qmd",
     "series/03-autocorrelacion.qmd",
+    "series/04-arima.qmd",
     "python/01-tipos-y-estructuras.qmd",
     "python/02-funciones-y-scope.qmd",
     "python/03-comprehensions.qmd",

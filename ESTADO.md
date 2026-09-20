@@ -37,7 +37,7 @@ Tres hitos de esta sesión:
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
 faltando lecciones por escribir: **ML va por 22 de 90**, **Series de tiempo
-va por 3 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
+va por 4 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
 
@@ -105,7 +105,7 @@ hay que empezar a hacer:
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
-| Series de tiempo | 3 | 11 | **3 de 3** | 4 a 11 |
+| Series de tiempo | 4 | 11 | **4 de 4** | 5 a 11 |
 | Machine Learning | 22 | 90 | **22 de 22** | la Fase 2 cerrada; quedan ESL y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
@@ -394,7 +394,7 @@ Lo que sigue, en orden de coste creciente:
    lección, y **no reaparece en ninguna fase posterior**. Deep Learning al
    menos se retoma en las lecciones 28 a 33; supervivencia no tiene red.
 
-3. **Series de tiempo ya no está vacía** —las lecciones 1 a 3 de 11 se
+3. **Series de tiempo ya no está vacía** —las lecciones 1 a 4 de 11 se
    publicaron el 19-09-2026, y no citan ningún libro porque ninguno del sitio
    cubre el tema—;
    **Inferencia causal sigue vacía** en el sidebar.
@@ -1852,6 +1852,65 @@ eso arrastraba el valor del ejercicio 2, de $1{,}944$ a $1{,}966$: se corrigió
 **antes** de publicar porque los números se leyeron de la corrida, no de la
 memoria. Y `simbolos.py`, ya nombrado en `CLAUDE.md`, encontró $\sigma$ sin
 declarar.
+
+### 3.30 Series de tiempo 04: un modelo de dos parámetros que es ruido blanco (19-09-2026)
+
+ARIMA suele presentarse como una caja con tres números que hay que acertar. La
+lección lo presenta con el resultado que explica por qué acertarlos no siempre
+es posible:
+
+> **4.3**: en un $\text{ARMA}(1,1)$ con $\theta=-\varphi$, la serie es
+> $y_t=\varepsilon_t$ **exactamente**, para cualquier $\varphi$.
+
+Se demuestra cancelando el factor común en un renglón, y se mide: sobre veinte
+mil réplicas, la ACF de ese modelo sale $-0{,}001085$ y la del ruido blanco puro
+$-0{,}002722$. **Son la misma serie.** Ningún criterio de información arregla
+eso, porque no hay nada que separar; la identificación de la lección 3 supone
+que los polinomios no comparten raíces, y ese supuesto es una hipótesis de
+trabajo.
+
+#### La tabla que traduce la decisión sobre $d$
+
+La otra pieza central enfrenta las dos fórmulas de la anchura del intervalo:
+
+| $h$ | AR(1), $\varphi=0{,}7$ | paseo aleatorio |
+|---|---|---|
+| 1 | $3{,}920000$ | $3{,}920000$ |
+| 50 | $5{,}489098$ | $27{,}718586$ |
+
+A un paso son idénticas. A cincuenta pasos el modelo estacionario sigue clavado
+en su techo $2\cdot1{,}96\,\sigma/\sqrt{1-\varphi^2}$ y el paseo va camino de
+infinito. **Esa es toda la diferencia práctica entre $d=0$ y $d=1$**: no cambia
+tanto el pronóstico central como lo que el modelo promete sobre él. Las dos
+fórmulas se demuestran desde la representación de media móvil y se comprueban
+por simulación sobre cuarenta mil series —$1{,}956300$ contra $1{,}960783$ y
+$19{,}965410$ contra $20$—.
+
+#### Yule-Walker, con la maquinaria de la lección anterior
+
+El sistema de Yule-Walker es el mismo que la recursión de Durbin-Levinson
+resuelve paso a paso, así que estimar un $\text{AR}(p)$ reutiliza lo ya
+construido. La tabla enseña la convergencia con todas sus letras: el error
+típico cae de $0{,}100122$ a $0{,}011944$, **dividiéndose por dos cada vez que
+$n$ se multiplica por cuatro**, que es $1/\sqrt{n}$ y nada más.
+
+Y $1-L^{s}$ recibe el mismo trato que la diferencia ordinaria: aniquila el
+periodo $s$ por debajo de $10^{-12}$, deja $bs$ sobre una recta, y sobre ruido
+blanco duplica la varianza dejando $-0{,}4780$ en el retardo doce. **La firma
+$-1/2$ de la Proposición 2.4, ahora en el retardo estacional.**
+
+#### La regla 19b otra vez, y por qué el arreglo mejoró la lección
+
+El segundo visual tenía un control de semilla, y la serie por defecto
+—estacionalidad pura— es determinista: la semilla no movía un píxel.
+`visuales.py` lo marcó.
+
+El arreglo no fue cambiar la serie por defecto sino **cambiar el control**: en
+su lugar hay un deslizador de *ruido añadido*. Con el ruido en cero la
+Proposición 4.7a se ve al pie de la letra —la diferencia estacional deja cero
+exacto— y subiéndolo se ve que **la aniquilación es exacta solo mientras el
+perfil lo sea**, que es justamente la advertencia que la sección necesitaba.
+Un control roto obligó a encontrar el control que faltaba.
 
 ---
 

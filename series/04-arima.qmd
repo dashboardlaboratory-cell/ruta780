@@ -1,0 +1,708 @@
+---
+title: "ARIMA y SARIMA, derivados"
+subtitle: "Series de tiempo · Lección 4"
+nivel: L3
+modulo: series
+fase: F3
+prereqs: [series/03-autocorrelacion, series/02-estacionariedad, matematica/06-minimos-cuadrados]
+siguientes: []
+libro: "—"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="series/04-arima"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F3]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Autocorrelación](03-autocorrelacion.qmd) · [Estacionariedad](02-estacionariedad.qmd) · [Mínimos cuadrados](../matematica/06-minimos-cuadrados.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Escribir un modelo [ARIMA]{.g data-t="arima"} con sus tres órdenes y decir qué hace cada uno.
+2. **Demostrar que un autorregresivo de orden uno es una media móvil infinita**, y acotar el error de truncarla.
+3. **Demostrar que los órdenes de un ARMA no siempre se pueden identificar**, exhibiendo un modelo de dos parámetros que es ruido blanco.
+4. Estimar los coeficientes de un $\text{AR}(p)$ resolviendo el sistema de [Yule-Walker]{.g data-t="ecuaciones de yule-walker"} desde la ACF.
+5. **Demostrar que el intervalo de pronóstico de un modelo estacionario tiene techo y el de uno con raíz unitaria no**, con las dos fórmulas.
+6. Aplicar la diferencia estacional, decir qué aniquila exactamente y reconocer cuándo sobra.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Series de tiempo 3**: la ACF y la PACF, que dan los órdenes $p$ y $q$ cuando se cortan.
+- **Series de tiempo 2**: la diferenciación y su exceso, que aquí se convierte en el orden $d$.
+- **Series de tiempo 1**: la descomposición, cuya estacionalidad reaparece como el operador $1-L^{s}$.
+- **Álgebra 6**: los mínimos cuadrados y los sistemas lineales, que es lo que Yule-Walker resuelve.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Series de tiempo 5**: el suavizado exponencial, que resulta ser un ARIMA disfrazado.
+- **Series de tiempo 7**: el backtesting, que necesita un modelo que reajustar en cada corte.
+- **Series de tiempo 9**: Prophet, cuya alternativa a este modelo se entiende por contraste.
+- **Series de tiempo 11**: la evaluación, donde los intervalos de esta lección se comprueban contra lo que pasó.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $y_t$ | y sub te | El valor observado en el instante $t$ |
+| $n$ | ene | La longitud de la serie |
+| $h$ | hache | El horizonte del pronóstico, en pasos hacia adelante |
+| $L$ | ele mayúscula | El operador de retardo: $Ly_t=y_{t-1}$ |
+| $\varepsilon_t$ | épsilon sub te | Una sacudida nueva, independiente del pasado |
+| $\sigma^2$ | sigma cuadrado | La varianza de $\varepsilon_t$ |
+| $p$ | pe | El orden autorregresivo |
+| $d$ | de | El número de diferencias aplicadas |
+| $q$ | cu | El orden de media móvil |
+| $s$ | ese | El periodo estacional, en número de observaciones |
+| $\varphi_j$ | fi sub jota | Los coeficientes autorregresivos |
+| $\theta_j$ | theta sub jota | Los coeficientes de media móvil |
+| $\rho_h$ | ro sub hache | La autocorrelación a distancia $h$ |
+| $\Phi(z)$ | fi de zeta | El polinomio autorregresivo $1-\varphi_1z-\dots-\varphi_pz^p$ |
+| $\Theta(z)$ | theta de zeta | El polinomio de media móvil $1+\theta_1z+\dots+\theta_qz^q$ |
+| $\gamma_h$ | gamma sub hache | La autocovarianza a distancia $h$; $\gamma_0$ es la varianza |
+:::
+
+## 1. El modelo, y por qué un AR es también un MA
+
+::: {.definicion}
+**Definición 4.1 (ARMA y ARIMA).** Una serie sigue un $\text{ARMA}(p,q)$ cuando
+$$\Phi(L)\,y_t=\Theta(L)\,\varepsilon_t,\qquad
+\Phi(z)=1-\sum_{j=1}^{p}\varphi_j z^j,\quad \Theta(z)=1+\sum_{j=1}^{q}\theta_j z^j .$$
+Sigue un $\text{ARIMA}(p,d,q)$ cuando $(1-L)^d y_t$ sigue un $\text{ARMA}(p,q)$. El modelo es **estacionario** si las raíces de $\Phi$ caen fuera del círculo unidad, e **invertible** si las de $\Theta$ también.
+:::
+
+Las dos condiciones dicen lo mismo desde dos lados, y la primera tiene una consecuencia que conviene ver entera.
+
+::: {.proposicion}
+**Proposición 4.2 (todo AR estacionario es un MA infinito).** Si $y_t=\varphi y_{t-1}+\varepsilon_t$ con $|\varphi|<1$, entonces
+$$y_t=\sum_{j=0}^{\infty}\varphi^{\,j}\varepsilon_{t-j},$$
+serie que converge en media cuadrática. Truncándola en $J$ términos, la varianza que queda fuera vale
+$$\sum_{j=J+1}^{\infty}\varphi^{2j}\sigma^2=\sigma^2\frac{\varphi^{2(J+1)}}{1-\varphi^{2}} .$$
+:::
+
+::: {.demostracion}
+*Demostración.* Sustituyendo $y_{t-1}$ por su propia ecuación $k$ veces,
+$$y_t=\sum_{j=0}^{k}\varphi^{\,j}\varepsilon_{t-j}+\varphi^{\,k+1}y_{t-k-1},$$
+y el resto tiene varianza $\varphi^{2(k+1)}\gamma_0\to0$ porque $|\varphi|<1$. La cola es una serie geométrica de razón $\varphi^2$, cuya suma desde $J+1$ vale $\varphi^{2(J+1)}/(1-\varphi^2)$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+phi = 0.7
+
+print("el AR(1) escrito como media movil: y_t = suma de phi^j e_{t-j}")
+print("  terminos    varianza que falta    porcentaje del total")
+for J in (5, 10, 20, 40):
+    cola = phi ** (2 * (J + 1)) / (1 - phi ** 2)
+    print("    %2d        %.10f          %.6f %%" % (J, cola, 100 * cola * (1 - phi ** 2)))
+print()
+print("con 20 terminos falta el 0.000031 % de la varianza: la cola es")
+print("geometrica y por eso un AR(1) se puede truncar sin perder nada")
+```
+
+Con veinte términos queda fuera el $0{,}000031\,\%$ de la varianza. Esa convergencia geométrica es lo que permite que un modelo con un solo parámetro represente memoria de cualquier longitud práctica, y también lo que hace posible la estimación de la sección 3.
+
+## 2. Un modelo de dos parámetros que es ruido blanco
+
+::: {.proposicion}
+**Proposición 4.3 (los órdenes no siempre se pueden identificar).** Considérese el $\text{ARMA}(1,1)$
+$$y_t=\varphi\,y_{t-1}+\varepsilon_t+\theta\,\varepsilon_{t-1}.$$
+Si $\theta=-\varphi$, entonces $y_t=\varepsilon_t$ **exactamente**: la serie es ruido blanco para cualquier valor de $\varphi$.
+:::
+
+::: {.demostracion}
+*Demostración.* En forma de polinomios, $(1-\varphi L)y_t=(1+\theta L)\varepsilon_t$. Con $\theta=-\varphi$ los dos polinomios coinciden, $(1-\varphi L)y_t=(1-\varphi L)\varepsilon_t$, y como $1-\varphi L$ es invertible cuando $|\varphi|<1$, se puede aplicar su inverso a los dos lados y queda $y_t=\varepsilon_t$. [∎]{.fin-demo}
+:::
+
+La consecuencia es incómoda y conviene decirla sin rodeos: **existen familias enteras de modelos distintos que generan exactamente los mismos datos**. Ningún criterio, ningún algoritmo y ninguna cantidad de observaciones puede separarlos, porque no hay nada que separar. La identificación de la lección 3 funciona cuando los polinomios no comparten raíces, y ese supuesto es una hipótesis de trabajo, no un teorema.
+
+```{pyodide}
+import numpy as np
+
+def acf_lote(Y, K):
+    """Las K primeras autocorrelaciones muestrales de cada fila."""
+    r = Y - Y.mean(axis=1, keepdims=True)
+    den = (r * r).sum(axis=1)
+    return np.column_stack([(r[:, h:] * r[:, :-h]).sum(axis=1) / den for h in range(1, K + 1)])
+
+rng = np.random.default_rng(71)
+B, n = 20000, 400
+
+print("tres ARMA(1,1), veinte mil replicas de 400 puntos")
+print("   phi    theta    ACF en los retardos 1 a 4                              varianza")
+for ph, th in ((0.7, -0.7), (0.7, -0.3), (0.0, 0.0)):
+    e = rng.normal(0, 1, (B, n + 1))
+    y = np.empty((B, n))
+    y[:, 0] = e[:, 1] + th * e[:, 0]
+    for t in range(1, n):
+        y[:, t] = ph * y[:, t - 1] + e[:, t + 1] + th * e[:, t]
+    r = acf_lote(y, 4).mean(axis=0)
+    print("  %+.1f    %+.1f    %s    %.4f" % (ph, th, "  ".join("%+.6f" % v for v in r), y.var()))
+print()
+print("la primera fila es un ARMA(1,1) con dos parametros no nulos y resulta")
+print("INDISTINGUIBLE del ruido blanco de la tercera. El factor comun se")
+print("cancela y no hay dato que permita separar los dos modelos")
+```
+
+La primera fila tiene $\varphi=0{,}7$ y $\theta=-0{,}7$, y su ACF medida sobre veinte mil réplicas vale $-0{,}001085$, $-0{,}001226$, $-0{,}001732$ y $-0{,}001984$, con varianza $1{,}0031$. La tercera fila es ruido blanco puro y da $-0{,}002722$, $-0{,}002291$, $-0{,}002118$ y $-0{,}002030$, con varianza $1{,}0003$. **Son la misma serie.** La segunda fila, con $\theta=-0{,}3$, sí es un ARMA de verdad, y su ACF decae desde $0{,}461212$.
+
+## 3. Estimar desde la ACF: Yule-Walker
+
+Multiplicando la ecuación de un $\text{AR}(p)$ por $y_{t-k}$ y tomando esperanzas se obtiene, para $k=1,\dots,p$,
+$$\rho_k=\varphi_1\rho_{k-1}+\varphi_2\rho_{k-2}+\dots+\varphi_p\rho_{k-p},$$
+un sistema lineal de $p$ ecuaciones con $p$ incógnitas cuya matriz es la de Toeplitz de las autocorrelaciones. Sustituyendo $\rho_k$ por $\hat\rho_k$ queda un estimador. Es el mismo sistema que la recursión de Durbin-Levinson de la lección 3 resuelve paso a paso, y por eso la PACF y estos coeficientes comparten maquinaria.
+
+```{pyodide}
+import numpy as np
+
+def acf_1(x, K):
+    r = x - x.mean()
+    den = (r * r).sum()
+    return np.array([(r[h:] * r[:-h]).sum() / den for h in range(1, K + 1)])
+
+def yule_walker(r, p):
+    """Resuelve el sistema de Yule-Walker con la matriz de Toeplitz de la ACF."""
+    R = np.array([[1.0 if i == j else r[abs(i - j) - 1] for j in range(p)] for i in range(p)])
+    return np.linalg.solve(R, r[:p])
+
+rng = np.random.default_rng(81)
+verdad = (0.6, -0.35)
+
+print("un AR(2) con phi1 = 0.60 y phi2 = -0.35, estimado desde su ACF")
+print("      n      phi1 medio     phi2 medio    error tipico de phi1")
+for n in (100, 400, 1600, 6400):
+    est = []
+    for _ in range(400):
+        e = rng.normal(0, 1, n + 50)
+        y = np.zeros(n + 50)
+        for t in range(2, n + 50):
+            y[t] = verdad[0] * y[t - 1] + verdad[1] * y[t - 2] + e[t]
+        est.append(yule_walker(acf_1(y[50:], 4), 2))
+    est = np.array(est)
+    print("  %5d      %+.6f      %+.6f         %.6f" % (n, est[:, 0].mean(), est[:, 1].mean(), est[:, 0].std()))
+print()
+print("al multiplicar n por cuatro el error tipico se parte por dos: es la")
+print("velocidad de siempre, 1/raiz(n), y el sesgo se va con ella")
+```
+
+Con cien observaciones el primer coeficiente sale en $0{,}577865$ frente al $0{,}60$ verdadero; con seis mil cuatrocientas, en $0{,}600605$. El error típico pasa de $0{,}100122$ a $0{,}011944$, dividiéndose por dos cada vez que $n$ se multiplica por cuatro: **la velocidad $1/\sqrt{n}$ de siempre**. El sesgo inicial hacia cero es el que la Proposición 3.2 anticipaba, y se va al mismo ritmo.
+
+## 4. Lo que de verdad cambia entre $d=0$ y $d=1$
+
+::: {.proposicion}
+**Proposición 4.4 (el intervalo de un modelo estacionario tiene techo).** Para $y_t=\varphi y_{t-1}+\varepsilon_t$ con $|\varphi|<1$, el mejor pronóstico a $h$ pasos desde $y_n$ es $\varphi^{\,h}y_n$, y la varianza del error vale
+$$\sigma^2\,\frac{1-\varphi^{2h}}{1-\varphi^{2}}\ \xrightarrow[h\to\infty]{}\ \frac{\sigma^2}{1-\varphi^{2}},$$
+que es la varianza incondicional de la serie.
+:::
+
+::: {.proposicion}
+**Proposición 4.5 (el de una raíz unitaria no lo tiene).** Para $y_t=y_{t-1}+\varepsilon_t$, el mejor pronóstico a $h$ pasos es $y_n$ para todo $h$, y la varianza del error vale $h\,\sigma^2$, que **crece sin tope**.
+:::
+
+::: {.demostracion}
+*Demostración.* En los dos casos el error de pronóstico es la suma de las sacudidas que aún no han ocurrido, pesadas por los coeficientes de la representación de media móvil de la Proposición 4.2. Para el $\text{AR}(1)$ esos pesos son $1,\varphi,\dots,\varphi^{h-1}$, de modo que la varianza es $\sigma^2\sum_{j<h}\varphi^{2j}=\sigma^2(1-\varphi^{2h})/(1-\varphi^2)$. Para el paseo aleatorio todos los pesos valen uno y la suma es $h\sigma^2$. Los pronósticos salen de tomar esperanza condicional, que anula las sacudidas futuras. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+sig, phi = 1.0, 0.7
+
+print("anchura del intervalo al 95 % a h pasos, con sigma = 1")
+print("    h     AR(1) phi=0.7            paseo aleatorio")
+print("          varianza   amplitud      varianza   amplitud")
+for h in (1, 2, 5, 10, 20, 50):
+    va = sig * (1 - phi ** (2 * h)) / (1 - phi ** 2)
+    vp = h * sig
+    print("   %2d     %8.6f  %8.6f      %8.6f  %8.6f" % (h, va, 2 * 1.96 * np.sqrt(va), vp, 2 * 1.96 * np.sqrt(vp)))
+print()
+print("el AR(1) tiene techo: sigma^2/(1-phi^2) = %.6f, amplitud %.6f"
+      % (1 / (1 - phi ** 2), 2 * 1.96 * np.sqrt(1 / (1 - phi ** 2))))
+print("el paseo no lo tiene: su intervalo crece como raiz(h) para siempre")
+print()
+
+rng = np.random.default_rng(83)
+B = 40000
+e = rng.normal(0, 1, (B, 80))
+y = np.empty((B, 80))
+y[:, 0] = e[:, 0]
+for t in range(1, 80):
+    y[:, t] = phi * y[:, t - 1] + e[:, t]
+p = np.cumsum(rng.normal(0, 1, (B, 80)), axis=1)
+
+print("comprobacion por simulacion, cuarenta mil series:")
+for h in (1, 5, 20):
+    ea = (y[:, 29 + h] - phi ** h * y[:, 29]).var()
+    ep = (p[:, 29 + h] - p[:, 29]).var()
+    print("  h=%2d   AR(1) medida %8.6f formula %8.6f   paseo medida %9.6f formula %9.6f"
+          % (h, ea, (1 - phi ** (2 * h)) / (1 - phi ** 2), ep, float(h)))
+```
+
+A un paso los dos modelos dan la misma amplitud, $3{,}920000$. A cincuenta pasos el $\text{AR}(1)$ sigue en $5{,}489098$ y el paseo aleatorio va por $27{,}718586$, camino de infinito. **Esa es toda la diferencia práctica entre elegir $d=0$ y $d=1$**, y explica por qué la decisión de la lección 2 importa tanto: no cambia el pronóstico central tanto como cambia lo que se promete sobre él.
+
+Conviene notar el otro lado de la Proposición 4.4: el pronóstico $\varphi^{\,h}y_n$ **tiende a la media** al alejarse el horizonte. Un modelo estacionario, pasado su tiempo de memoria, deja de decir nada sobre el futuro más allá del promedio histórico, y su intervalo lo reconoce quedándose en la varianza incondicional.
+
+```{=html}
+<div class="viz-abanico">
+  <div class="controles">
+    <label>Coeficiente φ <input id="ab-f" type="range" min="0" max="1" step="0.02" value="0.70"> <span id="ab-f-v">0.70</span></label>
+    <label>Horizonte <input id="ab-h" type="range" min="4" max="60" step="2" value="30"> <span id="ab-h-v">30</span></label>
+    <label>Último valor <input id="ab-y" type="range" min="-3" max="3" step="0.25" value="2.00"> <span id="ab-y-v">2.00</span></label>
+  </div>
+  <svg id="ab-svg" viewBox="0 0 660 260" role="img" aria-label="El pronóstico a varios pasos con su banda al 95 por ciento, que se estabiliza cuando el coeficiente es menor que uno y se abre sin tope cuando vale uno."></svg>
+  <p class="lectura" id="ab-lectura"></p>
+</div>
+<style>
+.viz-abanico { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-abanico .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-abanico label { display: flex; align-items: center; gap: .4rem; }
+.viz-abanico input[type=range] { width: 150px; padding: 0; }
+.viz-abanico svg { width: 100%; height: auto; display: block; }
+.viz-abanico .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("ab-svg"), lec = document.getElementById("ab-lectura");
+  var cf = document.getElementById("ab-f"), ch = document.getElementById("ab-h"), cy = document.getElementById("ab-y");
+  var ef = document.getElementById("ab-f-v"), eh = document.getElementById("ab-h-v"), ey = document.getElementById("ab-y-v");
+  var X0 = 46, XW = 574, Y0 = 20, YH = 200, LO = -14, HI = 14, PAS = 12;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function sacudidas(n) {
+    var s = 424242, out = [], i, u1, u2;
+    function u() { s = (s * 48271) % 2147483647; return s / 2147483647; }
+    for (i = 0; i < n; i++) {
+      u1 = Math.max(u(), 1e-9); u2 = u();
+      out.push(Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2));
+    }
+    return out;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var f = +cf.value, H = +ch.value, yn = +cy.value;
+    ef.textContent = f.toFixed(2); eh.textContent = H; ey.textContent = yn.toFixed(2);
+    // el marco es fijo: no sigue a los datos (regla 19b)
+    var total = PAS + H;
+    var px = function (i) { return X0 + i / (total - 1) * XW; };
+    var py = function (v) { return Y0 + (HI - Math.max(LO, Math.min(HI, v))) / (HI - LO) * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + (X0 + XW) + " " + py(0).toFixed(1), stroke: C_L, "stroke-width": 1, "stroke-dasharray": "3 3" }));
+
+    // el pasado: doce puntos que terminan en el ultimo valor elegido
+    var e = sacudidas(PAS), pasado = [], i, v = yn;
+    for (i = PAS - 1; i >= 0; i--) { pasado[i] = v; v = (v - e[i] * 0.7) * (f > 0.02 ? 1 / Math.max(f, 0.3) : 1); v = Math.max(-10, Math.min(10, v)); }
+    pasado[PAS - 1] = yn;
+    var d = "";
+    for (i = 0; i < PAS; i++) d += (i ? " L" : "M") + px(i).toFixed(1) + " " + py(pasado[i]).toFixed(1);
+    svg.appendChild(el("path", { d: d, stroke: C_T, "stroke-width": 1.5, fill: "none" }));
+    svg.appendChild(el("path", { d: "M" + px(PAS - 1).toFixed(1) + " " + Y0 + " L" + px(PAS - 1).toFixed(1) + " " + (Y0 + YH), stroke: C_L, "stroke-width": 1 }));
+
+    // el futuro: pronostico y banda
+    var arriba = "", abajo = "", centro = "", va, amp, ult = 0;
+    for (i = 0; i <= H; i++) {
+      var pred = Math.pow(f, i) * yn;
+      va = Math.abs(1 - f) < 1e-9 ? i : (1 - Math.pow(f, 2 * i)) / (1 - f * f);
+      amp = 1.96 * Math.sqrt(va);
+      ult = 2 * amp;
+      var X = px(PAS - 1 + i);
+      centro += (i ? " L" : "M") + X.toFixed(1) + " " + py(pred).toFixed(1);
+      arriba += (i ? " L" : "M") + X.toFixed(1) + " " + py(pred + amp).toFixed(1);
+      abajo = " L" + X.toFixed(1) + " " + py(pred - amp).toFixed(1) + abajo;
+    }
+    svg.appendChild(el("path", { d: arriba + abajo + " Z", fill: C_A, opacity: .16, stroke: "none" }));
+    svg.appendChild(el("path", { d: centro, stroke: C_B, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("text", { x: X0 - 6, y: py(0) + 4, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "0"));
+    svg.appendChild(el("text", { x: X0 + XW - 4, y: Y0 + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 },
+      "amplitud a " + H + " pasos: " + ult.toFixed(4)));
+
+    var techo = Math.abs(1 - f) < 1e-9 ? null : 2 * 1.96 / Math.sqrt(1 - f * f);
+    lec.innerHTML = "Con φ = <strong>" + f.toFixed(2) + "</strong>, el pronóstico a " + H + " pasos vale <strong>" +
+      (Math.pow(f, H) * yn).toFixed(4) + "</strong> y su intervalo mide <strong>" + ult.toFixed(4) + "</strong>. " +
+      (techo === null
+        ? "Con φ = 1 el modelo es un paseo aleatorio: el pronóstico se queda clavado en el último valor y la banda <strong>crece como √h sin tope</strong>. Es la Proposición 4.5."
+        : "El techo de la banda es 2·1,96·σ/√(1−φ²) = <strong>" + techo.toFixed(4) + "</strong>, y a este horizonte ya se ha alcanzado casi del todo. El pronóstico, mientras tanto, vuelve a la media. Es la Proposición 4.4.");
+  }
+  cf.addEventListener("input", dibujar);
+  ch.addEventListener("input", dibujar);
+  cy.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. La parte estacional
+
+::: {.definicion}
+**Definición 4.6 (SARIMA).** Un $\text{SARIMA}(p,d,q)\times(P,D,Q)_s$ aplica, además de los operadores de la Definición 4.1, sus versiones estacionales en potencias de $L^{s}$:
+$$\Phi(L)\,\Phi_s(L^{s})\,(1-L)^{d}(1-L^{s})^{D}\,y_t=\Theta(L)\,\Theta_s(L^{s})\,\varepsilon_t .$$
+:::
+
+El operador $1-L^{s}$ merece mirarse aparte, porque tiene la misma propiedad exacta que la media móvil de la lección 1 y el mismo defecto que la diferencia ordinaria de la lección 2.
+
+::: {.proposicion}
+**Proposición 4.7 (la diferencia estacional).** Sea $\Delta_s y_t=y_t-y_{t-s}$.
+
+(a) Si $S_t$ es periódica de periodo $s$, entonces $\Delta_s S_t=0$ **exactamente**.
+
+(b) Sobre una recta $a+bt$, $\Delta_s$ deja la constante $bs$.
+
+(c) Si $y_t$ ya era estacionaria, $\Delta_s y_t$ tiene el **doble** de varianza y autocorrelación $-1/2$ en el retardo $s$.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (a), $S_t=S_{t-s}$ por definición de periodicidad. Para (b), $a+bt-(a+b(t-s))=bs$. Para (c), es la Proposición 2.4 aplicada al operador $1-L^{s}$ en lugar de $1-L$: la varianza es $2(\gamma_0-\gamma_s)=2\gamma_0$ cuando $\gamma_s=0$, y la autocovarianza en el retardo $s$ vale $-\gamma_0$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+s = 12
+t = np.arange(120)
+perfil = np.array([2.0, 3.1, 1.4, -0.6, -2.2, -3.0, -2.4, -0.9, 0.7, 1.8, 1.1, -0.9])
+perfil = perfil - perfil.mean()
+est = perfil[t % s]
+
+d = est[s:] - est[:-s]
+print("la diferencia estacional (1 - L^12) sobre una estacional pura:")
+print("  maximo valor absoluto por debajo de 1e-12: %s" % bool(np.abs(d).max() < 1e-12))
+
+x = 0.05 * t + est
+d = x[s:] - x[:-s]
+print("sobre estacional + recta de pendiente 0.05:")
+print("  deja la constante 12*0.05 = %.6f, con desviacion %.12f" % (d.mean(), d.std()))
+print()
+
+rng = np.random.default_rng(82)
+B, n = 4000, 300
+W = rng.normal(0, 1, (B, n))
+D = W[:, s:] - W[:, :-s]
+r = D - D.mean(axis=1, keepdims=True)
+rho_s = ((r[:, s:] * r[:, :-s]).sum(axis=1) / (r * r).sum(axis=1)).mean()
+
+print("pero tambien sobre-diferencia, igual que la diferencia de orden uno:")
+print("  ruido blanco: varianza %.4f, tras (1 - L^12) %.4f" % (W.var(), D.var()))
+print("  y su autocorrelacion en el retardo 12 vale %.4f, la firma -1/2" % rho_s)
+```
+
+Sobre una estacionalidad pura la diferencia estacional da cero por debajo de $10^{-12}$, y sobre una recta con estacionalidad deja exactamente la constante $0{,}600000$ con desviación nula. Pero aplicada a ruido blanco duplica la varianza —$1{,}0019$ pasa a $2{,}0044$— y deja autocorrelación $-0{,}4780$ en el retardo doce: **la misma firma $-1/2$ de la Proposición 2.4**, ahora en el retardo estacional. El criterio de la lección 2 vale igual: si tras diferenciar estacionalmente aparece esa firma, la diferencia sobraba.
+
+```{=html}
+<div class="viz-operadores">
+  <div class="controles">
+    <label>Serie
+      <select id="op-s">
+        <option value="est" selected>estacionalidad pura</option>
+        <option value="recta">recta + estacionalidad</option>
+        <option value="paseo">paseo + estacionalidad</option>
+        <option value="blanco">ruido blanco</option>
+      </select>
+    </label>
+    <label>Operador
+      <select id="op-o">
+        <option value="nada" selected>ninguno</option>
+        <option value="d1">(1 − L)</option>
+        <option value="d12">(1 − L¹²)</option>
+        <option value="ambos">los dos</option>
+      </select>
+    </label>
+    <label>Ruido añadido <input id="op-r" type="range" min="0" max="1.5" step="0.1" value="0.0"> <span id="op-r-v">0.0</span></label>
+  </div>
+  <svg id="op-svg" viewBox="0 0 660 270" role="img" aria-label="La serie tras aplicarle el operador elegido y debajo su autocorrelación por retardo, con el retardo doce señalado."></svg>
+  <p class="lectura" id="op-lectura"></p>
+</div>
+<style>
+.viz-operadores { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-operadores .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-operadores label { display: flex; align-items: center; gap: .4rem; }
+.viz-operadores input[type=range] { width: 130px; padding: 0; }
+.viz-operadores select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-operadores svg { width: 100%; height: auto; display: block; }
+.viz-operadores .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("op-svg"), lec = document.getElementById("op-lectura");
+  var cs = document.getElementById("op-s"), co = document.getElementById("op-o"), cr = document.getElementById("op-r");
+  var er = document.getElementById("op-r-v");
+  var X0 = 46, XW = 574, N = 144, S = 12, LAGS = 24;
+  var perfil = [2.0, 3.1, 1.4, -0.6, -2.2, -3.0, -2.4, -0.9, 0.7, 1.8, 1.1, -0.9];
+  var mp = 0, k;
+  for (k = 0; k < S; k++) mp += perfil[k];
+  mp /= S;
+  for (k = 0; k < S; k++) perfil[k] -= mp;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var kk in at) e.setAttribute(kk, at[kk]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function sacudidas(semilla, n) {
+    var s = semilla * 6151 + 7, out = [], i, u1, u2;
+    function u() { s = (s * 48271) % 2147483647; return s / 2147483647; }
+    for (i = 0; i < n; i++) {
+      u1 = Math.max(u(), 1e-9); u2 = u();
+      out.push(Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2));
+    }
+    return out;
+  }
+  function acf(x, K) {
+    var n = x.length, m = 0, i, j, den = 0, out = [];
+    for (i = 0; i < n; i++) m += x[i];
+    m /= n;
+    for (i = 0; i < n; i++) den += (x[i] - m) * (x[i] - m);
+    for (j = 1; j <= K; j++) {
+      var sm = 0;
+      for (i = j; i < n; i++) sm += (x[i] - m) * (x[i - j] - m);
+      out.push(den < 1e-12 ? 0 : sm / den);
+    }
+    return out;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var tipo = cs.value, op = co.value, ruido = +cr.value;
+    er.textContent = ruido.toFixed(1);
+    // el ruido anadido es lo que separa un perfil exactamente periodico de uno
+    // medido: con ruido 0 la Proposicion 4.7a se cumple al pie de la letra
+    var e = sacudidas(7, N), g = sacudidas(23, N), x = [], acu = 0, i;
+    for (i = 0; i < N; i++) {
+      if (tipo === "est") x.push(perfil[i % S] + ruido * g[i]);
+      else if (tipo === "recta") x.push(0.05 * i + perfil[i % S] + ruido * g[i]);
+      else if (tipo === "paseo") { acu += e[i]; x.push(acu + perfil[i % S] + ruido * g[i]); }
+      else x.push(e[i] + ruido * g[i]);
+    }
+    var z = x.slice();
+    if (op === "d1" || op === "ambos") { var a = []; for (i = 1; i < z.length; i++) a.push(z[i] - z[i - 1]); z = a; }
+    if (op === "d12" || op === "ambos") { var b = []; for (i = S; i < z.length; i++) b.push(z[i] - z[i - S]); z = b; }
+
+    var lo = Math.min.apply(null, z), hi = Math.max.apply(null, z);
+    if (hi - lo < 1e-9) { lo -= 1; hi += 1; }
+    var pad = (hi - lo) * 0.12; lo -= pad; hi += pad;
+    var PY = 20, PH = 116;
+    var px = function (i2) { return X0 + i2 / (z.length - 1) * XW; };
+    var py = function (v) { return PY + (hi - v) / (hi - lo) * PH; };
+    svg.appendChild(el("rect", { x: X0, y: PY, width: XW, height: PH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    if (lo < 0 && hi > 0) svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + (X0 + XW) + " " + py(0).toFixed(1), stroke: C_L, "stroke-width": 1, "stroke-dasharray": "3 3" }));
+    var d = "";
+    for (i = 0; i < z.length; i++) d += (i ? " L" : "M") + px(i).toFixed(1) + " " + py(z[i]).toFixed(1);
+    svg.appendChild(el("path", { d: d, stroke: C_T, "stroke-width": 1.5, fill: "none" }));
+    svg.appendChild(el("text", { x: X0 + XW - 4, y: PY + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 },
+      z.length + " puntos, amplitud " + (hi - lo).toFixed(3)));
+
+    var r = acf(z, LAGS), QY = 158, QH = 84;
+    var qy = function (v) { return QY + (1.05 - Math.max(-1.05, Math.min(1.05, v))) / 2.1 * QH; };
+    svg.appendChild(el("rect", { x: X0, y: QY, width: XW, height: QH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + qy(0).toFixed(1) + " L" + (X0 + XW) + " " + qy(0).toFixed(1), stroke: C_L, "stroke-width": 1 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + qy(-0.5).toFixed(1) + " L" + (X0 + XW) + " " + qy(-0.5).toFixed(1), stroke: C_B, "stroke-width": 1, "stroke-dasharray": "5 3", opacity: .7 }));
+    for (i = 0; i < LAGS; i++) {
+      var bx = X0 + (i + 0.5) / LAGS * XW;
+      svg.appendChild(el("path", { d: "M" + bx.toFixed(1) + " " + qy(0).toFixed(1) + " L" + bx.toFixed(1) + " " + qy(r[i]).toFixed(1),
+        stroke: i === S - 1 ? C_B : C_A, "stroke-width": 4 }));
+    }
+    svg.appendChild(el("text", { x: X0 - 6, y: QY + 12, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "ρ"));
+    svg.appendChild(el("text", { x: X0 + XW, y: QY + QH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "retardo 1 … " + LAGS + ", el 12 marcado"));
+
+    var r12 = r[S - 1], nom = { est: "estacionalidad pura", recta: "recta + estacionalidad", paseo: "paseo + estacionalidad", blanco: "ruido blanco" }[tipo];
+    var texto = "Sobre <strong>" + nom + "</strong> con ruido añadido " + ruido.toFixed(1) + ", tras el operador elegido la autocorrelación en el retardo 12 vale <strong>" + r12.toFixed(4) + "</strong>. ";
+    if (op === "nada") texto += "Sin operador se ve el pico estacional de siempre, que es lo que hay que quitar antes de modelar.";
+    else if (r12 < -0.35) texto += "Está pegada a la línea de <strong>−0,5</strong>: la diferencia estacional <strong>sobraba</strong>, y lo que se ve es la firma de la Proposición 4.7c, no estructura de los datos.";
+    else if (op === "d12" && tipo === "est" && ruido < 0.05) texto += "La serie ha quedado en cero exacto: la Proposición 4.7a en el dibujo. Subiendo el ruido añadido se ve que la aniquilación es exacta solo mientras el perfil lo sea.";
+    else texto += "El pico del retardo 12 ha desaparecido sin dejar la firma de −0,5, que es justo lo que se busca antes de ajustar un modelo.";
+    lec.innerHTML = texto;
+  }
+  cs.addEventListener("change", dibujar);
+  co.addEventListener("change", dibujar);
+  cr.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 6. Lo que esta lección no resuelve
+
+- **La estimación por máxima verosimilitud queda fuera.** Yule-Walker sirve para un $\text{AR}(p)$ puro; en cuanto hay parte de media móvil hace falta optimizar una verosimilitud, y eso exige maquinaria que esta página no monta.
+- **La selección de órdenes no se trata.** Los criterios de información se vieron en Estadística 21 y aquí no se repiten; con la Proposición 4.3 sobre la mesa, además, ningún criterio arregla un modelo no identificable.
+- **Los intervalos suponen que el modelo es correcto.** Las fórmulas de las Proposiciones 4.4 y 4.5 dan la varianza del error **si los coeficientes fueran conocidos**; estimarlos añade incertidumbre que estas bandas no incluyen.
+- **La estacionalidad se supone fija.** $1-L^{s}$ la aniquila solo si el perfil no cambia; si cambia despacio, lo que queda es una serie con memoria estacional residual.
+- **Y nada de esto contempla eventos.** Un feriado móvil no tiene periodo fijo, así que ningún operador en potencias de $L$ lo captura. Es la lección 6.
+
+## Ejercicios
+
+### Ejercicio 1, Dónde se estabiliza el intervalo
+
+Con la Proposición 4.4, calcular a cuántos pasos el intervalo de un $\text{AR}(1)$ con $\varphi=0{,}9$ alcanza el $99\,\%$ de su techo.
+
+```{pyodide}
+#| exercise: ex_techo
+phi = 0.9
+
+def fraccion(h):
+    """Que fraccion del techo alcanza la desviacion a h pasos."""
+    return ______
+
+h = 1
+while fraccion(h) < 0.99:
+    h = ______
+
+print(h, round(fraccion(h), 6))
+int(h)
+```
+
+::: {.hint exercise="ex_techo"}
+La varianza a $h$ pasos es $(1-\varphi^{2h})/(1-\varphi^2)$ y el techo es $1/(1-\varphi^2)$, así que la fracción de la **desviación** es $\sqrt{1-\varphi^{2h}}$.
+:::
+
+::: {.solution exercise="ex_techo"}
+```{pyodide}
+phi = 0.9
+
+def fraccion(h):
+    """Que fraccion del techo alcanza la desviacion a h pasos."""
+    return (1 - phi ** (2 * h)) ** 0.5
+
+h = 1
+while fraccion(h) < 0.99:
+    h = h + 1
+
+print(h, round(fraccion(h), 6))
+int(h)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_techo
+#| check: true
+if result == 19:
+    feedback = {"correct": True, "message": "Correcto: a 19 pasos. Con φ = 0,9 el intervalo deja de crecer en la práctica antes de los veinte pasos, y a partir de ahí el modelo solo promete la varianza histórica.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 19 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, El factor común
+
+Comprobar la Proposición 4.3 simulando un $\text{ARMA}(1,1)$ con $\varphi=0{,}5$ y $\theta=-0{,}5$ y midiendo la mayor autocorrelación en los primeros cinco retardos.
+
+```{pyodide}
+#| exercise: ex_comun
+import numpy as np
+
+rng = np.random.default_rng(4)
+n = 4000
+e = rng.normal(0, 1, n + 1)
+y = np.zeros(n)
+y[0] = e[1] - 0.5 * e[0]
+for t in range(1, n):
+    y[t] = ______
+
+r = y - y.mean()
+peor = max(abs(float((r[h:] * r[:-h]).sum() / (r * r).sum())) for h in range(1, 6))
+print(round(peor, 4), peor < 0.05)
+bool(peor < 0.05)
+```
+
+::: {.hint exercise="ex_comun"}
+La recursión es `0.5 * y[t - 1] + e[t + 1] - 0.5 * e[t]`: el coeficiente de media móvil es el negativo del autorregresivo.
+:::
+
+::: {.solution exercise="ex_comun"}
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(4)
+n = 4000
+e = rng.normal(0, 1, n + 1)
+y = np.zeros(n)
+y[0] = e[1] - 0.5 * e[0]
+for t in range(1, n):
+    y[t] = 0.5 * y[t - 1] + e[t + 1] - 0.5 * e[t]
+
+r = y - y.mean()
+peor = max(abs(float((r[h:] * r[:-h]).sum() / (r * r).sum())) for h in range(1, 6))
+print(round(peor, 4), peor < 0.05)
+bool(peor < 0.05)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_comun
+#| check: true
+if result is True:
+    feedback = {"correct": True, "message": "Correcto: ninguna autocorrelación llega a 0,05. Un modelo con dos parámetros distintos de cero produce exactamente ruido blanco, y por eso los órdenes de un ARMA no siempre se pueden leer de los datos.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba True y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Series 4**:
+
+1. Ajustar un $\text{AR}(p)$ por Yule-Walker con $p$ de uno a seis sobre una serie simulada de orden dos, y anotar qué pasa con los coeficientes sobrantes. Contrastar con lo que dice la PACF de la lección 3.
+2. Simular un $\text{ARMA}(1,1)$ con $\theta$ cerca de $-\varphi$ —por ejemplo $\varphi=0{,}7$ y $\theta=-0{,}65$— y medir cuántas observaciones hacen falta para que su ACF se distinga de la del ruido blanco. Anotar la cifra: es la distancia real entre la Proposición 4.3 y la práctica.
+3. Dibujar el abanico de pronóstico de un $\text{AR}(1)$ y de un paseo aleatorio sobre los mismos datos y guardar la figura en `50-Errores/` con la anchura a cincuenta pasos anotada en el título.
+
+## Del libro
+
+Esta lección **no sigue ningún libro**. Igual que el resto del módulo, sus resultados se demuestran o se miden aquí.
+
+Los puntos de contacto con el sitio son **Álgebra 6**, de donde viene la resolución de sistemas lineales que Yule-Walker necesita, y **Series de tiempo 3**, que aporta la ACF sobre la que ese sistema se monta. Esta página añade lo que en aquellas no cabía: **que un modelo con dos parámetros no nulos puede ser ruido blanco**, y que la diferencia entre $d=0$ y $d=1$ se mide en lo que el modelo promete sobre el futuro, no en su pronóstico central.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/arima.md`, enlazada a [[autocorrelacion]], [[estacionariedad]] y [[minimos-cuadrados]]. Conviene rehacer a mano la Proposición 4.3: cancelar el factor común ocupa un renglón y deja grabado que **la identificabilidad es una hipótesis**, lo que ahorra discusiones sobre qué orden es el verdadero.
+
+```
+¿Qué es un ARMA(p,q)?::Φ(L)y = Θ(L)ε, con dos polinomios de retardo
+¿Qué añade la I de ARIMA?::Diferenciar d veces antes de ajustar el ARMA
+¿Cuándo es estacionario?::Cuando las raíces de Φ caen fuera del círculo unidad
+¿Cuándo es invertible?::Cuando las raíces de Θ caen fuera del círculo unidad
+¿Un AR(1) es también un MA?::Sí, uno infinito con pesos φ^j
+¿Cuánta varianza queda fuera al truncar en J?::σ²φ^(2J+2)/(1−φ²), una cola geométrica
+¿Qué pasa en un ARMA(1,1) con θ = −φ?::Es ruido blanco exacto: los factores se cancelan
+¿Qué implica eso?::Que los órdenes no siempre se pueden identificar
+¿Qué resuelve Yule-Walker?::Los coeficientes de un AR(p) desde su ACF
+¿A qué velocidad converge?::1/√n: el error típico se parte por dos al cuadruplicar n
+¿Pronóstico de un AR(1) a h pasos?::φ^h·y_n, que tiende a la media
+¿Varianza de ese error?::σ²(1−φ^2h)/(1−φ²), con techo σ²/(1−φ²)
+¿Pronóstico de un paseo aleatorio?::El último valor, para cualquier horizonte
+¿Varianza de ese error?::h·σ², que crece sin tope
+¿Qué diferencia práctica hay entre d=0 y d=1?::Lo que se promete sobre el futuro, no el pronóstico central
+¿Qué aniquila (1 − L^s)?::Cualquier estacionalidad de periodo s, exactamente
+¿Qué le deja a una recta?::La constante b·s
+¿Y si la serie ya era estacionaria?::Duplica la varianza y deja ρ = −1/2 en el retardo s
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 4.2 se demuestra sustituyendo la ecuación en sí misma; se comprueba con la tabla de colas, donde truncar en veinte términos deja fuera el $0{,}000031\,\%$. La Proposición 4.3 se demuestra cancelando el factor común; se comprueba sobre veinte mil réplicas, con la ACF del $\text{ARMA}(1,1)$ de factor común en $-0{,}001085$ y la del ruido blanco en $-0{,}002722$, indistinguibles. El sistema de Yule-Walker se deriva multiplicando la ecuación por $y_{t-k}$; se comprueba recuperando $0{,}600605$ y $-0{,}350657$ con $n=6400$, y con el error típico cayendo de $0{,}100122$ a $0{,}011944$. Las Proposiciones 4.4 y 4.5 se demuestran desde la representación de media móvil; se comprueban por simulación sobre cuarenta mil series, con $1{,}956300$ contra $1{,}960783$ y $19{,}965410$ contra $20$. La Proposición 4.7 se demuestra en tres renglones; se comprueba con la aniquilación exacta por debajo de $10^{-12}$, la constante $0{,}600000$ y la firma $-0{,}4780$.
+
+**Lo que se usa de otras lecciones sin repetir.** La ACF y la PACF, y su corte como regla de identificación, son de Series de tiempo 3. La firma $-1/2$ del exceso de diferencias es de Series de tiempo 2. La resolución de sistemas lineales es de Álgebra 6. Los criterios de información quedan en Estadística 21 y aquí se nombran sin repetirse.
+
+**Lo que se enuncia sin demostrar.** Que las raíces fuera del círculo unidad equivalen a la estacionariedad se **usa** como definición operativa y no se demuestra para $p>1$. La existencia y unicidad de la solución del sistema de Yule-Walker se apoya en que la matriz de autocovarianzas muestrales es definida no negativa, resultado que la lección 3 menciona y que aquí se da por bueno. Y la estimación por máxima verosimilitud queda nombrada como omisión deliberada.
+
+**Lo que viene de los libros.** Nada. Esta lección no cita ninguno.
+
+**Lo que es mío, no del libro.** Poner la Proposición 4.3 como **sección propia** en lugar de como advertencia al margen: un modelo de dos parámetros que es ruido blanco deja claro de entrada que la identificabilidad es una hipótesis. La tabla que enfrenta las dos anchuras de intervalo, $5{,}489098$ contra $27{,}718586$ a cincuenta pasos, que traduce la decisión sobre $d$ a la única unidad que el lector ve. Y tratar $1-L^{s}$ con el mismo rasero que la diferencia ordinaria, incluida su firma de exceso en el retardo estacional.
+:::
