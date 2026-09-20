@@ -37,7 +37,7 @@ Tres hitos de esta sesión:
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
 faltando lecciones por escribir: **ML va por 22 de 90**, **Series de tiempo
-va por 7 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
+va por 8 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
 
@@ -105,7 +105,7 @@ hay que empezar a hacer:
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
-| Series de tiempo | 7 | 11 | **7 de 7** | 8 a 11 |
+| Series de tiempo | 8 | 11 | **8 de 8** | 9 a 11 |
 | Machine Learning | 22 | 90 | **22 de 22** | la Fase 2 cerrada; quedan ESL y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
@@ -394,7 +394,7 @@ Lo que sigue, en orden de coste creciente:
    lección, y **no reaparece en ninguna fase posterior**. Deep Learning al
    menos se retoma en las lecciones 28 a 33; supervivencia no tiene red.
 
-3. **Series de tiempo ya no está vacía** —las lecciones 1 a 7 de 11 se
+3. **Series de tiempo ya no está vacía** —las lecciones 1 a 8 de 11 se
    publicaron el 19-09-2026, y no citan ningún libro porque ninguno del sitio
    cubre el tema—;
    **Inferencia causal sigue vacía** en el sidebar.
@@ -2080,6 +2080,55 @@ obligó a encontrar el control que faltaba.
 
 Y el valor del ejercicio 1 estaba escrito a mano en $2{,}033888$; la corrida dio
 $1{,}897905$.
+
+### 3.34 Series de tiempo 08: boosting, y la lección de cuándo NO usarlo (20-09-2026)
+
+La lección aplica a series lo que Machine Learning 13 dejó dicho, y el resultado
+es que **la limitación conocida de los árboles se vuelve decisiva**:
+
+> **8.2**: un conjunto de árboles es constante fuera del rango que vio. Para
+> todo $x$ mayor que todos los cortes, $f(x)$ no depende de $x$.
+
+Medido: el objetivo más alto en entrenamiento vale $16{,}150797$, el pronóstico
+a sesenta pasos llega como máximo a $15{,}792824$ y la serie llega a
+$19{,}023694$. **El pronóstico no se equivoca por ruido sino por construcción.**
+Con el objetivo diferenciado el mismo modelo alcanza $18{,}650203$ y el RMSE
+baja de $1{,}929395$ a $0{,}422776$: la tendencia no se aprende, se quita.
+
+#### El experimento se diseñó para que el boosting perdiera
+
+El proceso de la segunda sección es un $\text{AR}(2)$, o sea **lineal**, y esa
+elección es deliberada: es la única manera de que el lector aprenda cuándo *no*
+usar boosting. El resultado honesto es que pierde a un paso y empata a
+horizontes largos, porque por la Proposición 4.4 todo converge a la media.
+
+#### El absurdo que introdujo las barras de error
+
+Varios RMSE del backtesting caen **por debajo del óptimo teórico**: $1{,}2493$
+contra $1{,}2832$ en el horizonte seis, cosa imposible para un pronóstico. En
+lugar de esconderlo, la lección lo señala y añade la fila del error típico,
+$0{,}0396$: la diferencia es de menos de una desviación. **Esa tabla no se puede
+leer sin sus barras**, que es la Proposición 7.5 de la lección anterior en
+acción.
+
+> **8.5**: la diferencia de dos RMSE no lleva incertidumbre; la media de las
+> diferencias pareadas sí, y además cancela la variación común.
+
+Con el pareado, lo que la tabla no resolvía se decide: contra el modelo lineal
+el boosting pierde a un paso con cociente $2{,}99$, y a horizontes largos los
+cocientes bajan a $0{,}29$, $0{,}47$ y $0{,}85$. Entre recursivo y directo salen
+$-2{,}16$, $-2{,}09$ y $-1{,}67$: **gana el recursivo**, en contra de la
+costumbre, con margen modesto.
+
+#### Sobre el proceso
+
+Primero se montó el experimento con treinta réplicas y el error a doce pasos
+salió **menor** que a seis, cosa imposible: eran treinta muestras por celda. Se
+rehízo como backtesting de $476$ orígenes sobre una sola serie larga, que es
+más barato y mucho más preciso —y además es lo que la lección 7 enseña—.
+
+Y el valor del ejercicio 2 estaba escrito a mano en $137$; la corrida dio
+$138$. Van cuatro lecciones seguidas en que ese paso caza un entero inventado.
 
 ---
 

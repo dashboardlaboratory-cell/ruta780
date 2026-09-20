@@ -1,0 +1,728 @@
+---
+title: "Forecasting con gradient boosting"
+subtitle: "Series de tiempo · Lección 8"
+nivel: L3
+modulo: series
+fase: F3
+prereqs: [series/07-validacion-temporal, ml/13-bagging-bosques-y-boosting, series/04-arima]
+siguientes: []
+libro: "—"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="series/08-boosting"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F3]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Validación temporal](07-validacion-temporal.qmd) · [Boosting](../ml/13-bagging-bosques-y-boosting.qmd) · [ARIMA](04-arima.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Escribir una [matriz de retardos]{.g data-t="matriz de retardos"} que convierta una serie en un problema supervisado sin mirar el futuro.
+2. **Demostrar que un conjunto de árboles es constante fuera del rango de entrenamiento**, y por tanto no puede seguir una tendencia.
+3. Aplicar el remedio —diferenciar el objetivo— y medir cuánto mejora.
+4. Distinguir el pronóstico [recursivo]{.g data-t="pronóstico recursivo"} del [directo]{.g data-t="pronóstico directo"} y decir qué cuesta cada uno.
+5. **Comparar dos modelos con una prueba pareada origen a origen**, en lugar de restar dos RMSE.
+6. Reconocer cuándo el boosting no aporta nada sobre un modelo lineal.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 13**: el boosting y la Proposición 13.8, que dice que un conjunto de árboles es constante a trozos.
+- **Series de tiempo 7**: el backtesting de origen móvil y la advertencia de que los errores solapados repiten información.
+- **Series de tiempo 4**: la varianza óptima del error a $h$ pasos, que aquí sirve de suelo contra el que medir.
+- **Series de tiempo 6**: las columnas de calendario, que se añaden a la matriz de retardos.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Series de tiempo 9**: Prophet, que resuelve el mismo problema con un modelo aditivo y sí extrapola.
+- **Series de tiempo 10**: la reconciliación, que necesita pronósticos en muchas series a la vez.
+- **Series de tiempo 11**: la evaluación, que retoma la comparación pareada de esta lección.
+- **Machine Learning 8**: la selección de variables, cuya lógica reaparece al elegir cuántos retardos poner.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $y_t$ | y sub te | El valor observado en el instante $t$ |
+| $n$ | ene | La longitud de la serie |
+| $p$ | pe | El número de retardos que entran como columnas |
+| $h$ | hache | El horizonte del pronóstico, en pasos |
+| $m$ | eme | El número de orígenes de un backtesting |
+| $f$ | efe | La función que el modelo aprende |
+| $\nu$ | nu | La tasa de aprendizaje del boosting |
+| $T_b$ | te sub be | El árbol de la ronda $b$ |
+| $B$ | be mayúscula | El número de rondas de boosting |
+| $\psi_j$ | psi sub jota | Los pesos de la representación de media móvil |
+| $\sigma^2$ | sigma cuadrado | La varianza de la sacudida de la serie |
+:::
+
+## 1. La serie como tabla, y el muro que aparece
+
+::: {.definicion}
+**Definición 8.1 (matriz de retardos).** Dada una serie y un número de retardos $p$, la matriz de retardos para horizonte $h$ tiene una fila por cada instante $t$ con
+$$\text{columnas }(y_{t-1},y_{t-2},\dots,y_{t-p}),\qquad \text{objetivo }y_{t+h-1}.$$
+Cada fila contiene **solo pasado** respecto a su objetivo, que es la condición de la Definición 7.3.
+:::
+
+Con esa tabla, cualquier método de regresión sirve para pronosticar. El boosting de la lección 13 de Machine Learning es uno de los que mejor funcionan sobre tablas, y por eso es la elección natural. Tiene, sin embargo, una limitación que sobre datos tabulares no se nota y aquí decide el resultado.
+
+::: {.proposicion}
+**Proposición 8.2 (un conjunto de árboles no extrapola).** Sea $f(x)=c_0+\nu\sum_{b=1}^{B}T_b(x)$ con árboles de hojas constantes ajustados sobre datos cuyas columnas caen en $[\min,\max]$. Entonces $f$ es **constante** en cada región exterior a ese rango: para todo $x$ mayor que todos los cortes de una columna, $f(x)$ no depende de $x$.
+:::
+
+::: {.demostracion}
+*Demostración.* Cada árbol reparte el espacio según comparaciones $x_j\le c$ con umbrales $c$ tomados de los datos. Un punto con $x_j$ mayor que todos los umbrales de la columna $j$ cae en la misma hoja que cualquier otro punto con $x_j$ aún mayor, porque todas las comparaciones dan el mismo resultado; y la hoja devuelve una constante. La suma de constantes es constante. [∎]{.fin-demo}
+:::
+
+::: {.proposicion}
+**Proposición 8.3 (diferenciar devuelve el problema a su terreno).** Si $y_t$ tiene tendencia y se modela $\Delta y_t$ en lugar de $y_t$, el objetivo deja de crecer y el pronóstico se reconstruye acumulando: $\hat y_{t+h}=y_t+\sum_{j=1}^{h}\widehat{\Delta y}_{t+j}$. El pronóstico resultante **sí** puede salir del rango observado, porque la suma de constantes acumuladas no está acotada.
+:::
+
+```{pyodide}
+import numpy as np
+
+def mejor_corte(X, r):
+    """El corte que mas reduce la suma de cuadrados, mirando todas las columnas."""
+    n, p = X.shape
+    mejor = (None, None, -np.inf)
+    for j in range(p):
+        orden = np.argsort(X[:, j], kind="stable")
+        xs, rs = X[orden, j], r[orden]
+        cum = np.cumsum(rs)
+        k = np.arange(1, n)
+        val = cum[:-1] ** 2 / k + (cum[-1] - cum[:-1]) ** 2 / (n - k)
+        val = np.where(xs[1:] > xs[:-1], val, -np.inf)
+        i = int(np.argmax(val))
+        if val[i] > mejor[2]:
+            mejor = (j, 0.5 * (xs[i] + xs[i + 1]), float(val[i]))
+    return mejor[0], mejor[1]
+
+class Arbol:
+    """Un arbol de regresion de profundidad fija, con hojas constantes."""
+    def __init__(self, prof):
+        self.prof, self.nodos = prof, []
+    def ajusta(self, X, r):
+        self.nodos = []
+        self.raiz = self._crece(X, r, np.arange(len(r)), 0)
+        return self
+    def _crece(self, X, r, idx, d):
+        if d == self.prof or len(idx) < 4 or np.ptp(r[idx]) < 1e-12:
+            self.nodos.append(("hoja", float(r[idx].mean())))
+            return len(self.nodos) - 1
+        j, c = mejor_corte(X[idx], r[idx])
+        izq, der = idx[X[idx, j] <= c], idx[X[idx, j] > c]
+        if j is None or len(izq) == 0 or len(der) == 0:
+            self.nodos.append(("hoja", float(r[idx].mean())))
+            return len(self.nodos) - 1
+        yo = len(self.nodos)
+        self.nodos.append(None)
+        a, b = self._crece(X, r, izq, d + 1), self._crece(X, r, der, d + 1)
+        self.nodos[yo] = ("corte", j, c, a, b)
+        return yo
+    def predice(self, X):
+        return np.array([self._baja(x) for x in X])
+    def _baja(self, x):
+        i = self.raiz
+        while self.nodos[i][0] != "hoja":
+            _, j, c, a, b = self.nodos[i]
+            i = a if x[j] <= c else b
+        return self.nodos[i][1]
+
+class Boosting:
+    """Suma de arboles ajustados sobre el residuo, con tasa de aprendizaje."""
+    def __init__(self, rondas=40, tasa=0.15, prof=3):
+        self.rondas, self.tasa, self.prof = rondas, tasa, prof
+    def ajusta(self, X, y):
+        self.base = float(y.mean())
+        self.arboles = []
+        pred = np.full(len(y), self.base)
+        for _ in range(self.rondas):
+            a = Arbol(self.prof).ajusta(X, y - pred)
+            pred = pred + self.tasa * a.predice(X)
+            self.arboles.append(a)
+        return self
+    def predice(self, X):
+        p = np.full(len(X), self.base)
+        for a in self.arboles:
+            p = p + self.tasa * a.predice(X)
+        return p
+
+def matriz_retardos(y, p, h=1):
+    """Columnas y_{t-1} .. y_{t-p} y objetivo y_{t+h-1}: solo pasado en cada fila."""
+    filas = len(y) - p - h + 1
+    X = np.column_stack([y[p - 1 - j: p - 1 - j + filas] for j in range(p)])
+    return X, y[p + h - 1: p + h - 1 + filas]
+
+rng = np.random.default_rng(151)
+n, p, H = 320, 4, 60
+t = np.arange(n + H)
+serie = 0.05 * t + rng.normal(0, 0.3, n + H)
+ent, fut = serie[:n], serie[n:]
+
+X, obj = matriz_retardos(ent, p)
+mod = Boosting().ajusta(X, obj)
+
+hist, nivel_pred = list(ent), []
+for h in range(H):
+    x = np.array([[hist[-1 - j] for j in range(p)]])
+    q = float(mod.predice(x)[0])
+    hist.append(q)
+    nivel_pred.append(q)
+nivel_pred = np.array(nivel_pred)
+
+print("una serie con tendencia, pronosticada con boosting sobre los retardos")
+print("  maximo del objetivo visto en entrenamiento : %.6f" % obj.max())
+print("  maximo del pronostico a %d pasos           : %.6f" % (H, nivel_pred.max()))
+print("  el pronostico NO sale del rango de entrenamiento: %s" % bool(nivel_pred.max() <= obj.max()))
+print("  valor verdadero al final: %.6f   pronosticado: %.6f" % (fut[-1], nivel_pred[-1]))
+print()
+
+d = np.diff(ent)
+Xd, objd = matriz_retardos(d, p)
+modd = Boosting().ajusta(Xd, objd)
+histd, nivel, dif_pred = list(d), ent[-1], []
+for h in range(H):
+    x = np.array([[histd[-1 - j] for j in range(p)]])
+    q = float(modd.predice(x)[0])
+    histd.append(q)
+    nivel = nivel + q
+    dif_pred.append(nivel)
+dif_pred = np.array(dif_pred)
+
+print("el mismo modelo con el objetivo DIFERENCIADO")
+print("  valor verdadero al final: %.6f   pronosticado: %.6f" % (fut[-1], dif_pred[-1]))
+print("  RMSE prediciendo el nivel      : %.6f" % np.sqrt(((fut - nivel_pred) ** 2).mean()))
+print("  RMSE prediciendo la diferencia : %.6f" % np.sqrt(((fut - dif_pred) ** 2).mean()))
+print()
+print("el arbol es constante a trozos, asi que fuera del rango que vio su")
+print("prediccion es una constante: no sabe subir. Diferenciar quita la")
+print("tendencia del objetivo y devuelve el problema a su terreno")
+```
+
+El objetivo más alto que el modelo vio durante el ajuste vale $16{,}150797$, y su pronóstico a sesenta pasos llega como máximo a $15{,}792824$: **nunca sale del rango**. La serie, mientras tanto, llega a $19{,}023694$. El pronóstico no se equivoca por ruido sino por construcción, y el error crece con el horizonte sin tope.
+
+Con el objetivo diferenciado el mismo modelo llega a $18{,}650203$ y el error cuadrático medio pasa de $1{,}929395$ a $0{,}422776$: **cuatro veces y media mejor**. La tendencia no se aprende, se quita.
+
+```{=html}
+<div class="viz-escalon">
+  <div class="controles">
+    <label>Profundidad <input id="es-d" type="range" min="1" max="6" step="1" value="3"> <span id="es-d-v">3</span></label>
+    <label>Pendiente <input id="es-p" type="range" min="0" max="0.12" step="0.01" value="0.05"> <span id="es-p-v">0.05</span></label>
+    <label>Ruido <input id="es-r" type="range" min="0.1" max="2" step="0.1" value="0.4"> <span id="es-r-v">0.4</span></label>
+  </div>
+  <svg id="es-svg" viewBox="0 0 660 270" role="img" aria-label="La relación entre el valor actual y el anterior, con la función escalonada que ajusta un árbol y la región donde esa función ya es constante."></svg>
+  <p class="lectura" id="es-lectura"></p>
+</div>
+<style>
+.viz-escalon { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-escalon .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-escalon label { display: flex; align-items: center; gap: .4rem; }
+.viz-escalon input[type=range] { width: 140px; padding: 0; }
+.viz-escalon svg { width: 100%; height: auto; display: block; }
+.viz-escalon .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("es-svg"), lec = document.getElementById("es-lectura");
+  var cd = document.getElementById("es-d"), cp = document.getElementById("es-p"), cr = document.getElementById("es-r");
+  var ed = document.getElementById("es-d-v"), ep = document.getElementById("es-p-v"), er = document.getElementById("es-r-v");
+  var X0 = 46, XW = 574, Y0 = 20, YH = 200, N = 200, LO = -1, HI = 26;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function sacudidas(n) {
+    var s = 606060, out = [], i, u1, u2;
+    function u() { s = (s * 48271) % 2147483647; return s / 2147483647; }
+    for (i = 0; i < n; i++) {
+      u1 = Math.max(u(), 1e-9); u2 = u();
+      out.push(Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2));
+    }
+    return out;
+  }
+  // arbol de regresion en una dimension, por cortes recursivos
+  function corta(xs, ys, d, salida) {
+    var n = xs.length, i;
+    if (d === 0 || n < 4) {
+      var m = 0;
+      for (i = 0; i < n; i++) m += ys[i];
+      salida.push([xs[0], xs[n - 1], n ? m / n : 0]);
+      return;
+    }
+    var cum = 0, total = 0;
+    for (i = 0; i < n; i++) total += ys[i];
+    var mejor = -Infinity, ic = -1;
+    for (i = 0; i < n - 1; i++) {
+      cum += ys[i];
+      if (xs[i + 1] <= xs[i]) continue;
+      var v = cum * cum / (i + 1) + (total - cum) * (total - cum) / (n - i - 1);
+      if (v > mejor) { mejor = v; ic = i; }
+    }
+    if (ic < 0) { corta(xs, ys, 0, salida); return; }
+    corta(xs.slice(0, ic + 1), ys.slice(0, ic + 1), d - 1, salida);
+    corta(xs.slice(ic + 1), ys.slice(ic + 1), d - 1, salida);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var d = +cd.value, pend = +cp.value, ruido = +cr.value;
+    ed.textContent = d; ep.textContent = pend.toFixed(2); er.textContent = ruido.toFixed(1);
+    var e = sacudidas(N + 1), serie = [], i;
+    for (i = 0; i <= N; i++) serie.push(pend * i + ruido * e[i]);
+    var xs = [], ys = [];
+    for (i = 1; i <= N; i++) { xs.push(serie[i - 1]); ys.push(serie[i]); }
+    var orden = xs.map(function (v, j) { return j; }).sort(function (a, b) { return xs[a] - xs[b]; });
+    var xo = orden.map(function (j) { return xs[j]; }), yo = orden.map(function (j) { return ys[j]; });
+    var hojas = [];
+    corta(xo, yo, d, hojas);
+
+    var px = function (v) { return X0 + (v - LO) / (HI - LO) * XW; };
+    var py = function (v) { return Y0 + (HI - Math.max(LO, Math.min(HI, v))) / (HI - LO) * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    // la region que el modelo nunca vio
+    var xmax = xo[xo.length - 1];
+    svg.appendChild(el("path", { d: "M" + px(xmax).toFixed(1) + " " + Y0 + " L" + (X0 + XW) + " " + Y0 +
+      " L" + (X0 + XW) + " " + (Y0 + YH) + " L" + px(xmax).toFixed(1) + " " + (Y0 + YH) + " Z", fill: C_B, opacity: .07 }));
+    svg.appendChild(el("text", { x: (px(xmax) + 6).toFixed(1), y: Y0 + 14, "font-size": 10.5, fill: C_B }, "fuera del rango visto"));
+    // la diagonal: lo que una recta haria
+    svg.appendChild(el("path", { d: "M" + px(LO).toFixed(1) + " " + py(LO + pend).toFixed(1) + " L" + px(HI).toFixed(1) + " " + py(HI + pend).toFixed(1),
+      stroke: C_L, "stroke-width": 1.4, "stroke-dasharray": "5 3" }));
+    for (i = 0; i < xo.length; i++)
+      svg.appendChild(el("circle", { cx: px(xo[i]).toFixed(1), cy: py(yo[i]).toFixed(1), r: 1.9, fill: C_T, opacity: .4 }));
+    var dd = "", ultima = 0;
+    for (i = 0; i < hojas.length; i++) {
+      var a = hojas[i][0], b = hojas[i][1], v = hojas[i][2];
+      dd += "M" + px(a).toFixed(1) + " " + py(v).toFixed(1) + " L" + px(b).toFixed(1) + " " + py(v).toFixed(1);
+      ultima = v;
+    }
+    // la prolongacion constante hacia la derecha
+    dd += "M" + px(xmax).toFixed(1) + " " + py(ultima).toFixed(1) + " L" + (X0 + XW) + " " + py(ultima).toFixed(1);
+    svg.appendChild(el("path", { d: dd, stroke: C_A, "stroke-width": 2.5, fill: "none" }));
+    svg.appendChild(el("text", { x: X0 - 6, y: Y0 + 12, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "yₜ"));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "yₜ₋₁"));
+
+    lec.innerHTML = "Con profundidad <strong>" + d + "</strong> el árbol usa <strong>" + hojas.length +
+      "</strong> hojas y su última vale <strong>" + ultima.toFixed(4) + "</strong>. A la derecha de " + xmax.toFixed(2) +
+      " la función <strong>ya es una recta horizontal</strong>, por mucho que se aumente la profundidad: es la Proposición 8.2. " +
+      (pend < 0.005
+        ? "Sin tendencia eso no importa, porque la serie nunca sale de su rango."
+        : "Con tendencia, el pronóstico recursivo entra en esa zona al cabo de unos pocos pasos y se queda ahí para siempre.");
+  }
+  cd.addEventListener("input", dibujar);
+  cp.addEventListener("input", dibujar);
+  cr.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Dos maneras de llegar a $h$, y cómo comparar sin engañarse
+
+::: {.definicion}
+**Definición 8.4 (recursivo y directo).** El pronóstico **recursivo** ajusta un solo modelo a un paso y lo aplica repetidamente, alimentándolo con sus propias predicciones. El **directo** ajusta un modelo distinto por cada horizonte, con objetivo $y_{t+h-1}$.
+:::
+
+El recursivo usa todos los datos para un solo ajuste y arrastra sus errores; el directo evita el arrastre y paga con $h-1$ filas menos y un modelo por horizonte. Cuál gana es una pregunta empírica, y contestarla exige más cuidado del que parece.
+
+::: {.proposicion}
+**Proposición 8.5 (comparar restando RMSE no alcanza).** Sean $e^{A}_i$ y $e^{B}_i$ los errores cuadráticos de dos modelos en el mismo origen $i$. La diferencia de sus RMSE globales no lleva incertidumbre asociada, mientras que la media de las diferencias $d_i=e^{A}_i-e^{B}_i$ sí tiene error estándar estimable, y además **elimina la variación común** a los dos modelos, que en un backtesting es casi toda.
+:::
+
+```{pyodide}
+import numpy as np
+
+def mejor_corte(X, r):
+    """El corte que mas reduce la suma de cuadrados, mirando todas las columnas."""
+    n, p = X.shape
+    mejor = (None, None, -np.inf)
+    for j in range(p):
+        orden = np.argsort(X[:, j], kind="stable")
+        xs, rs = X[orden, j], r[orden]
+        cum = np.cumsum(rs)
+        k = np.arange(1, n)
+        val = cum[:-1] ** 2 / k + (cum[-1] - cum[:-1]) ** 2 / (n - k)
+        val = np.where(xs[1:] > xs[:-1], val, -np.inf)
+        i = int(np.argmax(val))
+        if val[i] > mejor[2]:
+            mejor = (j, 0.5 * (xs[i] + xs[i + 1]), float(val[i]))
+    return mejor[0], mejor[1]
+
+class Arbol:
+    def __init__(self, prof):
+        self.prof, self.nodos = prof, []
+    def ajusta(self, X, r):
+        self.nodos = []
+        self.raiz = self._crece(X, r, np.arange(len(r)), 0)
+        return self
+    def _crece(self, X, r, idx, d):
+        if d == self.prof or len(idx) < 4 or np.ptp(r[idx]) < 1e-12:
+            self.nodos.append(("hoja", float(r[idx].mean())))
+            return len(self.nodos) - 1
+        j, c = mejor_corte(X[idx], r[idx])
+        izq, der = idx[X[idx, j] <= c], idx[X[idx, j] > c]
+        if j is None or len(izq) == 0 or len(der) == 0:
+            self.nodos.append(("hoja", float(r[idx].mean())))
+            return len(self.nodos) - 1
+        yo = len(self.nodos)
+        self.nodos.append(None)
+        a, b = self._crece(X, r, izq, d + 1), self._crece(X, r, der, d + 1)
+        self.nodos[yo] = ("corte", j, c, a, b)
+        return yo
+    def predice(self, X):
+        return np.array([self._baja(x) for x in X])
+    def _baja(self, x):
+        i = self.raiz
+        while self.nodos[i][0] != "hoja":
+            _, j, c, a, b = self.nodos[i]
+            i = a if x[j] <= c else b
+        return self.nodos[i][1]
+
+class Boosting:
+    def __init__(self, rondas=40, tasa=0.15, prof=3):
+        self.rondas, self.tasa, self.prof = rondas, tasa, prof
+    def ajusta(self, X, y):
+        self.base = float(y.mean())
+        self.arboles = []
+        pred = np.full(len(y), self.base)
+        for _ in range(self.rondas):
+            a = Arbol(self.prof).ajusta(X, y - pred)
+            pred = pred + self.tasa * a.predice(X)
+            self.arboles.append(a)
+        return self
+    def predice(self, X):
+        p = np.full(len(X), self.base)
+        for a in self.arboles:
+            p = p + self.tasa * a.predice(X)
+        return p
+
+def matriz_retardos(y, p, h=1):
+    filas = len(y) - p - h + 1
+    X = np.column_stack([y[p - 1 - j: p - 1 - j + filas] for j in range(p)])
+    return X, y[p + h - 1: p + h - 1 + filas]
+
+def lineal(X, y):
+    A = np.column_stack([np.ones(len(y)), X])
+    b, _, _, _ = np.linalg.lstsq(A, y, rcond=None)
+    return lambda Z: np.column_stack([np.ones(len(Z)), Z]) @ b
+
+fi1, fi2, p = 0.75, -0.3, 4
+rng = np.random.default_rng(161)
+n, corte, H = 1200, 700, 24
+HS = [1, 6, 12, 24]
+
+e = rng.normal(0, 1, n)
+y = np.empty(n)
+y[0], y[1] = e[0], fi1 * e[0] + e[1]
+for t in range(2, n):
+    y[t] = fi1 * y[t - 1] + fi2 * y[t - 2] + e[t]
+ent = y[:corte]
+
+X1, t1 = matriz_retardos(ent, p, 1)
+mod1 = Boosting().ajusta(X1, t1)
+lin1 = lineal(X1, t1)
+directos = {}
+for h in HS:
+    Xh, th = matriz_retardos(ent, p, h)
+    directos[("boosting", h)] = Boosting().ajusta(Xh, th)
+    directos[("lineal", h)] = lineal(Xh, th)
+
+origenes = np.arange(corte, n - H)
+err = {(m, esq): {h: [] for h in HS} for m in ("boosting", "lineal") for esq in ("recursivo", "directo")}
+for o in origenes:
+    for nombre, f in (("boosting", mod1.predice), ("lineal", lin1)):
+        hist = list(y[:o])
+        for h in range(1, H + 1):
+            x = np.array([[hist[-1 - j] for j in range(p)]])
+            q = float(f(x)[0])
+            hist.append(q)
+            if h in HS:
+                err[(nombre, "recursivo")][h].append((y[o + h - 1] - q) ** 2)
+    x = np.array([[y[o - 1 - j] for j in range(p)]])
+    for h in HS:
+        err[("boosting", "directo")][h].append((y[o + h - 1] - float(directos[("boosting", h)].predice(x)[0])) ** 2)
+        err[("lineal", "directo")][h].append((y[o + h - 1] - float(directos[("lineal", h)](x)[0])) ** 2)
+
+psi = [1.0, fi1]
+for j in range(2, H + 1):
+    psi.append(fi1 * psi[j - 1] + fi2 * psi[j - 2])
+
+print("backtesting sobre %d origenes de un AR(2), RMSE por horizonte" % len(origenes))
+print("  modelo     esquema      h=1      h=6     h=12     h=24")
+for m in ("boosting", "lineal"):
+    for esq in ("recursivo", "directo"):
+        print("  %-10s %-10s %s" % (m, esq, " ".join("%8.4f" % np.sqrt(np.mean(err[(m, esq)][h])) for h in HS)))
+print("  %-21s %s" % ("optimo teorico", " ".join("%8.4f" % np.sqrt(sum(psi[j] ** 2 for j in range(h))) for h in HS)))
+print("  error tipico de cada RMSE de la tabla (lineal recursivo):")
+print("  %-21s %s" % ("", " ".join("%8.4f" % (np.array(err[("lineal", "recursivo")][h]).std(ddof=1)
+                                              / np.sqrt(len(origenes)) / (2 * np.sqrt(np.mean(err[("lineal", "recursivo")][h])))) for h in HS)))
+print()
+print("comparacion PAREADA, origen a origen, con su error tipico")
+print("  boosting menos lineal (recursivo):")
+for h in HS:
+    dd = np.array(err[("boosting", "recursivo")][h]) - np.array(err[("lineal", "recursivo")][h])
+    m_, s_ = dd.mean(), dd.std(ddof=1) / np.sqrt(len(dd))
+    print("    h=%2d  diferencia %+.6f   ee %.6f   cociente %5.2f" % (h, m_, s_, m_ / s_))
+print("  recursivo menos directo (boosting), sin h=1 porque es el mismo modelo:")
+for h in HS[1:]:
+    dd = np.array(err[("boosting", "recursivo")][h]) - np.array(err[("boosting", "directo")][h])
+    m_, s_ = dd.mean(), dd.std(ddof=1) / np.sqrt(len(dd))
+    print("    h=%2d  diferencia %+.6f   ee %.6f   cociente %5.2f" % (h, m_, s_, m_ / s_))
+```
+
+La tabla trae una sorpresa que conviene mirar antes que nada: varios RMSE medidos caen **por debajo del óptimo teórico** —$1{,}2493$ contra $1{,}2832$ en el horizonte seis—, cosa imposible para un pronóstico. La fila siguiente lo explica: el error típico de cada RMSE vale alrededor de $0{,}0396$, así que esa diferencia es de menos de una desviación. **Los números de esa tabla no se pueden leer sin sus barras**, que es la Proposición 7.5 en acción.
+
+La comparación pareada sí decide. Contra el modelo lineal, el boosting pierde con claridad a un paso —diferencia $+0{,}092845$ con error típico $0{,}031019$, un cociente de $2{,}99$— y a horizontes largos la diferencia deja de ser distinguible: cocientes de $0{,}29$, $0{,}47$ y $0{,}85$. La razón es la Proposición 4.4: a horizonte largo todos los pronósticos convergen a la media y ya no hay nada que hacer mejor.
+
+Entre recursivo y directo, los cocientes salen $-2{,}16$, $-2{,}09$ y $-1{,}67$: aquí **gana el recursivo**, en contra de la costumbre de suponer lo contrario, aunque el margen es modesto. Y la lectura que importa no es cuál gana sobre este proceso sino que **la pregunta se contesta midiendo, con la diferencia pareada y su error típico**.
+
+**El proceso de esta sección es lineal**, y ese es el punto. Un $\text{AR}(2)$ no tiene nada que un árbol pueda aprovechar, así que el boosting solo puede empatar o perder. Merece la pena cuando hay interacciones, umbrales o efectos de calendario que un modelo lineal no captura, y el gasto se justifica midiéndolo, no suponiéndolo.
+
+```{=html}
+<div class="viz-barras8">
+  <div class="controles">
+    <label>Coeficiente φ₁ <input id="b8-f" type="range" min="0" max="0.95" step="0.05" value="0.75"> <span id="b8-f-v">0.75</span></label>
+    <label>Orígenes <input id="b8-m" type="range" min="20" max="600" step="20" value="120"> <span id="b8-m-v">120</span></label>
+    <label>Ventaja real <input id="b8-v" type="range" min="0" max="0.2" step="0.01" value="0.05"> <span id="b8-v-v">0.05</span></label>
+  </div>
+  <svg id="b8-svg" viewBox="0 0 660 250" role="img" aria-label="El error por horizonte de dos modelos con sus barras de incertidumbre, que se estrechan al aumentar el número de orígenes del backtesting."></svg>
+  <p class="lectura" id="b8-lectura"></p>
+</div>
+<style>
+.viz-barras8 { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-barras8 .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-barras8 label { display: flex; align-items: center; gap: .4rem; }
+.viz-barras8 input[type=range] { width: 140px; padding: 0; }
+.viz-barras8 svg { width: 100%; height: auto; display: block; }
+.viz-barras8 .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("b8-svg"), lec = document.getElementById("b8-lectura");
+  var cf = document.getElementById("b8-f"), cm = document.getElementById("b8-m"), cv = document.getElementById("b8-v");
+  var ef = document.getElementById("b8-f-v"), em = document.getElementById("b8-m-v"), ev = document.getElementById("b8-v-v");
+  var X0 = 52, XW = 568, Y0 = 20, YH = 190, HMAX = 12, HI = 3.4;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var fi = +cf.value, m = +cm.value, ventaja = +cv.value;
+    ef.textContent = fi.toFixed(2); em.textContent = m; ev.textContent = ventaja.toFixed(2);
+    var psi = [1], j;
+    for (j = 1; j <= HMAX; j++) psi.push(fi * psi[j - 1]);
+    var px = function (h) { return X0 + (h - 0.5) / HMAX * XW; };
+    var py = function (v) { return Y0 + (HI - Math.max(0, Math.min(HI, v))) / HI * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+
+    var detectados = 0;
+    for (var h = 1; h <= HMAX; h++) {
+      var v = 0;
+      for (j = 0; j < h; j++) v += psi[j] * psi[j];
+      var rmseA = Math.sqrt(v), rmseB = rmseA * (1 + ventaja);
+      // el error tipico del RMSE cae como 1/raiz(m)
+      var ee = rmseA / Math.sqrt(2 * m);
+      var xA = px(h) - 5, xB = px(h) + 5;
+      svg.appendChild(el("path", { d: "M" + xA.toFixed(1) + " " + py(rmseA - 1.96 * ee).toFixed(1) + " L" + xA.toFixed(1) + " " + py(rmseA + 1.96 * ee).toFixed(1), stroke: C_A, "stroke-width": 2 }));
+      svg.appendChild(el("circle", { cx: xA.toFixed(1), cy: py(rmseA).toFixed(1), r: 3, fill: C_A }));
+      svg.appendChild(el("path", { d: "M" + xB.toFixed(1) + " " + py(rmseB - 1.96 * ee).toFixed(1) + " L" + xB.toFixed(1) + " " + py(rmseB + 1.96 * ee).toFixed(1), stroke: C_B, "stroke-width": 2 }));
+      svg.appendChild(el("circle", { cx: xB.toFixed(1), cy: py(rmseB).toFixed(1), r: 3, fill: C_B }));
+      if (rmseB - 1.96 * ee > rmseA + 1.96 * ee) detectados++;
+    }
+    svg.appendChild(el("text", { x: X0 + 6, y: Y0 + 14, "font-size": 10.5, fill: C_A }, "modelo mejor"));
+    svg.appendChild(el("text", { x: X0 + 90, y: Y0 + 14, "font-size": 10.5, fill: C_B }, "modelo peor"));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "horizonte 1 … " + HMAX));
+
+    lec.innerHTML = "Con φ₁ = <strong>" + fi.toFixed(2) + "</strong>, una ventaja real del <strong>" + (100 * ventaja).toFixed(0) +
+      " %</strong> y <strong>" + m + "</strong> orígenes, las barras se separan en <strong>" + detectados + "</strong> de los " + HMAX +
+      " horizontes. " +
+      (ventaja < 0.005
+        ? "Sin ventaja real las barras se solapan siempre, que es lo correcto."
+        : detectados === 0
+          ? "Con tan pocos orígenes la ventaja <strong>existe y no se ve</strong>: el backtesting no tiene potencia para detectarla."
+          : "Subiendo los orígenes las barras se estrechan como 1/√m y la ventaja empieza a distinguirse; bajándolos desaparece aunque siga estando ahí.");
+  }
+  cf.addEventListener("input", dibujar);
+  cm.addEventListener("input", dibujar);
+  cv.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Lo que esta lección no resuelve
+
+- **Las columnas de calendario no se añaden aquí.** La matriz de retardos admite las columnas de la lección 6 sin cambiar nada del esquema, y es donde el boosting empieza a tener ventaja.
+- **No se ajustan hiperparámetros.** Rondas, tasa y profundidad se fijan a mano; elegirlos exige un nivel más de validación, con el cuidado de la lección 7.
+- **Los intervalos de pronóstico quedan fuera.** Un conjunto de árboles no da varianza del error de forma natural; hay que estimarla del backtesting o recurrir a cuantiles.
+- **La importancia de variable no se trata.** Con retardos muy correlacionados entre sí, el reparto de importancia entre ellos es inestable, y sacar conclusiones de ahí es otra trampa.
+- **Y una sola serie es el caso fácil.** Entrenar un modelo con muchas series a la vez cambia el problema, y aparece en la lección 10.
+
+## Ejercicios
+
+### Ejercicio 1, Cuántas filas quedan
+
+Con la Definición 8.1, calcular cuántas filas tiene la matriz de retardos para varios horizontes, con $n=500$ observaciones y $p=12$ retardos, y cuántas se pierden respecto al horizonte uno.
+
+```{pyodide}
+#| exercise: ex_filas
+n, p = 500, 12
+
+def filas(h):
+    return ______
+
+for h in (1, 6, 12, 24):
+    print(h, filas(h), filas(1) - filas(h))
+
+int(filas(24))
+```
+
+::: {.hint exercise="ex_filas"}
+Cada fila necesita $p$ retardos por detrás y llegar hasta $y_{t+h-1}$, así que quedan $n-p-h+1$.
+:::
+
+::: {.solution exercise="ex_filas"}
+```{pyodide}
+n, p = 500, 12
+
+def filas(h):
+    return n - p - h + 1
+
+for h in (1, 6, 12, 24):
+    print(h, filas(h), filas(1) - filas(h))
+
+int(filas(24))
+```
+:::
+
+```{pyodide}
+#| exercise: ex_filas
+#| check: true
+if result == 465:
+    feedback = {"correct": True, "message": "Correcto: 465 filas con horizonte 24, veintitrés menos que con horizonte uno. Ese es el precio del pronóstico directo, y con series cortas deja de ser despreciable.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 465 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuántos orígenes para ver una ventaja
+
+Con la Proposición 8.5, calcular cuántos orígenes hacen falta para que una ventaja del $5\,\%$ en RMSE se separe de cero por dos errores típicos, suponiendo que la desviación de las diferencias pareadas es $0{,}6$ veces el error cuadrático medio.
+
+```{pyodide}
+#| exercise: ex_origenes
+rmse, ventaja, k = 1.3, 0.05, 0.6
+
+# la diferencia media de errores cuadraticos entre los dos modelos
+dif = (rmse * (1 + ventaja)) ** 2 - rmse ** 2
+sd = k * rmse ** 2
+
+m = 1
+while dif <= 2 * sd / m ** 0.5:
+    m = ______
+
+print(round(dif, 6), round(sd, 6), m)
+int(m)
+```
+
+::: {.hint exercise="ex_origenes"}
+La condición es $\text{dif}>2\,\text{sd}/\sqrt{m}$, y basta avanzar $m$ de uno en uno.
+:::
+
+::: {.solution exercise="ex_origenes"}
+```{pyodide}
+rmse, ventaja, k = 1.3, 0.05, 0.6
+
+# la diferencia media de errores cuadraticos entre los dos modelos
+dif = (rmse * (1 + ventaja)) ** 2 - rmse ** 2
+sd = k * rmse ** 2
+
+m = 1
+while dif <= 2 * sd / m ** 0.5:
+    m = m + 1
+
+print(round(dif, 6), round(sd, 6), m)
+int(m)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_origenes
+#| check: true
+if result == 138:
+    feedback = {"correct": True, "message": "Correcto: 138 orígenes independientes. Y por la Proposición 7.5 esos 138 independientes pueden exigir muchos más pronósticos solapados, así que una ventaja del 5 % es difícil de demostrar con una serie corta.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 138 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Series 8**:
+
+1. Añadir a la matriz de retardos las columnas de calendario de la lección 6 y repetir la comparación pareada contra el modelo lineal. Anotar si el boosting pasa a ganar y en qué horizontes.
+2. Repetir el experimento de la Proposición 8.2 con una serie sin tendencia pero con un cambio de nivel a la mitad. Anotar qué hace el pronóstico al llegar al nivel nuevo y por qué.
+3. Ajustar la profundidad de los árboles de uno a seis y dibujar el error de backtesting contra la profundidad. Guardar el dibujo en `50-Errores/` anotando dónde está el mínimo y si es distinguible del vecino.
+
+## Del libro
+
+Esta lección **no sigue ningún libro**. Igual que el resto del módulo, sus resultados se demuestran o se miden aquí.
+
+Los puntos de contacto con el sitio son **Machine Learning 13**, de donde vienen el boosting y la propiedad de ser constante a trozos, y **Series de tiempo 7**, que aporta el backtesting y la advertencia sobre los errores solapados. Esta página añade lo que en aquellas no cabía: **que la limitación conocida de los árboles se vuelve decisiva en cuanto la serie tiene tendencia**, y que la comparación entre dos modelos de pronóstico se hace en pares, no restando dos RMSE.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/boosting-series.md`, enlazada a [[bagging-bosques-y-boosting]], [[validacion-temporal]] y [[arima]]. Conviene rehacer a mano la Proposición 8.2: el argumento ocupa dos renglones y deja grabado que **un árbol es constante fuera del rango que vio**, lo que explica de una vez por qué hay que diferenciar antes de dárselo.
+
+```
+¿Qué es una matriz de retardos?::Una fila por instante, con y_{t-1}..y_{t-p} y objetivo y_{t+h-1}
+¿Qué condición debe cumplir cada fila?::Contener solo pasado respecto a su objetivo
+¿Qué hace un árbol fuera del rango de entrenamiento?::Devuelve una constante: no extrapola
+¿Por qué?::Todas sus comparaciones dan el mismo resultado, así que cae en la misma hoja
+¿Qué pasa con una serie con tendencia?::El pronóstico se satura y el error crece sin tope
+¿Cuál es el remedio?::Modelar la diferencia y reconstruir el nivel acumulando
+¿Cuánto mejora en la medición?::De 1,929395 a 0,422776 de RMSE
+¿Qué es el pronóstico recursivo?::Un modelo a un paso aplicado repetidamente sobre sus predicciones
+¿Y el directo?::Un modelo por horizonte, con objetivo y_{t+h-1}
+¿Cuántas filas pierde el directo?::h−1 respecto al horizonte uno
+¿Cómo se comparan dos modelos?::Con la diferencia pareada origen a origen y su error típico
+¿Por qué no basta restar dos RMSE?::Porque esa resta no lleva incertidumbre y no cancela la variación común
+¿Gana el boosting sobre un AR(2)?::No: pierde a un paso y empata a horizontes largos
+¿Cuándo merece la pena?::Cuando hay interacciones, umbrales o calendario que un lineal no captura
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 8.2 se demuestra con el recorrido de las comparaciones del árbol; se comprueba con un pronóstico que se queda en $15{,}792824$ cuando el máximo visto es $16{,}150797$ y la verdad llega a $19{,}023694$. La Proposición 8.3 se comprueba con el mismo modelo sobre el objetivo diferenciado, que llega a $18{,}650203$ y baja el RMSE de $1{,}929395$ a $0{,}422776$. La Proposición 8.5 se ilustra con un backtesting de $476$ orígenes donde varios RMSE caen por debajo del óptimo teórico por menos de un error típico —$1{,}2493$ contra $1{,}2832$, con error típico $0{,}0396$—, y donde la comparación pareada sí decide: cociente $2{,}99$ a un paso contra el modelo lineal, y $-2{,}16$, $-2{,}09$ y $-1{,}67$ entre recursivo y directo. El árbol de regresión y el boosting están programados en la página.
+
+**Lo que se usa de otras lecciones sin repetir.** El boosting y su carácter constante a trozos son de Machine Learning 13. El backtesting de origen móvil y la correlación entre errores solapados son de Series de tiempo 7. La varianza óptima del error a $h$ pasos y su techo son de Series de tiempo 4.
+
+**Lo que se enuncia sin demostrar.** Que la media de las diferencias pareadas tiene error típico estimable se **usa** con la fórmula habitual, que supone orígenes poco correlacionados; la lección 7 ya advirtió de que ese supuesto no es gratuito, y aquí se hereda la advertencia sin corregir la fórmula. Las propiedades de convergencia del boosting quedan en Machine Learning 13 y no se repiten.
+
+**Lo que viene de los libros.** Nada. Esta lección no cita ninguno.
+
+**Lo que es mío, no del libro.** Elegir un proceso **lineal** para la comparación, de modo que el resultado honesto sea que el boosting no aporta: es la única manera de que el lector aprenda cuándo **no** usarlo. Señalar que varios RMSE medidos caen por debajo del óptimo teórico y usar ese absurdo aparente para introducir las barras de error, en lugar de esconderlo. Y presentar la comparación pareada como el método, con su cociente, en vez de restar dos números sin incertidumbre.
+:::
