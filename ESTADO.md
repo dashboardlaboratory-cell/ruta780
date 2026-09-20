@@ -36,7 +36,7 @@ Tres hitos de esta sesión:
   las 33 secciones de retos y los 106 símbolos sin declarar.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
-faltando lecciones por escribir: **ML va por 23 de 90**, **Series de tiempo
+faltando lecciones por escribir: **ML va por 24 de 90**, **Series de tiempo
 está **completo, 11 de 11**, e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -106,7 +106,7 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 11 | 11 | **11 de 11** | — |
-| Machine Learning | 23 | 90 | **23 de 23** | ESL 3 a 15 y deep learning |
+| Machine Learning | 24 | 90 | **24 de 24** | ESL 3 a 15 y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
@@ -2392,6 +2392,51 @@ hecho y era la lista de lo que faltaba. Ahora dice **«FALTAN 11 SECCIONES POR
 ESCRIBIR. Esto es un simulacro»**, o «no falta ninguna sección: los cuadernos
 están al día». La regla general: **un mensaje sobre lo pendiente y otro sobre lo
 hecho no deben poder confundirse leyendo por encima**.
+
+### 3.41 ML 24: qué es de verdad un coeficiente (20-09-2026)
+
+La lección se apoya en un resultado de ESL §3.2.3 que casi nunca se enseña como
+lo que es:
+
+> **24.2**: el coeficiente de mínimos cuadrados de la columna $j$ es la
+> regresión **simple** de $y$ sobre $z_j$, lo que esa columna tiene y las demás
+> no.
+
+Eso convierte «controlar por las demás variables» de fórmula hecha en
+definición exacta, y repetido columna a columna **es** Gram-Schmidt. Comprobado
+sobre cinco columnas: los coeficientes coinciden por los dos caminos por debajo
+de $10^{-10}$.
+
+De ahí sale la segunda, que es la que da el diagnóstico:
+
+> **24.3**: $\operatorname{Var}(\hat\beta_j)=\sigma^2/\lVert z_j\rVert^2$.
+
+Comprobada contra la diagonal de $(X^{\top}X)^{-1}$, que coincide a ocho
+decimales. Con una columna que es casi copia de otra, $\lVert z_j\rVert^2$ cae
+de $227{,}1063$ a $1{,}5533$ y la varianza sube de $0{,}00440322$ a
+$0{,}64379892$: **un factor de ciento cuarenta y seis**. El VIF lo resume en
+$137{,}3682$, y esa cifra tiene traducción a presupuesto: harían falta $137$
+veces más datos.
+
+#### La letra pequeña de Gauss-Markov
+
+El teorema se demuestra por Pitágoras en tres renglones, y la lección se detiene
+en sus dos palabras: **lineales** e **insesgados**. Quitando la segunda, la
+Proposición 24.5 exhibe un estimador mejor: con $\lambda=0{,}2$ el error baja de
+$1{,}310782$ a $0{,}967835$, y con $0{,}5$ a $0{,}985342$, **un $24{,}8\,\%$
+menos**. No hay contradicción —ridge es sesgado y no compite en esa categoría—,
+y lo que el resultado dice es que la categoría estaba mal elegida.
+
+Donde más gana es **precisamente donde la Proposición 24.3 hacía explotar la
+varianza**, de modo que las dos primeras secciones explican por qué existe el
+capítulo siguiente del libro.
+
+#### La regla 21b, otra vez con un término
+
+La entrada «colinealidad» del glosario decía solo el caso exacto —una columna es
+combinación lineal de otras, baja el rango—, y esta lección la usa en el caso
+aproximado. Como el enganche del glosario es global, la entrada habría mentido
+en esta página. Ahora cubre los dos casos y nombra la fórmula del segundo.
 
 ---
 

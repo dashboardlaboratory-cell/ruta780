@@ -1,0 +1,585 @@
+---
+title: "Geometría de mínimos cuadrados"
+subtitle: "Machine Learning · Lección 24"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/23-panorama-supervisado, matematica/06-minimos-cuadrados, ml/09-alta-dimension]
+siguientes: []
+libro: "ESL §3.2 Linear Regression Models and Least Squares · §3.4 Shrinkage Methods"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="ml/24-geometria-minimos-cuadrados"}
+[[L3]{.nivel .nivel-L3} **ESL 3**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ESL §3.2 · §3.4]{.item}
+[**Prereqs** [Panorama supervisado](23-panorama-supervisado.qmd) · [Mínimos cuadrados](../matematica/06-minimos-cuadrados.qmd) · [Alta dimensión](09-alta-dimension.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Demostrar que el coeficiente de una variable es la regresión simple de la respuesta sobre lo que esa variable tiene y las demás no.**
+2. Escribir esa construcción como [ortogonalización sucesiva]{.g data-t="ortogonalización sucesiva"} y reconocerla como Gram-Schmidt.
+3. **Demostrar que $\operatorname{Var}(\hat\beta_j)=\sigma^2/\lVert z_j\rVert^2$**, y leer ahí la [colinealidad]{.g data-t="colinealidad"} sin necesidad de nombrarla.
+4. Enunciar y demostrar el teorema de [Gauss-Markov]{.g data-t="teorema de gauss-markov"}.
+5. **Exhibir un estimador sesgado con menos error que mínimos cuadrados**, y decir por qué eso no contradice el teorema.
+6. Calcular el factor de inflación de la varianza y traducirlo a cuántos datos harían falta.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Álgebra 6**: la solución de mínimos cuadrados como proyección ortogonal, que aquí se refina.
+- **Machine Learning 23**: los dos extremos del aprendizaje supervisado, de los que este es el rígido.
+- **Machine Learning 9**: ridge y la penalización, que aquí aparece como respuesta a un teorema.
+- **Estadística 14**: el error estándar de un coeficiente, que aquí recibe su forma geométrica.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 25**: Least Angle Regression, que recorre el mismo espacio en otro orden.
+- **Machine Learning 27**: las expansiones en base, que añaden columnas y agravan lo de aquí.
+- **Machine Learning 29**: la descomposición sesgo-varianza, de la que la sección 4 es un caso.
+- **Series de tiempo 6**: los indicadores de calendario, cuya colinealidad se lee con esta misma fórmula.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $N$ | ene mayúscula | El número de observaciones |
+| $p$ | pe | El número de variables |
+| $X$ | equis mayúscula | La matriz de diseño, de $N\times p$ |
+| $x_j$ | equis sub jota | La columna $j$ de esa matriz |
+| $y$ | y | El vector de respuestas |
+| $\beta$ | beta | El vector de coeficientes |
+| $\hat\beta$ | beta con sombrero | Su estimador |
+| $z_j$ | zeta sub jota | El residuo de $x_j$ tras quitarle las demás columnas |
+| $\sigma^2$ | sigma cuadrado | La varianza del error |
+| $H$ | hache | La matriz de proyección $X(X^{\top}X)^{-1}X^{\top}$ |
+| $\lambda$ | lambda | El parámetro de la penalización de ridge |
+| $R_j^2$ | erre sub jota cuadrado | La fracción de $x_j$ que explican las demás columnas |
+| $\text{VIF}_j$ | vif sub jota | El factor de inflación de la varianza |
+| $\theta$ | theta | El ángulo entre dos columnas |
+| $\hat\gamma$ | gamma con sombrero | El coeficiente en la base ya ortogonalizada |
+:::
+
+## 1. Qué es de verdad un coeficiente
+
+Álgebra 6 demostró que $\hat\beta=(X^{\top}X)^{-1}X^{\top}y$ y que $\hat y=Hy$ es la proyección ortogonal sobre el espacio columna. Esa fórmula dice **dónde** cae el ajuste, y no dice qué significa cada coeficiente por separado. La respuesta a eso es el resultado que ordena esta lección.
+
+::: {.definicion}
+**Definición 24.1 (residuo contra las demás).** Para cada columna $j$, sea
+$$z_j=x_j-\text{proyección de }x_j\text{ sobre las demás columnas},$$
+es decir, lo que $x_j$ aporta y ninguna otra columna sabe explicar.
+:::
+
+::: {.proposicion}
+**Proposición 24.2 (regresión múltiple por ortogonalización sucesiva).** El coeficiente de mínimos cuadrados de la columna $j$ vale
+$$\hat\beta_j=\frac{\langle z_j,\,y\rangle}{\langle z_j,\,z_j\rangle},$$
+que es exactamente el coeficiente de la **regresión simple** de $y$ sobre $z_j$.
+:::
+
+::: {.demostracion}
+*Demostración.* Escríbase $X=[X_{-j}\;\;x_j]$ con $X_{-j}$ las demás columnas. Como $z_j$ es ortogonal a todas ellas, el espacio columna de $X$ coincide con el de $[X_{-j}\;\;z_j]$, y el ajuste es el mismo. En esa segunda base, la última columna es ortogonal a las anteriores, de modo que su coeficiente se obtiene proyectando $y$ sobre ella sin interferencia:
+$$\hat\gamma=\frac{\langle z_j,y\rangle}{\langle z_j,z_j\rangle}.$$
+Y como el cambio de base solo modifica los coeficientes de $X_{-j}$ —a $x_j$ le corresponde el mismo multiplicador en las dos escrituras—, $\hat\beta_j=\hat\gamma$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def ols(X, y):
+    A = np.column_stack([np.ones(len(y)), X])
+    b, _, _, _ = np.linalg.lstsq(A, y, rcond=None)
+    return b
+
+def residuo_contra_las_otras(X, j):
+    """Lo que la columna j tiene y las demas no: z_j."""
+    n = X.shape[0]
+    otras = np.column_stack([np.ones(n)] + [X[:, k] for k in range(X.shape[1]) if k != j])
+    c, _, _, _ = np.linalg.lstsq(otras, X[:, j], rcond=None)
+    return X[:, j] - otras @ c
+
+rng = np.random.default_rng(241)
+n, p = 200, 5
+X = rng.normal(0, 1, (n, p))
+X[:, 2] = 0.95 * X[:, 1] + 0.1 * rng.normal(0, 1, n)     # dos columnas casi iguales
+beta = np.array([1.0, -2.0, 0.5, 0.0, 3.0])
+y = 2.0 + X @ beta + rng.normal(0, 1.0, n)
+
+b = ols(X, y)
+print("un ajuste con cinco columnas, la tercera casi copia de la segunda")
+print("   j   coeficiente   por ortogonalizacion   ¿iguales a 1e-10?   ||z_j||^2")
+for j in range(p):
+    z = residuo_contra_las_otras(X, j)
+    bj = float(z @ y / (z @ z))
+    print("   %d   %+.8f      %+.8f            %-5s        %10.4f"
+          % (j, b[1 + j], bj, bool(abs(bj - b[1 + j]) < 1e-10), z @ z))
+print()
+print("el coeficiente de una columna es la regresion simple de y sobre lo que")
+print("esa columna tiene y las demas no. Ahi esta escrito lo que significa")
+print("«controlar por las demas variables»")
+```
+
+Los cinco coeficientes coinciden por los dos caminos. La lectura es la que importa. **«Controlar por las demás variables» tiene aquí su definición exacta**, en lugar de quedarse en fórmula hecha: el coeficiente de $x_j$ mide la relación entre $y$ y la parte de $x_j$ que ninguna otra columna podía anticipar.
+
+Aplicando el procedimiento a las columnas una tras otra se obtiene Gram-Schmidt y, ordenando los resultados, la descomposición $X=QR$ de Álgebra 7. La ortogonalización sucesiva **es** el algoritmo con el que se resuelve el problema, y no solo una manera de interpretarlo.
+
+## 2. Dónde está la colinealidad
+
+::: {.proposicion}
+**Proposición 24.3 (la varianza de un coeficiente).** Con errores de varianza $\sigma^2$ independientes,
+$$\operatorname{Var}(\hat\beta_j)=\frac{\sigma^{2}}{\lVert z_j\rVert^{2}}
+=\frac{\sigma^{2}}{\lVert x_j-\bar x_j\rVert^{2}\,(1-R_j^{2})},$$
+donde $R_j^2$ es la fracción de $x_j$ que explican las demás columnas. El cociente $\text{VIF}_j=1/(1-R_j^2)$ mide cuántas veces más variable es el coeficiente por culpa de las otras columnas.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Proposición 24.2, $\hat\beta_j=\langle z_j,y\rangle/\lVert z_j\rVert^2$ es lineal en $y$ con vector de pesos $z_j/\lVert z_j\rVert^2$. La varianza de una combinación lineal con errores independientes es $\sigma^2$ por el cuadrado de la norma de esos pesos:
+$$\operatorname{Var}(\hat\beta_j)=\sigma^{2}\frac{\lVert z_j\rVert^{2}}{\lVert z_j\rVert^{4}}=\frac{\sigma^{2}}{\lVert z_j\rVert^{2}} .$$
+La segunda igualdad es la definición de $R_j^2$ como fracción de varianza explicada: $\lVert z_j\rVert^2=\lVert x_j-\bar x_j\rVert^2(1-R_j^2)$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def residuo_contra_las_otras(X, j):
+    n = X.shape[0]
+    otras = np.column_stack([np.ones(n)] + [X[:, k] for k in range(X.shape[1]) if k != j])
+    c, _, _, _ = np.linalg.lstsq(otras, X[:, j], rcond=None)
+    return X[:, j] - otras @ c
+
+rng = np.random.default_rng(241)
+n, p = 200, 5
+X = rng.normal(0, 1, (n, p))
+X[:, 2] = 0.95 * X[:, 1] + 0.1 * rng.normal(0, 1, n)
+
+sigma = 1.0
+A = np.column_stack([np.ones(n), X])
+G = np.linalg.inv(A.T @ A)
+
+print("la varianza de cada coeficiente, por dos caminos")
+print("   j   var exacta de (X'X)^-1   sigma^2/||z_j||^2   ¿iguales a 1e-10?      VIF")
+for j in range(p):
+    z = residuo_contra_las_otras(X, j)
+    v1 = sigma ** 2 * G[1 + j, 1 + j]
+    v2 = sigma ** 2 / (z @ z)
+    xc = X[:, j] - X[:, j].mean()
+    vif = (xc @ xc) / (z @ z)
+    print("   %d      %.8f            %.8f           %-5s      %8.4f"
+          % (j, v1, v2, bool(abs(v1 - v2) < 1e-10), vif))
+print()
+print("la colinealidad se lee aqui sin nombrarla: es que ||z_j|| se hace corto.")
+print("Las columnas 1 y 2 tienen un factor de inflacion de 137, o sea que su")
+print("coeficiente es 137 veces mas variable de lo que seria sin la copia")
+```
+
+Las dos columnas coinciden a ocho decimales, como exige la proposición. Y el diagnóstico sale solo: $\lVert z_j\rVert^2$ vale $227{,}1063$ para la primera columna y $1{,}5533$ para la segunda, que es casi copia de la tercera. La varianza pasa de $0{,}00440322$ a $0{,}64379892$: **un factor de ciento cuarenta y seis**.
+
+El factor de inflación lo dice en una cifra: $137{,}3682$ y $137{,}3871$ para el par colineal, frente a valores entre $1{,}0022$ y $1{,}0109$ para las demás. Y tiene una traducción directa a presupuesto: como la varianza va como $1/N$, **un VIF de $137$ significa que harían falta $137$ veces más datos** para estimar ese coeficiente con la precisión que se tendría sin la copia.
+
+```{=html}
+<div class="viz-ortogonal">
+  <div class="controles">
+    <label>Ángulo entre las columnas <input id="or-a" type="range" min="4" max="90" step="2" value="40"> <span id="or-a-v">40</span>°</label>
+    <label>Observaciones N <input id="or-n" type="range" min="20" max="400" step="20" value="200"> <span id="or-n-v">200</span></label>
+    <label>Ruido σ <input id="or-s" type="range" min="0.2" max="3" step="0.1" value="1.0"> <span id="or-s-v">1.0</span></label>
+  </div>
+  <svg id="or-svg" viewBox="0 0 660 270" role="img" aria-label="Las dos columnas como vectores y el residuo de la segunda contra la primera, con la varianza del coeficiente que ese residuo determina."></svg>
+  <p class="lectura" id="or-lectura"></p>
+</div>
+<style>
+.viz-ortogonal { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-ortogonal .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-ortogonal label { display: flex; align-items: center; gap: .4rem; }
+.viz-ortogonal input[type=range] { width: 140px; padding: 0; }
+.viz-ortogonal svg { width: 100%; height: auto; display: block; }
+.viz-ortogonal .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("or-svg"), lec = document.getElementById("or-lectura");
+  var ca = document.getElementById("or-a"), cn = document.getElementById("or-n"), cs = document.getElementById("or-s");
+  var ea = document.getElementById("or-a-v"), en = document.getElementById("or-n-v"), es = document.getElementById("or-s-v");
+  var OX = 150, OY = 205, ESC = 130;          // origen y escala fijos: el marco no sigue a los datos
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function flecha(x1, y1, x2, y2, color, ancho) {
+    svg.appendChild(el("path", { d: "M" + x1.toFixed(1) + " " + y1.toFixed(1) + " L" + x2.toFixed(1) + " " + y2.toFixed(1),
+      stroke: color, "stroke-width": ancho, fill: "none" }));
+    var a = Math.atan2(y2 - y1, x2 - x1), L = 9;
+    svg.appendChild(el("path", { d: "M" + x2.toFixed(1) + " " + y2.toFixed(1) +
+      " L" + (x2 - L * Math.cos(a - 0.4)).toFixed(1) + " " + (y2 - L * Math.sin(a - 0.4)).toFixed(1) +
+      " L" + (x2 - L * Math.cos(a + 0.4)).toFixed(1) + " " + (y2 - L * Math.sin(a + 0.4)).toFixed(1) + " Z",
+      fill: color }));
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var ang = +ca.value, N = +cn.value, sd = +cs.value;
+    ea.textContent = ang; en.textContent = N; es.textContent = sd.toFixed(1);
+    var t = ang * Math.PI / 180;
+    // x1 sobre el eje, x2 girado; ambos de norma raiz(N) como columnas tipicas
+    var x1 = [1, 0], x2 = [Math.cos(t), Math.sin(t)];
+    var p1 = [OX + ESC * x1[0], OY - ESC * x1[1]];
+    var p2 = [OX + ESC * x2[0], OY - ESC * x2[1]];
+    var pr = [OX + ESC * x2[0], OY];            // la proyeccion de x2 sobre x1
+
+    svg.appendChild(el("path", { d: "M" + (OX - 30) + " " + OY + " L" + (OX + ESC + 40) + " " + OY, stroke: C_L, "stroke-width": 1 }));
+    flecha(OX, OY, p1[0], p1[1], C_T, 2);
+    flecha(OX, OY, p2[0], p2[1], C_T, 2);
+    svg.appendChild(el("path", { d: "M" + pr[0].toFixed(1) + " " + pr[1].toFixed(1) + " L" + p2[0].toFixed(1) + " " + p2[1].toFixed(1),
+      stroke: C_L, "stroke-width": 1, "stroke-dasharray": "4 3" }));
+    flecha(pr[0], pr[1], p2[0], p2[1], C_B, 3);
+    svg.appendChild(el("text", { x: (p1[0] + 8).toFixed(1), y: (p1[1] + 4).toFixed(1), "font-size": 11.5, fill: C_T }, "x₁"));
+    svg.appendChild(el("text", { x: (p2[0] + 8).toFixed(1), y: (p2[1] - 4).toFixed(1), "font-size": 11.5, fill: C_T }, "x₂"));
+    svg.appendChild(el("text", { x: (p2[0] + 10).toFixed(1), y: ((pr[1] + p2[1]) / 2).toFixed(1), "font-size": 11.5, fill: C_B }, "z₂"));
+
+    var sen = Math.sin(t);
+    var normaz2 = N * sen * sen;                 // ||z2||^2 con columnas de norma raiz(N)
+    var varianza = sd * sd / normaz2;
+    var vif = 1 / (sen * sen);
+    // la barra de la varianza, a la derecha, con escala fija
+    var BX = 430, BY = 40, BH = 165, TOPE = 0.25;
+    svg.appendChild(el("rect", { x: BX, y: BY, width: 150, height: BH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    var h = Math.min(varianza, TOPE) / TOPE * BH;
+    svg.appendChild(el("path", { d: "M" + (BX + 40) + " " + (BY + BH) + " L" + (BX + 40) + " " + (BY + BH - h).toFixed(1) +
+      " L" + (BX + 110) + " " + (BY + BH - h).toFixed(1) + " L" + (BX + 110) + " " + (BY + BH) + " Z", fill: C_B, opacity: .75 }));
+    svg.appendChild(el("text", { x: BX + 75, y: (BY + BH - h - 7).toFixed(1), "text-anchor": "middle", "font-size": 11, fill: C_B },
+      varianza < TOPE ? varianza.toFixed(5) : "> " + TOPE));
+    svg.appendChild(el("text", { x: BX + 75, y: BY - 6, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "Var(β̂₂) = σ²/‖z₂‖²"));
+
+    lec.innerHTML = "Con las columnas a <strong>" + ang + "°</strong>, el residuo mide ‖z₂‖² = <strong>" + normaz2.toFixed(2) +
+      "</strong> y el coeficiente tiene varianza <strong>" + varianza.toFixed(6) + "</strong>, con VIF = <strong>" + vif.toFixed(2) + "</strong>. " +
+      (ang >= 88
+        ? "Con las columnas ortogonales el residuo es la columna entera y el VIF vale 1: cada coeficiente se estima como si la otra variable no existiera."
+        : ang <= 10
+          ? "Casi alineadas: z₂ se ha quedado en nada y la varianza se dispara. <strong>Eso es la colinealidad</strong>, sin necesidad de nombrarla."
+          : "Cerrando el ángulo, z₂ se acorta como el seno y la varianza crece como su cuadrado.") +
+      " Subir N alarga z₂ proporcionalmente, y por eso hacen falta VIF veces más datos para compensar.";
+  }
+  ca.addEventListener("input", dibujar);
+  cn.addEventListener("input", dibujar);
+  cs.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. El mejor, con letra pequeña
+
+::: {.proposicion}
+**Proposición 24.4 (Gauss-Markov).** Si $\mathbb{E}[y]=X\beta$ y los errores tienen varianza $\sigma^2$ y son incorrelados, entonces para cualquier combinación lineal $a^{\top}\beta$ el estimador de mínimos cuadrados $a^{\top}\hat\beta$ tiene la **menor varianza entre todos los estimadores lineales insesgados**.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $c^{\top}y$ otro estimador lineal insesgado de $a^{\top}\beta$. Insesgado significa $\mathbb{E}[c^{\top}y]=c^{\top}X\beta=a^{\top}\beta$ para todo $\beta$, o sea $X^{\top}c=a$. El de mínimos cuadrados es $a^{\top}\hat\beta=d^{\top}y$ con $d=X(X^{\top}X)^{-1}a$, que también cumple $X^{\top}d=a$. Entonces $X^{\top}(c-d)=0$, de modo que $c-d$ es ortogonal al espacio columna, y como $d$ pertenece a él,
+$$\operatorname{Var}(c^{\top}y)=\sigma^{2}\lVert c\rVert^{2}=\sigma^{2}\bigl(\lVert d\rVert^{2}+\lVert c-d\rVert^{2}\bigr)\ \ge\ \sigma^{2}\lVert d\rVert^{2}=\operatorname{Var}(d^{\top}y),$$
+por el teorema de Pitágoras, con igualdad solo si $c=d$. [∎]{.fin-demo}
+:::
+
+La letra pequeña está en dos palabras: **lineales** e **insesgados**. Quitando la segunda, el teorema deja de decir nada útil, y eso no es una objeción retórica.
+
+::: {.proposicion}
+**Proposición 24.5 (hay estimadores sesgados con menos error).** El error cuadrático medio de un estimador se parte en sesgo al cuadrado más varianza. Existen estimadores con sesgo no nulo y varianza tan menor que su error total es **estrictamente inferior** al de mínimos cuadrados; el de ridge con $\lambda$ pequeño es uno de ellos.
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(241)
+n, p = 200, 5
+X = rng.normal(0, 1, (n, p))
+X[:, 2] = 0.95 * X[:, 1] + 0.1 * rng.normal(0, 1, n)
+beta = np.array([1.0, -2.0, 0.5, 0.0, 3.0])
+
+rng = np.random.default_rng(242)
+B = 2000
+lams = (0.0, 0.2, 0.5, 1.0, 2.0, 5.0, 15.0, 40.0)
+Xc = X - X.mean(axis=0)
+err = {l: [] for l in lams}
+for _ in range(B):
+    yy = Xc @ beta + rng.normal(0, 1.0, n)
+    yc = yy - yy.mean()
+    for l in lams:
+        bh = np.linalg.solve(Xc.T @ Xc + l * np.eye(p), Xc.T @ yc)
+        err[l].append(((bh - beta) ** 2).sum())
+
+print("error cuadratico de los coeficientes, dos mil repeticiones")
+print("   lambda    error   ¿mejor que minimos cuadrados?")
+base = float(np.mean(err[0.0]))
+for l in lams:
+    m = float(np.mean(err[l]))
+    print("   %5.1f   %.6f          %-5s" % (l, m, bool(m < base)))
+print()
+print("minimos cuadrados es el mejor estimador INSESGADO, y aun asi hay")
+print("estimadores sesgados con menos error: con lambda = 0.5 el error baja de")
+print("%.6f a %.6f, un %.1f %% menos" % (base, np.mean(err[0.5]), 100 * (1 - np.mean(err[0.5]) / base)))
+```
+
+Con $\lambda=0$ —o sea, mínimos cuadrados— el error vale $1{,}310782$. Con $\lambda=0{,}2$ baja a $0{,}967835$ y con $\lambda=0{,}5$ a $0{,}985342$, **un $24{,}8\,\%$ menos**. A partir de $\lambda=2$ el sesgo domina y el error vuelve a subir, hasta $3{,}307539$ con $\lambda=40$.
+
+No hay contradicción con la Proposición 24.4: el estimador de ridge **es sesgado**, así que no compite en la categoría del teorema. Lo que el resultado dice es que esa categoría estaba mal elegida. Quien quiera predecir bien no tiene ninguna razón para exigir insesgadez, y renunciar a ella compra varianza a cambio de sesgo en un intercambio que a veces sale a favor.
+
+Y conviene notar dónde sale a favor: **precisamente cuando hay colinealidad**. La varianza que ridge recorta es la que la Proposición 24.3 hacía explotar, de modo que las dos secciones anteriores explican por qué existe el capítulo siguiente del libro.
+
+```{=html}
+<div class="viz-ridge24">
+  <div class="controles">
+    <label>Colinealidad, ángulo <input id="ri-a" type="range" min="4" max="90" step="2" value="16"> <span id="ri-a-v">16</span>°</label>
+    <label>Observaciones N <input id="ri-n" type="range" min="30" max="500" step="10" value="200"> <span id="ri-n-v">200</span></label>
+    <label>Tamaño de β <input id="ri-b" type="range" min="0.5" max="6" step="0.5" value="2.0"> <span id="ri-b-v">2.0</span></label>
+  </div>
+  <svg id="ri-svg" viewBox="0 0 660 250" role="img" aria-label="El sesgo al cuadrado, la varianza y su suma en función de la penalización, con el mínimo del error total marcado."></svg>
+  <p class="lectura" id="ri-lectura"></p>
+</div>
+<style>
+.viz-ridge24 { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-ridge24 .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-ridge24 label { display: flex; align-items: center; gap: .4rem; }
+.viz-ridge24 input[type=range] { width: 140px; padding: 0; }
+.viz-ridge24 svg { width: 100%; height: auto; display: block; }
+.viz-ridge24 .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("ri-svg"), lec = document.getElementById("ri-lectura");
+  var ca = document.getElementById("ri-a"), cn = document.getElementById("ri-n"), cb = document.getElementById("ri-b");
+  var ea = document.getElementById("ri-a-v"), en = document.getElementById("ri-n-v"), eb = document.getElementById("ri-b-v");
+  var X0 = 52, XW = 568, Y0 = 20, YH = 190, LMAX = 40, TOPE = 1.0;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var ang = +ca.value, N = +cn.value, mag = +cb.value;
+    ea.textContent = ang; en.textContent = N; eb.textContent = mag.toFixed(1);
+    // dos columnas de norma raiz(N) a ese angulo: los autovalores de X'X
+    var c = Math.cos(ang * Math.PI / 180);
+    var d1 = N * (1 + c), d2 = N * (1 - c);     // autovalores
+    var b1 = mag / Math.SQRT2, b2 = mag / Math.SQRT2;
+    // para ridge: sesgo^2 = sum (lam/(d+lam))^2 b^2 ; var = sum d/(d+lam)^2 sigma^2
+    function piezas(lam) {
+      var s = 0, v = 0;
+      [[d1, b1], [d2, b2]].forEach(function (par) {
+        var d = par[0], b = par[1];
+        s += Math.pow(lam / (d + lam), 2) * b * b;
+        v += d / Math.pow(d + lam, 2);
+      });
+      return [s, v];
+    }
+    var px = function (l) { return X0 + l / LMAX * XW; };
+    var py = function (v) { return Y0 + (1 - Math.min(v, TOPE) / TOPE) * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    var ds = "", dv = "", dt = "", mejor = 0, mejorv = Infinity, K = 200, i;
+    for (i = 0; i <= K; i++) {
+      var lam = i / K * LMAX, q = piezas(lam), tot = q[0] + q[1];
+      ds += (i ? " L" : "M") + px(lam).toFixed(1) + " " + py(q[0]).toFixed(1);
+      dv += (i ? " L" : "M") + px(lam).toFixed(1) + " " + py(q[1]).toFixed(1);
+      dt += (i ? " L" : "M") + px(lam).toFixed(1) + " " + py(tot).toFixed(1);
+      if (tot < mejorv) { mejorv = tot; mejor = lam; }
+    }
+    svg.appendChild(el("path", { d: ds, stroke: C_G, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("path", { d: dv, stroke: C_A, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("path", { d: dt, stroke: C_B, "stroke-width": 2.5, fill: "none" }));
+    svg.appendChild(el("path", { d: "M" + px(mejor).toFixed(1) + " " + Y0 + " L" + px(mejor).toFixed(1) + " " + (Y0 + YH), stroke: C_T, "stroke-width": 1, "stroke-dasharray": "4 3", opacity: .6 }));
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 14, "font-size": 10.5, fill: C_G }, "sesgo²"));
+    svg.appendChild(el("text", { x: X0 + 62, y: Y0 + 14, "font-size": 10.5, fill: C_A }, "varianza"));
+    svg.appendChild(el("text", { x: X0 + 128, y: Y0 + 14, "font-size": 10.5, fill: C_B }, "total"));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "λ de 0 a " + LMAX));
+
+    var q0 = piezas(0), tot0 = q0[0] + q0[1];
+    lec.innerHTML = "Con las columnas a <strong>" + ang + "°</strong>, N = " + N + " y ‖β‖ = " + mag.toFixed(1) +
+      ", el error de mínimos cuadrados vale <strong>" + tot0.toFixed(6) + "</strong> y el mínimo cae en λ = <strong>" +
+      mejor.toFixed(2) + "</strong> con <strong>" + mejorv.toFixed(6) + "</strong>. " +
+      (mejor < 0.25
+        ? "Con las columnas casi ortogonales apenas hay varianza que recortar, y el λ óptimo es casi cero: <strong>mínimos cuadrados ya está bien</strong>."
+        : "El λ óptimo es <strong>estrictamente positivo</strong>, que es la Proposición 24.5: el estimador sesgado gana. " +
+          "Cerrando el ángulo crece la varianza que hay para recortar, y el óptimo se aleja de cero.") +
+      " Subir ‖β‖ encarece el sesgo y devuelve el óptimo hacia cero.";
+  }
+  ca.addEventListener("input", dibujar);
+  cn.addEventListener("input", dibujar);
+  cb.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Lo que esta lección no resuelve
+
+- **No se elige $\lambda$.** La sección 3 exhibe que existe uno mejor que cero; encontrarlo con datos es validación cruzada, de la lección 6.
+- **Los errores se suponen incorrelados y de varianza igual.** Gauss-Markov necesita las dos cosas; cuando fallan, el mejor estimador lineal insesgado es otro y se llama mínimos cuadrados generalizados.
+- **No se trata la selección de subconjuntos.** ESL §3.3 recorre ese camino, y la lección 25 toma el que lo conecta con ridge.
+- **El diagnóstico de colinealidad se queda en el VIF.** Los números de condición y la descomposición en valores singulares dicen más, y aparecen en la lección 19.
+- **Y nada de esto es causal.** El coeficiente mide la relación con la parte no explicada de $x_j$, que es una afirmación sobre esta muestra y este conjunto de columnas.
+
+## Ejercicios
+
+### Ejercicio 1, Cuántos datos cuesta una copia
+
+Con la Proposición 24.3, calcular el factor de inflación de la varianza para varios valores de $R_j^2$ y traducirlo a cuántos datos harían falta para compensarlo.
+
+```{pyodide}
+#| exercise: ex_vif
+def vif(r2):
+    return ______
+
+for r2 in (0.0, 0.5, 0.9, 0.99, 0.999):
+    print(r2, round(vif(r2), 4))
+
+round(vif(0.99), 4)
+```
+
+::: {.hint exercise="ex_vif"}
+La proposición da $\text{VIF}=1/(1-R_j^2)$.
+:::
+
+::: {.solution exercise="ex_vif"}
+```{pyodide}
+def vif(r2):
+    return 1.0 / (1.0 - r2)
+
+for r2 in (0.0, 0.5, 0.9, 0.99, 0.999):
+    print(r2, round(vif(r2), 4))
+
+round(vif(0.99), 4)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_vif
+#| check: true
+if abs(result - 100.0) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: 100. Si las demás columnas explican el 99 % de una variable, su coeficiente es cien veces más variable, y hacen falta cien veces más datos para estimarlo igual de bien. Con R² = 0,999 son mil.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 100.0 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, El ángulo que arruina un coeficiente
+
+Con la Proposición 24.3 y dos columnas de norma $\sqrt{N}$ separadas por un ángulo $\theta$, calcular la varianza del coeficiente y el ángulo a partir del cual supera diez veces la del caso ortogonal.
+
+```{pyodide}
+#| exercise: ex_angulo
+import numpy as np
+
+N, sigma = 200, 1.0
+
+def varianza(grados):
+    s = np.sin(np.radians(grados))
+    return ______
+
+base = varianza(90)
+g = 90
+while varianza(g) < 10 * base:
+    g = ______
+
+print(round(base, 8), g, round(varianza(g) / base, 4))
+int(g)
+```
+
+::: {.hint exercise="ex_angulo"}
+Con columnas de norma $\sqrt{N}$ a ángulo $\theta$, el residuo cumple $\lVert z\rVert^2=N\sin^2\theta$, así que la varianza es $\sigma^2/(N\sin^2\theta)$. Hay que bajar el ángulo de uno en uno.
+:::
+
+::: {.solution exercise="ex_angulo"}
+```{pyodide}
+import numpy as np
+
+N, sigma = 200, 1.0
+
+def varianza(grados):
+    s = np.sin(np.radians(grados))
+    return sigma ** 2 / (N * s * s)
+
+base = varianza(90)
+g = 90
+while varianza(g) < 10 * base:
+    g = g - 1
+
+print(round(base, 8), g, round(varianza(g) / base, 4))
+int(g)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_angulo
+#| check: true
+if result == 18:
+    feedback = {"correct": True, "message": "Correcto: a 18 grados la varianza ya es más de diez veces la del caso ortogonal. Dos variables que un gráfico de dispersión mostraría como claramente distintas bastan para multiplicar por diez el error de su coeficiente.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 18 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 24**:
+
+1. Implementar la ortogonalización sucesiva como algoritmo completo —el de ESL §3.2.3— y comprobar que reproduce los coeficientes de `lstsq` sobre una matriz propia. Anotar cuántas operaciones cuesta comparado con resolver las ecuaciones normales.
+2. Construir una matriz con tres columnas cuya suma sea casi constante y calcular los tres factores de inflación. Anotar cuál es el más alto y por qué no es evidente a simple vista.
+3. Repetir la medición de la Proposición 24.5 variando la colinealidad, y guardar en `50-Errores/` la curva del $\lambda$ óptimo contra el ángulo entre columnas. Anotar hacia dónde tiende cuando las columnas son ortogonales.
+
+## Del libro
+
+**ESL §3.2** desarrolla la solución de mínimos cuadrados y contiene, en §3.2.2, el teorema de Gauss-Markov con la observación de que un estimador sesgado puede tener menor error; en §3.2.3 está la regresión múltiple por ortogonalización sucesiva, que es la Proposición 24.2. **§3.4** introduce las penalizaciones que la sección 3 usa como contraejemplo.
+
+Esta página añade la medición: el libro enuncia que existe un estimador sesgado mejor y aquí se **exhibe uno** con su tabla, se comprueba que $\sigma^2/\lVert z_j\rVert^2$ coincide con la diagonal de $(X^{\top}X)^{-1}$ a ocho decimales, y se traduce el factor de inflación a la única unidad que decide un diseño: cuántos datos más harían falta.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/geometria-minimos-cuadrados.md`, enlazada a [[minimos-cuadrados]], [[alta-dimension]] y [[maldicion-dimension]]. Conviene rehacer a mano la Proposición 24.2: el argumento del cambio de base ocupa tres renglones y deja grabado que **controlar por las demás variables es proyectar y quedarse con el resto**, que es la frase que hace falta para leer cualquier tabla de coeficientes.
+
+```
+¿Qué es z_j?::Lo que la columna j tiene y las demás no saben explicar
+¿Cuánto vale el coeficiente de x_j?::La regresión simple de y sobre z_j
+¿Qué significa «controlar por las demás variables»?::Proyectar x_j sobre ellas y quedarse con el residuo
+¿Qué algoritmo sale de repetirlo?::Gram-Schmidt, y con él la descomposición QR
+¿Cuánto vale la varianza de un coeficiente?::σ²/‖z_j‖²
+¿Dónde está la colinealidad en esa fórmula?::En que ‖z_j‖ se hace corto
+¿Qué es el VIF?::1/(1−R²_j), cuántas veces más variable es el coeficiente
+¿Y en datos?::Cuántas veces más observaciones harían falta para compensarlo
+¿Qué dice Gauss-Markov?::Mínimos cuadrados tiene la menor varianza entre los lineales insesgados
+¿Dónde está su letra pequeña?::En «lineales» y en «insesgados»
+¿Hay estimadores mejores?::Sí, sesgados: ridge con λ pequeño baja el error un 24,8 % en la medición
+¿Contradice eso el teorema?::No: ridge es sesgado y no compite en esa categoría
+¿Cuándo gana más ridge?::Cuando hay colinealidad, que es la varianza que recorta
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 24.2 se demuestra con el cambio de base a $[X_{-j}\;z_j]$; se comprueba sobre cinco columnas, con los coeficientes coincidiendo por los dos caminos por debajo de $10^{-10}$. La Proposición 24.3 se demuestra calculando la varianza de una combinación lineal; se comprueba contra la diagonal de $(X^{\top}X)^{-1}$, que coincide a ocho decimales, con $\lVert z_j\rVert^2$ pasando de $227{,}1063$ a $1{,}5533$ y la varianza de $0{,}00440322$ a $0{,}64379892$. La Proposición 24.4 se demuestra por Pitágoras sobre el espacio columna. La Proposición 24.5 se comprueba con dos mil repeticiones, donde $\lambda=0{,}2$ da $0{,}967835$ y $\lambda=0{,}5$ da $0{,}985342$ frente a $1{,}310782$ de mínimos cuadrados.
+
+**Lo que viene de los libros.** De **ESL §3.2** vienen la presentación de mínimos cuadrados, el teorema de Gauss-Markov de §3.2.2 y la regresión por ortogonalización sucesiva de §3.2.3. De **§3.4**, las penalizaciones que aquí sirven de contraejemplo. El texto no se reproduce.
+
+**Lo que se usa de otras lecciones sin repetir.** La solución como proyección ortogonal y la descomposición QR son de Álgebra 6 y 7. Ridge y su formulación penalizada son de Machine Learning 9. El error estándar de un coeficiente es de Estadística 14, y aquí recibe su forma geométrica.
+
+**Lo que se enuncia sin demostrar.** Que el estimador de ridge tiene la forma $(X^{\top}X+\lambda I)^{-1}X^{\top}y$ se **usa** y se atribuye a Machine Learning 9. La existencia de un $\lambda>0$ que mejora a mínimos cuadrados **para toda** matriz de diseño es un resultado clásico que aquí se **comprueba en un caso** y no se demuestra en general.
+
+**Lo que es mío, no del libro.** Poner la Proposición 24.2 como **el resultado que ordena la lección** en lugar de como un método de cálculo, porque es lo que define qué significa un coeficiente. Comprobar numéricamente la identidad $\sigma^2/\lVert z_j\rVert^2$ contra la diagonal de $(X^{\top}X)^{-1}$, que el libro da por evidente. Y traducir el VIF a **cuántos datos más harían falta**, que convierte un diagnóstico en una decisión de diseño.
+:::
