@@ -36,7 +36,7 @@ Tres hitos de esta sesión:
   las 33 secciones de retos y los 106 símbolos sin declarar.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
-faltando lecciones por escribir: **ML va por 22 de 90**, **Series de tiempo
+faltando lecciones por escribir: **ML va por 23 de 90**, **Series de tiempo
 está **completo, 11 de 11**, e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -106,7 +106,7 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 11 | 11 | **11 de 11** | — |
-| Machine Learning | 22 | 90 | **22 de 22** | la Fase 2 cerrada; quedan ESL y deep learning |
+| Machine Learning | 23 | 90 | **23 de 23** | ESL 3 a 15 y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
@@ -402,7 +402,8 @@ Lo que sigue, en orden de coste creciente:
    13-09-2026 con sus 81 secciones, así que se puede citar `§4.3 Logistic
    Regression` y no solo el capítulo. Causal sigue necesitando *Causal Inference
    for the Brave and True*, que no está verificado y por tanto no es citable.
-4. **Fase 2**: traer los índices de ESL y fast.ai antes de citarlos.
+4. **Fase 2**: el índice de ESL ya está traído y verificado (20-09-2026), así
+   que las lecciones 23 a 35 son citables. Falta el de fast.ai.
 
 ### 3.5 Estadística 01 y 02: hechas
 
@@ -2289,6 +2290,77 @@ El procedimiento cazó un valor escrito a mano en **siete** de las once
 lecciones, y la regla 19b marcó controles muertos en **cinco**; en todos los
 casos el arreglo mejoró lo que el visual enseñaba, en lugar de limitarse a
 silenciar el aviso.
+
+### 3.38 El índice de ESL, con dos fuentes porque una no bastaba (20-09-2026)
+
+ML 23 a 35 llevaban bloqueadas desde el principio por la regla 3: sin índice
+verificado no se cita. Traerlo costó más de lo previsto y por una razón que
+merece quedar escrita.
+
+El PDF oficial —enlazado desde `hastie.su.domains/ElemStatLearn/download.html`,
+que redirige a Google Drive, 764 páginas— **tiene los marcadores corrompidos**:
+
+- meten tabuladores dentro de los números, de modo que `7.1\t0.1` es en realidad
+  la sección **7.10.1**;
+- anidan ramas enteras donde no van, hasta siete niveles de profundidad bajo una
+  sección que no es su padre;
+- y por esa vía **pierden la sección 18.8**, que queda colgada bajo el capítulo 7.
+
+Una extracción ingenua de los marcadores daba un índice con secciones
+inventadas: la 7.1 salía titulada «1.1 Example (Continued)», que es un trozo de
+la 7.11.1.
+
+#### La regla que sale de aquí
+
+**Cuando una fuente sola es dudosa, la respuesta es traer la segunda, no elegir
+entre las dos.** Se extrajo aparte el **índice impreso** de las páginas 9 a 18
+del mismo PDF, uniendo las líneas partidas, y se contrastaron:
+
+- 126 de 133 secciones coinciden **literalmente**;
+- las 7 restantes difieren solo en los puntos suspensivos del índice impreso,
+  que el lector de líneas no recortó;
+- 8 secciones faltaban en el impreso por líneas partidas, y 1 —la 18.8— faltaba
+  en los marcadores.
+
+Además, cada capítulo da una secuencia de secciones **sin huecos**, de 1 a N, lo
+que es una comprobación de consistencia interna que una extracción rota no
+pasaría.
+
+El resultado: **18 capítulos y 134 secciones**, en `indices.json` con las dos
+fuentes y la fecha. ESL queda citable a nivel de sección, como ISLP.
+
+### 3.39 ML 23: la maldición de la dimensión con presupuesto (20-09-2026)
+
+Primera lección sobre ESL. Reúne en **una sola proposición con demostración** las
+tres cuentas que §2.5 presenta como ejemplos numéricos sueltos:
+
+> **23.3**: el lado del vecindario es $r^{1/p}$; la distancia mediana al vecino
+> más cercano es $(1-2^{-1/N})^{1/p}$; la densidad va como $N^{1/p}$.
+
+La segunda se **comprueba por simulación**, cosa que el libro no hace: $0{,}517822$
+medido contra $0{,}517792$ calculado con $p=10$ y $N=500$.
+
+Y el cruce de la Proposición 23.5 se **tabula** en lugar de dibujarse: sobre una
+verdad que depende de una sola coordenada, el vecino más cercano gana con
+cociente $0{,}2140$ en $p=5$, empata en $p=10$ y pierde $2{,}0382$ a uno en
+$p=20$, mientras el modelo lineal mal especificado se queda clavado en
+$0{,}25$ para toda $p$. **En dimensión alta hay que suponer algo**; la elección
+es qué.
+
+#### Un fallo mío que llevaba dos días publicado
+
+`genera_retos.py` necesita `--escribe` para escribir: sin esa bandera imprime lo
+que **falta**, no lo que hizo. Lo leí al revés once veces seguidas, así que las
+once lecciones de Series de tiempo remiten a secciones de `F3-retos.ipynb` que
+**no existían**; el cuaderno solo tenía la de Series 1.
+
+Al escribirlas apareció un segundo fallo, este en el propio guion: su detector de
+secciones ya existentes conocía `Matemática|Estadística|Python|ML` y **no
+`Series`**, de modo que duplicó la única que sí estaba. Las dos cosas quedan
+arregladas y el cuaderno tiene ahora sus once secciones sin repetidos.
+
+La lección práctica: **un guion que informa de lo pendiente y otro que informa
+de lo hecho no deben parecerse tanto**. Conviene mirar el archivo, no la salida.
 
 ---
 

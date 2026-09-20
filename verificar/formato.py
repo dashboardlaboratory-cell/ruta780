@@ -111,6 +111,7 @@ MIGRADAS = {
     "ml/20-pcr-y-pls.qmd",
     "ml/21-clustering.qmd",
     "ml/22-pruebas-multiples.qmd",
+    "ml/23-panorama-supervisado.qmd",
     "series/01-descomposicion.qmd",
     "series/02-estacionariedad.qmd",
     "series/03-autocorrelacion.qmd",

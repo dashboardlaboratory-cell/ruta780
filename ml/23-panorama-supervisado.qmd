@@ -1,0 +1,557 @@
+---
+title: "Panorama supervisado: kNN, mínimos cuadrados y la maldición de la dimensión"
+subtitle: "Machine Learning · Lección 23"
+nivel: L2
+modulo: ml
+fase: F2
+prereqs: [ml/01-aprendizaje-estadistico, ml/06-validacion-cruzada, matematica/06-minimos-cuadrados]
+siguientes: []
+libro: "ESL §2.3 Two Simple Approaches to Prediction: Least Squares and Nearest Neighbors · §2.4 Statistical Decision Theory · §2.5 Local Methods in High Dimensions"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="ml/23-panorama-supervisado"}
+[[L2]{.nivel .nivel-L2} **ESL 2**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ESL §2.3–2.5]{.item}
+[**Prereqs** [Sesgo y varianza](01-aprendizaje-estadistico.qmd) · [Validación cruzada](06-validacion-cruzada.qmd) · [Mínimos cuadrados](../matematica/06-minimos-cuadrados.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Describir los dos métodos extremos del aprendizaje supervisado y qué supone cada uno.
+2. **Demostrar que para capturar una fracción $r$ del volumen en $p$ dimensiones hace falta cubrir $r^{1/p}$ de cada eje**, y evaluarlo.
+3. **Demostrar la fórmula de la distancia mediana al vecino más cercano** y comprobarla por simulación.
+4. Descomponer el error de un método local y ver que en dimensión alta **se vuelve casi todo sesgo**.
+5. Medir dónde está el cruce entre un método sin supuestos y uno mal especificado pero estable.
+6. Decir qué significa la [maldición de la dimensión]{.g data-t="maldición de la dimensión"} en términos que se puedan calcular.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 1**: el sesgo y la varianza, que son las dos piezas en que se parte el error aquí.
+- **Machine Learning 6**: la validación cruzada, que es como se elegiría $k$ en la práctica.
+- **Álgebra 6**: los mínimos cuadrados y la proyección, que dan la solución cerrada.
+- **Estadística 4**: la esperanza y la varianza, con las que se descompone el error.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 24**: la geometría de mínimos cuadrados, que desarrolla el primero de los dos extremos.
+- **Machine Learning 27**: las expansiones en base, que son la manera de ganar flexibilidad sin pagar la maldición entera.
+- **Machine Learning 29**: la descomposición sesgo-varianza en su forma general.
+- **Machine Learning 35**: por qué funciona random forest, que es una respuesta a este mismo problema.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $p$ | pe | El número de variables de entrada |
+| $N$ | ene mayúscula | El número de observaciones |
+| $X$ | equis mayúscula | El vector de entradas |
+| $Y$ | y griega mayúscula | La respuesta |
+| $\hat f(x)$ | efe con sombrero | La predicción en el punto $x$ |
+| $k$ | ka | El número de vecinos que promedia el método local |
+| $r$ | erre | La fracción de volumen que se quiere capturar |
+| $e_p(r)$ | e sub pe de erre | El lado del cubo que captura esa fracción |
+| $d(p,N)$ | de de pe y ene | La distancia mediana al vecino más cercano |
+| $\text{EPE}$ | e pe e | El error de predicción esperado |
+| $\beta$ | beta | Los coeficientes del modelo lineal |
+:::
+
+## 1. Los dos extremos
+
+::: {.definicion}
+**Definición 23.1 (los dos métodos).** Dados datos $(x_i,y_i)$:
+
+- **Mínimos cuadrados** predice $\hat f(x)=x^{\top}\hat\beta$ con $\hat\beta$ el minimizador de $\sum_i(y_i-x_i^{\top}\beta)^2$. Impone una forma global y rígida.
+- **$k$ vecinos más cercanos** predice $\hat f(x)=\frac1k\sum_{x_i\in N_k(x)}y_i$, el promedio de las respuestas de los $k$ puntos más próximos. No impone ninguna forma.
+:::
+
+ESL los presenta como los dos extremos de un mismo eje: el primero tiene dos parámetros por variable y muchos supuestos, el segundo tiene un parámetro —$k$— y ninguno. Casi todo lo demás del libro cae entre los dos.
+
+::: {.definicion}
+**Definición 23.2 (error de predicción esperado).** Con pérdida cuadrática,
+$$\text{EPE}(x_0)=\mathbb{E}\bigl[(Y-\hat f(x_0))^2\mid X=x_0\bigr],$$
+que se descompone en el cuadrado del sesgo más la varianza del estimador, más el ruido irreducible.
+:::
+
+La pregunta que ordena la lección es cuándo conviene cada extremo, y la respuesta depende de una propiedad de la geometría que no tiene nada que ver con los datos.
+
+## 2. Tres cuentas sobre el espacio vacío
+
+::: {.proposicion}
+**Proposición 23.3 (la maldición de la dimensión, en tres fórmulas).** Sea el cubo unidad $[0,1]^{p}$ con puntos distribuidos uniformemente.
+
+(a) Un vecindario cúbico que capture una fracción $r$ del volumen tiene lado
+$$e_p(r)=r^{1/p}.$$
+
+(b) Con $N$ puntos uniformes en la bola unidad de $\mathbb{R}^{p}$, la distancia mediana del origen al más cercano vale
+$$d(p,N)=\Bigl(1-\tfrac12^{\,1/N}\Bigr)^{1/p}.$$
+
+(c) La densidad de muestreo es proporcional a $N^{1/p}$, de modo que mantenerla al pasar de $p$ a $p+1$ dimensiones exige multiplicar $N$ por el número de puntos que había por eje.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (a), el volumen de un cubo de lado $e$ es $e^{p}$, y la fracción capturada es ese mismo volumen porque el total es uno; despejando $e^p=r$ sale $e=r^{1/p}$. Para (b), un punto uniforme en la bola unidad cae a distancia mayor que $t$ con probabilidad $1-t^{p}$, así que los $N$ puntos están todos más lejos que $t$ con probabilidad $(1-t^{p})^{N}$. La mediana del mínimo es el $t$ que iguala esa probabilidad a $1/2$:
+$$(1-t^{p})^{N}=\tfrac12\iff t=\Bigl(1-\tfrac12^{\,1/N}\Bigr)^{1/p}.$$
+Para (c), $N$ puntos repartidos por $p$ ejes dan $N^{1/p}$ por eje. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+print("el lado del cubo que hace falta para capturar una fraccion r del volumen")
+print("     r       p=2       p=5      p=10      p=50     p=100")
+for r in (0.001, 0.01, 0.1):
+    print("  %.3f  " % r, "  ".join("%8.6f" % r ** (1.0 / p) for p in (2, 5, 10, 50, 100)))
+print()
+print("con p=10, capturar el 1 %% de los datos exige cubrir el %.4f de cada eje" % 0.01 ** 0.1)
+```
+
+La tabla dice algo que no se ve venir. Con diez variables, un vecindario que contenga el $1\,\%$ de los datos ocupa el $\mathbf{63{,}10\,\%}$ del recorrido de **cada** variable. Con cien variables, el $95{,}50\,\%$. **Un método que se llama local ha dejado de serlo**, y sin embargo sigue promediando solo cien puntos de diez mil.
+
+```{pyodide}
+import numpy as np
+
+def dmed(p, N):
+    """Distancia mediana del origen al mas cercano de N puntos en la bola unidad."""
+    return (1 - 0.5 ** (1.0 / N)) ** (1.0 / p)
+
+print("distancia mediana al vecino mas cercano, N puntos uniformes en la bola")
+print("     N       p=2       p=5      p=10      p=50     p=100")
+for N in (100, 500, 5000):
+    print("  %5d  " % N, "  ".join("%8.6f" % dmed(p, N) for p in (2, 5, 10, 50, 100)))
+print()
+
+rng = np.random.default_rng(231)
+print("comprobacion por simulacion, 400 muestras de N = 500 puntos:")
+for p in (2, 10, 20):
+    ds = []
+    for _ in range(400):
+        v = rng.normal(0, 1, (500, p))
+        v /= np.linalg.norm(v, axis=1, keepdims=True)
+        x = v * (rng.random((500, 1)) ** (1.0 / p))
+        ds.append(np.linalg.norm(x, axis=1).min())
+    print("  p=%2d   mediana medida %.6f   formula %.6f" % (p, np.median(ds), dmed(p, 500)))
+print()
+print("con p=10 y N=500 el vecino mas cercano esta a %.6f del centro: mas de la" % dmed(10, 500))
+print("mitad del camino al borde. Un metodo local deja de ser local")
+```
+
+La simulación reproduce la fórmula: $0{,}517822$ medido contra $0{,}517792$ calculado con $p=10$, y $0{,}719429$ contra $0{,}719578$ con $p=20$. Con quinientas observaciones y diez variables, **el vecino más cercano de un punto está a más de la mitad del camino hacia el borde**.
+
+Y la tercera cuenta cierra el cuadro: con cien puntos por eje, igualar esa densidad en diez dimensiones exige $100^{10}=10^{20}$ observaciones. **Ninguna cantidad realista de datos arregla esto**, y por eso el problema no se resuelve recogiendo más.
+
+```{=html}
+<div class="viz-maldicion">
+  <div class="controles">
+    <label>Dimensión p <input id="ma-p" type="range" min="1" max="50" step="1" value="10"> <span id="ma-p-v">10</span></label>
+    <label>Observaciones N <input id="ma-n" type="range" min="50" max="5000" step="50" value="500"> <span id="ma-n-v">500</span></label>
+    <label>Fracción r <input id="ma-r" type="range" min="0.005" max="0.3" step="0.005" value="0.01"> <span id="ma-r-v">0.010</span></label>
+  </div>
+  <svg id="ma-svg" viewBox="0 0 660 260" role="img" aria-label="El lado del vecindario y la distancia al vecino más cercano en función de la dimensión, con el valor de la dimensión elegida marcado."></svg>
+  <p class="lectura" id="ma-lectura"></p>
+</div>
+<style>
+.viz-maldicion { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-maldicion .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-maldicion label { display: flex; align-items: center; gap: .4rem; }
+.viz-maldicion input[type=range] { width: 150px; padding: 0; }
+.viz-maldicion svg { width: 100%; height: auto; display: block; }
+.viz-maldicion .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("ma-svg"), lec = document.getElementById("ma-lectura");
+  var cp = document.getElementById("ma-p"), cn = document.getElementById("ma-n"), cr = document.getElementById("ma-r");
+  var ep = document.getElementById("ma-p-v"), en = document.getElementById("ma-n-v"), er = document.getElementById("ma-r-v");
+  var X0 = 46, XW = 574, Y0 = 20, YH = 200, PMAX = 50;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var P = +cp.value, N = +cn.value, r = +cr.value;
+    ep.textContent = P; en.textContent = N; er.textContent = r.toFixed(3);
+    // el marco es [0,1] fijo: las dos cantidades son fracciones (regla 19b)
+    var px = function (p) { return X0 + (p - 1) / (PMAX - 1) * XW; };
+    var py = function (v) { return Y0 + (1 - Math.max(0, Math.min(1, v))) * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    [0.25, 0.5, 0.75].forEach(function (v) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(v).toFixed(1) + " L" + (X0 + XW) + " " + py(v).toFixed(1), stroke: C_L, "stroke-width": 1, "stroke-dasharray": "3 3", opacity: .5 }));
+      svg.appendChild(el("text", { x: X0 - 6, y: (py(v) + 3).toFixed(1), "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .55 }, v.toFixed(2)));
+    });
+    var d1 = "", d2 = "", p;
+    for (p = 1; p <= PMAX; p++) {
+      d1 += (p > 1 ? " L" : "M") + px(p).toFixed(1) + " " + py(Math.pow(r, 1 / p)).toFixed(1);
+      d2 += (p > 1 ? " L" : "M") + px(p).toFixed(1) + " " + py(Math.pow(1 - Math.pow(0.5, 1 / N), 1 / p)).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: d1, stroke: C_A, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("path", { d: d2, stroke: C_B, "stroke-width": 2, fill: "none" }));
+    var lado = Math.pow(r, 1 / P), dist = Math.pow(1 - Math.pow(0.5, 1 / N), 1 / P);
+    svg.appendChild(el("path", { d: "M" + px(P).toFixed(1) + " " + Y0 + " L" + px(P).toFixed(1) + " " + (Y0 + YH), stroke: C_T, "stroke-width": 1, opacity: .45 }));
+    svg.appendChild(el("circle", { cx: px(P).toFixed(1), cy: py(lado).toFixed(1), r: 4, fill: C_A }));
+    svg.appendChild(el("circle", { cx: px(P).toFixed(1), cy: py(dist).toFixed(1), r: 4, fill: C_B }));
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 14, "font-size": 10.5, fill: C_A }, "lado del vecindario que captura r"));
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 27, "font-size": 10.5, fill: C_B }, "distancia al vecino más cercano"));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "dimensión 1 … " + PMAX));
+
+    lec.innerHTML = "Con p = <strong>" + P + "</strong>, capturar el <strong>" + (100 * r).toFixed(1) +
+      " %</strong> del volumen exige cubrir <strong>" + lado.toFixed(4) + "</strong> de cada eje, y con N = " + N +
+      " el vecino más cercano queda a <strong>" + dist.toFixed(4) + "</strong> del centro. " +
+      (P <= 2
+        ? "En dimensión baja las dos cantidades son pequeñas y un método local es de verdad local."
+        : lado > 0.5
+          ? "Las dos superan la mitad del recorrido: <strong>el vecindario ya no es un vecindario</strong>."
+          : "Al subir p las dos curvas trepan hacia uno, y lo hacen deprisa: la de la izquierda es r^(1/p).") +
+      " Subiendo N la curva roja baja, pero solo como N^(−1/p): por eso recoger más datos no arregla el problema.";
+  }
+  cp.addEventListener("input", dibujar);
+  cn.addEventListener("input", dibujar);
+  cr.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Qué le pasa al error
+
+::: {.proposicion}
+**Proposición 23.4 (en dimensión alta el error local es casi todo sesgo).** Sea $f$ una función suave y $\hat f(x_0)$ el valor del vecino más cercano a $x_0$ entre $N$ puntos uniformes. Al crecer $p$ con $N$ fijo, la distancia al vecino tiende a la del borde por la Proposición 23.3b, de modo que $\mathbb{E}[\hat f(x_0)]$ se aleja de $f(x_0)$ y el error
+$$\text{EPE}(x_0)=\bigl(\mathbb{E}[\hat f(x_0)]-f(x_0)\bigr)^2+\operatorname{Var}\bigl(\hat f(x_0)\bigr)$$
+pasa a estar dominado por el primer término.
+:::
+
+```{pyodide}
+import numpy as np
+
+def experimento(p, N, B, verdad, rng):
+    """Estima en x0 = 0 con 1-NN y con minimos cuadrados, y descompone el error."""
+    est_nn, est_ls = [], []
+    for _ in range(B):
+        X = rng.uniform(-1, 1, (N, p))
+        y = verdad(X)
+        est_nn.append(y[int(np.argmin((X ** 2).sum(axis=1)))])
+        A = np.column_stack([np.ones(N), X])
+        b, _, _, _ = np.linalg.lstsq(A, y, rcond=None)
+        est_ls.append(b[0])            # la prediccion en x0 = 0 es el intercepto
+    f0 = float(verdad(np.zeros((1, p)))[0])
+    salida = {}
+    for nom, e in (("nn", np.array(est_nn)), ("ls", np.array(est_ls))):
+        sesgo = e.mean() - f0
+        salida[nom] = (sesgo ** 2 + e.var(), sesgo ** 2, e.var())
+    return salida
+
+campana = lambda X: np.exp(-8.0 * (X ** 2).sum(axis=1))
+rng = np.random.default_rng(232)
+
+print("verdad y = exp(-8|x|^2): depende de TODAS las coordenadas")
+print("   p    1-NN: error   sesgo^2   varianza     sesgo como % del error")
+for p in (1, 2, 3, 5, 10):
+    a = experimento(p, 1000, 250, campana, rng)["nn"]
+    frac = "     -" if a[0] < 1e-6 else "%6.2f" % (100 * a[1] / a[0])
+    print("  %2d     %9.6f  %8.6f  %8.6f       %s %%" % (p, a[0], a[1], a[2], frac))
+print()
+print("el error del vecino mas cercano pasa de cero a casi uno, y al final es")
+print("casi todo SESGO: el vecino que se usa ya no se parece al punto pedido")
+```
+
+Con una sola variable el vecino más cercano acierta: el error es cero a seis decimales. Con diez, el error vale $0{,}989079$ sobre una función que toma valores en $[0,1]$ —o sea, **tan malo como predecir cero siempre**— y el $99{,}99\,\%$ de ese error es sesgo.
+
+La lectura importa. El método **empieza a contestar la pregunta equivocada** en lugar de volverse ruidoso: el punto que usa para responder está lejos, y la respuesta que da es la de ese otro punto. Bajar la varianza con más vecinos empeora aún más el sesgo.
+
+## 4. Dónde está el cruce
+
+::: {.proposicion}
+**Proposición 23.5 (una estructura equivocada puede costar menos que ninguna).** Si el modelo lineal está mal especificado, su sesgo no desaparece pero **no depende de $p$** mientras $N\gg p$. El método local no tiene sesgo de especificación pero lo adquiere por la geometría. En consecuencia existe una dimensión a partir de la cual el modelo equivocado gana.
+:::
+
+```{pyodide}
+import numpy as np
+
+def experimento(p, N, B, verdad, rng):
+    est_nn, est_ls = [], []
+    for _ in range(B):
+        X = rng.uniform(-1, 1, (N, p))
+        y = verdad(X)
+        est_nn.append(y[int(np.argmin((X ** 2).sum(axis=1)))])
+        A = np.column_stack([np.ones(N), X])
+        b, _, _, _ = np.linalg.lstsq(A, y, rcond=None)
+        est_ls.append(b[0])
+    f0 = float(verdad(np.zeros((1, p)))[0])
+    salida = {}
+    for nom, e in (("nn", np.array(est_nn)), ("ls", np.array(est_ls))):
+        sesgo = e.mean() - f0
+        salida[nom] = (sesgo ** 2 + e.var(), sesgo ** 2, e.var())
+    return salida
+
+cubica = lambda X: 0.5 * (X[:, 0] + 1.0) ** 3
+rng = np.random.default_rng(233)
+
+print("verdad y = (x1+1)^3/2: depende de UNA sola coordenada")
+print("   p    1-NN       minimos cuadrados    cociente")
+for p in (1, 2, 3, 5, 10, 20):
+    r = experimento(p, 1000, 250, cubica, rng)
+    print("  %2d   %9.6f        %9.6f       %7.4f" % (p, r["nn"][0], r["ls"][0], r["nn"][0] / r["ls"][0]))
+print()
+print("el modelo lineal esta MAL especificado —la verdad es cubica— y su error")
+print("se queda plano alrededor de 0.25 para toda p. El vecino mas cercano no")
+print("supone nada y gana en dimension baja, pero cruza entre p=5 y p=10")
+```
+
+La verdad de esta tabla es una función cúbica de la primera coordenada, y las otras $p-1$ variables **no influyen en nada**. El modelo lineal está equivocado y lo paga con un error de $0{,}25$ que no baja nunca; pero tampoco sube: con una variable vale $0{,}250168$ y con veinte, $0{,}250171$.
+
+El vecino más cercano no supone nada y gana con holgura hasta $p=5$, con un cociente de $0{,}2140$. En $p=10$ el cociente es $0{,}8546$ y en $p=20$ llega a $2{,}0382$: **el método equivocado pasa a ser el doble de bueno que el método sin supuestos**.
+
+Eso es lo que ESL llama el intercambio central del aprendizaje supervisado, y conviene decirlo sin adornos: en dimensión alta **hay que suponer algo**. La elección no es entre suponer y no suponer, sino entre suposiciones cuyo coste se puede medir. El resto del libro consiste en construir suposiciones más finas que la del modelo lineal.
+
+```{=html}
+<div class="viz-cruce">
+  <div class="controles">
+    <label>Observaciones N <input id="cr-n" type="range" min="100" max="4000" step="100" value="1000"> <span id="cr-n-v">1000</span></label>
+    <label>Sesgo del modelo rígido <input id="cr-b" type="range" min="0" max="0.6" step="0.02" value="0.25"> <span id="cr-b-v">0.25</span></label>
+    <label>Suavidad de la verdad <input id="cr-s" type="range" min="0.5" max="4" step="0.25" value="2.00"> <span id="cr-s-v">2.00</span></label>
+  </div>
+  <svg id="cr-svg" viewBox="0 0 660 250" role="img" aria-label="El error del método local y el del modelo rígido en función de la dimensión, con el punto de cruce marcado."></svg>
+  <p class="lectura" id="cr-lectura"></p>
+</div>
+<style>
+.viz-cruce { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-cruce .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-cruce label { display: flex; align-items: center; gap: .4rem; }
+.viz-cruce input[type=range] { width: 140px; padding: 0; }
+.viz-cruce svg { width: 100%; height: auto; display: block; }
+.viz-cruce .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("cr-svg"), lec = document.getElementById("cr-lectura");
+  var cn = document.getElementById("cr-n"), cb = document.getElementById("cr-b"), cs = document.getElementById("cr-s");
+  var en = document.getElementById("cr-n-v"), eb = document.getElementById("cr-b-v"), es = document.getElementById("cr-s-v");
+  var X0 = 46, XW = 574, Y0 = 20, YH = 190, PMAX = 30, HI = 1.05;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var N = +cn.value, sesgo = +cb.value, suav = +cs.value;
+    en.textContent = N; eb.textContent = sesgo.toFixed(2); es.textContent = suav.toFixed(2);
+    // el error del metodo local sale de la distancia al vecino: d^2 por la
+    // suavidad. El del modelo rigido es su sesgo, constante en p.
+    var px = function (p) { return X0 + (p - 1) / (PMAX - 1) * XW; };
+    var py = function (v) { return Y0 + (HI - Math.max(0, Math.min(HI, v))) / HI * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    var d1 = "", d2 = "", cruce = 0, p, prev = null;
+    for (p = 1; p <= PMAX; p++) {
+      var d = Math.pow(1 - Math.pow(0.5, 1 / N), 1 / p);
+      var local = Math.min(HI, suav * d * d);
+      d1 += (p > 1 ? " L" : "M") + px(p).toFixed(1) + " " + py(local).toFixed(1);
+      d2 += (p > 1 ? " L" : "M") + px(p).toFixed(1) + " " + py(sesgo).toFixed(1);
+      if (prev !== null && prev <= sesgo && local > sesgo && cruce === 0) cruce = p;
+      prev = local;
+    }
+    svg.appendChild(el("path", { d: d1, stroke: C_A, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("path", { d: d2, stroke: C_B, "stroke-width": 2, fill: "none" }));
+    if (cruce > 0) {
+      svg.appendChild(el("path", { d: "M" + px(cruce).toFixed(1) + " " + Y0 + " L" + px(cruce).toFixed(1) + " " + (Y0 + YH), stroke: C_T, "stroke-width": 1, "stroke-dasharray": "4 3", opacity: .6 }));
+      svg.appendChild(el("text", { x: (px(cruce) + 5).toFixed(1), y: Y0 + 14, "font-size": 10.5, fill: C_T, opacity: .75 }, "cruce en p = " + cruce));
+    }
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + YH - 10, "font-size": 10.5, fill: C_A }, "método local"));
+    svg.appendChild(el("text", { x: X0 + 8, y: py(sesgo) - 6, "font-size": 10.5, fill: C_B }, "modelo rígido, sesgo " + sesgo.toFixed(2)));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "dimensión 1 … " + PMAX));
+
+    lec.innerHTML = (cruce > 0
+        ? "Con N = <strong>" + N + "</strong> y un modelo rígido de sesgo <strong>" + sesgo.toFixed(2) +
+          "</strong>, el cruce cae en <strong>p = " + cruce + "</strong>: a partir de ahí conviene el modelo equivocado."
+        : "Con N = <strong>" + N + "</strong> y sesgo <strong>" + sesgo.toFixed(2) +
+          "</strong> no hay cruce dentro de las " + PMAX + " dimensiones dibujadas.") +
+      " Multiplicar N por cuatro mueve el cruce muy poco, porque la distancia al vecino baja como N^(−1/p); bajar el sesgo del modelo rígido lo mueve mucho más. " +
+      "Ahí está el trabajo del resto del libro: <strong>fabricar modelos rígidos con menos sesgo</strong>.";
+  }
+  cn.addEventListener("input", dibujar);
+  cb.addEventListener("input", dibujar);
+  cs.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Lo que esta lección no resuelve
+
+- **No se elige $k$.** El número de vecinos se fija en uno para aislar el efecto de la dimensión; elegirlo bien es validación cruzada, de la lección 6.
+- **Los datos reales no son uniformes.** Las tres cuentas suponen distribución uniforme en el cubo o la bola; cuando los datos viven cerca de una superficie de dimensión baja, la maldición se mide sobre esa dimensión y no sobre $p$.
+- **No se trata la reducción de dimensión.** Proyectar antes de aplicar un método local es la respuesta obvia y tiene su propia lección.
+- **El ruido irreducible se deja fuera.** Los experimentos usan funciones deterministas para que el sesgo y la varianza se vean limpios.
+- **Y el modelo lineal aquí es el más simple posible.** ESL dedica los capítulos siguientes a construir estructuras intermedias, que es donde está casi todo el valor.
+
+## Ejercicios
+
+### Ejercicio 1, Cuánto ocupa un vecindario
+
+Con la Proposición 23.3a, calcular el lado del vecindario que captura el $5\,\%$ del volumen en varias dimensiones, y en qué dimensión ese lado supera la mitad del recorrido.
+
+```{pyodide}
+#| exercise: ex_lado
+r = 0.05
+
+def lado(p):
+    return ______
+
+for p in (1, 2, 5, 10):
+    print(p, round(lado(p), 6))
+
+p = 1
+while lado(p) <= 0.5:
+    p = ______
+
+print("primera dimension con lado por encima de 0.5:", p)
+int(p)
+```
+
+::: {.hint exercise="ex_lado"}
+El lado es $r^{1/p}$. Es creciente en $p$, así que basta avanzar de uno en uno.
+:::
+
+::: {.solution exercise="ex_lado"}
+```{pyodide}
+r = 0.05
+
+def lado(p):
+    return r ** (1.0 / p)
+
+for p in (1, 2, 5, 10):
+    print(p, round(lado(p), 6))
+
+p = 1
+while lado(p) <= 0.5:
+    p = p + 1
+
+print("primera dimension con lado por encima de 0.5:", p)
+int(p)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_lado
+#| check: true
+if result == 5:
+    feedback = {"correct": True, "message": "Correcto: desde p = 5 un vecindario que contiene el 5 % de los datos ya cubre más de la mitad del recorrido de cada variable. Con cinco variables, la palabra «local» empieza a sobrar.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 5 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuántos datos harían falta
+
+Con la Proposición 23.3b, calcular cuántas observaciones hacen falta para que el vecino más cercano quede a distancia $0{,}1$ del centro, en varias dimensiones.
+
+```{pyodide}
+#| exercise: ex_cuantos
+import numpy as np
+
+def cuantos(p, objetivo):
+    """Despeja N en (1 - 2^(-1/N))^(1/p) = objetivo."""
+    return ______
+
+for p in (1, 2, 5, 10):
+    print(p, "%.4e" % cuantos(p, 0.1))
+
+round(np.log10(cuantos(10, 0.1)), 4)
+```
+
+::: {.hint exercise="ex_cuantos"}
+Elevando a $p$: $1-2^{-1/N}=t^{p}$, de donde $2^{-1/N}=1-t^{p}$ y $N=-\log 2/\log(1-t^{p})$.
+:::
+
+::: {.solution exercise="ex_cuantos"}
+```{pyodide}
+import numpy as np
+
+def cuantos(p, objetivo):
+    """Despeja N en (1 - 2^(-1/N))^(1/p) = objetivo."""
+    return -np.log(2) / np.log(1 - objetivo ** p)
+
+for p in (1, 2, 5, 10):
+    print(p, "%.4e" % cuantos(p, 0.1))
+
+round(np.log10(cuantos(10, 0.1)), 4)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_cuantos
+#| check: true
+if abs(result - 9.8408) < 1e-4:
+    feedback = {"correct": True, "message": "Correcto: 9,8408, o sea unas 10^9,84 observaciones —casi siete mil millones— para que el vecino más cercano esté a 0,1 del centro. Ese número es la maldición de la dimensión escrita como presupuesto.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 9.8408 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 23**:
+
+1. Repetir el experimento de la sección 3 con $k$ vecinos en lugar de uno, para $k$ de 1 a 25, y dibujar el error contra $k$ para $p=2$ y $p=10$. Anotar si el $k$ óptimo cambia con la dimensión y en qué sentido.
+2. Generar datos que vivan sobre un plano de dimensión dos dentro de $\mathbb{R}^{20}$ y medir la distancia al vecino más cercano. Contrastarla con la Proposición 23.3b para $p=20$ y para $p=2$, y anotar cuál de las dos describe lo que pasa.
+3. Buscar el cruce de la sección 4 para tres funciones distintas y guardar en `50-Errores/` la tabla con la dimensión de cruce de cada una, anotando qué propiedad de la función la mueve.
+
+## Del libro
+
+**ESL §2.3** presenta los dos métodos como los extremos de un mismo eje; **§2.4** introduce el error de predicción esperado y demuestra que su minimizador es la esperanza condicional; **§2.5** contiene las tres cuentas de la Proposición 23.3, que en el libro aparecen como ejemplos numéricos sueltos.
+
+Esta página las reúne en una sola proposición con su demostración, comprueba la fórmula de la distancia mediana por simulación —que el libro no hace— y mide el cruce de la Proposición 23.5, que el libro ilustra con figuras pero no tabula.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/maldicion-dimension.md`, enlazada a [[aprendizaje-estadistico]], [[validacion-cruzada]] y [[minimos-cuadrados]]. Conviene rehacer a mano la Proposición 23.3b: la cuenta ocupa tres renglones —$(1-t^p)^N=1/2$— y deja grabado que **la distancia al vecino depende de $N$ solo a través de $N^{-1/p}$**, que es la manera rápida de ver por qué recoger más datos no arregla nada.
+
+```
+¿Cuáles son los dos extremos del aprendizaje supervisado?::Mínimos cuadrados, todo estructura; k vecinos, ninguna
+¿Qué lado tiene un vecindario que captura la fracción r?::r^(1/p)
+¿Cuánto con r = 0,01 y p = 10?::0,6310, o sea el 63 % de cada eje
+¿Distancia mediana al vecino más cercano?::(1 − 2^(−1/N))^(1/p)
+¿Cuánto con p = 10 y N = 500?::0,517792: más de la mitad del camino al borde
+¿Cómo baja esa distancia al recoger más datos?::Como N^(−1/p), o sea casi nada si p es grande
+¿Cuántos puntos para igualar en p=10 una densidad de 100 por eje?::10^20
+¿En qué se convierte el error de un método local al crecer p?::En casi todo sesgo: 99,99 % con p = 10
+¿Por qué?::Porque el vecino que usa ya no se parece al punto pedido
+¿Crece con p el error de un modelo lineal mal especificado?::No: se queda plano mientras N ≫ p
+¿Dónde estuvo el cruce en la medición?::Entre p = 5 y p = 10; en p = 20 el cociente es 2,0382
+¿Cuál es la conclusión?::En dimensión alta hay que suponer algo; la elección es qué suponer
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 23.3a se demuestra igualando volúmenes; se comprueba con la tabla, donde $r=0{,}01$ y $p=10$ dan $0{,}6310$. La 23.3b se demuestra con la probabilidad de que los $N$ puntos queden más lejos que $t$; se comprueba por simulación en tres dimensiones, con $0{,}517822$ medido contra $0{,}517792$ calculado. La Proposición 23.4 se comprueba con la descomposición del error, que pasa de cero a $0{,}989079$ con el $99{,}99\,\%$ en el sesgo. La Proposición 23.5 se comprueba con la tabla del cruce, donde el cociente pasa de $0{,}2140$ en $p=5$ a $2{,}0382$ en $p=20$ mientras el error del modelo rígido se mantiene entre $0{,}248280$ y $0{,}251127$.
+
+**Lo que viene de los libros.** De **ESL §2.3** viene la presentación de los dos métodos como extremos de un mismo eje. De **§2.4**, la definición del error de predicción esperado. De **§2.5**, las tres cuentas de la maldición de la dimensión, que el libro plantea como ejemplos numéricos. El texto no se reproduce: el índice de ESL está verificado a nivel de sección, lo que permite citar número y título, y su PDF es accesible con permiso de Springer.
+
+**Lo que se usa de otras lecciones sin repetir.** La solución de mínimos cuadrados y su interpretación geométrica son de Álgebra 6. La descomposición del error en sesgo y varianza es de Machine Learning 1. La elección de $k$ por validación cruzada es de Machine Learning 6, y aquí se evita a propósito.
+
+**Lo que se enuncia sin demostrar.** Que el minimizador del error cuadrático esperado es la esperanza condicional se **usa** y se atribuye a §2.4 sin volver a demostrarse. La descomposición sesgo-varianza se aplica en su forma elemental; su tratamiento general queda para la lección 29.
+
+**Lo que es mío, no del libro.** Reunir las tres cuentas dispersas de §2.5 en **una sola proposición con demostración**, y comprobar la fórmula de la distancia mediana por simulación, que el libro no hace. Medir el cruce de la Proposición 23.5 y **tabularlo**, en lugar de mostrarlo como figura. Y el encuadre del ejercicio 2: convertir la maldición en un presupuesto —$10^{9{,}84}$ observaciones— que se puede enseñar a alguien que no va a mirar una fórmula.
+:::

@@ -52,13 +52,22 @@ cada build.** Contrasta el campo `libro:` de cada lección contra
 `verificar/indices.json` y falla si el libro no está verificado, si la sección
 no existe, o si el título escrito no coincide con el real.
 
-Índices ya verificados (12-09-2026): Think Stats 3e (14 capítulos + 60 secciones
-de los capítulos 1–8 y 14), Mathematics for ML (12 capítulos + las 80 secciones,
-del índice del PDF oficial), Think Bayes 2e (20 capítulos + las 7 secciones del
-cap. 2), McKinney 3E (capítulos), ISLP (solo capítulos: statlearning.com no
-publica los títulos de sección). Pendientes, y por tanto **no citables** hasta
-traerlos: ESL, Causal Inference for the Brave and True, fast.ai, y las secciones
-de los capítulos de Think Bayes distintos del 2.
+Índices ya verificados: Think Stats 3e (14 capítulos + 60 secciones de los
+capítulos 1–8 y 14), Mathematics for ML (12 capítulos + las 80 secciones, del
+índice del PDF oficial), Think Bayes 2e (20 capítulos + las 7 secciones del
+cap. 2), McKinney 3E (capítulos), ISLP (capítulos y sus 81 secciones, de los
+marcadores del PDF oficial) y **ESL (18 capítulos + sus 134 secciones,
+20-09-2026)**. Pendientes, y por tanto **no citables** hasta traerlos: Causal
+Inference for the Brave and True, fast.ai, y las secciones de los capítulos de
+Think Bayes distintos del 2.
+
+El de ESL se trajo con **dos fuentes independientes**, porque los marcadores de
+su PDF están corrompidos: meten tabuladores dentro de los números —`7.1\t0.1`
+es la sección 7.10.1— y anidan mal varias ramas, hasta el punto de perder la
+sección 18.8. Se extrajeron los marcadores, se extrajo aparte el índice impreso
+de las páginas 9 a 18, y se contrastaron: 126 de 133 coinciden literalmente y
+las 7 restantes difieren solo en los puntos suspensivos del impreso. **Cuando
+una fuente sola es dudosa, la regla es traer la segunda**, no elegir.
 
 Tener el índice verificado permite citar **número y título**; no permite citar
 texto. Para lo segundo hay que poder extraer el texto de la fuente. Cuando no
