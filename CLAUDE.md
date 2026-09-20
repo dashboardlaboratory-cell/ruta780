@@ -6,12 +6,13 @@ Plataforma de estudio de Luis. 86 semanas, 2 h/día. Él estudia; yo construyo.
 lista de lo que falta y cómo poner el entorno en marcha están en
 [`ESTADO.md`](ESTADO.md), que cambia cada semana. Leer los dos antes de empezar.**
 
-Antes de cada commit, los seis gates:
+Antes de cada commit, los siete gates:
 
 ```sh
 python3 verificar/estructura.py  && \
 python3 verificar/citas.py       && \
 python3 verificar/referencias.py && \
+python3 verificar/retos.py       && \
 python3 verificar/salidas.py     && \
 python3 verificar/formato.py     && \
 python3 verificar/visuales.py --estricto
@@ -19,6 +20,13 @@ python3 verificar/visuales.py --estricto
 
 `referencias.py` resuelve cada **Machine Learning N** contra el título de la
 fila N de `ml/index.qmd` y falla si apunta a una fila que no existe.
+
+`retos.py` abre el cuaderno que cada bloque `## Reto` promete y comprueba que
+la sección nombrada existe. **Existe porque falló**: las once lecciones de
+Series de tiempo remitieron durante dos días a secciones que no estaban
+escritas, y once builds en verde no lo vieron. Al estrenarlo encontró además
+que Estadística 1 y 2 nombraban `F0-retos.ipynb` cuando sus secciones están en
+`F1-retos.ipynb`.
 
 Y `python3 verificar/simbolos.py`, que **no corre en CI**: lista, símbolo por
 símbolo, qué lecciones lo usan en fórmula y cuáles lo declaran en su tabla de

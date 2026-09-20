@@ -2362,6 +2362,37 @@ arregladas y el cuaderno tiene ahora sus once secciones sin repetidos.
 La lección práctica: **un guion que informa de lo pendiente y otro que informa
 de lo hecho no deben parecerse tanto**. Conviene mirar el archivo, no la salida.
 
+### 3.40 La séptima compuerta: que el reto prometido exista (20-09-2026)
+
+El fallo de `genera_retos.py` dejó una pregunta más útil que el propio fallo:
+**¿por qué once builds en verde no lo vieron?** Porque ninguna compuerta abría
+el cuaderno. Cada lección promete «En `proyectos/notebooks/F3-retos.ipynb`,
+sección **Series 4**» y eso era una promesa que nadie cobraba.
+
+`verificar/retos.py` la cobra. Por cada lección con bloque `## Reto`:
+
+- lee el cuaderno y la sección que nombra;
+- comprueba que el cuaderno existe y tiene un encabezado para esa sección,
+  con el alias correcto —la prosa dice «Mat 5» y el cuaderno «Matemática 5»—;
+- comprueba que el bloque tiene exactamente tres puntos numerados.
+
+**Al estrenarla encontró dos huecos más**, y de otra clase: `estadistica/01` y
+`estadistica/02` nombran `F0-retos.ipynb` y sus secciones están en
+`F1-retos.ipynb`. Llevaban así desde que se escribieron. Un lector que siguiera
+la instrucción habría abierto el cuaderno equivocado.
+
+Se comprobó **en negativo**: quitando a propósito la sección de Series 4 del
+cuaderno, la compuerta falla nombrando `series/04-arima.qmd`. Sin esa prueba no
+se sabe si una compuerta comprueba algo o solo dice que sí.
+
+#### Y el guion que engañaba
+
+`genera_retos.py` imprimía «total a generar: 11», que suena a informe de lo
+hecho y era la lista de lo que faltaba. Ahora dice **«FALTAN 11 SECCIONES POR
+ESCRIBIR. Esto es un simulacro»**, o «no falta ninguna sección: los cuadernos
+están al día». La regla general: **un mensaje sobre lo pendiente y otro sobre lo
+hecho no deben poder confundirse leyendo por encima**.
+
 ---
 
 ## 4. Cómo se escribe una lección

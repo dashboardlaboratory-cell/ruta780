@@ -106,11 +106,18 @@ for p in sorted(RAIZ.glob("*/[0-9]*.qmd")):
     if (mod, num) in hay: continue
     pendientes.setdefault(nb, []).append((mod, num, titulo(p), puntos, p))
 
+escribiendo = "--escribe" in sys.argv
 for nb, items in sorted(pendientes.items()):
-    print(f"{nb}: {len(items)} secciones -> {[f'{m} {n}' for m,n,_,_,_ in items]}")
+    print(f"{nb}: FALTAN {len(items)} secciones -> {[f'{m} {n}' for m,n,_,_,_ in items]}")
 print()
 total = sum(len(v) for v in pendientes.values())
-print("total a generar:", total)
+if total == 0:
+    print("no falta ninguna seccion: los cuadernos estan al dia")
+elif escribiendo:
+    print(f"faltan {total} secciones y se van a escribir ahora")
+else:
+    print(f"FALTAN {total} SECCIONES POR ESCRIBIR. Esto es un simulacro:")
+    print("vuelve a llamarlo con --escribe para que las anada de verdad.")
 sin_tres = [(m,n) for v in pendientes.values() for m,n,_,pts,_ in v if len(pts) != 3]
 print("secciones cuyo bloque Reto no tiene exactamente 3 puntos:", sin_tres or "ninguna")
 
