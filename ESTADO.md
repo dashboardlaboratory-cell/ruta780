@@ -37,7 +37,7 @@ Tres hitos de esta sesión:
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
 faltando lecciones por escribir: **ML va por 22 de 90**, **Series de tiempo
-va por 5 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
+va por 6 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
 
@@ -105,7 +105,7 @@ hay que empezar a hacer:
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
-| Series de tiempo | 5 | 11 | **5 de 5** | 6 a 11 |
+| Series de tiempo | 6 | 11 | **6 de 6** | 7 a 11 |
 | Machine Learning | 22 | 90 | **22 de 22** | la Fase 2 cerrada; quedan ESL y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
@@ -394,7 +394,7 @@ Lo que sigue, en orden de coste creciente:
    lección, y **no reaparece en ninguna fase posterior**. Deep Learning al
    menos se retoma en las lecciones 28 a 33; supervivencia no tiene red.
 
-3. **Series de tiempo ya no está vacía** —las lecciones 1 a 5 de 11 se
+3. **Series de tiempo ya no está vacía** —las lecciones 1 a 6 de 11 se
    publicaron el 19-09-2026, y no citan ningún libro porque ninguno del sitio
    cubre el tema—;
    **Inferencia causal sigue vacía** en el sidebar.
@@ -1956,6 +1956,71 @@ Dos cosas se cazaron antes de publicar. El prerrequisito `estadistica/12` estaba
 mal —ese número es la normal multivariante, la regresión es la 13—, y la regla
 14 marcó un «no son parecidos, son la misma cuenta» en la prosa. Las dos
 salieron de correr las compuertas antes del commit, no después.
+
+### 3.32 Series de tiempo 06: el calendario como columnas, con las dos cuentas (20-09-2026)
+
+La elección entre indicadores y armónicos suele contarse como una preferencia de
+escuela. La lección la convierte en **un intercambio con dos cantidades
+calculables**, y empieza quitando de en medio la falsa alternativa:
+
+> **6.3**: los $s-1$ indicadores y los $s-1$ armónicos completos generan el
+> mismo subespacio, así que dan el mismo ajuste.
+
+Comprobado en $s=7$, $12$ y $52$: mismo rango y ajustes iguales por debajo de
+$10^{-10}$. **Mientras no se trunquen, los armónicos son un cambio de base.**
+
+#### Las dos cantidades
+
+> **6.4**: la desviación de un coeficiente indicador vale $\sigma\sqrt{2/a}$ y
+> la de uno de armónico $\sigma\sqrt{2/n}$, con cociente **exactamente
+> $\sqrt{s}$**.
+
+La columna del cociente sale $7{,}2111$ en las cuatro filas de la tabla, que es
+$\sqrt{52}$ y no depende de cuántos años haya. De ahí la frase que decide el
+diseño antes de mirar los datos: **un indicador semanal se estima con tantas
+observaciones como años haya**. Con tres años su desviación es $0{,}816497$
+veces la del ruido; el mismo perfil en tres armónicos se estima con
+$0{,}113228$. Para una precisión de $0{,}1\sigma$ con indicadores harían falta
+doscientos años.
+
+> **6.5**: truncar es proyectar, y Parseval dice cuánto queda fuera.
+
+Sobre un perfil anual con una punta de dos semanas: $K=26$ explica el
+$100{,}0000\,\%$ —la 6.3 otra vez— y $K=3$ solo el $46{,}2060\,\%$, con error
+máximo $4{,}669436$ en la semana $51$. **Los armónicos bajos no saben dibujar
+una punta**, y eso es lo que se paga por la banda estrecha.
+
+#### El feriado móvil tiene fórmula
+
+> **6.6**: un evento de efecto $\delta$ que visita $m$ posiciones aparece en el
+> perfil estacional como $\delta/m$ en cada una.
+
+Medido sobre doscientas réplicas de cuarenta ciclos: $0{,}830802$ contra los
+$0{,}833333$ predichos, y $5{,}002083$ cuando se le da su propia columna. El
+perfil no ignora el evento móvil, **lo reparte**, que es la peor manera de
+verlo. De ahí la regla que la lección justifica: todo lo que se mueve respecto
+al ciclo necesita su propia columna.
+
+Y la 6.7 cierra con la trampa inversa: un evento anclado a una posición del
+ciclo es colineal con su indicador —deficiencia uno de ocho columnas—, y basta
+**una excepción en $364$ observaciones** para que el rango vuelva a ser completo
+y ninguna biblioteca se queje: el número de condición pasa de $7{,}8730$ a
+$29{,}0505$, y el coeficiente pasa a depender de esa única observación.
+
+#### Dos cosas del procedimiento
+
+El valor del ejercicio 2 estaba escrito a mano en $15$ y la corrida dio **$4$**.
+Van tres lecciones en las que el orden «calcular aparte, leer, después escribir
+el bloque `check`» caza un número inventado.
+
+Y la primera versión de la celda 0 imprimía la diferencia entre los dos ajustes,
+$0{,}00000000000001$ en una versión y $0{,}00000000000002$ en la otra: **regla 7
+en estado puro**. Se cambió por una afirmación de propiedad —¿por debajo de
+$10^{-10}$?— y las dos versiones volvieron a coincidir.
+
+El gate de visuales avisó de que el control de años no movía ningún trazo,
+porque las bandas de incertidumbre estaban dibujadas como `rect`. Se pasaron a
+trazo, que además se ve mejor.
 
 ---
 

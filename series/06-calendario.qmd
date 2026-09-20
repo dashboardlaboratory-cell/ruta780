@@ -1,0 +1,695 @@
+---
+title: "Features de calendario: feriados, promociones y eventos"
+subtitle: "Series de tiempo · Lección 6"
+nivel: L4
+modulo: series
+fase: F3
+prereqs: [series/05-suavizado-exponencial, series/01-descomposicion, matematica/06-minimos-cuadrados]
+siguientes: []
+libro: "—"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="series/06-calendario"}
+[[L4]{.nivel .nivel-L4} **From scratch**]{.item}
+[**Fase** F3]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Suavizado exponencial](05-suavizado-exponencial.qmd) · [Descomposición](01-descomposicion.qmd) · [Mínimos cuadrados](../matematica/06-minimos-cuadrados.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Escribir la estacionalidad como columnas de una matriz de diseño, con [indicadores]{.g data-t="variable indicadora"} o con [armónicos]{.g data-t="armónicos de Fourier"}.
+2. **Demostrar que las dos bases completas generan el mismo espacio**, y que por tanto dan el mismo ajuste.
+3. **Demostrar que un coeficiente de armónico se estima $\sqrt{s}$ veces más preciso que un indicador**, con la fórmula cerrada de las dos desviaciones.
+4. Calcular con Parseval cuánta varianza del perfil queda fuera al truncar en $K$ armónicos, y ver qué forma no se puede representar.
+5. **Demostrar que un [evento móvil]{.g data-t="evento móvil"} se diluye en el perfil estacional** por el número de posiciones que visita.
+6. Reconocer la colinealidad exacta que produce un evento anclado a una posición del ciclo, y la casi colinealidad que queda al romperla.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Series de tiempo 1**: la descomposición, cuyo perfil estacional fijo es lo que aquí se escribe como columnas.
+- **Series de tiempo 4**: el operador $1-L^{s}$, que es la alternativa a modelar la estacionalidad con regresores.
+- **Álgebra 6**: los mínimos cuadrados, la matriz de diseño y el rango, que es toda la maquinaria de esta lección.
+- **Estadística 14**: el error estándar de un coeficiente, que aquí se calcula en forma cerrada.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Series de tiempo 7**: la validación temporal, donde estas columnas se construyen con cuidado para no mirar el futuro.
+- **Series de tiempo 8**: el gradient boosting, que recibe estas mismas columnas como entrada.
+- **Series de tiempo 9**: Prophet, que usa armónicos truncados y regresores de evento exactamente así.
+- **Series de tiempo 11**: la evaluación, donde los errores se miran por posición del calendario.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $y_t$ | y sub te | El valor observado en el instante $t$ |
+| $n$ | ene | La longitud de la serie |
+| $s$ | ese | El periodo estacional, en número de observaciones |
+| $K$ | ka | El número de pares de armónicos que se conservan |
+| $m$ | eme | El número de posiciones del ciclo que un evento móvil puede visitar |
+| $\delta$ | delta | El efecto verdadero del evento |
+| $\sigma^2$ | sigma cuadrado | La varianza del ruido |
+| $A$ | a mayúscula | La matriz de diseño |
+| $\beta_k$ | beta sub ka | El coeficiente de la columna $k$ |
+| $D_k(t)$ | de sub ka de te | El indicador de la posición $k$ del ciclo |
+| $c_k$ | ce sub ka | El coeficiente de Fourier del armónico $k$ |
+| $a$ | a | El número de ciclos completos observados |
+| $\alpha_k$ | alfa sub ka | El factor de Parseval del armónico $k$: vale $2$, salvo $1$ en el de Nyquist |
+| $L$ | ele mayúscula | El operador de retardo: $Ly_t=y_{t-1}$ |
+:::
+
+## 1. Dos maneras de escribir el mismo perfil
+
+::: {.definicion}
+**Definición 6.1 (indicadores estacionales).** Para un ciclo de periodo $s$, el indicador de la posición $k$ es
+$$D_k(t)=\begin{cases}1&\text{si }t\bmod s=k,\\0&\text{en otro caso,}\end{cases}$$
+y el perfil se modela con las $s-1$ columnas $D_1,\dots,D_{s-1}$, dejando $D_0$ absorbida por el intercepto.
+:::
+
+::: {.definicion}
+**Definición 6.2 (armónicos de Fourier).** El perfil se modela con los $K$ primeros pares
+$$\cos\!\Bigl(\frac{2\pi k t}{s}\Bigr),\qquad \sin\!\Bigl(\frac{2\pi k t}{s}\Bigr),\qquad k=1,\dots,K,$$
+donde el seno del armónico $k=s/2$, cuando $s$ es par, es idénticamente cero y se omite.
+:::
+
+La primera descripción permite cualquier perfil; la segunda lo obliga a ser suave. La primera pregunta es si son modelos distintos.
+
+::: {.proposicion}
+**Proposición 6.3 (con $K=\lfloor s/2\rfloor$ son la misma base).** Las $s-1$ columnas de indicadores y las $s-1$ columnas de armónicos completos, junto con el intercepto, generan **el mismo subespacio** de $\mathbb{R}^{n}$. En consecuencia los dos ajustes por mínimos cuadrados coinciden.
+:::
+
+::: {.demostracion}
+*Demostración.* Las dos familias son funciones de $t\bmod s$, así que viven en el espacio de funciones del ciclo, de dimensión $s$. Los indicadores $D_0,\dots,D_{s-1}$ son una base de ese espacio. Los $s$ vectores formados por el intercepto y los armónicos completos son las columnas de la matriz de Fourier discreta, que es ortogonal salvo un factor y por tanto de rango $s$. Dos familias de $s$ vectores independientes dentro de un espacio de dimensión $s$ generan el mismo espacio. Como el ajuste por mínimos cuadrados es la proyección ortogonal sobre el espacio de columnas, coincide. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def indicadores(t, s):
+    """Una columna por posicion del ciclo, menos la primera, que queda en el intercepto."""
+    pos = t % s
+    return np.column_stack([(pos == k).astype(float) for k in range(1, s)])
+
+def armonicos(t, s, K):
+    """K pares seno-coseno; con 2K = s el ultimo seno es identicamente cero y se omite."""
+    cols = []
+    for k in range(1, K + 1):
+        cols.append(np.cos(2 * np.pi * k * t / s))
+        if 2 * k != s:
+            cols.append(np.sin(2 * np.pi * k * t / s))
+    return np.column_stack(cols)
+
+def ajusta(X, y):
+    A = np.column_stack([np.ones(len(y)), X])
+    b, _, _, _ = np.linalg.lstsq(A, y, rcond=None)
+    return A @ b
+
+rng = np.random.default_rng(101)
+print("los indicadores y la base completa de armonicos generan el mismo espacio")
+print("   s    columnas   rango con indicadores   rango con armonicos   ¿mismo ajuste a 1e-10?")
+for s in (7, 12, 52):
+    n = s * 6
+    t = np.arange(n)
+    y = rng.normal(0, 1, n) + 2 * np.sin(2 * np.pi * t / s)
+    D, F = indicadores(t, s), armonicos(t, s, s // 2)
+    rd = np.linalg.matrix_rank(np.column_stack([np.ones(n), D]))
+    rf = np.linalg.matrix_rank(np.column_stack([np.ones(n), F]))
+    igual = bool(np.abs(ajusta(D, y) - ajusta(F, y)).max() < 1e-10)
+    print("  %2d       %2d y %2d          %2d                    %2d                    %s"
+          % (s, D.shape[1], F.shape[1], rd, rf, igual))
+print()
+print("mismo numero de columnas, mismo rango y el MISMO ajuste: elegir")
+print("armonicos completos no es otro modelo, es otra base del mismo espacio")
+```
+
+Los tres periodos dan el mismo rango y el mismo ajuste. **Mientras no se trunquen, los armónicos son un cambio de base y nada más.** Todo lo interesante empieza cuando se descartan columnas, y la sección siguiente mide qué se gana.
+
+## 2. Lo que cuesta un indicador
+
+::: {.proposicion}
+**Proposición 6.4 (la precisión de un coeficiente).** Sobre $a$ ciclos completos, con ruido de varianza $\sigma^2$ y diseño balanceado:
+
+(a) la desviación típica del coeficiente de un indicador estacional vale $\sigma\sqrt{2/a}$, y **no depende de $s$**;
+
+(b) la de un coeficiente de armónico vale $\sigma\sqrt{2/n}$ con $n=as$;
+
+(c) el cociente entre las dos es exactamente $\sqrt{s}$, sea cual sea el número de ciclos.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (a), en un diseño balanceado el coeficiente de $D_k$ es la diferencia entre la media de las $a$ observaciones de la posición $k$ y la media de las $a$ de la posición $0$; su varianza es $\sigma^2/a+\sigma^2/a=2\sigma^2/a$. Para (b), las columnas de armónicos son ortogonales entre sí y al intercepto, y $\sum_t\cos^2(2\pi kt/s)=n/2$, de modo que la varianza del coeficiente es $\sigma^2/(n/2)=2\sigma^2/n$. Para (c), el cociente de las desviaciones es $\sqrt{(2/a)\big/(2/n)}=\sqrt{n/a}=\sqrt{s}$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def indicadores(t, s):
+    pos = t % s
+    return np.column_stack([(pos == k).astype(float) for k in range(1, s)])
+
+def armonicos(t, s, K):
+    cols = []
+    for k in range(1, K + 1):
+        cols.append(np.cos(2 * np.pi * k * t / s))
+        if 2 * k != s:
+            cols.append(np.sin(2 * np.pi * k * t / s))
+    return np.column_stack(cols)
+
+s = 52
+print("desviacion tipica exacta de un coeficiente, con sigma = 1")
+print("  anios   obs    indicador semanal   armonicos K=3     cociente")
+for anios in (2, 3, 5, 10):
+    n = s * anios
+    t = np.arange(n)
+    A1 = np.column_stack([np.ones(n), indicadores(t, s)])
+    A2 = np.column_stack([np.ones(n), armonicos(t, s, 3)])
+    d1 = np.sqrt(np.linalg.inv(A1.T @ A1)[1, 1])
+    d2 = np.sqrt(np.linalg.inv(A2.T @ A2)[1, 1])
+    print("   %2d    %4d       %.6f            %.6f         %.4f" % (anios, n, d1, d2, d1 / d2))
+print()
+print("las dos formulas cerradas son sqrt(2/anios) y sqrt(2/n):")
+for anios in (3, 10):
+    print("  con %2d anios: %.6f contra %.6f" % (anios, np.sqrt(2.0 / anios), np.sqrt(2.0 / (s * anios))))
+print("un indicador semanal se estima con tantas observaciones como anios haya")
+```
+
+La columna del cociente vale $7{,}2111$ en las cuatro filas, que es $\sqrt{52}$. La lectura es dura y conviene no suavizarla: **con tres años de datos semanales, cada coeficiente semanal se estima con tres observaciones**, y su desviación típica es $0{,}816497$ veces la del ruido. Un efecto estacional verdadero de media desviación típica queda indistinguible del azar, mientras que el mismo efecto escrito en tres armónicos se estima con desviación $0{,}113228$.
+
+La cuenta sirve también para decidir antes de mirar los datos: para que un indicador semanal tenga una precisión de $0{,}1\sigma$ hacen falta $2/0{,}1^2=200$ años.
+
+```{=html}
+<div class="viz-truncar">
+  <div class="controles">
+    <label>Armónicos K <input id="tr-k" type="range" min="1" max="26" step="1" value="3"> <span id="tr-k-v">3</span></label>
+    <label>Altura de la punta <input id="tr-p" type="range" min="0" max="8" step="0.5" value="6.0"> <span id="tr-p-v">6.0</span></label>
+    <label>Años observados <input id="tr-a" type="range" min="2" max="12" step="1" value="3"> <span id="tr-a-v">3</span></label>
+  </div>
+  <svg id="tr-svg" viewBox="0 0 660 260" role="img" aria-label="El perfil anual verdadero y su reconstrucción con K armónicos, con la banda de incertidumbre que corresponde a cada base."></svg>
+  <p class="lectura" id="tr-lectura"></p>
+</div>
+<style>
+.viz-truncar { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-truncar .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-truncar label { display: flex; align-items: center; gap: .4rem; }
+.viz-truncar input[type=range] { width: 150px; padding: 0; }
+.viz-truncar svg { width: 100%; height: auto; display: block; }
+.viz-truncar .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("tr-svg"), lec = document.getElementById("tr-lectura");
+  var ck = document.getElementById("tr-k"), cp = document.getElementById("tr-p"), ca = document.getElementById("tr-a");
+  var ek = document.getElementById("tr-k-v"), ep = document.getElementById("tr-p-v"), ea = document.getElementById("tr-a-v");
+  var X0 = 46, XW = 574, Y0 = 20, YH = 200, S = 52, LO = -3.5, HI = 7.5;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // perfil verdadero: una onda suave mas una punta al final del ciclo
+  function perfil(punta) {
+    var p = [], i, m = 0;
+    for (i = 0; i < S; i++) p.push(0.8 * Math.sin(2 * Math.PI * i / S) + 0.3 * Math.cos(4 * Math.PI * i / S));
+    p[S - 2] += punta * 2 / 3;
+    p[S - 1] += punta;
+    for (i = 0; i < S; i++) m += p[i];
+    m /= S;
+    for (i = 0; i < S; i++) p[i] -= m;
+    return p;
+  }
+  // proyeccion sobre los K primeros armonicos, calculada a mano
+  function proyecta(p, K) {
+    var r = new Array(S).fill(0), k, i, ac, as2, nc;
+    for (k = 1; k <= K; k++) {
+      ac = 0; as2 = 0;
+      for (i = 0; i < S; i++) { ac += p[i] * Math.cos(2 * Math.PI * k * i / S); as2 += p[i] * Math.sin(2 * Math.PI * k * i / S); }
+      nc = (2 * k === S) ? S : S / 2;
+      for (i = 0; i < S; i++) r[i] += (ac / nc) * Math.cos(2 * Math.PI * k * i / S) + (2 * k === S ? 0 : (as2 / (S / 2)) * Math.sin(2 * Math.PI * k * i / S));
+    }
+    return r;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var K = +ck.value, punta = +cp.value, anios = +ca.value;
+    ek.textContent = K; ep.textContent = punta.toFixed(1); ea.textContent = anios;
+    var p = perfil(punta), r = proyecta(p, K), i;
+
+    var px = function (i2) { return X0 + i2 / (S - 1) * XW; };
+    var py = function (v) { return Y0 + (HI - Math.max(LO, Math.min(HI, v))) / (HI - LO) * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + (X0 + XW) + " " + py(0).toFixed(1), stroke: C_L, "stroke-width": 1, "stroke-dasharray": "3 3" }));
+
+    // la banda de incertidumbre, dibujada como trazo para que su movimiento
+    // se pueda medir: depende solo del numero de ciclos observados
+    var sd = Math.sqrt(2 / anios), sdf = Math.sqrt(2 / (S * anios));
+    function banda(h, color, op) {
+      var d = "M" + X0 + " " + py(h).toFixed(1) + " L" + (X0 + XW) + " " + py(h).toFixed(1) +
+              " L" + (X0 + XW) + " " + py(-h).toFixed(1) + " L" + X0 + " " + py(-h).toFixed(1) + " Z";
+      svg.appendChild(el("path", { d: d, fill: color, opacity: op, stroke: "none" }));
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(h).toFixed(1) + " L" + (X0 + XW) + " " + py(h).toFixed(1),
+        stroke: color, "stroke-width": 1, "stroke-dasharray": "4 3", opacity: .8 }));
+    }
+    banda(sd, C_T, .07);
+    banda(sdf, C_A, .18);
+
+    var d1 = "", d2 = "", peor = 0, expl = 0, tot = 0;
+    for (i = 0; i < S; i++) {
+      d1 += (i ? " L" : "M") + px(i).toFixed(1) + " " + py(p[i]).toFixed(1);
+      d2 += (i ? " L" : "M") + px(i).toFixed(1) + " " + py(r[i]).toFixed(1);
+      peor = Math.max(peor, Math.abs(p[i] - r[i]));
+      expl += r[i] * r[i]; tot += p[i] * p[i];
+    }
+    svg.appendChild(el("path", { d: d1, stroke: C_T, "stroke-width": 1.6, fill: "none" }));
+    svg.appendChild(el("path", { d: d2, stroke: C_B, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("text", { x: X0 + 6, y: Y0 + 14, "font-size": 10.5, fill: C_T }, "perfil verdadero"));
+    svg.appendChild(el("text", { x: X0 + 6, y: Y0 + 27, "font-size": 10.5, fill: C_B }, "reconstruido con " + K + " armónicos"));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "posición del ciclo 0 … 51"));
+
+    var pct = tot < 1e-12 ? 100 : 100 * expl / tot;
+    lec.innerHTML = "Con <strong>" + K + "</strong> armónicos se explica el <strong>" + pct.toFixed(2) +
+      " %</strong> de la varianza del perfil y el peor error vale <strong>" + peor.toFixed(4) + "</strong>. " +
+      "Las bandas son la incertidumbre de un coeficiente con " + anios + " años: <strong>±" + sd.toFixed(4) +
+      "</strong> para un indicador y <strong>±" + sdf.toFixed(4) + "</strong> para un armónico, un cociente de √52 = 7,2111. " +
+      (K >= 26
+        ? "Con K = 26 la reconstrucción es exacta: es la Proposición 6.3, y con ella se paga la banda ancha."
+        : punta < 0.5
+          ? "Sin punta, pocos armónicos bastan: el perfil ya era suave."
+          : "La punta necesita armónicos altos; truncando se borra, y ese error es el precio de la banda estrecha.");
+  }
+  ck.addEventListener("input", dibujar);
+  cp.addEventListener("input", dibujar);
+  ca.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Qué se pierde al truncar
+
+::: {.proposicion}
+**Proposición 6.5 (truncar es proyectar, y Parseval lo cuantifica).** Sea $P$ el perfil de media cero sobre el ciclo, con coeficientes de Fourier $c_k$. Conservar los $K$ primeros armónicos es la proyección ortogonal de $P$ sobre el subespacio que generan, y la varianza del perfil se reparte exactamente entre los armónicos:
+$$\frac1s\sum_{t=0}^{s-1}P(t)^2=\sum_{k\ge1}\lvert c_k\rvert^2\cdot\alpha_k,$$
+de modo que lo que queda fuera al truncar es la suma de los términos descartados.
+:::
+
+::: {.demostracion}
+*Demostración.* Las columnas de armónicos son ortogonales entre sí, así que la proyección sobre un subconjunto de ellas se obtiene conservando sus coeficientes y anulando el resto, y el teorema de Pitágoras reparte la norma entre la parte conservada y la descartada. La identidad es la de Parseval para la transformada discreta, con $\alpha_k=2$ salvo para $k=s/2$ cuando $s$ es par, donde vale $1$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+s = 52
+t = np.arange(s)
+perfil = 0.8 * np.sin(2 * np.pi * t / s) + 0.3 * np.cos(4 * np.pi * t / s)
+perfil[50] += 4.0
+perfil[51] += 6.0
+perfil = perfil - perfil.mean()
+c = np.fft.rfft(perfil) / s
+total = float((perfil ** 2).mean())
+
+def reconstruye(K):
+    cc = np.zeros_like(c)
+    cc[1:K + 1] = c[1:K + 1]
+    return np.fft.irfft(cc * s, n=s)
+
+print("un perfil anual con una punta en las dos ultimas semanas")
+print("  varianza del perfil: %.6f" % total)
+print("   K    varianza explicada   porcentaje   error maximo del perfil")
+for K in (1, 3, 6, 10, 26):
+    r = reconstruye(K)
+    expl = float((r ** 2).mean())
+    print("  %2d        %.6f          %8.4f %%        %.6f" % (K, expl, 100 * expl / total, np.abs(r - perfil).max()))
+print()
+print("con K=26 se recupera el 100 % exacto, que es la Proposicion 6.3 otra vez.")
+print("con K=3 quedan fuera dos tercios de la varianza y un error de 4.669436")
+print("en la semana 51: los armonicos bajos NO saben dibujar una punta")
+```
+
+La tabla cierra el argumento de las dos secciones anteriores. Con $K=26$ se explica el $100{,}0000\,\%$ y el error es cero: la Proposición 6.3 otra vez. Con $K=3$ se explica el $46{,}2060\,\%$ y el perfil reconstruido se equivoca en $4{,}669436$ en la semana $51$.
+
+**La elección de $K$ es, pues, un intercambio explícito**: cada armónico que se añade compra capacidad de dibujar formas abruptas y no cuesta precisión —la desviación de cada coeficiente sigue siendo $\sigma\sqrt{2/n}$—, pero acerca el modelo al de indicadores, con todo su ruido. Una punta de dos posiciones en un ciclo de $52$ **no se puede representar con armónicos bajos**, y ahí es donde entran los regresores de la sección siguiente.
+
+## 4. Un evento que se mueve
+
+Una punta que cae siempre en la misma posición del ciclo es parte del perfil estacional. Una que se mueve —una fiesta móvil, una fecha que depende del calendario lunar, un evento que se programa cada año en una semana distinta— no lo es, y el perfil hace con ella algo concreto.
+
+::: {.proposicion}
+**Proposición 6.6 (dilución de un evento móvil).** Sea un evento de efecto $\delta$ que cada ciclo cae en una de $m$ posiciones posibles, con probabilidad $1/m$ cada una e independientemente entre ciclos. Ajustando **solo** el perfil estacional por indicadores, el coeficiente de cada una de esas $m$ posiciones tiene esperanza
+$$\mathbb{E}[\hat\beta_k]=\frac{\delta}{m},$$
+mientras que un regresor propio del evento estima $\delta$ sin diluir.
+:::
+
+::: {.demostracion}
+*Demostración.* En un diseño balanceado el coeficiente de la posición $k$ es la media de las observaciones de esa posición, menos la de la posición de referencia. En cada ciclo esa posición contiene el efecto con probabilidad $1/m$ y no lo contiene con probabilidad $1-1/m$, así que la media de sus valores tiene esperanza $\delta/m$ más la parte común, que la referencia cancela. El regresor de evento, en cambio, vale uno exactamente en las observaciones afectadas, y su coeficiente por mínimos cuadrados es la media de esas observaciones menos lo que el resto del modelo predice. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def indicadores(t, s):
+    pos = t % s
+    return np.column_stack([(pos == k).astype(float) for k in range(1, s)])
+
+s, anios, delta = 52, 40, 5.0
+semanas = np.array([12, 13, 14, 15, 16, 17])
+rng = np.random.default_rng(111)
+n = s * anios
+t = np.arange(n)
+D = indicadores(t, s)
+
+cp, ce = [], []
+for _ in range(200):
+    visita = rng.choice(semanas, size=anios)
+    evento = np.zeros(n)
+    evento[np.arange(anios) * s + visita] = 1.0
+    y = delta * evento + rng.normal(0, 1, n)
+    A1 = np.column_stack([np.ones(n), D])
+    A2 = np.column_stack([np.ones(n), D, evento])
+    # el diseno esta bien condicionado, asi que las ecuaciones normales bastan
+    cp.append(np.linalg.solve(A1.T @ A1, A1.T @ y)[14])
+    ce.append(np.linalg.solve(A2.T @ A2, A2.T @ y)[-1])
+
+print("un feriado movil de efecto %.1f que visita %d semanas distintas" % (delta, len(semanas)))
+print("  coeficiente medio de la semana 14, SOLO con perfil estacional: %.6f" % np.mean(cp))
+print("  lo que predice la Proposicion 6.6, delta/%d                  : %.6f" % (len(semanas), delta / len(semanas)))
+print("  coeficiente medio del regresor de evento                     : %.6f" % np.mean(ce))
+print()
+print("el perfil estacional reparte el efecto entre las semanas que el feriado")
+print("visita y cada una se queda con una fraccion. Un regresor propio lo recupera")
+```
+
+El coeficiente medio de la semana $14$ sale $0{,}830802$ contra los $0{,}833333$ que predice la proposición, y el regresor de evento recupera $5{,}002083$ del efecto verdadero $5$. **El perfil estacional no ignora el evento móvil: lo reparte**, y el reparto es tanto peor cuanto más se mueva. Con seis posiciones el efecto aparece seis veces más pequeño en seis sitios distintos, que es la peor manera posible de verlo.
+
+De ahí sale la regla que esta lección justifica: **todo lo que se mueve respecto al ciclo necesita su propia columna**.
+
+```{=html}
+<div class="viz-evento">
+  <div class="controles">
+    <label>Posiciones que visita <input id="ev-m" type="range" min="1" max="10" step="1" value="6"> <span id="ev-m-v">6</span></label>
+    <label>Efecto δ <input id="ev-d" type="range" min="0" max="8" step="0.5" value="5.0"> <span id="ev-d-v">5.0</span></label>
+    <label>Ciclos observados <input id="ev-a" type="range" min="3" max="40" step="1" value="20"> <span id="ev-a-v">20</span></label>
+  </div>
+  <svg id="ev-svg" viewBox="0 0 660 250" role="img" aria-label="El perfil estacional estimado sin regresor de evento, con el efecto repartido entre las posiciones que el evento visita, y la línea del efecto verdadero."></svg>
+  <p class="lectura" id="ev-lectura"></p>
+</div>
+<style>
+.viz-evento { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-evento .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-evento label { display: flex; align-items: center; gap: .4rem; }
+.viz-evento input[type=range] { width: 140px; padding: 0; }
+.viz-evento svg { width: 100%; height: auto; display: block; }
+.viz-evento .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("ev-svg"), lec = document.getElementById("ev-lectura");
+  var cm = document.getElementById("ev-m"), cd = document.getElementById("ev-d"), ca = document.getElementById("ev-a");
+  var em = document.getElementById("ev-m-v"), ed = document.getElementById("ev-d-v"), ea = document.getElementById("ev-a-v");
+  var X0 = 46, XW = 574, Y0 = 20, YH = 190, S = 26, PRIMERA = 8, LO = -2.5, HI = 8.5;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function sacudidas(n) {
+    var s = 30303, out = [], i, u1, u2;
+    function u() { s = (s * 48271) % 2147483647; return s / 2147483647; }
+    for (i = 0; i < n; i++) {
+      u1 = Math.max(u(), 1e-9); u2 = u();
+      out.push(Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2));
+    }
+    return out;
+  }
+  function entero(n) {   // un sorteo reproducible de posiciones
+    var s = 777, out = [], i;
+    function u() { s = (s * 48271) % 2147483647; return s / 2147483647; }
+    for (i = 0; i < n; i++) out.push(u());
+    return out;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var m = +cm.value, delta = +cd.value, anios = +ca.value;
+    em.textContent = m; ed.textContent = delta.toFixed(1); ea.textContent = anios;
+    var e = sacudidas(anios * S), u = entero(anios), i, a;
+    // media por posicion del ciclo
+    var suma = new Array(S).fill(0);
+    for (a = 0; a < anios; a++) {
+      var donde = PRIMERA + Math.floor(u[a] * m);
+      for (i = 0; i < S; i++) {
+        var v = e[a * S + i];
+        if (i === donde) v += delta;
+        suma[i] += v;
+      }
+    }
+    var perfil = suma.map(function (v) { return v / anios; });
+
+    var px = function (i2) { return X0 + (i2 + 0.5) / S * XW; };
+    var py = function (v) { return Y0 + (HI - Math.max(LO, Math.min(HI, v))) / (HI - LO) * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + (X0 + XW) + " " + py(0).toFixed(1), stroke: C_L, "stroke-width": 1 }));
+    // el efecto verdadero y el diluido que predice la proposicion
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(delta).toFixed(1) + " L" + (X0 + XW) + " " + py(delta).toFixed(1), stroke: C_B, "stroke-width": 1.4, "stroke-dasharray": "6 3" }));
+    svg.appendChild(el("text", { x: X0 + 5, y: py(delta) - 5, "font-size": 10.5, fill: C_B }, "δ = " + delta.toFixed(1) + ", el efecto verdadero"));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(delta / m).toFixed(1) + " L" + (X0 + XW) + " " + py(delta / m).toFixed(1), stroke: C_A, "stroke-width": 1.4, "stroke-dasharray": "6 3" }));
+    svg.appendChild(el("text", { x: X0 + XW - 5, y: py(delta / m) - 5, "text-anchor": "end", "font-size": 10.5, fill: C_A }, "δ/m = " + (delta / m).toFixed(4)));
+
+    var pico = 0;
+    for (i = 0; i < S; i++) {
+      var dentro = (i >= PRIMERA && i < PRIMERA + m);
+      if (dentro) pico = Math.max(pico, perfil[i]);
+      svg.appendChild(el("path", { d: "M" + px(i).toFixed(1) + " " + py(0).toFixed(1) + " L" + px(i).toFixed(1) + " " + py(perfil[i]).toFixed(1),
+        stroke: dentro ? C_A : C_T, "stroke-width": 8, opacity: dentro ? 1 : .35 }));
+    }
+    svg.appendChild(el("text", { x: X0 - 6, y: Y0 + 12, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "β"));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "posición del ciclo 0 … " + (S - 1)));
+
+    lec.innerHTML = "Con un evento que visita <strong>" + m + "</strong> posiciones y efecto <strong>" + delta.toFixed(1) +
+      "</strong> sobre " + anios + " ciclos, el mayor coeficiente de las posiciones afectadas vale <strong>" + pico.toFixed(4) +
+      "</strong>, frente al efecto verdadero " + delta.toFixed(1) + ". " +
+      (m === 1
+        ? "Con una sola posición el evento <strong>es</strong> estacionalidad, y el perfil lo recoge entero: no hace falta regresor aparte."
+        : "La Proposición 6.6 predice <strong>" + (delta / m).toFixed(4) + "</strong> de media en cada una de las " + m +
+          " posiciones. Bajando los ciclos observados se ve además que el ruido, de desviación √(2/ciclos), llega a tapar el efecto diluido.");
+  }
+  cm.addEventListener("input", dibujar);
+  cd.addEventListener("input", dibujar);
+  ca.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Cuando la columna nueva ya estaba
+
+::: {.proposicion}
+**Proposición 6.7 (colinealidad exacta).** Si un evento ocurre en **todas** las observaciones de una posición del ciclo y en ninguna otra, su columna es exactamente $D_k$, y la matriz de diseño que contiene las dos pierde rango: su deficiencia es uno y el sistema normal no tiene solución única.
+:::
+
+::: {.demostracion}
+*Demostración.* Por hipótesis la columna del evento coincide entrada a entrada con $D_k$, de modo que la matriz tiene dos columnas iguales y su rango es a lo sumo uno menos que el número de columnas. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def indicadores(t, s):
+    pos = t % s
+    return np.column_stack([(pos == k).astype(float) for k in range(1, s)])
+
+n = 7 * 52
+t = np.arange(n)
+D7 = indicadores(t, 7)
+lunes = (t % 7 == 1).astype(float)
+X1 = np.column_stack([np.ones(n), D7, lunes])
+
+print("dia de la semana mas un evento que SIEMPRE cae en lunes")
+print("  columnas %d, rango %d, deficiencia %d"
+      % (X1.shape[1], np.linalg.matrix_rank(X1), X1.shape[1] - np.linalg.matrix_rank(X1)))
+
+casi = lunes.copy()
+casi[1] = 0.0          # un solo lunes sin evento
+X2 = np.column_stack([np.ones(n), D7, casi])
+print("  con un solo lunes sin evento: rango %d de %d" % (np.linalg.matrix_rank(X2), X2.shape[1]))
+print("  numero de condicion sin el evento %.4f, con el evento casi colineal %.4f"
+      % (np.linalg.cond(np.column_stack([np.ones(n), D7])), np.linalg.cond(X2)))
+print()
+print("el rango vuelve a ser completo con UNA sola excepcion, pero el problema")
+print("no desaparece: el coeficiente pasa a depender de esa unica observacion")
+```
+
+El caso exacto lo detecta cualquier descomposición: deficiencia uno de ocho columnas. El caso interesante es el segundo. **Basta una excepción en $364$ observaciones para que el rango vuelva a ser completo**, y entonces el ajuste se calcula sin quejarse: el número de condición pasa de $7{,}8730$ a $29{,}0505$, que ninguna biblioteca considera alarmante.
+
+Lo que ha ocurrido es que el coeficiente del evento se estima **con esa única observación**, y su error estándar lo dice, aunque nadie lo mire. Conviene comprobar el rango y el condicionamiento de la matriz de diseño antes de leer un coeficiente de calendario, sobre todo cuando el evento y el ciclo comparten origen.
+
+## 6. Lo que esta lección no resuelve
+
+- **La ventana del evento no se trata.** Un feriado que afecta a los tres días previos necesita tres columnas, o una forma paramétrica; aquí el evento dura una observación.
+- **Los efectos multiplicativos quedan fuera.** Todo esto es aditivo; si el evento multiplica el nivel, hay que trabajar en logaritmos, con lo que la lección 1 ya dijo.
+- **La selección de $K$ no se automatiza.** La Proposición 6.5 dice qué se pierde con cada $K$ sobre un perfil **conocido**; elegirlo con datos ruidosos es un problema de selección de modelos, con los criterios de Estadística 21.
+- **El calendario real es más sucio.** Años bisiestos, semanas que cruzan el año, husos horarios y cambios de hora rompen la aritmética limpia de $t\bmod s$, y cada uno pide su propio cuidado.
+- **Y nada de esto es causal.** Un coeficiente de evento mide cuánto se desvía la serie ese día respecto al resto del modelo, sin decir por qué.
+
+## Ejercicios
+
+### Ejercicio 1, Cuántos ciclos hacen falta
+
+Con la Proposición 6.4, calcular cuántos ciclos completos hacen falta para que un indicador estacional tenga desviación típica $0{,}25\sigma$, y cuántos para un armónico con $s=52$.
+
+```{pyodide}
+#| exercise: ex_ciclos
+s = 52
+objetivo = 0.25
+
+ciclos_indicador = ______
+ciclos_armonico = ______
+
+print(ciclos_indicador, round(ciclos_armonico, 6))
+int(ciclos_indicador)
+```
+
+::: {.hint exercise="ex_ciclos"}
+Hay que despejar en $\sqrt{2/a}=0{,}25$ y en $\sqrt{2/(as)}=0{,}25$. El segundo resultado sale fraccionario.
+:::
+
+::: {.solution exercise="ex_ciclos"}
+```{pyodide}
+s = 52
+objetivo = 0.25
+
+ciclos_indicador = 2 / objetivo ** 2
+ciclos_armonico = 2 / (objetivo ** 2 * s)
+
+print(ciclos_indicador, round(ciclos_armonico, 6))
+int(ciclos_indicador)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_ciclos
+#| check: true
+if result == 32:
+    feedback = {"correct": True, "message": "Correcto: 32 años para un indicador semanal y 0,615385 para un armónico, o sea menos de un año. El factor entre los dos es 52, que es s, y su raíz es el 7,2111 de las desviaciones.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 32 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuánto diluye el calendario
+
+Con la Proposición 6.6, calcular qué efecto aparente deja un evento de efecto $6$ que visita $4$ posiciones, y cuántos ciclos harían falta para que ese efecto aparente supere dos desviaciones típicas del coeficiente.
+
+```{pyodide}
+#| exercise: ex_dilucion
+delta, m = 6.0, 4
+
+aparente = ______
+
+# la desviacion de un coeficiente es sqrt(2/ciclos); se busca aparente > 2*sd
+ciclos = 1
+while aparente <= 2 * (2 / ciclos) ** 0.5:
+    ciclos = ______
+
+print(round(aparente, 6), ciclos)
+int(ciclos)
+```
+
+::: {.hint exercise="ex_dilucion"}
+El efecto aparente es $\delta/m$. La condición es $\delta/m>2\sqrt{2/a}$, y basta avanzar $a$ de uno en uno.
+:::
+
+::: {.solution exercise="ex_dilucion"}
+```{pyodide}
+delta, m = 6.0, 4
+
+aparente = delta / m
+
+# la desviacion de un coeficiente es sqrt(2/ciclos); se busca aparente > 2*sd
+ciclos = 1
+while aparente <= 2 * (2 / ciclos) ** 0.5:
+    ciclos = ciclos + 1
+
+print(round(aparente, 6), ciclos)
+int(ciclos)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_dilucion
+#| check: true
+if result == 4:
+    feedback = {"correct": True, "message": "Correcto: el efecto aparente es 1,5 y hacen falta 4 ciclos para distinguirlo del ruido. Con un regresor propio el efecto sería 6, que ya supera las dos desviaciones con un solo ciclo.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 4 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Series 6**:
+
+1. Construir la matriz de diseño con indicadores y con armónicos para $s=7$ y comprobar la Proposición 6.3 a mano, escribiendo el cambio de base explícito entre las dos. Anotar cuánto ocupa la matriz de cambio.
+2. Simular un evento cuya ventana dure tres observaciones y ajustarlo con un solo indicador del día central. Medir qué fracción del efecto se recupera y compararla con la dilución de la Proposición 6.6.
+3. Tomar una serie con estacionalidad anual y una punta conocida, ajustarla con $K$ de uno a diez, y dibujar el error contra $K$. Guardar el dibujo en `50-Errores/` anotando dónde deja de mejorar.
+
+## Del libro
+
+Esta lección **no sigue ningún libro**. Igual que el resto del módulo, sus resultados se demuestran o se miden aquí.
+
+Los puntos de contacto con el sitio son **Álgebra 6**, de donde vienen la matriz de diseño, el rango y la proyección ortogonal, y **Series de tiempo 1**, cuyo perfil estacional fijo es lo que aquí se escribe como columnas. Esta página añade lo que en aquellas no cabía: **que elegir entre indicadores y armónicos es elegir un punto en un intercambio con dos cantidades calculables**, $\sqrt{s}$ de precisión contra la capacidad de dibujar una punta.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/calendario.md`, enlazada a [[descomposicion-series]], [[minimos-cuadrados]] y [[arima]]. Conviene rehacer a mano la Proposición 6.4: la cuenta ocupa dos renglones y deja grabado que **un indicador semanal se estima con tantas observaciones como años haya**, que es la frase que decide el diseño antes de mirar los datos.
+
+```
+¿Cómo se escribe la estacionalidad como columnas?::Con s−1 indicadores o con pares seno-coseno
+¿Son modelos distintos?::No, mientras los armónicos estén completos: es un cambio de base
+¿Cuántas columnas tiene cada base?::s−1 en las dos, y el mismo rango
+¿Desviación de un coeficiente indicador?::σ√(2/a), con a el número de ciclos completos
+¿Y la de un armónico?::σ√(2/n), con n = a·s
+¿Cuál es el cociente?::√s exacto, 7,2111 con s = 52
+¿Con cuántas observaciones se estima un indicador semanal?::Con tantas como años haya
+¿Qué se pierde al truncar en K armónicos?::La suma de los armónicos descartados, por Parseval
+¿Qué forma no saben dibujar los armónicos bajos?::Una punta estrecha
+¿Qué le hace el perfil estacional a un evento móvil?::Lo reparte: δ/m en cada una de las m posiciones
+¿Cómo se recupera el efecto entero?::Con una columna propia del evento
+¿Cuándo un evento es estacionalidad?::Cuando visita siempre la misma posición del ciclo
+¿Qué pasa si el evento cae siempre el mismo día de la semana?::Colinealidad exacta: la matriz pierde rango
+¿Y si hay una sola excepción?::El rango es completo, pero el coeficiente depende de esa observación
+¿Es causal un coeficiente de evento?::No: mide la desviación respecto al resto del modelo
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 6.3 se demuestra con el rango de la matriz de Fourier discreta; se comprueba en tres periodos, con rangos $7$, $12$ y $52$ y ajustes iguales por debajo de $10^{-10}$. La Proposición 6.4 se demuestra con la varianza de una diferencia de medias y la ortogonalidad de los armónicos; se comprueba con las desviaciones exactas obtenidas de $(A^\top A)^{-1}$, que reproducen $\sqrt{2/a}$ y $\sqrt{2/n}$ y dan cociente $7{,}2111=\sqrt{52}$ en las cuatro filas. La Proposición 6.5 se demuestra por Pitágoras y Parseval; se comprueba con la tabla de varianza explicada, que llega al $100{,}0000\,\%$ con $K=26$ y se queda en $46{,}2060\,\%$ con $K=3$, con error máximo $4{,}669436$. La Proposición 6.6 se demuestra con la esperanza de la media de una posición; se comprueba sobre doscientas réplicas de cuarenta ciclos, con $0{,}830802$ contra los $0{,}833333$ predichos y $5{,}002083$ para el regresor propio. La Proposición 6.7 se comprueba con el rango y el número de condición, $7{,}8730$ contra $29{,}0505$.
+
+**Lo que se usa de otras lecciones sin repetir.** La matriz de diseño, el rango y la proyección ortogonal son de Álgebra 6. El error estándar de un coeficiente es de Estadística 14. El perfil estacional y su restricción de suma cero son de Series de tiempo 1.
+
+**Lo que se enuncia sin demostrar.** La ortogonalidad de la base de Fourier discreta se **usa** sin demostrarla columna a columna; se apoya en que la matriz correspondiente es ortogonal salvo un factor, hecho estándar que aquí se toma como conocido. Y la identidad de Parseval se enuncia en su forma discreta sin derivarla.
+
+**Lo que es mío, no del libro.** Presentar la elección entre indicadores y armónicos como **un intercambio con dos cantidades calculables** en lugar de como una preferencia: $\sqrt{s}$ de precisión por un lado, y por el otro la incapacidad de dibujar una punta, medida en porcentaje de varianza y en error máximo. La frase que resume la Proposición 6.4 —un indicador semanal se estima con tantas observaciones como años haya— y su consecuencia: para una precisión de $0{,}1\sigma$ harían falta doscientos años. Y tratar la dilución del evento móvil como un resultado con fórmula, $\delta/m$, en lugar de como una advertencia vaga.
+:::
