@@ -6,15 +6,23 @@ Plataforma de estudio de Luis. 86 semanas, 2 h/día. Él estudia; yo construyo.
 lista de lo que falta y cómo poner el entorno en marcha están en
 [`ESTADO.md`](ESTADO.md), que cambia cada semana. Leer los dos antes de empezar.**
 
-Antes de cada commit, los cinco gates:
+Antes de cada commit, los seis gates:
 
 ```sh
-python3 verificar/estructura.py && \
-python3 verificar/citas.py     && \
-python3 verificar/salidas.py   && \
-python3 verificar/formato.py   && \
+python3 verificar/estructura.py  && \
+python3 verificar/citas.py       && \
+python3 verificar/referencias.py && \
+python3 verificar/salidas.py     && \
+python3 verificar/formato.py     && \
 python3 verificar/visuales.py --estricto
 ```
+
+`referencias.py` resuelve cada **Machine Learning N** contra el título de la
+fila N de `ml/index.qmd` y falla si apunta a una fila que no existe.
+
+Y `python3 verificar/simbolos.py`, que **no corre en CI**: lista, símbolo por
+símbolo, qué lecciones lo usan en fórmula y cuáles lo declaran en su tabla de
+notación. Conviene correrlo a mano en cada lección nueva (regla 16).
 
 Y `quarto preview` para ver la página de verdad: los tooltips del glosario y
 KaTeX solo existen ahí, no en el `.qmd` ni en un visual suelto.

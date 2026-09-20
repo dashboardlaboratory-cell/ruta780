@@ -37,7 +37,7 @@ Tres hitos de esta sesión:
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
 faltando lecciones por escribir: **ML va por 22 de 90**, **Series de tiempo
-empieza con 1 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
+va por 2 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
 
@@ -105,7 +105,7 @@ hay que empezar a hacer:
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
-| Series de tiempo | 1 | 11 | **1 de 1** | 2 a 11 |
+| Series de tiempo | 2 | 11 | **2 de 2** | 3 a 11 |
 | Machine Learning | 22 | 90 | **22 de 22** | la Fase 2 cerrada; quedan ESL y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
@@ -394,8 +394,9 @@ Lo que sigue, en orden de coste creciente:
    lección, y **no reaparece en ninguna fase posterior**. Deep Learning al
    menos se retoma en las lecciones 28 a 33; supervivencia no tiene red.
 
-3. **Series de tiempo ya no está vacía** —la lección 1 de 11 se publicó el
-   19-09-2026, y no cita ningún libro porque ninguno del sitio cubre el tema—;
+3. **Series de tiempo ya no está vacía** —las lecciones 1 y 2 de 11 se
+   publicaron el 19-09-2026, y no citan ningún libro porque ninguno del sitio
+   cubre el tema—;
    **Inferencia causal sigue vacía** en el sidebar.
    **ML ya no tiene bloqueo de citación**: el índice de ISLP se completó el
    13-09-2026 con sus 81 secciones, así que se puede citar `§4.3 Logistic
@@ -1745,6 +1746,65 @@ Arrancar un módulo vacío es más que escribir una página: hubo que crear
 `proyectos/notebooks/F3-retos.ipynb`, añadir `"F3-retos"` al bucle de
 `proyectos/genera_retos.py` y enseñarle a la expresión de módulos a reconocer
 `Series`. Sin eso el reto de la lección no habría llegado a ningún cuaderno.
+
+### 3.28 Series de tiempo 02: las tablas de valores críticos, reconstruidas (19-09-2026)
+
+La lección 2 programa **ADF y KPSS desde cero, sin `statsmodels`**, y en lugar
+de copiar sus valores críticos los **vuelve a calcular simulando la hipótesis
+nula**. Cincuenta líneas de numpy y veinte mil series de $250$ puntos devuelven
+$-3{,}4392$, $-2{,}8596$ y $-2{,}5543$ donde las tablas publicadas traen
+$-3{,}43$, $-2{,}86$ y $-2{,}57$.
+
+Eso convierte un número memorizado en algo que el lector puede comprobar, y de
+paso deja medir lo que cuesta equivocarse: usar el valor crítico normal
+$-1{,}6449$ rechaza la raíz unitaria en el $45{,}27\,\%$ de las series que sí la
+tienen. Una prueba anunciada al $5\,\%$ que falla cuarenta y cinco veces de cada
+cien.
+
+El KPSS cuadra al $90\,\%$ y al $95\,\%$ y **falla en el $99\,\%$** —$0{,}6949$
+contra $0{,}739$—, porque la tabla publicada es asintótica y con $n=250$ la cola
+no ha llegado. Se dice en la prosa en lugar de esconderlo.
+
+#### El hallazgo de la lección
+
+La tabla de la sección 5 cruza dos procesos con tres remedios, y la fila que
+importa es la última: diferenciar una serie de tendencia determinista deja
+$\rho_1=-0{,}4964$ —la firma exacta de la Proposición 2.4— mientras **el ADF
+rechaza el $100\,\%$ de las veces y el KPSS no rechaza nunca**. Las dos pruebas
+dan el visto bueno a una serie estropeada. El único aviso está en la
+autocorrelación de retardo uno, que ninguna de las dos mira.
+
+Al lado, la zona gris medida: con $\varphi=0{,}95$ la serie **es** estacionaria,
+el ADF lo detecta el $46{,}60\,\%$ de las veces y el KPSS afirma lo contrario el
+$66{,}36\,\%$. De ahí sale la tabla de cuatro filas con la celda «la muestra no
+alcanza» dicha con todas las letras.
+
+#### Tres cosas que el procedimiento cazó
+
+**El valor del ejercicio 1 estaba mal.** La primera escritura ponía $591$; la
+condición $t/(t+12)>0{,}9801$ se cumple desde $t>591{,}0151$, así que el primer
+entero es **592**. Calculado en una orden aparte antes de escribir el bloque
+`check`, como manda la costumbre nueva.
+
+**Las celdas no corrían solas.** `salidas.py` ejecuta **cada celda en su propio
+proceso**, así que las funciones definidas en una no existen en la siguiente.
+Las celdas 4, 5 y 6 heredaban `adf_lote` y compañía de la 3. Se repiten las
+definiciones con un comentario que lo dice, que además es la convención del
+sitio: cada celda del sitio arranca con su `import numpy as np`.
+
+**Faltaban las dos etiquetas `</script>`.** El fuente salió sin ellas, y pandoc
+**reparó el HTML mal formado cerrando secciones**: el `viewBox` bajó a
+minúsculas, el `<h2>` perdió su clase de ancla y los dos visuales quedaron
+muertos. `visuales.py` marcó solo dos controles del segundo visual; **quien lo
+cazó de verdad fue la comprobación en el navegador**, con `Unexpected token
+'<'` en la consola. Conviene recordarlo: el gate de visuales monta cada bloque
+en un HTML suelto y no ve lo que el render completo hace con un bloque roto.
+
+#### La regla 16, siete veces
+
+`verificar/simbolos.py` encontró $\mu$, $\alpha$, $\gamma$, $\theta$,
+$\delta$, $L$ y $z$ usados en fórmula y sin declarar en la tabla de notación.
+Ese script no es un gate de CI, y merece correrse a mano en cada lección nueva.
 
 ---
 

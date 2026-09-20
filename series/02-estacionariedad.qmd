@@ -1,0 +1,870 @@
+---
+title: "Estacionariedad y sus pruebas: ADF y KPSS"
+subtitle: "Series de tiempo · Lección 2"
+nivel: L2
+modulo: series
+fase: F3
+prereqs: [series/01-descomposicion, estadistica/10-pruebas-de-hipotesis, estadistica/05-covarianza-correlacion]
+siguientes: []
+libro: "—"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="series/02-estacionariedad"}
+[[L2]{.nivel .nivel-L2} **From scratch**]{.item}
+[**Fase** F3]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Descomposición](01-descomposicion.qmd) · [Pruebas de hipótesis](../estadistica/10-pruebas-de-hipotesis.qmd) · [Covarianza](../estadistica/05-covarianza-correlacion.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Escribir la definición de [estacionariedad débil]{.g data-t="estacionariedad débil"} y **demostrar que un [paseo aleatorio]{.g data-t="paseo aleatorio"} la incumple**, con la varianza y la correlación calculadas.
+2. Distinguir una [raíz unitaria]{.g data-t="raíz unitaria"} de una tendencia determinista, y decir por qué el remedio de cada una estropea la otra.
+3. **Demostrar que diferenciar una serie ya estacionaria le duplica la varianza y le fabrica una [autocorrelación]{.g} de $-1/2$ exacta.**
+4. Programar las pruebas ADF y KPSS desde cero y **reproducir sus tablas de valores críticos simulando la distribución nula**.
+5. Explicar por qué la distribución nula del ADF no es la normal, y cuánto cuesta olvidarlo.
+6. Leer las cuatro combinaciones de las dos pruebas, incluida la que no decide nada.
+7. Medir la [regresión espuria]{.g data-t="regresión espuria"} y comprobar que empeora al crecer la muestra.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Series de tiempo 1**: la descomposición, que quita tendencia y estacionalidad; lo que queda es lo que esta lección examina.
+- **Estadística 10**: las pruebas de hipótesis, el nivel y la potencia, que aquí se miden en lugar de suponerse.
+- **Estadística 5**: la covarianza, que al escribirse entre dos instantes de la misma serie pasa a llamarse autocovarianza.
+- **Estadística 14**: el error estándar de una pendiente, que es la pieza que la regresión espuria rompe.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Series de tiempo 3**: la autocorrelación, que solo se lee sobre una serie estacionaria.
+- **Series de tiempo 4**: ARIMA, cuyo parámetro $d$ es exactamente el número de diferencias que esta lección enseña a decidir.
+- **Series de tiempo 7**: la validación temporal, que hereda de aquí la sospecha hacia los ajustes en nivel.
+- **Series de tiempo 11**: la evaluación, donde vuelve a aparecer que un ajuste alto sobre series con tendencia no significa nada.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $y_t$ | y sub te | El valor observado en el instante $t$ |
+| $n$ | ene | La longitud de la serie |
+| $h$ | hache | Una distancia entre instantes, o retardo |
+| $\varepsilon_t$ | épsilon sub te | Una sacudida nueva en el instante $t$, independiente del pasado |
+| $\sigma^2$ | sigma cuadrado | La varianza de $\varepsilon_t$ |
+| $\varphi$ | fi | El coeficiente de $y_{t-1}$ en un proceso autorregresivo de orden uno |
+| $\Delta$ | delta | El operador diferencia: $\Delta y_t=y_t-y_{t-1}$ |
+| $\rho_1$ | ro sub uno | La autocorrelación de retardo uno |
+| $\hat\tau$ | tau con sombrero | El estadístico de la prueba ADF |
+| $\hat\eta$ | eta con sombrero | El estadístico de la prueba KPSS |
+| $C_t$ | ce sub te | La suma acumulada de los residuos, dentro del KPSS |
+| $\ell$ | ele | El número de retardos de la varianza de largo plazo del KPSS |
+| $\mu$ | mu | La media de la serie, cuando no depende del instante |
+| $\gamma_h$ | gamma sub hache | La autocovarianza a distancia $h$; $\gamma_0$ es la varianza |
+| $\alpha$ | alfa | La constante de la regresión que ajusta el ADF |
+| $\delta_i$ | delta sub i | Los coeficientes de los retardos que añade la versión completa del ADF |
+| $L$ | ele mayúscula | El operador de retardo: $Ly_t=y_{t-1}$ |
+| $\theta(z)$ | theta de zeta | El polinomio de la parte de media móvil |
+| $z$ | zeta | La variable de ese polinomio, cuyas raíces deciden la invertibilidad |
+:::
+
+## 1. Qué pide exactamente la palabra estacionaria
+
+::: {.definicion}
+**Definición 2.1 (estacionariedad débil).** Una serie $y_t$ es débilmente estacionaria cuando cumple las tres condiciones a la vez:
+
+(a) $\mathbb{E}[y_t]=\mu$ no depende de $t$;
+
+(b) $\operatorname{Var}(y_t)=\gamma_0<\infty$ no depende de $t$;
+
+(c) $\operatorname{Cov}(y_t,y_{t+h})=\gamma_h$ depende **solo de $h$**, no de $t$.
+:::
+
+La tercera condición es la que hace todo el trabajo. Dice que la relación entre dos instantes depende de la **distancia** entre ellos y de nada más, y esa es la razón por la que una sola realización alcanza para estimar algo: los pares separados por $h$ son todos informativos sobre la misma cantidad $\gamma_h$.
+
+::: {.proposicion}
+**Proposición 2.2 (el paseo aleatorio incumple las tres).** Sea $y_t=\sum_{s=1}^{t}\varepsilon_s$ con $\varepsilon_s$ independientes, de media cero y varianza $\sigma^2$. Entonces
+
+$$\operatorname{Var}(y_t)=t\,\sigma^2,\qquad \operatorname{Cov}(y_t,y_{t+h})=t\,\sigma^2,\qquad \operatorname{Corr}(y_t,y_{t+h})=\sqrt{\frac{t}{t+h}}.$$
+
+En particular la varianza crece sin tope, la correlación depende de $t$ además de $h$, y con $h$ fijo tiende a uno cuando $t$ crece.
+:::
+
+::: {.demostracion}
+*Demostración.* La varianza de una suma de términos independientes es la suma de las varianzas, y hay $t$ de ellos: $\operatorname{Var}(y_t)=t\sigma^2$. Para la covarianza, $y_{t+h}=y_t+\sum_{s=t+1}^{t+h}\varepsilon_s$, y el segundo sumando es independiente de $y_t$, así que
+$$\operatorname{Cov}(y_t,y_{t+h})=\operatorname{Cov}(y_t,y_t)=t\sigma^2 .$$
+Dividiendo por $\sqrt{t\sigma^2}\sqrt{(t+h)\sigma^2}$ sale la correlación, y $\sqrt{t/(t+h)}\to1$ con $h$ fijo y $t\to\infty$. [∎]{.fin-demo}
+:::
+
+Conviene ver la última igualdad despacio, porque es la que explica todo lo que sigue. **Una serie con raíz unitaria no olvida.** La correlación entre el valor de hoy y el de dentro de doce meses no baja con el tiempo: sube. Un promedio sobre esa serie no promedia información nueva, porque casi toda la observación de mañana ya está en la de hoy.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(11)
+B, n = 20000, 160
+y = np.cumsum(rng.normal(0, 1, (B, n)), axis=1)
+
+print("un paseo aleatorio no es estacionario: la varianza crece con t")
+print("   t      var medida    var teorica (= t)")
+for t in (10, 40, 160):
+    print("  %4d   %11.4f   %11d" % (t, y[:, t - 1].var(), t))
+print()
+print("y la correlacion entre dos instantes NO depende solo de la distancia:")
+print("   t     h    corr medida   sqrt(t/(t+h))")
+for t, h in ((20, 12), (100, 12), (20, 60), (100, 60)):
+    c = float(np.corrcoef(y[:, t - 1], y[:, t + h - 1])[0, 1])
+    print("  %4d  %4d   %10.6f   %13.6f" % (t, h, c, np.sqrt(t / (t + h))))
+print()
+print("con h fijo la correlacion TIENDE A UNO al avanzar t: una serie asi no")
+print("olvida nada, y por eso ninguna media muestral converge a lo que se cree")
+```
+
+Las dos filas del medio son la demostración numérica de que la condición (c) falla: con $h=12$ la correlación vale $0{,}793189$ en $t=20$ y $0{,}944573$ en $t=100$. Y las filas primera y cuarta comparten el mismo valor teórico $0{,}790569$ con distancias $12$ y $60$: **la distancia por sí sola no determina nada**.
+
+```{=html}
+<div class="viz-persist">
+  <div class="controles">
+    <label>Coeficiente φ <input id="pe-f" type="range" min="0" max="1.02" step="0.01" value="0.80"> <span id="pe-f-v">0.80</span></label>
+    <label>Longitud n <input id="pe-n" type="range" min="60" max="300" step="20" value="180"> <span id="pe-n-v">180</span></label>
+    <label>Semilla <input id="pe-s" type="range" min="1" max="12" step="1" value="4"> <span id="pe-s-v">4</span></label>
+  </div>
+  <svg id="pe-svg" viewBox="0 0 660 300" role="img" aria-label="Arriba el recorrido de un proceso autorregresivo de orden uno y abajo su autocorrelación por retardo, ambos gobernados por el coeficiente fi."></svg>
+  <p class="lectura" id="pe-lectura"></p>
+</div>
+<style>
+.viz-persist { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-persist .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-persist label { display: flex; align-items: center; gap: .4rem; }
+.viz-persist input[type=range] { width: 160px; padding: 0; }
+.viz-persist svg { width: 100%; height: auto; display: block; }
+.viz-persist .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("pe-svg"), lec = document.getElementById("pe-lectura");
+  var cf = document.getElementById("pe-f"), cn = document.getElementById("pe-n"), cs = document.getElementById("pe-s");
+  var ef = document.getElementById("pe-f-v"), en = document.getElementById("pe-n-v"), es = document.getElementById("pe-s-v");
+  var X0 = 46, XW = 574, LAGS = 24;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // un generador propio para que el dibujo sea el mismo en cada visita
+  function sacudidas(semilla, n) {
+    var s = semilla * 7919 + 13, out = [], i, u1, u2;
+    function u() { s = (s * 48271) % 2147483647; return s / 2147483647; }
+    for (i = 0; i < n; i++) {
+      u1 = Math.max(u(), 1e-9); u2 = u();
+      out.push(Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2));
+    }
+    return out;
+  }
+  function acf(x, K) {
+    var n = x.length, m = 0, i, j, den = 0, out = [];
+    for (i = 0; i < n; i++) m += x[i];
+    m /= n;
+    for (i = 0; i < n; i++) den += (x[i] - m) * (x[i] - m);
+    for (j = 1; j <= K; j++) {
+      var s = 0;
+      for (i = j; i < n; i++) s += (x[i] - m) * (x[i - j] - m);
+      out.push(s / den);
+    }
+    return out;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var f = +cf.value, n = +cn.value, sem = +cs.value;
+    ef.textContent = f.toFixed(2); en.textContent = n; es.textContent = sem;
+    var e = sacudidas(sem, n), x = [e[0]], i;
+    for (i = 1; i < n; i++) x.push(f * x[i - 1] + e[i]);
+
+    // panel de arriba: el recorrido, con escala propia para que siempre se vea
+    var lo = Math.min.apply(null, x), hi = Math.max.apply(null, x), pad = (hi - lo) * 0.12 + 1e-6;
+    lo -= pad; hi += pad;
+    var PY = 22, PH = 130;
+    var px = function (i2) { return X0 + i2 / (n - 1) * XW; };
+    var py = function (v) { return PY + (hi - v) / (hi - lo) * PH; };
+    svg.appendChild(el("rect", { x: X0, y: PY, width: XW, height: PH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    if (lo < 0 && hi > 0) svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + (X0 + XW) + " " + py(0).toFixed(1), stroke: C_L, "stroke-width": 1, "stroke-dasharray": "3 3" }));
+    var d = "";
+    for (i = 0; i < n; i++) d += (i ? " L" : "M") + px(i).toFixed(1) + " " + py(x[i]).toFixed(1);
+    svg.appendChild(el("path", { d: d, stroke: C_T, "stroke-width": 1.5, fill: "none" }));
+    svg.appendChild(el("text", { x: X0 - 6, y: PY + 12, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "y"));
+    svg.appendChild(el("text", { x: X0 + XW, y: PY - 6, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 },
+      "recorrido de " + n + " puntos, amplitud " + (hi - lo).toFixed(1)));
+
+    // panel de abajo: la autocorrelacion por retardo
+    var r = acf(x, LAGS), QY = 186, QH = 92;
+    var qy = function (v) { return QY + (1.05 - v) / 2.1 * QH; };
+    svg.appendChild(el("rect", { x: X0, y: QY, width: XW, height: QH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + qy(0).toFixed(1) + " L" + (X0 + XW) + " " + qy(0).toFixed(1), stroke: C_L, "stroke-width": 1 }));
+    var band = 1.96 / Math.sqrt(n);
+    svg.appendChild(el("rect", { x: X0, y: qy(band), width: XW, height: (qy(-band) - qy(band)), fill: C_A, opacity: .10 }));
+    for (i = 0; i < LAGS; i++) {
+      var bx = X0 + (i + 0.5) / LAGS * XW;
+      svg.appendChild(el("path", { d: "M" + bx.toFixed(1) + " " + qy(0).toFixed(1) + " L" + bx.toFixed(1) + " " + qy(r[i]).toFixed(1),
+        stroke: Math.abs(r[i]) > band ? C_B : C_A, "stroke-width": 4 }));
+    }
+    svg.appendChild(el("text", { x: X0 - 6, y: QY + 12, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "ρ"));
+    svg.appendChild(el("text", { x: X0 + XW, y: QY + QH + 13, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "retardo 1 … " + LAGS));
+
+    var fuera = 0;
+    for (i = 0; i < LAGS; i++) if (Math.abs(r[i]) > band) fuera++;
+    lec.innerHTML = "Con φ = <strong>" + f.toFixed(2) + "</strong> y n = <strong>" + n + "</strong>, la autocorrelación de retardo uno vale <strong>" +
+      r[0].toFixed(4) + "</strong> y <strong>" + fuera + "</strong> de los " + LAGS + " retardos salen de la banda. " +
+      (f >= 1
+        ? "Con φ ≥ 1 el recorrido ya no vuelve: la amplitud crece con n y la autocorrelación baja despacio, en línea casi recta. Esa lentitud es la firma de una raíz unitaria."
+        : "Con φ &lt; 1 la autocorrelación teórica es φ<sup>h</sup>, que cae geométricamente; al acercar φ a uno la caída se vuelve tan lenta que a simple vista se confunde con el caso no estacionario, y ahí es donde las pruebas de la sección 3 pierden potencia.");
+  }
+  cf.addEventListener("input", dibujar);
+  cn.addEventListener("input", dibujar);
+  cs.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Dos tendencias distintas, y el precio de confundirlas
+
+::: {.definicion}
+**Definición 2.3 (las dos maneras de subir).** Una serie tiene **tendencia determinista** cuando $y_t=a+bt+w_t$ con $w_t$ estacionario. Tiene **tendencia estocástica**, o [raíz unitaria]{.g data-t="raíz unitaria"}, cuando $\Delta y_t$ es estacionario pero $y_t$ no lo es.
+:::
+
+Las dos suben en el dibujo, y ninguna de las dos es estacionaria, pero **no se arreglan con la misma operación**: a la primera se le resta la recta, a la segunda se la diferencia. Aplicar el remedio cruzado deja el problema donde estaba o fabrica uno nuevo, y esto último tiene nombre y firma numérica.
+
+::: {.proposicion}
+**Proposición 2.4 (diferenciar de más).** Sea $w_t$ estacionario con autocovarianzas $\gamma_h$. Entonces $\Delta w_t$ es estacionario con
+$$\operatorname{Var}(\Delta w_t)=2(\gamma_0-\gamma_1),\qquad
+\rho_1(\Delta w)=\frac{2\gamma_1-\gamma_0-\gamma_2}{2(\gamma_0-\gamma_1)} .$$
+En el caso particular de que $w_t$ sea [ruido blanco]{.g data-t="ruido blanco"} ($\gamma_h=0$ para $h\ne0$), la varianza se **duplica** y
+$$\rho_1(\Delta w)=-\frac12\qquad\text{exactamente.}$$
+Además, si $w_t$ es una media móvil de orden $q$ con polinomio $\theta(z)$, el de $\Delta w_t$ es $(1-z)\,\theta(z)$, que tiene una raíz en $z=1$.
+:::
+
+::: {.demostracion}
+*Demostración.* Para la varianza, $\operatorname{Var}(w_t-w_{t-1})=\gamma_0+\gamma_0-2\gamma_1$. Para la autocovarianza de retardo uno,
+$$\operatorname{Cov}(\Delta w_t,\Delta w_{t-1})=\operatorname{Cov}(w_t-w_{t-1},\,w_{t-1}-w_{t-2})=\gamma_1-\gamma_0-\gamma_2+\gamma_1=2\gamma_1-\gamma_0-\gamma_2 .$$
+Con ruido blanco, $\gamma_1=\gamma_2=0$ y $\gamma_0=\sigma^2$, así que la varianza vale $2\sigma^2$ y la autocovarianza $-\sigma^2$: el cociente es $-1/2$. La última afirmación es inmediata, porque $\Delta$ aplicado a $w_t=\theta(L)\varepsilon_t$ da $(1-L)\theta(L)\varepsilon_t$. [∎]{.fin-demo}
+:::
+
+La raíz en $z=1$ importa porque **una media móvil con raíz unitaria no se puede invertir**: no existe ninguna representación autorregresiva de esa serie, y los métodos de la lección 4 que estiman por máxima verosimilitud se quedan pegados en el borde del espacio de parámetros. Diferenciar de más tiene, pues, un coste doble: ruido multiplicado por dos y un modelo que ya no se deja ajustar.
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(12)
+B, n = 20000, 400
+w = rng.normal(0, 1, (B, n))
+d = np.diff(w, axis=1)
+
+def rho1_lote(Y):
+    """La autocorrelacion de retardo uno de cada fila."""
+    r = Y - Y.mean(axis=1, keepdims=True)
+    return (r[:, :-1] * r[:, 1:]).sum(axis=1) / (r * r).sum(axis=1)
+
+print("diferenciar ruido blanco, que ya era estacionario:")
+print("  varianza de w       %.4f" % w.var())
+print("  varianza de Dw      %.4f   (el doble, exacto)" % d.var())
+print("  cociente            %.4f" % (d.var() / w.var()))
+print("  rho1 medio de w     %+.4f" % rho1_lote(w).mean())
+print("  rho1 medio de Dw    %+.4f   (teorico -1/2)" % rho1_lote(d).mean())
+print()
+print("o sea: se duplica el ruido y se inventa una autocorrelacion que no")
+print("estaba. La firma -0.5 en el retardo uno es lo que delata el exceso")
+```
+
+El cociente de varianzas sale $2{,}0001$ y la autocorrelación media $-0{,}4972$ sobre veinte mil series de cuatrocientos puntos. **Ese $-0{,}5$ es la huella que conviene memorizar**: una serie recién diferenciada cuya autocorrelación de retardo uno ronde $-0{,}5$ delata que la diferencia sobraba.
+
+## 3. Las dos pruebas, escritas aquí
+
+La prueba **ADF** (Dickey-Fuller aumentada) ajusta por mínimos cuadrados
+$$\Delta y_t=\alpha+\varphi\,y_{t-1}+\varepsilon_t$$
+y mira el estadístico $t$ del coeficiente $\varphi$, llamado $\hat\tau$. Bajo raíz unitaria $\varphi=0$, y valores muy negativos hablan contra ella. La hipótesis nula es **hay raíz unitaria**.
+
+La prueba **KPSS** va al revés. Parte de los residuos $r_t=y_t-\bar y$ y de su suma acumulada $C_t=\sum_{s\le t}r_s$, con las que forma
+$$\hat\eta=\frac{1}{n^2}\frac{\sum_{t=1}^{n}C_t^{2}}{\hat s^{2}},\qquad
+\hat s^{2}=\hat\gamma_0+2\sum_{j=1}^{\ell}\Bigl(1-\frac{j}{\ell+1}\Bigr)\hat\gamma_j ,$$
+donde $\hat s^2$ estima la varianza de largo plazo. Valores grandes hablan contra la estacionariedad, porque una suma acumulada de residuos estacionarios no se aleja mucho del cero. La hipótesis nula es **la serie es estacionaria**.
+
+::: {.proposicion}
+**Proposición 2.5 (la distribución nula del ADF no es la normal).** Bajo la hipótesis nula de raíz unitaria, la suma de cuadrados del regresor cumple
+$$\mathbb{E}\Bigl[\sum_{t=1}^{n}y_{t-1}^{2}\Bigr]=\sigma^{2}\frac{n(n-1)}{2},$$
+que crece como $n^2$ y no como $n$. En consecuencia la normalización habitual $\sqrt{n}$ del estadístico $t$ no aplica, y $\hat\tau$ **no converge a una normal estándar**. Sus cuantiles se obtienen por simulación.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Proposición 2.2, $\mathbb{E}[y_{t-1}^2]=(t-1)\sigma^2$. Sumando sobre $t=1,\dots,n$ queda $\sigma^2\sum_{t=1}^{n}(t-1)=\sigma^2 n(n-1)/2$. Para un regresor estacionario la misma suma tendría esperanza $n\gamma_0$, de orden $n$, y ahí es donde descansa la teoría normal usual. [∎]{.fin-demo}
+:::
+
+**Lo que esta lección omite deliberadamente:** la ley límite de $\hat\tau$ se escribe como un cociente de integrales de un movimiento browniano y se demuestra con un teorema central del límite funcional, herramienta que este sitio no cubre. La proposición dice por qué la teoría estándar falla; los cuantiles concretos se sacan simulando, que es lo que hace la celda siguiente.
+
+```{pyodide}
+import numpy as np
+
+def adf_lote(Y):
+    """El estadistico de Dickey-Fuller con constante de cada fila de Y."""
+    dy = np.diff(Y, axis=1)
+    x = Y[:, :-1]
+    k = dy.shape[1]
+    xc = x - x.mean(axis=1, keepdims=True)
+    dc = dy - dy.mean(axis=1, keepdims=True)
+    Sxx = (xc * xc).sum(axis=1)
+    b = (xc * dc).sum(axis=1) / Sxx
+    res = dc - b[:, None] * xc
+    s2 = (res * res).sum(axis=1) / (k - 2)
+    return b / np.sqrt(s2 / Sxx)
+
+def kpss_lote(Y):
+    """El estadistico KPSS de nivel de cada fila de Y."""
+    n = Y.shape[1]
+    l = int(4 * (n / 100.0) ** 0.25)
+    r = Y - Y.mean(axis=1, keepdims=True)
+    C = np.cumsum(r, axis=1)
+    s2 = (r * r).sum(axis=1) / n
+    for j in range(1, l + 1):
+        s2 += 2.0 * (1.0 - j / (l + 1.0)) * (r[:, j:] * r[:, :-j]).sum(axis=1) / n
+    return (C * C).sum(axis=1) / (n * n) / s2
+
+def por_bloques(rng, B, n, hace, bloque=5000):
+    """Simula en tandas para no tener veinte mil series en memoria a la vez."""
+    a, k = [], []
+    for _ in range(B // bloque):
+        Y = hace(rng, bloque, n)
+        a.append(adf_lote(Y))
+        k.append(kpss_lote(Y))
+    return np.concatenate(a), np.concatenate(k)
+
+paseo = lambda r, B, n: np.cumsum(r.normal(0, 1, (B, n)), axis=1)
+blanco = lambda r, B, n: r.normal(0, 1, (B, n))
+
+N = 250
+ta, _ = por_bloques(np.random.default_rng(21), 20000, N, paseo)
+_, kw = por_bloques(np.random.default_rng(22), 20000, N, blanco)
+
+print("distribucion nula simulada aqui, n = 250, veinte mil series")
+print("  ADF (nula: hay raiz unitaria)        simulado     tabla publicada")
+for q, tabla in ((0.01, -3.43), (0.05, -2.86), (0.10, -2.57)):
+    print("     cuantil %3.0f%%                    %8.4f          %6.2f" % (100 * q, np.quantile(ta, q), tabla))
+print("  KPSS (nula: es estacionaria)")
+for q, tabla in ((0.90, 0.347), (0.95, 0.463), (0.99, 0.739)):
+    print("     cuantil %3.0f%%                    %8.4f          %6.3f" % (100 * q, np.quantile(kw, q), tabla))
+print()
+print("y el precio de usar el valor critico normal -1.6449 con el ADF:")
+print("  rechaza raiz unitaria en %.4f de los casos en que SI la hay" % float((ta < -1.6449).mean()))
+print("  o sea un nivel real del %.0f %% en lugar del 5 %% prometido" % (100 * float((ta < -1.6449).mean())))
+```
+
+Los tres cuantiles del ADF salen $-3{,}4392$, $-2{,}8596$ y $-2{,}5543$ contra los $-3{,}43$, $-2{,}86$ y $-2{,}57$ de las tablas publicadas: **cincuenta líneas de numpy reconstruyen la tabla entera**. El KPSS acierta al $90\,\%$ y al $95\,\%$ —$0{,}3515$ y $0{,}4604$ contra $0{,}347$ y $0{,}463$— y **falla en el $99\,\%$**, $0{,}6949$ contra $0{,}739$, porque la tabla publicada recoge la distribución asintótica y con $n=250$ y esta ventana de retardos la cola todavía no ha llegado.
+
+Y la cifra que justifica toda la sección: usar el valor crítico normal $-1{,}6449$ rechaza la raíz unitaria en el $\mathbf{45\,\%}$ de las series que la tienen. Una prueba anunciada al $5\,\%$ que se equivoca cuarenta y cinco veces de cada cien.
+
+## 4. La zona gris, medida
+
+Una prueba que no rechaza no ha probado su hipótesis nula; solo ha fallado en contradecirla. Con las dos pruebas programadas, eso se puede medir en lugar de repetirlo.
+
+```{pyodide}
+import numpy as np
+
+# Las dos pruebas de la seccion anterior, repetidas para que esta celda corra
+# sola, igual que todas las de este sitio.
+def adf_lote(Y):
+    dy = np.diff(Y, axis=1)
+    x = Y[:, :-1]
+    k = dy.shape[1]
+    xc = x - x.mean(axis=1, keepdims=True)
+    dc = dy - dy.mean(axis=1, keepdims=True)
+    Sxx = (xc * xc).sum(axis=1)
+    b = (xc * dc).sum(axis=1) / Sxx
+    res = dc - b[:, None] * xc
+    s2 = (res * res).sum(axis=1) / (k - 2)
+    return b / np.sqrt(s2 / Sxx)
+
+def kpss_lote(Y):
+    n = Y.shape[1]
+    l = int(4 * (n / 100.0) ** 0.25)
+    r = Y - Y.mean(axis=1, keepdims=True)
+    C = np.cumsum(r, axis=1)
+    s2 = (r * r).sum(axis=1) / n
+    for j in range(1, l + 1):
+        s2 += 2.0 * (1.0 - j / (l + 1.0)) * (r[:, j:] * r[:, :-j]).sum(axis=1) / n
+    return (C * C).sum(axis=1) / (n * n) / s2
+
+def por_bloques(rng, B, n, hace, bloque=5000):
+    a, k = [], []
+    for _ in range(B // bloque):
+        Y = hace(rng, bloque, n)
+        a.append(adf_lote(Y))
+        k.append(kpss_lote(Y))
+    return np.concatenate(a), np.concatenate(k)
+
+paseo = lambda r, B, n: np.cumsum(r.normal(0, 1, (B, n)), axis=1)
+N = 250
+CVA, CVK = -2.8596, 0.4604   # los cuantiles simulados en la celda anterior
+
+def ar1(phi):
+    def hace(r, B, n):
+        e = r.normal(0, 1, (B, n))
+        y = np.empty((B, n))
+        y[:, 0] = e[:, 0]
+        for t in range(1, n):
+            y[:, t] = phi * y[:, t - 1] + e[:, t]
+        return y
+    return hace
+
+rng = np.random.default_rng(31)
+print("cinco mil series de 250 puntos por fila, nivel nominal del 5 %")
+print("   phi     ADF rechaza    KPSS rechaza    estacionaria de verdad")
+for phi in (1.00, 0.99, 0.95, 0.90, 0.80):
+    a, k = por_bloques(rng, 5000, N, paseo if phi >= 1.0 else ar1(phi))
+    print("  %.2f      %.4f         %.4f            %s"
+          % (phi, float((a < CVA).mean()), float((k > CVK).mean()), "no" if phi >= 1.0 else "si"))
+print()
+print("con phi = 1 el ADF rechaza al 4.38 %: el nivel prometido se cumple")
+print("con phi = 0.95 la serie ES estacionaria y el ADF solo la detecta el 47 %")
+print("de las veces, mientras el KPSS niega la estacionariedad el 66 %")
+```
+
+La fila de $\varphi=0{,}95$ es la lección entera. La serie **es** estacionaria; el ADF lo detecta el $46{,}60\,\%$ de las veces y el KPSS afirma lo contrario el $66{,}36\,\%$. Las dos pruebas se contradicen sobre un proceso perfectamente definido, y ninguna miente: cada una responde su propia pregunta con la potencia que tiene.
+
+De ahí sale la manera de leerlas juntas, que es la razón práctica de correr las dos:
+
+| ADF | KPSS | Lectura |
+|---|---|---|
+| rechaza | no rechaza | Hay acuerdo: tratar la serie como estacionaria |
+| no rechaza | rechaza | Hay acuerdo: hay raíz unitaria, diferenciar |
+| no rechaza | no rechaza | **La muestra no alcanza**: ninguna prueba tiene potencia aquí |
+| rechaza | rechaza | Estructura sin capturar: tendencia determinista, un cambio de nivel o varianza que se mueve |
+
+Las dos últimas filas son las interesantes, y las dos aparecen con frecuencia. La tercera dice que la respuesta depende de conseguir más datos. La cuarta dice que la serie sube de una manera que ninguna de las dos hipótesis nulas describe, y la sección siguiente enseña el caso más común.
+
+## 5. El remedio correcto depende de la clase de tendencia
+
+::: {.proposicion}
+**Proposición 2.6 (cada remedio arregla una y estropea la otra).**
+
+(a) Si $y_t$ es un paseo aleatorio y $r_t=y_t-a-bt$ son los residuos de quitarle cualquier recta, entonces $\Delta r_t=\varepsilon_t-b$, de modo que $r_t$ **vuelve a ser un paseo aleatorio**, con deriva. Quitar la recta no elimina la raíz unitaria.
+
+(b) Si $y_t=a+bt+w_t$ con $w_t$ ruido blanco, entonces $\Delta y_t=b+\Delta w_t$, que por la Proposición 2.4 tiene $\rho_1=-1/2$ y varianza duplicada. Diferenciar introduce una raíz unitaria en la parte de media móvil.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (a), $r_t-r_{t-1}=(y_t-y_{t-1})-b=\varepsilon_t-b$, y una serie cuya diferencia es ruido blanco más una constante es un paseo aleatorio con deriva; su varianza sigue creciendo con $t$. Para (b), $\Delta y_t=b(t-(t-1))+\Delta w_t=b+\Delta w_t$, y sumar una constante no cambia autocovarianzas ni autocorrelaciones. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+# Las dos pruebas de la seccion anterior, repetidas para que esta celda corra
+# sola, igual que todas las de este sitio.
+def adf_lote(Y):
+    dy = np.diff(Y, axis=1)
+    x = Y[:, :-1]
+    k = dy.shape[1]
+    xc = x - x.mean(axis=1, keepdims=True)
+    dc = dy - dy.mean(axis=1, keepdims=True)
+    Sxx = (xc * xc).sum(axis=1)
+    b = (xc * dc).sum(axis=1) / Sxx
+    res = dc - b[:, None] * xc
+    s2 = (res * res).sum(axis=1) / (k - 2)
+    return b / np.sqrt(s2 / Sxx)
+
+def kpss_lote(Y):
+    n = Y.shape[1]
+    l = int(4 * (n / 100.0) ** 0.25)
+    r = Y - Y.mean(axis=1, keepdims=True)
+    C = np.cumsum(r, axis=1)
+    s2 = (r * r).sum(axis=1) / n
+    for j in range(1, l + 1):
+        s2 += 2.0 * (1.0 - j / (l + 1.0)) * (r[:, j:] * r[:, :-j]).sum(axis=1) / n
+    return (C * C).sum(axis=1) / (n * n) / s2
+
+def por_bloques(rng, B, n, hace, bloque=5000):
+    a, k = [], []
+    for _ in range(B // bloque):
+        Y = hace(rng, bloque, n)
+        a.append(adf_lote(Y))
+        k.append(kpss_lote(Y))
+    return np.concatenate(a), np.concatenate(k)
+
+paseo = lambda r, B, n: np.cumsum(r.normal(0, 1, (B, n)), axis=1)
+N = 250
+CVA, CVK = -2.8596, 0.4604   # los cuantiles simulados en la celda anterior
+
+def quita_recta_lote(Y):
+    """Residuos de ajustar una recta en t a cada fila."""
+    n = Y.shape[1]
+    t = np.arange(n, dtype=float)
+    tc = t - t.mean()
+    Yc = Y - Y.mean(axis=1, keepdims=True)
+    b = (Yc * tc).sum(axis=1) / (tc * tc).sum()
+    return Yc - b[:, None] * tc
+
+def rho1_lote(Y):
+    r = Y - Y.mean(axis=1, keepdims=True)
+    return (r[:, :-1] * r[:, 1:]).sum(axis=1) / (r * r).sum(axis=1)
+
+recta = lambda r, B, n: 0.05 * np.arange(n) + r.normal(0, 1, (B, n))
+
+rng = np.random.default_rng(41)
+print("cuatro mil series de 250 puntos en cada fila")
+print("  %-18s %-16s %8s %10s %10s" % ("proceso", "remedio", "rho1", "ADF rech", "KPSS rech"))
+for nombre, gen in (("paseo aleatorio", paseo), ("recta + ruido", recta)):
+    for rem, f in (("nada", lambda Y: Y),
+                   ("quitar la recta", quita_recta_lote),
+                   ("diferenciar", lambda Y: np.diff(Y, axis=1))):
+        Y = f(gen(rng, 4000, N))
+        print("  %-18s %-16s %8.4f %10.4f %10.4f"
+              % (nombre, rem, rho1_lote(Y).mean(),
+                 float((adf_lote(Y) < CVA).mean()), float((kpss_lote(Y) > CVK).mean())))
+print()
+print("la diagonal funciona y las cruzadas no: al paseo hay que diferenciarlo")
+print("y a la recta hay que restarle la recta. Y hay algo peor en la ultima")
+print("fila: diferenciar la recta deja rho1 = -0.4964 y NINGUNA de las dos")
+print("pruebas se queja, porque sobre-diferenciar no crea una raiz unitaria")
+print("en la parte autorregresiva, que es lo unico que el ADF mira")
+```
+
+La tabla confirma la proposición fila por fila. Al paseo aleatorio se le quita la recta y la autocorrelación de retardo uno sigue en $0{,}9520$, con el ADF rechazando solo el $18{,}40\,\%$ de las veces: **el remedio equivocado deja el problema en pie**. A la recta con ruido se le quita la recta y $\rho_1$ cae a $-0{,}0087$, que es lo correcto.
+
+Y la última fila es la que conviene recordar: diferenciar la serie de tendencia determinista deja $\rho_1=-0{,}4964$ —la firma exacta de la Proposición 2.4— mientras el ADF rechaza el $100\,\%$ de las veces y el KPSS no rechaza nunca. **Las dos pruebas dan el visto bueno a una serie estropeada.** El único aviso está en la autocorrelación de retardo uno, que ninguna de las dos mira.
+
+```{=html}
+<div class="viz-remedio">
+  <div class="controles">
+    <label>Proceso
+      <select id="re-p">
+        <option value="paseo" selected>paseo aleatorio</option>
+        <option value="recta">recta + ruido</option>
+      </select>
+    </label>
+    <label>Remedio
+      <select id="re-r">
+        <option value="nada" selected>ninguno</option>
+        <option value="recta">quitar la recta</option>
+        <option value="dif">diferenciar</option>
+      </select>
+    </label>
+    <label>Semilla <input id="re-s" type="range" min="1" max="12" step="1" value="3"> <span id="re-s-v">3</span></label>
+  </div>
+  <svg id="re-svg" viewBox="0 0 660 260" role="img" aria-label="La serie elegida arriba y abajo el resultado de aplicarle el remedio elegido, con su autocorrelación de retardo uno."></svg>
+  <p class="lectura" id="re-lectura"></p>
+</div>
+<style>
+.viz-remedio { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-remedio .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-remedio label { display: flex; align-items: center; gap: .4rem; }
+.viz-remedio input[type=range] { width: 130px; padding: 0; }
+.viz-remedio select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-remedio svg { width: 100%; height: auto; display: block; }
+.viz-remedio .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("re-svg"), lec = document.getElementById("re-lectura");
+  var cp = document.getElementById("re-p"), cr = document.getElementById("re-r"), cs = document.getElementById("re-s");
+  var es = document.getElementById("re-s-v");
+  var X0 = 46, XW = 574, N = 220;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function sacudidas(semilla, n) {
+    var s = semilla * 7919 + 13, out = [], i, u1, u2;
+    function u() { s = (s * 48271) % 2147483647; return s / 2147483647; }
+    for (i = 0; i < n; i++) {
+      u1 = Math.max(u(), 1e-9); u2 = u();
+      out.push(Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2));
+    }
+    return out;
+  }
+  function rho1(x) {
+    var n = x.length, m = 0, i, num = 0, den = 0;
+    for (i = 0; i < n; i++) m += x[i];
+    m /= n;
+    for (i = 0; i < n; i++) den += (x[i] - m) * (x[i] - m);
+    for (i = 1; i < n; i++) num += (x[i] - m) * (x[i - 1] - m);
+    return num / den;
+  }
+  function panel(y, py0, ph, serie, color, nombre) {
+    var lo = Math.min.apply(null, serie), hi = Math.max.apply(null, serie);
+    var pad = (hi - lo) * 0.12 + 1e-6; lo -= pad; hi += pad;
+    var k = serie.length;
+    var px = function (i) { return X0 + i / (k - 1) * XW; };
+    var py = function (v) { return py0 + (hi - v) / (hi - lo) * ph; };
+    svg.appendChild(el("rect", { x: X0, y: py0, width: XW, height: ph, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    if (lo < 0 && hi > 0) svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + (X0 + XW) + " " + py(0).toFixed(1), stroke: C_L, "stroke-width": 1, "stroke-dasharray": "3 3" }));
+    var d = "", i;
+    for (i = 0; i < k; i++) d += (i ? " L" : "M") + px(i).toFixed(1) + " " + py(serie[i]).toFixed(1);
+    svg.appendChild(el("path", { d: d, stroke: color, "stroke-width": 1.5, fill: "none" }));
+    svg.appendChild(el("text", { x: X0 - 6, y: py0 + 12, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, nombre));
+    svg.appendChild(el("text", { x: X0 + XW - 4, y: py0 + 13, "text-anchor": "end", "font-size": 10.5, fill: color },
+      "amplitud " + (hi - lo).toFixed(2) + "   ρ₁ = " + rho1(serie).toFixed(4)));
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var proc = cp.value, rem = cr.value, sem = +cs.value;
+    es.textContent = sem;
+    var e = sacudidas(sem, N), y = [], acu = 0, i;
+    for (i = 0; i < N; i++) {
+      if (proc === "paseo") { acu += e[i]; y.push(acu); }
+      else y.push(0.05 * i + e[i]);
+    }
+    var z;
+    if (rem === "dif") {
+      z = [];
+      for (i = 1; i < N; i++) z.push(y[i] - y[i - 1]);
+    } else if (rem === "recta") {
+      var mt = (N - 1) / 2, my = 0, sxy = 0, sxx = 0;
+      for (i = 0; i < N; i++) my += y[i];
+      my /= N;
+      for (i = 0; i < N; i++) { sxy += (i - mt) * (y[i] - my); sxx += (i - mt) * (i - mt); }
+      var b = sxy / sxx;
+      z = [];
+      for (i = 0; i < N; i++) z.push(y[i] - my - b * (i - mt));
+    } else {
+      z = y.slice();
+    }
+    panel(0, 20, 96, y, C_T, "y");
+    panel(0, 142, 96, z, rem === "nada" ? C_T : C_A, "resultado");
+
+    var r = rho1(z), texto;
+    if (rem === "nada") texto = "Sin remedio, la serie de abajo repite la de arriba y su ρ₁ vale <strong>" + r.toFixed(4) + "</strong>: cerca de uno, que es lo que se ve en cualquier serie con tendencia, de la clase que sea.";
+    else if (proc === "paseo" && rem === "recta") texto = "Quitarle la recta a un paseo aleatorio deja ρ₁ = <strong>" + r.toFixed(4) + "</strong>, todavía pegado a uno: por la Proposición 2.6a el resultado <strong>sigue siendo un paseo aleatorio</strong>. El dibujo baja de nivel y no pierde la persistencia.";
+    else if (proc === "paseo" && rem === "dif") texto = "Diferenciar el paseo deja ρ₁ = <strong>" + r.toFixed(4) + "</strong>, alrededor de cero: este es el remedio que corresponde, y el resultado es ruido sin memoria.";
+    else if (proc === "recta" && rem === "recta") texto = "Quitarle la recta a una serie de tendencia determinista deja ρ₁ = <strong>" + r.toFixed(4) + "</strong>: el remedio que corresponde, y lo que queda es el ruido original.";
+    else texto = "Diferenciar una serie de tendencia determinista deja ρ₁ = <strong>" + r.toFixed(4) + "</strong>, cerca de <strong>−0,5</strong>. Esa es la firma de la Proposición 2.4, y ninguna de las dos pruebas de la sección 3 la detecta.";
+    lec.innerHTML = texto;
+  }
+  cp.addEventListener("change", dibujar);
+  cr.addEventListener("change", dibujar);
+  cs.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 6. Por qué esto importa: la regresión espuria
+
+::: {.proposicion}
+**Proposición 2.7 (medida, no demostrada aquí).** Al regresar una serie con raíz unitaria sobre otra **independiente** de ella, la proporción de veces que el estadístico $t$ de la pendiente supera $1{,}96$ en valor absoluto **crece con la longitud de la serie** en lugar de quedarse en el $5\,\%$ prometido. Sobre las mismas series diferenciadas, la proporción se queda en el $5\,\%$.
+:::
+
+La razón elemental es que la fórmula del error estándar de la pendiente supone residuos sin correlación. Si las dos series tienen raíz unitaria, los residuos de la regresión también la tienen, y esa fórmula subestima la incertidumbre por un factor que empeora al alargar la muestra. El resultado formal pertenece a la teoría de raíces unitarias y necesita el mismo teorema funcional que quedó nombrado en la sección 3; aquí se mide.
+
+```{pyodide}
+import numpy as np
+
+paseo = lambda r, B, n: np.cumsum(r.normal(0, 1, (B, n)), axis=1)
+
+def t_pendiente(X, Y):
+    """El estadistico t de la pendiente y el R2, fila por fila."""
+    n = X.shape[1]
+    xc = X - X.mean(axis=1, keepdims=True)
+    yc = Y - Y.mean(axis=1, keepdims=True)
+    Sxx = (xc * xc).sum(axis=1)
+    b = (xc * yc).sum(axis=1) / Sxx
+    res = yc - b[:, None] * xc
+    s2 = (res * res).sum(axis=1) / (n - 2)
+    return b / np.sqrt(s2 / Sxx), 1.0 - (res * res).sum(axis=1) / (yc * yc).sum(axis=1)
+
+rng = np.random.default_rng(32)
+print("cuatro mil pares de paseos aleatorios INDEPENDIENTES entre si")
+print("    n     |t|>1.96 en nivel    R2 medio    |t|>1.96 diferenciadas")
+for n in (50, 100, 200, 400, 800):
+    X = paseo(rng, 4000, n)
+    Y = paseo(rng, 4000, n)
+    t, r2 = t_pendiente(X, Y)
+    td, _ = t_pendiente(np.diff(X, axis=1), np.diff(Y, axis=1))
+    print("  %4d          %.4f          %.4f              %.4f"
+          % (n, float((np.abs(t) > 1.96).mean()), r2.mean(), float((np.abs(td) > 1.96).mean())))
+print()
+print("la columna del medio crece de 0.6623 a 0.9160 al alargar la serie:")
+print("mas datos empeoran el problema en lugar de arreglarlo. La ultima")
+print("columna, sobre las mismas series diferenciadas, se queda en el 5 %")
+```
+
+Con cincuenta observaciones, dos series sin ninguna relación se declaran relacionadas el $66{,}23\,\%$ de las veces. Con ochocientas, el $91{,}60\,\%$. **Alargar la muestra empeora el diagnóstico**, que es justo lo contrario de lo que hace cualquier prueba correcta, y explica por qué la última columna —las mismas series diferenciadas— se queda clavada entre $0{,}0462$ y $0{,}0540$.
+
+El $R^2$ medio merece un párrafo aparte: ronda $0{,}24$ en todos los tamaños. Un ajuste de esa magnitud entre dos series que **no tienen nada que ver** se publica sin sonrojo en cualquier informe. La defensa no es mirar el $R^2$, sino comprobar la estacionariedad antes de regresar.
+
+## 7. Lo que esta lección no resuelve
+
+- **El ADF aquí es el caso sin retardos.** La versión completa añade $\sum_i\delta_i\Delta y_{t-i}$ para absorber autocorrelación en $\varepsilon$, y elegir cuántos retardos es una decisión con sus propios criterios. La forma de la conclusión no cambia.
+- **El KPSS aquí es el de nivel.** Existe la variante con tendencia, que regresa contra una recta antes de acumular, y sus cuantiles son otros.
+- **La ventana $\ell$ de la varianza de largo plazo se fija con una regla.** El resultado del KPSS depende de esa elección más de lo que gustaría, como se ve en el cuantil del $99\,\%$ que no cuadra con la tabla.
+- **Nada de esto detecta cambios de régimen.** Una serie estacionaria a trozos con un salto de nivel en el medio hace rechazar a las dos pruebas, y ninguna dice dónde está el salto.
+- **Y estacionaria no significa pronosticable.** El ruido blanco es lo más estacionario que existe y no se puede pronosticar en absoluto. La estacionariedad es una condición para que los métodos de las lecciones 3 y 4 tengan sentido, no una propiedad deseable por sí misma.
+
+## Ejercicios
+
+### Ejercicio 1, Cuánto tarda en olvidar un paseo aleatorio
+
+Con la fórmula de la Proposición 2.2, calcular la correlación entre $y_t$ y $y_{t+h}$ y el primer $t$ a partir del cual esa correlación pasa de $0{,}99$ con $h=12$.
+
+```{pyodide}
+#| exercise: ex_corr
+import numpy as np
+
+def corr(t, h):
+    return ______
+
+print(round(corr(100, 12), 6), round(corr(20, 60), 6))
+
+t = 1
+while corr(t, 12) <= 0.99:
+    t = ______
+
+print("primer t con correlacion sobre 0.99:", t)
+int(t)
+```
+
+::: {.hint exercise="ex_corr"}
+La correlación es $\sqrt{t/(t+h)}$. Para la segunda parte basta avanzar $t$ de uno en uno; despejando, la condición es $t/(t+12)>0{,}9801$, que se cumple desde $t>591{,}0151$.
+:::
+
+::: {.solution exercise="ex_corr"}
+```{pyodide}
+import numpy as np
+
+def corr(t, h):
+    return np.sqrt(t / (t + h))
+
+print(round(corr(100, 12), 6), round(corr(20, 60), 6))
+
+t = 1
+while corr(t, 12) <= 0.99:
+    t = t + 1
+
+print("primer t con correlacion sobre 0.99:", t)
+int(t)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_corr
+#| check: true
+if result == 592:
+    feedback = {"correct": True, "message": "Correcto: hacen falta 592 pasos para que la correlación a doce de distancia supere 0,99. Una serie así nunca olvida del todo, y por eso su media muestral no converge a nada útil.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 592 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, La firma de haber diferenciado de más
+
+Con las fórmulas de la Proposición 2.4, calcular la varianza y la autocorrelación de retardo uno de $\Delta w$ cuando $w$ es ruido blanco de varianza $\sigma^2=3$.
+
+```{pyodide}
+#| exercise: ex_sobre
+s2 = 3.0
+
+var_dw = ______
+rho1_dw = ______
+
+print(round(var_dw, 6), round(rho1_dw, 6))
+round(rho1_dw, 6)
+```
+
+::: {.hint exercise="ex_sobre"}
+La varianza se duplica: $2\gamma_0$. La autocovarianza de retardo uno vale $-\gamma_0$, así que el cociente no depende de $\sigma^2$.
+:::
+
+::: {.solution exercise="ex_sobre"}
+```{pyodide}
+s2 = 3.0
+
+var_dw = 2 * s2
+rho1_dw = -s2 / (2 * s2)
+
+print(round(var_dw, 6), round(rho1_dw, 6))
+round(rho1_dw, 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_sobre
+#| check: true
+if abs(result + 0.5) < 1e-9:
+    feedback = {"correct": True, "message": "Correcto: −0,5 sin depender de σ². Por eso ese número sirve de alarma universal: una serie recién diferenciada con ρ₁ cerca de −0,5 estaba estacionaria antes de tocarla.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba -0.5 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Series 2**:
+
+1. Repetir la simulación de los cuantiles del ADF con $n=50$, $n=250$ y $n=1000$, y anotar cómo se mueve el valor crítico del $5\,\%$ con la longitud de la serie. Contrastar con el número único que traen las tablas de un solo valor.
+2. Tomar una serie propia con tendencia clara, aplicarle los tres remedios de la sección 5 y clasificarla con las dos pruebas. Anotar en qué celda de la tabla de cuatro filas cae, y qué conclusión se sostiene.
+3. Construir dos paseos aleatorios independientes, regresar uno sobre otro y **dibujar los dos juntos** con el $R^2$ en el título. Guardar el dibujo en `50-Errores/` como recordatorio de que un ajuste alto sobre series en nivel no prueba nada.
+
+## Del libro
+
+Esta lección **no sigue ningún libro**. Igual que la anterior, el módulo cubre lo que ni ISLP ni ESL tratan, y sus resultados se demuestran o se miden aquí.
+
+Los puntos de contacto con el resto del sitio son **Estadística 10**, de donde vienen el nivel y la potencia que aquí se miden en lugar de suponerse, y **Estadística 14**, de donde viene el error estándar de la pendiente que la sección 6 rompe. Esta página añade lo que en aquellas no cabía: **que la distribución nula de un estadístico $t$ puede no ser la de un estadístico $t$**, y que la manera de averiguarlo es simular la hipótesis nula, que cuesta cincuenta líneas.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/estacionariedad.md`, enlazada a [[descomposicion-series]], [[pruebas-de-hipotesis]] y [[covarianza-correlacion]]. Conviene rehacer a mano la Proposición 2.6: las dos cuentas ocupan un renglón cada una y dejan grabado por qué **quitar la recta y diferenciar no son intercambiables**, que es el error más caro de este módulo.
+
+```
+¿Qué pide la estacionariedad débil?::Media y varianza constantes, y covarianza que dependa solo del retardo
+¿Cuál de las tres hace el trabajo?::La tercera: la relación depende de la distancia y de nada más
+¿Var(y_t) de un paseo aleatorio?::t·σ², crece sin tope
+¿Corr(y_t, y_{t+h}) de un paseo?::√(t/(t+h)), que con h fijo tiende a uno
+¿Qué significa que tienda a uno?::Que la serie no olvida: no llega información nueva
+¿Cuál es la nula del ADF?::Que hay raíz unitaria
+¿Cuál es la nula del KPSS?::Que la serie es estacionaria
+¿Distribución nula del ADF?::No es la normal; sus cuantiles se simulan
+¿Por qué falla la teoría normal?::La suma de cuadrados del regresor crece como n², no como n
+¿Valor crítico del ADF al 5 %?::−2,86 con constante, simulado aquí en −2,8596
+¿Qué pasa usando −1,645?::Rechaza el 45 % de las series que sí tienen raíz unitaria
+¿Qué dice ADF no rechaza + KPSS no rechaza?::Que la muestra no alcanza para decidir
+¿Qué dice ADF rechaza + KPSS rechaza?::Que hay estructura sin capturar, como tendencia determinista
+¿Remedio de una tendencia determinista?::Restarle la recta
+¿Remedio de una raíz unitaria?::Diferenciar
+¿Qué pasa al quitarle la recta a un paseo?::Sigue siendo un paseo, ahora con deriva
+¿Qué pasa al diferenciar de más?::La varianza se duplica y aparece ρ₁ = −1/2
+¿Detectan las pruebas el exceso de diferencias?::No: ninguna de las dos lo ve
+¿Qué es la regresión espuria?::Declarar relacionadas dos series con raíz unitaria independientes
+¿Empeora o mejora con más datos?::Empeora: del 66 % al 92 % entre n=50 y n=800
+¿Qué R² sale entre dos paseos independientes?::Alrededor de 0,24, sin ninguna relación real
+¿Estacionaria implica pronosticable?::No: el ruido blanco es estacionario y no se pronostica
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 2.2 se demuestra con la independencia de las sacudidas; se comprueba sobre veinte mil paseos, con varianzas medidas $9{,}9960$, $40{,}0098$ y $159{,}3001$ contra las teóricas $10$, $40$ y $160$, y cuatro correlaciones que siguen a $\sqrt{t/(t+h)}$. La Proposición 2.4 se demuestra desarrollando la covarianza de la diferencia; se comprueba con un cociente de varianzas de $2{,}0001$ y una autocorrelación media de $-0{,}4972$ sobre veinte mil series. La Proposición 2.5 se demuestra calculando $\mathbb{E}[\sum y_{t-1}^2]=\sigma^2n(n-1)/2$; se comprueba reproduciendo la tabla del ADF —$-3{,}4392$, $-2{,}8596$ y $-2{,}5543$ contra $-3{,}43$, $-2{,}86$ y $-2{,}57$— y midiendo que el valor crítico normal da un nivel real del $45{,}27\,\%$. La Proposición 2.6 se demuestra en dos renglones; se comprueba con la tabla de seis filas, donde el remedio cruzado deja $\rho_1=0{,}9520$ en un caso y $-0{,}4964$ en el otro. Las dos pruebas están programadas aquí desde cero, sin `statsmodels`, y sus cuantiles salen de simular la hipótesis nula.
+
+**Lo que se usa de otras lecciones sin repetir.** El nivel y la potencia de una prueba, y la asimetría entre rechazar y no rechazar, son de Estadística 10. El error estándar de una pendiente por mínimos cuadrados es de Estadística 14. La descomposición que deja el residuo sobre el que se trabaja aquí es de Series de tiempo 1.
+
+**Lo que se enuncia sin demostrar.** La ley límite del estadístico $\hat\tau$, que se escribe con integrales de un movimiento browniano y necesita un teorema central del límite funcional, queda **nombrada y no demostrada**; la sección 3 demuestra solo por qué la teoría normal no aplica. La Proposición 2.7 se **mide y no se demuestra**, por la misma razón. Los valores de la tabla publicada del KPSS son asintóticos, y la lección muestra dónde deja de cuadrar con $n=250$ en lugar de justificarlos.
+
+**Lo que viene de los libros.** Nada. Esta lección no cita ninguno.
+
+**Lo que es mío, no del libro.** Reconstruir las dos tablas de valores críticos por simulación en lugar de copiarlas, que convierte un número memorizado en algo verificable, y medir el precio exacto de usar el crítico equivocado. La tabla de cuatro filas con la celda «la muestra no alcanza» dicha con todas las letras. Y el hallazgo de la sección 5: **ninguna de las dos pruebas detecta el exceso de diferencias**, cuyo único aviso es la autocorrelación de retardo uno cerca de $-1/2$.
+:::
