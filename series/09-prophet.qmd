@@ -1,0 +1,675 @@
+---
+title: "Prophet: qué hace por dentro"
+subtitle: "Series de tiempo · Lección 9"
+nivel: L3
+modulo: series
+fase: F3
+prereqs: [series/08-boosting, series/06-calendario, ml/09-alta-dimension]
+siguientes: []
+libro: "—"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="series/09-prophet"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F3]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Boosting](08-boosting.qmd) · [Calendario](06-calendario.qmd) · [Alta dimensión](../ml/09-alta-dimension.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Escribir el modelo aditivo de tendencia, estacionalidad y eventos que usa Prophet.
+2. **Demostrar que la corrección de continuidad de la tendencia por tramos es forzada**, y medir el salto que aparece sin ella.
+3. **Demostrar que la prior de Laplace sobre los cambios de pendiente equivale a una penalización $L_1$**, y ver cómo deja los [puntos de cambio]{.g data-t="punto de cambio"} dispersos.
+4. **Demostrar que este modelo extrapola donde un conjunto de árboles no puede**, con las dos formas de función.
+5. Descomponer la anchura del intervalo y comprobar que su parte de tendencia sale de un supuesto, no de los datos.
+6. Reconocer qué hereda de la lección 6, incluida la limitación que viene con ello.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Series de tiempo 8**: la Proposición 8.2, que dice que un conjunto de árboles es constante fuera del rango; aquí sirve de contraste.
+- **Series de tiempo 6**: los armónicos truncados, que son exactamente la estacionalidad de este modelo.
+- **Machine Learning 9**: la regularización $L_1$ y su efecto de selección, que aquí aparece disfrazada de prior.
+- **Series de tiempo 1**: la descomposición aditiva, de la que este modelo es una versión ajustable.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Series de tiempo 10**: la reconciliación, que necesita pronósticos por componente en muchas series.
+- **Series de tiempo 11**: la evaluación, donde los intervalos de esta lección se contrastan con lo que pasó.
+- **Machine Learning 11**: los modelos aditivos, de los que este es un caso con componentes fijadas a mano.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $y_t$ | y sub te | El valor observado en el instante $t$ |
+| $n$ | ene | La longitud de la serie |
+| $u$ | u | El tiempo escalado al intervalo $[0,1]$ |
+| $g(t)$ | ge de te | La componente de tendencia |
+| $s(t)$ | ese de te | La componente estacional |
+| $h(t)$ | hache de te | La componente de eventos |
+| $k$ | ka | La pendiente inicial de la tendencia |
+| $m$ | eme | El nivel inicial de la tendencia |
+| $s_j$ | ese sub jota | La posición del punto de cambio $j$ |
+| $\delta_j$ | delta sub jota | El cambio de pendiente en el punto $j$ |
+| $\gamma_j$ | gamma sub jota | La corrección de nivel que mantiene la continuidad |
+| $\tau$ | tau | La escala de la prior de Laplace sobre los $\delta_j$ |
+| $\lambda$ | lambda | La penalización equivalente, $\lambda=2\sigma^2/\tau$ |
+| $K$ | ka mayúscula | El número de pares de armónicos de la estacionalidad |
+| $\sigma^2$ | sigma cuadrado | La varianza del residuo |
+| $\varepsilon_t$ | épsilon sub te | El residuo del modelo en el instante $t$ |
+| $J$ | jota mayúscula | El número de puntos de cambio candidatos |
+| $p$ | pe | La densidad de probabilidad, en la Proposición 9.4 |
+| $L_1$ | ele uno | La norma que suma valores absolutos |
+:::
+
+## 1. Una suma de tres piezas, y una tendencia que se dobla
+
+::: {.definicion}
+**Definición 9.1 (modelo aditivo).** El modelo escribe
+$$y_t=g(t)+s(t)+h(t)+\varepsilon_t,$$
+con $g$ una tendencia por tramos, $s$ una estacionalidad de armónicos truncados y $h$ una suma de indicadores de evento. Las tres piezas son las de la Definición 1.1 y de la lección 6, ahora con parámetros que se ajustan.
+:::
+
+::: {.definicion}
+**Definición 9.2 (tendencia por tramos).** Dados puntos de cambio $s_1<\dots<s_J$ y cambios de pendiente $\delta_j$,
+$$g(t)=\Bigl(k+\sum_{j:\,s_j<t}\delta_j\Bigr)t+\Bigl(m+\sum_{j:\,s_j<t}\gamma_j\Bigr).$$
+:::
+
+Los $\gamma_j$ parecen parámetros libres y no lo son.
+
+::: {.proposicion}
+**Proposición 9.3 (la corrección de continuidad es forzada).** La tendencia de la Definición 9.2 es continua **si y solo si** $\gamma_j=-s_j\delta_j$ para todo $j$. Con cualquier otra elección, $g$ salta en $s_j$ una cantidad $\lvert\gamma_j+s_j\delta_j\rvert$.
+:::
+
+::: {.demostracion}
+*Demostración.* Los límites por la izquierda y por la derecha en $s_j$ difieren exactamente en el término que se activa:
+$$\lim_{t\to s_j^+}g(t)-\lim_{t\to s_j^-}g(t)=\delta_j s_j+\gamma_j .$$
+Ese salto es cero si y solo si $\gamma_j=-s_j\delta_j$, y en ese caso el término activado vale $\delta_j(t-s_j)$, que se anula en $s_j$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+cortes, delta, k, m = [5.0, 12.0], [0.8, -1.5], 1.0, 0.0
+
+def tendencia(t, con_correccion):
+    """g(t) = (k + suma de los d_j activos) t + (m + suma de los gamma_j)."""
+    g = m + k * np.asarray(t, dtype=float)
+    for s, d in zip(cortes, delta):
+        activo = np.asarray(t) > s
+        g = np.where(activo, g + d * np.asarray(t), g)
+        if con_correccion:
+            g = np.where(activo, g - s * d, g)
+    return g
+
+eps = 1e-9
+print("el salto de la tendencia en cada punto de cambio, medido en el limite")
+print("  correccion    en s=5           en s=12")
+for con in (True, False):
+    izq = tendencia([c - eps for c in cortes], con)
+    der = tendencia([c + eps for c in cortes], con)
+    saltos = np.abs(der - izq)
+    print("  %-11s   %.9f      %.9f" % (str(con), saltos[0], saltos[1]))
+print()
+print("sin la correccion el salto vale exactamente |s_j d_j| = %.1f y %.1f" % (5 * 0.8, 12 * 1.5))
+print("gamma_j = -s_j d_j es la UNICA eleccion que deja la tendencia continua")
+```
+
+Con la corrección los saltos valen $0{,}000000003$ y $0{,}000000002$, que es el propio $\varepsilon$ del límite multiplicado por la pendiente. Sin ella valen $4{,}000000003$ y $17{,}999999998$, o sea exactamente $\lvert s_j\delta_j\rvert$. **La documentación de Prophet presenta $\gamma_j=-s_j\delta_j$ como una definición; es un teorema de una línea.**
+
+## 2. Por qué los puntos de cambio salen pocos
+
+Prophet coloca veinticinco puntos de cambio candidatos por omisión, repartidos por el pasado, y les pone una prior $\delta_j\sim\text{Laplace}(0,\tau)$. Esa elección no es decorativa.
+
+::: {.proposicion}
+**Proposición 9.4 (la prior de Laplace es una penalización $L_1$).** Maximizar la densidad a posteriori con verosimilitud gaussiana de varianza $\sigma^2$ y prior $\delta_j\sim\text{Laplace}(0,\tau)$ equivale a minimizar
+$$\sum_t\bigl(y_t-g(t)\bigr)^2+\lambda\sum_j\lvert\delta_j\rvert,\qquad \lambda=\frac{2\sigma^2}{\tau},$$
+que es un problema $L_1$. Su solución tiene **coordenadas exactamente nulas**, de modo que sobreviven pocos puntos de cambio.
+:::
+
+::: {.demostracion}
+*Demostración.* Tomando logaritmos, $-\log p(\delta\mid y)$ es, salvo constantes, $\frac{1}{2\sigma^2}\sum_t(y_t-g(t))^2+\frac{1}{\tau}\sum_j\lvert\delta_j\rvert$. Multiplicando por $2\sigma^2$ queda la expresión del enunciado. La aparición de ceros exactos es la propiedad de la penalización $L_1$ demostrada en Machine Learning 9: el subgradiente de $\lvert\delta_j\rvert$ en cero es todo el intervalo $[-1,1]$, así que la condición de optimalidad se cumple con $\delta_j=0$ siempre que la correlación de esa columna con el residuo no supere $\lambda/2$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def ajusta_l1(X, y, pena, cuales, pasos=6000):
+    """Descenso proximal: cuadrados mas lambda|beta| en las columnas marcadas."""
+    n = len(y)
+    lr = 1.0 / (np.linalg.norm(X, 2) ** 2 / n)
+    b = np.zeros(X.shape[1])
+    for _ in range(pasos):
+        b = b - lr * (X.T @ (X @ b - y) / n)
+        b[cuales] = np.sign(b[cuales]) * np.maximum(np.abs(b[cuales]) - lr * pena, 0.0)
+    return b
+
+def diseno(u, scorte):
+    """Intercepto, tendencia y una columna (u - s_j)_+ por punto de cambio."""
+    return np.column_stack([np.ones(len(u)), u] + [np.maximum(0.0, u - s) for s in scorte])
+
+rng = np.random.default_rng(171)
+n = 400
+u = np.arange(n, dtype=float) / (n - 1)
+verdad = 8.0 * u + np.where(u > 0.625, -20.0 * (u - 0.625), 0.0)
+y = verdad + rng.normal(0, 0.6, n)
+scorte = list(np.linspace(0.05, 0.95, 25))
+X = diseno(u, scorte)
+cuales = np.arange(2, X.shape[1])
+
+print("una serie con UN solo cambio de pendiente y 25 candidatos")
+print("   lambda    cortes activos   error contra la verdad")
+for pena in (0.0, 0.001, 0.005, 0.02, 0.1):
+    b = ajusta_l1(X, y, pena, cuales)
+    activos = int((np.abs(b[cuales]) > 1e-6).sum())
+    print("   %.3f        %2d              %.6f" % (pena, activos, float(np.sqrt(((X @ b - verdad) ** 2).mean()))))
+print()
+print("la prior de Laplace sobre los cambios de pendiente es una penalizacion")
+print("L1, y por eso los deja dispersos: de 25 candidatos sobreviven unos pocos")
+```
+
+Sin penalización sobreviven los veinticinco; con $\lambda=0{,}001$ quedan diez, con $0{,}02$ quedan cuatro y con $0{,}1$ ninguno, y ahí el error contra la tendencia verdadera se dispara a $1{,}314595$ porque el modelo ya no puede doblarse. **El parámetro que Prophet llama flexibilidad de la tendencia es una penalización $L_1$ con otro nombre**, y por tanto hereda todo lo que Machine Learning 9 dice sobre ella, incluido que su valor decide cuántas componentes sobreviven.
+
+```{=html}
+<div class="viz-cortes">
+  <div class="controles">
+    <label>Penalización λ <input id="co-l" type="range" min="0" max="0.12" step="0.002" value="0.005"> <span id="co-l-v">0.005</span></label>
+    <label>Cambio verdadero <input id="co-d" type="range" min="-30" max="0" step="2" value="-20"> <span id="co-d-v">-20</span></label>
+    <label>Ruido <input id="co-r" type="range" min="0.1" max="2" step="0.1" value="0.6"> <span id="co-r-v">0.6</span></label>
+  </div>
+  <svg id="co-svg" viewBox="0 0 660 260" role="img" aria-label="La serie con su tendencia verdadera y la ajustada, y debajo qué puntos de cambio sobreviven a la penalización."></svg>
+  <p class="lectura" id="co-lectura"></p>
+</div>
+<style>
+.viz-cortes { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-cortes .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-cortes label { display: flex; align-items: center; gap: .4rem; }
+.viz-cortes input[type=range] { width: 140px; padding: 0; }
+.viz-cortes svg { width: 100%; height: auto; display: block; }
+.viz-cortes .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("co-svg"), lec = document.getElementById("co-lectura");
+  var cl = document.getElementById("co-l"), cd = document.getElementById("co-d"), cr = document.getElementById("co-r");
+  var el_ = document.getElementById("co-l-v"), ed = document.getElementById("co-d-v"), er = document.getElementById("co-r-v");
+  var X0 = 46, XW = 574, Y0 = 20, YH = 160, N = 200, J = 12, LO = -3, HI = 11;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function sacudidas(n) {
+    var s = 131313, out = [], i, u1, u2;
+    function u() { s = (s * 48271) % 2147483647; return s / 2147483647; }
+    for (i = 0; i < n; i++) {
+      u1 = Math.max(u(), 1e-9); u2 = u();
+      out.push(Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2));
+    }
+    return out;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var lam = +cl.value, dver = +cd.value, ruido = +cr.value;
+    el_.textContent = lam.toFixed(3); ed.textContent = dver; er.textContent = ruido.toFixed(1);
+    var e = sacudidas(N), u = [], verdad = [], y = [], i, j;
+    for (i = 0; i < N; i++) {
+      var ui = i / (N - 1);
+      u.push(ui);
+      verdad.push(8 * ui + (ui > 0.625 ? dver * (ui - 0.625) : 0));
+      y.push(verdad[i] + ruido * e[i]);
+    }
+    var cortes = [];
+    for (j = 0; j < J; j++) cortes.push(0.08 + 0.78 * j / (J - 1));
+    // diseno y descenso proximal, en el navegador
+    var P = 2 + J;
+    var col = function (i2, p) { return p === 0 ? 1 : (p === 1 ? u[i2] : Math.max(0, u[i2] - cortes[p - 2])); };
+    var b = new Array(P).fill(0), pasos = 900, lr = 0.35;
+    for (var it = 0; it < pasos; it++) {
+      var g = new Array(P).fill(0);
+      for (i = 0; i < N; i++) {
+        var f = 0;
+        for (j = 0; j < P; j++) f += b[j] * col(i, j);
+        var r = f - y[i];
+        for (j = 0; j < P; j++) g[j] += r * col(i, j) / N;
+      }
+      for (j = 0; j < P; j++) {
+        b[j] -= lr * g[j];
+        if (j >= 2) {
+          var u2 = lr * lam * 40;
+          b[j] = Math.sign(b[j]) * Math.max(Math.abs(b[j]) - u2, 0);
+        }
+      }
+    }
+    var activos = 0;
+    for (j = 2; j < P; j++) if (Math.abs(b[j]) > 1e-4) activos++;
+
+    var px = function (i2) { return X0 + i2 / (N - 1) * XW; };
+    var py = function (v) { return Y0 + (HI - Math.max(LO, Math.min(HI, v))) / (HI - LO) * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    for (i = 0; i < N; i++) svg.appendChild(el("circle", { cx: px(i).toFixed(1), cy: py(y[i]).toFixed(1), r: 1.6, fill: C_T, opacity: .3 }));
+    var d1 = "", d2 = "", err = 0;
+    for (i = 0; i < N; i++) {
+      var f2 = 0;
+      for (j = 0; j < P; j++) f2 += b[j] * col(i, j);
+      d1 += (i ? " L" : "M") + px(i).toFixed(1) + " " + py(verdad[i]).toFixed(1);
+      d2 += (i ? " L" : "M") + px(i).toFixed(1) + " " + py(f2).toFixed(1);
+      err += (f2 - verdad[i]) * (f2 - verdad[i]);
+    }
+    err = Math.sqrt(err / N);
+    svg.appendChild(el("path", { d: d1, stroke: C_A, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("path", { d: d2, stroke: C_B, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("text", { x: X0 + 6, y: Y0 + 14, "font-size": 10.5, fill: C_A }, "tendencia verdadera"));
+    svg.appendChild(el("text", { x: X0 + 120, y: Y0 + 14, "font-size": 10.5, fill: C_B }, "ajustada"));
+
+    var YB = Y0 + YH + 26;
+    svg.appendChild(el("path", { d: "M" + X0 + " " + YB + " L" + (X0 + XW) + " " + YB, stroke: C_L, "stroke-width": 1 }));
+    for (j = 0; j < J; j++) {
+      var bx = X0 + cortes[j] * XW, vivo = Math.abs(b[j + 2]) > 1e-4;
+      svg.appendChild(el("path", { d: "M" + bx.toFixed(1) + " " + (YB - (vivo ? 18 : 5)).toFixed(1) + " L" + bx.toFixed(1) + " " + YB,
+        stroke: vivo ? C_B : C_L, "stroke-width": vivo ? 4 : 2, opacity: vivo ? 1 : .6 }));
+    }
+    svg.appendChild(el("text", { x: X0 - 6, y: YB, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "cortes"));
+
+    lec.innerHTML = "Con λ = <strong>" + lam.toFixed(3) + "</strong> sobreviven <strong>" + activos + "</strong> de los " + J +
+      " puntos de cambio y el error contra la tendencia verdadera vale <strong>" + err.toFixed(4) + "</strong>. " +
+      (lam < 0.001
+        ? "Sin penalización sobreviven todos y la tendencia ajustada se dobla siguiendo el ruido."
+        : activos === 0
+          ? "Con esta penalización no sobrevive ninguno: la tendencia es una recta y no puede seguir el cambio de pendiente."
+          : "La penalización deja solo los cortes que pagan su coste, que es la propiedad de selección de la norma L₁.");
+  }
+  cl.addEventListener("input", dibujar);
+  cd.addEventListener("input", dibujar);
+  cr.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. La diferencia con la lección anterior
+
+::: {.proposicion}
+**Proposición 9.5 (esta tendencia sí extrapola).** Para $t$ mayor que el último punto de cambio, $g(t)$ es una función **afín** de $t$ con pendiente $k+\sum_j\delta_j$. En consecuencia $g$ no está acotada, y el pronóstico puede salir del rango observado. Un conjunto de árboles, por la Proposición 8.2, es constante en esa misma región.
+:::
+
+::: {.demostracion}
+*Demostración.* Para $t>s_J$ todos los términos están activos, de modo que $g(t)=(k+\sum_j\delta_j)t+(m+\sum_j\gamma_j)$, afín en $t$. Una función afín de pendiente no nula toma valores arbitrariamente grandes. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def ajusta_l1(X, y, pena, cuales, pasos=6000):
+    n = len(y)
+    lr = 1.0 / (np.linalg.norm(X, 2) ** 2 / n)
+    b = np.zeros(X.shape[1])
+    for _ in range(pasos):
+        b = b - lr * (X.T @ (X @ b - y) / n)
+        b[cuales] = np.sign(b[cuales]) * np.maximum(np.abs(b[cuales]) - lr * pena, 0.0)
+    return b
+
+def diseno(u, scorte):
+    return np.column_stack([np.ones(len(u)), u] + [np.maximum(0.0, u - s) for s in scorte])
+
+rng = np.random.default_rng(151)
+n, H = 320, 60
+t = np.arange(n + H)
+serie = 0.05 * t + rng.normal(0, 0.3, n + H)
+ent, fut = serie[:n], serie[n:]
+
+u = np.arange(n, dtype=float) / (n - 1)
+scorte = list(np.linspace(0.05, 0.9, 20))
+X = diseno(u, scorte)
+b = ajusta_l1(X, ent, 0.005, np.arange(2, X.shape[1]))
+activos = int((np.abs(b[2:]) > 1e-6).sum())
+uf = np.arange(n, n + H, dtype=float) / (n - 1)
+pred = diseno(uf, scorte) @ b
+
+print("la MISMA serie con tendencia de la leccion 8, ahora con esta tendencia")
+print("  maximo visto en entrenamiento  : %.6f" % ent.max())
+print("  pronostico al final del horizonte: %.6f" % pred[-1])
+print("  valor verdadero                 : %.6f" % fut[-1])
+print("  sale del rango de entrenamiento : %s" % bool(pred.max() > ent.max()))
+print("  cortes activos: %d de %d" % (activos, len(scorte)))
+print()
+print("  RMSE a 60 pasos de esta tendencia     : %.6f" % np.sqrt(((fut - pred) ** 2).mean()))
+print("  RMSE del boosting sobre el nivel      : 1.929395   (leccion 8)")
+print("  RMSE del boosting sobre la diferencia : 0.422776   (leccion 8)")
+print()
+print("la diferencia no esta en el ajuste sino en la forma de la funcion: una")
+print("recta por tramos sigue subiendo fuera del rango, un arbol no")
+```
+
+Sobre la misma serie de la lección 8, esta tendencia pronostica $18{,}985036$ contra un valor verdadero de $19{,}023694$, con un error cuadrático medio de $0{,}307414$. El boosting sobre el nivel daba $1{,}929395$ y sobre la diferencia $0{,}422776$. **La ventaja no viene de ajustar mejor sino de la forma de la función**: una recta por tramos sigue subiendo, y una función constante a trozos no.
+
+Conviene señalar también los **dos** puntos de cambio activos de veinte candidatos sobre una serie cuya tendencia verdadera es una recta. La penalización mantiene el modelo cerca de una recta, que es exactamente lo que hacía falta.
+
+## 4. De dónde sale el intervalo
+
+::: {.proposicion}
+**Proposición 9.6 (la incertidumbre de la tendencia es un supuesto).** La banda de pronóstico de este modelo tiene dos partes: la varianza del residuo y la incertidumbre de la tendencia futura, que se obtiene **simulando puntos de cambio que aún no han ocurrido** con la frecuencia observada en el pasado. Si se supone que no habrá ninguno, esa segunda parte vale exactamente cero, sea cual sea la serie.
+:::
+
+```{pyodide}
+import numpy as np
+
+def ajusta_l1(X, y, pena, cuales, pasos=6000):
+    n = len(y)
+    lr = 1.0 / (np.linalg.norm(X, 2) ** 2 / n)
+    b = np.zeros(X.shape[1])
+    for _ in range(pasos):
+        b = b - lr * (X.T @ (X @ b - y) / n)
+        b[cuales] = np.sign(b[cuales]) * np.maximum(np.abs(b[cuales]) - lr * pena, 0.0)
+    return b
+
+def diseno(u, scorte):
+    return np.column_stack([np.ones(len(u)), u] + [np.maximum(0.0, u - s) for s in scorte])
+
+rng = np.random.default_rng(151)
+n, H = 320, 60
+t = np.arange(n + H)
+serie = 0.05 * t + rng.normal(0, 0.3, n + H)
+ent = serie[:n]
+u = np.arange(n, dtype=float) / (n - 1)
+scorte = list(np.linspace(0.05, 0.9, 20))
+b = ajusta_l1(diseno(u, scorte), ent, 0.005, np.arange(2, 2 + len(scorte)))
+activos = int((np.abs(b[2:]) > 1e-6).sum())
+uf = np.arange(n, n + H, dtype=float) / (n - 1)
+pred = diseno(uf, scorte) @ b
+
+deltas = b[2:]
+tasa = float(np.mean(np.abs(deltas[np.abs(deltas) > 1e-6]))) if activos else 0.0
+sigma = float(np.std(ent - diseno(u, scorte) @ b))
+rng2 = np.random.default_rng(181)
+
+print("de donde sale la anchura del intervalo, al final del horizonte")
+print("  desviacion del residuo ajustado: %.6f" % sigma)
+print("  magnitud media de los cambios de pendiente: %.6f" % tasa)
+print("   frecuencia supuesta   anchura por la tendencia   mas el ruido")
+for lam in (0.0, 0.5, 1.0, 2.0):
+    finales = []
+    for _ in range(3000):
+        g = pred[-1]
+        cuantos = int(rng2.poisson(lam * max(activos, 1) * H / n))
+        for _ in range(cuantos):
+            s = rng2.uniform(uf[0], uf[-1])
+            g = g + rng2.laplace(0.0, tasa) * max(0.0, uf[-1] - s)
+        finales.append(g)
+    finales = np.array(finales)
+    ancho = float(np.quantile(finales, 0.975) - np.quantile(finales, 0.025))
+    print("        %.1f                  %.6f                %.6f"
+          % (lam, ancho, np.sqrt(ancho ** 2 + (2 * 1.96 * sigma) ** 2)))
+print()
+print("con frecuencia cero la parte de tendencia mide EXACTAMENTE cero: toda")
+print("esa anchura viene del supuesto sobre los cortes futuros, no de los datos")
+```
+
+Con frecuencia supuesta cero la parte de tendencia mide $0{,}000000$ y el intervalo entero se reduce a la banda del ruido, $1{,}200824$. Duplicando la frecuencia respecto a la observada, la parte de tendencia llega a $0{,}520906$ y el total a $1{,}308939$.
+
+**Ese parámetro no se estima de los datos**: es una declaración sobre cuántas veces cambiará la pendiente en el futuro. La banda que sale de ahí responde a esa declaración, y por eso conviene leerla como lo que es. La lección 11 vuelve sobre cómo comprobar si una banda cumple lo que promete.
+
+::: {.proposicion}
+**Proposición 9.7 (lo que hereda de la lección 6).** La componente $s(t)$ de la Definición 9.1 es exactamente la base de $K$ armónicos truncados de la Definición 6.2. En consecuencia le aplican la Proposición 6.4 —sus coeficientes se estiman $\sqrt{s}$ veces más preciso que un indicador— y la Proposición 6.5 —no puede representar una punta estrecha—.
+:::
+
+```{=html}
+<div class="viz-piezas">
+  <div class="controles">
+    <label>Pendiente del cambio <input id="pz-d" type="range" min="-0.12" max="0.12" step="0.01" value="-0.08"> <span id="pz-d-v">-0.08</span></label>
+    <label>Amplitud estacional <input id="pz-a" type="range" min="0" max="4" step="0.25" value="2.00"> <span id="pz-a-v">2.00</span></label>
+    <label>Efecto del evento <input id="pz-e" type="range" min="0" max="6" step="0.5" value="3.0"> <span id="pz-e-v">3.0</span></label>
+  </div>
+  <svg id="pz-svg" viewBox="0 0 660 300" role="img" aria-label="La serie arriba y debajo las tres piezas del modelo: tendencia por tramos, estacionalidad de armónicos y efectos de evento."></svg>
+  <p class="lectura" id="pz-lectura"></p>
+</div>
+<style>
+.viz-piezas { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-piezas .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-piezas label { display: flex; align-items: center; gap: .4rem; }
+.viz-piezas input[type=range] { width: 140px; padding: 0; }
+.viz-piezas svg { width: 100%; height: auto; display: block; }
+.viz-piezas .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("pz-svg"), lec = document.getElementById("pz-lectura");
+  var cd = document.getElementById("pz-d"), ca = document.getElementById("pz-a"), ce = document.getElementById("pz-e");
+  var ed = document.getElementById("pz-d-v"), ea = document.getElementById("pz-a-v"), ee = document.getElementById("pz-e-v");
+  var X0 = 46, XW = 574, N = 144, S = 12, CORTE = 80;
+  var paneles = [{ y: 22, h: 68, lo: -4, hi: 16, nom: "y" },
+                 { y: 100, h: 56, lo: -1, hi: 13, nom: "g" },
+                 { y: 166, h: 52, lo: -5, hi: 5, nom: "s" },
+                 { y: 228, h: 52, lo: -1, hi: 7, nom: "h" }];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function sacudidas(n) {
+    var s = 242424, out = [], i, u1, u2;
+    function u() { s = (s * 48271) % 2147483647; return s / 2147483647; }
+    for (i = 0; i < n; i++) {
+      u1 = Math.max(u(), 1e-9); u2 = u();
+      out.push(Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2));
+    }
+    return out;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var dd = +cd.value, amp = +ca.value, efe = +ce.value;
+    ed.textContent = dd.toFixed(2); ea.textContent = amp.toFixed(2); ee.textContent = efe.toFixed(1);
+    var e = sacudidas(N), g = [], s = [], h = [], y = [], i;
+    for (i = 0; i < N; i++) {
+      g.push(2 + 0.08 * i + (i > CORTE ? dd * (i - CORTE) : 0));
+      s.push(amp * Math.sin(2 * Math.PI * i / S) + 0.4 * amp * Math.cos(4 * Math.PI * i / S));
+      h.push((i === 30 || i === 66 || i === 114) ? efe : 0);
+      y.push(g[i] + s[i] + h[i] + 0.35 * e[i]);
+    }
+    var series = [y, g, s, h], colores = [C_T, C_A, C_B, C_G];
+    var px = function (i2) { return X0 + i2 / (N - 1) * XW; };
+    paneles.forEach(function (p, k) {
+      var py = function (v) { return p.y + (p.hi - Math.max(p.lo, Math.min(p.hi, v))) / (p.hi - p.lo) * p.h; };
+      svg.appendChild(el("rect", { x: X0, y: p.y, width: XW, height: p.h, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+      if (p.lo < 0) svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + (X0 + XW) + " " + py(0).toFixed(1), stroke: C_L, "stroke-width": 1, "stroke-dasharray": "3 3" }));
+      var d = "", j;
+      for (j = 0; j < N; j++) d += (j ? " L" : "M") + px(j).toFixed(1) + " " + py(series[k][j]).toFixed(1);
+      svg.appendChild(el("path", { d: d, stroke: colores[k], "stroke-width": k === 0 ? 1.5 : 2, fill: "none" }));
+      svg.appendChild(el("text", { x: X0 - 6, y: p.y + 12, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, p.nom));
+    });
+    svg.appendChild(el("path", { d: "M" + px(CORTE).toFixed(1) + " " + paneles[1].y + " L" + px(CORTE).toFixed(1) + " " + (paneles[1].y + paneles[1].h), stroke: C_A, "stroke-width": 1, "stroke-dasharray": "4 3" }));
+    // los eventos, con tallo propio en su panel: asi su altura es geometria
+    // medible y no tres vertices perdidos en un trazo largo
+    var pe = paneles[3];
+    var pey = function (v) { return pe.y + (pe.hi - Math.max(pe.lo, Math.min(pe.hi, v))) / (pe.hi - pe.lo) * pe.h; };
+    [30, 66, 114].forEach(function (j) {
+      svg.appendChild(el("path", { d: "M" + px(j).toFixed(1) + " " + pey(0).toFixed(1) + " L" + px(j).toFixed(1) + " " + pey(efe).toFixed(1),
+        stroke: C_G, "stroke-width": 5 }));
+      svg.appendChild(el("path", { d: "M" + (px(j) - 5).toFixed(1) + " " + pey(efe).toFixed(1) + " L" + (px(j) + 5).toFixed(1) + " " + pey(efe).toFixed(1),
+        stroke: C_G, "stroke-width": 3 }));
+    });
+    svg.appendChild(el("text", { x: X0 + XW - 4, y: pe.y + 13, "text-anchor": "end", "font-size": 10.5, fill: C_G }, "altura del evento: " + efe.toFixed(1)));
+
+    var pend2 = 0.08 + dd;
+    lec.innerHTML = "La tendencia cambia de pendiente <strong>" + (0.08).toFixed(2) + "</strong> a <strong>" + pend2.toFixed(2) +
+      "</strong> en el punto de cambio marcado, y sigue siendo continua por la Proposición 9.3. " +
+      (Math.abs(amp) < 0.01
+        ? "Sin estacionalidad la serie es tendencia más eventos."
+        : "La estacionalidad son dos armónicos, no un perfil libre: por la Proposición 9.7 no sabría dibujar una punta de una sola posición.") +
+      (efe > 0.01
+        ? " Los tres eventos aparecen como picos aislados en la última pieza, que es lo que un perfil estacional no puede capturar cuando se mueven."
+        : " Sin eventos, la última pieza es plana.");
+  }
+  cd.addEventListener("input", dibujar);
+  ca.addEventListener("input", dibujar);
+  ce.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Lo que esta lección no resuelve
+
+- **El ajuste real no es este.** Prophet maximiza la densidad a posteriori con un optimizador de segundo orden, o muestrea; aquí se usa descenso proximal, que resuelve el mismo problema pero más despacio.
+- **La estacionalidad multiplicativa queda fuera.** Prophet la ofrece, y equivale a trabajar en logaritmos con lo que la lección 1 ya dijo.
+- **La selección automática de puntos de cambio no se discute.** Colocar veinticinco por omisión en el $80\,\%$ inicial de la serie es una convención, y su efecto en el pronóstico no se mide aquí.
+- **No se compara contra ARIMA.** Las dos familias resuelven el mismo problema con supuestos distintos, y la comparación honesta necesita el backtesting pareado de la lección 8.
+- **Y un modelo aditivo no es causal.** El coeficiente de un evento mide una desviación respecto al resto de las piezas, exactamente con la salvedad de la lección 6.
+
+## Ejercicios
+
+### Ejercicio 1, El salto que deja una corrección mal puesta
+
+Con la Proposición 9.3, calcular el salto que deja cada punto de cambio si se omite la corrección, para tres cambios de pendiente.
+
+```{pyodide}
+#| exercise: ex_salto
+cortes = [0.2, 0.5, 0.8]
+deltas = [1.5, -2.0, 0.75]
+
+saltos = ______
+
+print([round(s, 6) for s in saltos])
+round(max(saltos), 6)
+```
+
+::: {.hint exercise="ex_salto"}
+La proposición dice que sin corrección el salto vale $\lvert s_j\delta_j\rvert$. En Python, `[abs(s * d) for s, d in zip(cortes, deltas)]`.
+:::
+
+::: {.solution exercise="ex_salto"}
+```{pyodide}
+cortes = [0.2, 0.5, 0.8]
+deltas = [1.5, -2.0, 0.75]
+
+saltos = [abs(s * d) for s, d in zip(cortes, deltas)]
+
+print([round(s, 6) for s in saltos])
+round(max(saltos), 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_salto
+#| check: true
+if abs(result - 1.0) < 1e-9:
+    feedback = {"correct": True, "message": "Correcto: el mayor salto vale 1,0, en el corte de 0,5. Cuanto más tarde cae el punto de cambio, mayor es el salto que deja olvidar la corrección, porque el término activado arranca en s·δ.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 1.0 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuánta flexibilidad se está comprando
+
+Con la Proposición 9.4, calcular la penalización equivalente a una prior de Laplace de escala $\tau$, con residuo de desviación $\sigma$.
+
+```{pyodide}
+#| exercise: ex_lambda
+sigma, taus = 0.6, [0.01, 0.05, 0.5]
+
+def penalizacion(sigma, tau):
+    return ______
+
+for tau in taus:
+    print(tau, round(penalizacion(sigma, tau), 6))
+
+round(penalizacion(sigma, 0.05), 6)
+```
+
+::: {.hint exercise="ex_lambda"}
+La proposición da $\lambda=2\sigma^2/\tau$.
+:::
+
+::: {.solution exercise="ex_lambda"}
+```{pyodide}
+sigma, taus = 0.6, [0.01, 0.05, 0.5]
+
+def penalizacion(sigma, tau):
+    return 2 * sigma ** 2 / tau
+
+for tau in taus:
+    print(tau, round(penalizacion(sigma, tau), 6))
+
+round(penalizacion(sigma, 0.05), 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_lambda
+#| check: true
+if abs(result - 14.4) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: 14,4. Bajar τ de 0,5 a 0,01 multiplica la penalización por cincuenta, y con ella desaparecen casi todos los puntos de cambio: la flexibilidad de la tendencia y la penalización L₁ son el mismo mando.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 14.4 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Series 9**:
+
+1. Ajustar la tendencia por tramos con $\lambda$ en una malla y dibujar el número de puntos de cambio activos contra $\lambda$. Anotar dónde está el codo y compararlo con la traza del lasso de Machine Learning 9.
+2. Añadir la estacionalidad de armónicos al diseño y comprobar sobre una serie con una punta de una sola posición qué parte de esa punta queda sin explicar. Relacionarlo con la Proposición 6.5.
+3. Comparar este modelo contra el ARIMA de la lección 4 sobre la misma serie, con el backtesting pareado de la lección 8, y guardar en `50-Errores/` el cociente obtenido y si es distinguible de cero.
+
+## Del libro
+
+Esta lección **no sigue ningún libro**. Igual que el resto del módulo, sus resultados se demuestran o se miden aquí, y la descripción del modelo se reconstruye desde sus piezas en lugar de citarse.
+
+Los puntos de contacto con el sitio son **Machine Learning 9**, de donde viene la penalización $L_1$ y su propiedad de selección, y **Series de tiempo 6**, que aporta la base de armónicos truncados. Esta página añade lo que en aquellas no cabía: **que la corrección de continuidad es un teorema y no una convención**, y que la anchura de la banda de pronóstico depende de un parámetro que no se estima de los datos.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/prophet.md`, enlazada a [[calendario]], [[alta-dimension]] y [[boosting-series]]. Conviene rehacer a mano la Proposición 9.3: el límite por los dos lados ocupa un renglón y deja grabado por qué el término activado se escribe $\delta_j(t-s_j)$ y no $\delta_j t$.
+
+```
+¿Qué piezas suma este modelo?::Tendencia por tramos, estacionalidad de armónicos y eventos
+¿Cómo es la tendencia?::Lineal por tramos, con cambios de pendiente en puntos de cambio
+¿Cuánto vale la corrección de continuidad?::γ_j = −s_j·δ_j, y es la única que no deja salto
+¿Qué salto deja olvidarla?::Exactamente |s_j·δ_j|
+¿Qué prior llevan los cambios de pendiente?::Laplace de escala τ
+¿A qué equivale esa prior?::A una penalización L₁ con λ = 2σ²/τ
+¿Qué consigue esa penalización?::Que sobrevivan pocos puntos de cambio
+¿Extrapola este modelo?::Sí: pasado el último corte la tendencia es afín y no está acotada
+¿Y un conjunto de árboles?::No: es constante fuera del rango, por la Proposición 8.2
+¿De dónde sale la banda de pronóstico?::Del ruido más la simulación de cortes futuros
+¿Qué pasa si se supone que no habrá cortes?::Esa parte de la banda vale exactamente cero
+¿Se estima de los datos la frecuencia de cortes futuros?::No: es una declaración sobre el futuro
+¿Qué hereda de la lección 6?::La base de armónicos, con su precisión y su incapacidad para una punta
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 9.3 se demuestra con los límites laterales; se comprueba midiendo el salto con $\varepsilon=10^{-9}$, que da $0{,}000000003$ con corrección y $4{,}000000003$ y $17{,}999999998$ sin ella, o sea exactamente $\lvert s_j\delta_j\rvert$. La Proposición 9.4 se demuestra tomando logaritmos de la densidad a posteriori; se comprueba con la tabla de cortes activos, que pasa de $25$ a $10$, $7$, $4$ y $0$ al subir $\lambda$. La Proposición 9.5 se demuestra observando que la función es afín tras el último corte; se comprueba sobre la misma serie de la lección 8, con pronóstico $18{,}985036$ contra $19{,}023694$ y RMSE $0{,}307414$, frente a los $1{,}929395$ y $0{,}422776$ de allí. La Proposición 9.6 se comprueba con la tabla de anchuras, donde la parte de tendencia vale $0{,}000000$ con frecuencia cero y $0{,}520906$ al duplicar la observada. El ajuste $L_1$ está programado en la página con descenso proximal.
+
+**Lo que se usa de otras lecciones sin repetir.** La penalización $L_1$ y su propiedad de dar ceros exactos son de Machine Learning 9. La base de armónicos truncados, con su precisión y su límite, es de Series de tiempo 6. La Proposición 8.2 sobre el carácter constante de un conjunto de árboles es de Series de tiempo 8, y aquí se usa como contraste sin volver a demostrarse.
+
+**Lo que se enuncia sin demostrar.** La equivalencia entre el modo de la densidad a posteriori y la solución del problema penalizado se **usa** suponiendo que el máximo existe y es único, cosa que con penalización $L_1$ y diseño no singular se cumple pero no se demuestra aquí. La convergencia del descenso proximal se da por conocida. Y la comparación con la implementación real de Prophet queda **nombrada y no hecha**: esta página reconstruye el modelo, no reproduce el programa.
+
+**Lo que viene de los libros.** Nada. Esta lección no cita ninguno.
+
+**Lo que es mío, no del libro.** Tratar la corrección de continuidad como **un teorema de una línea** en lugar de como parte de la definición, con el salto medido. Presentar la flexibilidad de la tendencia como lo que es —una penalización $L_1$— y enseñar la tabla de cortes supervivientes. Y descomponer la banda de pronóstico para mostrar que **con frecuencia de cortes cero mide exactamente cero**, lo que convierte una cifra de aspecto estadístico en una declaración sobre el futuro.
+:::

@@ -37,7 +37,7 @@ Tres hitos de esta sesión:
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
 faltando lecciones por escribir: **ML va por 22 de 90**, **Series de tiempo
-va por 8 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
+va por 9 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
 
@@ -105,7 +105,7 @@ hay que empezar a hacer:
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
-| Series de tiempo | 8 | 11 | **8 de 8** | 9 a 11 |
+| Series de tiempo | 9 | 11 | **9 de 9** | 10 y 11 |
 | Machine Learning | 22 | 90 | **22 de 22** | la Fase 2 cerrada; quedan ESL y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
@@ -394,7 +394,7 @@ Lo que sigue, en orden de coste creciente:
    lección, y **no reaparece en ninguna fase posterior**. Deep Learning al
    menos se retoma en las lecciones 28 a 33; supervivencia no tiene red.
 
-3. **Series de tiempo ya no está vacía** —las lecciones 1 a 8 de 11 se
+3. **Series de tiempo ya no está vacía** —las lecciones 1 a 9 de 11 se
    publicaron el 19-09-2026, y no citan ningún libro porque ninguno del sitio
    cubre el tema—;
    **Inferencia causal sigue vacía** en el sidebar.
@@ -2129,6 +2129,63 @@ más barato y mucho más preciso —y además es lo que la lección 7 enseña—
 
 Y el valor del ejercicio 2 estaba escrito a mano en $137$; la corrida dio
 $138$. Van cuatro lecciones seguidas en que ese paso caza un entero inventado.
+
+### 3.35 Series de tiempo 09: Prophet reconstruido desde sus piezas (20-09-2026)
+
+La lección no describe la biblioteca: **reconstruye el modelo** y demuestra las
+dos cosas que su documentación presenta como convenciones.
+
+> **9.3**: la tendencia por tramos es continua **si y solo si**
+> $\gamma_j=-s_j\delta_j$.
+
+Medido con $\varepsilon=10^{-9}$: con la corrección el salto vale
+$0{,}000000003$, y sin ella $4{,}000000003$ y $17{,}999999998$, o sea
+exactamente $\lvert s_j\delta_j\rvert$. Es un teorema de una línea.
+
+> **9.4**: la prior de Laplace sobre los cambios de pendiente es una
+> penalización $L_1$ con $\lambda=2\sigma^2/\tau$.
+
+De veinticinco candidatos sobreviven $25$, $10$, $7$, $4$ y $0$ según sube
+$\lambda$. **El parámetro que Prophet llama flexibilidad de la tendencia es un
+lasso con otro nombre**, y hereda todo lo que ML 9 dice sobre él.
+
+#### La comparación directa con la lección anterior
+
+> **9.5**: pasado el último corte la tendencia es **afín**, así que no está
+> acotada.
+
+Sobre **la misma serie** de la lección 8 —misma semilla, misma pendiente, mismo
+ruido— esta tendencia pronostica $18{,}985036$ contra un verdadero
+$19{,}023694$, con RMSE $0{,}307414$. Allí el boosting daba $1{,}929395$ sobre
+el nivel y $0{,}422776$ sobre la diferencia. La ventaja no está en el ajuste
+sino en **la forma de la función**, y poder enfrentar las dos cifras en la misma
+serie es lo que convierte el contraste en un dato.
+
+#### La banda que no sale de los datos
+
+> **9.6**: la parte de tendencia del intervalo se obtiene simulando cortes
+> futuros.
+
+Con frecuencia supuesta cero mide **exactamente $0{,}000000$**; duplicando la
+observada llega a $0{,}520906$. Ese parámetro no se estima: es una declaración
+sobre cuántas veces cambiará la pendiente en el futuro, y la banda contesta a
+esa declaración.
+
+#### Tres cosas del procedimiento
+
+La primera comprobación de la continuidad estaba **mal escrita**: medía
+`searchsorted`, que devuelve el índice donde $t$ vale exactamente $s$, mientras
+la condición del código era `t > s`. Los dos casos daban $0{,}018$ —el
+incremento normal de la rejilla— y parecía que la corrección no hacía nada. Se
+rehizo midiendo el límite por los dos lados con $\varepsilon$ explícito.
+
+La penalización tampoco hacía nada al principio: las columnas $(t-s_j)_+$ iban
+de norma $49{,}7$ a $4268{,}3$, así que un solo $\lambda$ no podía umbralarlas.
+Escalar el tiempo a $[0,1]$ —que es lo que hace Prophet— lo arregló.
+
+Y el gate de visuales avisó de que el deslizador de evento movía tres vértices
+perdidos en un trazo de ciento cuarenta puntos. Ahora los eventos tienen tallo
+propio, con su altura escrita al lado.
 
 ---
 
