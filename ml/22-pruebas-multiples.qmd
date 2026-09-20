@@ -1,0 +1,699 @@
+---
+title: "Pruebas múltiples"
+subtitle: "Machine Learning · Lección 22"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [estadistica/17-p-hacking, estadistica/10-pruebas-de-hipotesis, estadistica/11-bootstrap]
+siguientes: []
+libro: "ISLP §13.3.3 Trade-Off Between the FWER and Power · §13.4 The False Discovery Rate · §13.4.1 Intuition for the False Discovery Rate · §13.4.2 The Benjamini–Hochberg Procedure · §13.5 A Re-Sampling Approach to p-Values and False Discovery Rates · §13.5.1 A Re-Sampling Approach to the p-Value · §13.5.3 When Are Re-Sampling Approaches Useful?"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="ml/22-pruebas-multiples"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §13.3.3–13.5]{.item}
+[**Prereqs** [P-hacking](../estadistica/17-p-hacking.qmd) · [Pruebas de hipótesis](../estadistica/10-pruebas-de-hipotesis.qmd) · [Bootstrap](../estadistica/11-bootstrap.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Demostrar el caso general de Benjamini-Hochberg**, que Estadística 17 dejó pendiente: $\text{FDR}\le\alpha\,m_0/m$.
+2. Explicar el lema en que se apoya esa demostración y comprobarlo.
+3. Exhibir que Benjamini-Hochberg **no** controla la tasa de error por familia, y medir cuánto se aleja.
+4. Definir el [valor p por permutación]{.g data-t="valor p por permutación"} y demostrar que es válido **sin ningún supuesto** sobre la distribución del estadístico.
+5. Medir cuándo la fórmula teórica falla y el remuestreo no.
+6. Leer el intercambio entre control de errores y potencia en una sola tabla.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Estadística 17**: la tasa de error por familia, Bonferroni, Holm y el enunciado de Benjamini-Hochberg, cuya demostración general **queda pendiente allí y se paga aquí**.
+- **Estadística 10**: qué es el nivel de una prueba y qué significa que esté calibrada.
+- **Estadística 11**: el remuestreo, del que la permutación es una variante con otra pregunta.
+- **Machine Learning 6**: la separación entre elegir y evaluar, que es el mismo problema con otro nombre.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 34**: por qué funciona el bosque aleatorio, donde reaparecen las medidas de importancia y su significación.
+- **Series de tiempo**: las pruebas sobre muchos rezagos a la vez, que son pruebas múltiples con dependencia.
+- **Inferencia causal**: la comparación de muchos subgrupos, donde el FWER decide si un hallazgo es publicable.
+- **Estadística 17**: la propia lección de p-hacking, que se puede releer con la demostración completa.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $m$ | eme | El número de hipótesis que se prueban a la vez |
+| $m_0$ | eme sub cero | Cuántas de ellas son **ciertas** |
+| $p_i$ | pe sub i | El valor p de la prueba $i$ |
+| $p_{(i)}$ | pe sub i entre paréntesis | El $i$-ésimo valor p en orden creciente |
+| $\alpha$ | alfa | El nivel que se quiere controlar |
+| $R$ | erre | Cuántas hipótesis se rechazan |
+| $V$ | uve | Cuántos de esos rechazos son falsos |
+| $\text{FWER}$ | efe doble u e erre | $P(V\ge 1)$: probabilidad de al menos un falso positivo |
+| $\text{FDR}$ | efe de erre | $E[V/\max(R,1)]$: proporción esperada de falsos entre los hallazgos |
+| $t_k$ | te sub ka | El umbral $\alpha k/m$ de Benjamini-Hochberg |
+| $B$ | be | El número de permutaciones |
+:::
+
+## 1. La deuda de Estadística 17
+
+Aquella lección enunció el procedimiento de Benjamini-Hochberg y demostró **solo** el caso en que todas las nulas son ciertas, dejando el general declarado en su bloque de Fuentes. Esta sección lo paga.
+
+::: {.proposicion}
+**Proposición 22.1 (el lema de bajar a cero).** Si Benjamini-Hochberg rechaza la hipótesis $i$, entonces sustituir $p_i$ por $0$ deja **el mismo número de rechazos**.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $R$ el número de rechazos, de modo que $p_{(R)}\le t_R$ y ningún $j>R$ cumple $p_{(j)}\le t_j$. Si $i$ está entre las rechazadas, bajar $p_i$ a cero solo puede adelantarlo en el orden, y los demás valores conservan su posición relativa o retroceden a lo sumo un puesto **dentro de las primeras $R$**. Los valores con rango mayor que $R$ no cambian de rango, así que ninguno pasa a cumplir su desigualdad; y los primeros $R$ siguen cumpliéndola, porque sus valores no suben y sus umbrales tampoco bajan. El máximo sigue siendo $R$. [∎]{.fin-demo}
+:::
+
+::: {.proposicion}
+**Proposición 22.2 (Benjamini-Hochberg, caso general).** Con los $m$ valores p **independientes** y los de las $m_0$ hipótesis ciertas uniformes en $[0,1]$,
+$$\text{FDR}\ \le\ \alpha\,\frac{m_0}{m}.$$
+:::
+
+::: {.demostracion}
+*Demostración.* Escríbase $t_k=\alpha k/m$. Para una hipótesis cierta $i$, su aporte al FDR es
+$$E\Big[\frac{\mathbf{1}\{i\ \text{rechazada}\}}{\max(R,1)}\Big]=\sum_{k=1}^{m}\frac{1}{k}\,P\big(p_i\le t_k,\ R=k\big).$$
+Sea $R^{0}_i$ el número de rechazos que daría el procedimiento con $p_i$ sustituido por $0$. Por la Proposición 22.1, el suceso $\{p_i\le t_k,\ R=k\}$ coincide con $\{p_i\le t_k,\ R^{0}_i=k\}$. Y $R^{0}_i$ **no depende de $p_i$**: solo de los otros $m-1$ valores. Por independencia,
+$$P\big(p_i\le t_k,\ R^{0}_i=k\big)=P(p_i\le t_k)\cdot P(R^{0}_i=k)=\frac{\alpha k}{m}\,P(R^{0}_i=k),$$
+donde se usa que $p_i$ es uniforme. Sustituyendo,
+$$E\Big[\frac{\mathbf{1}\{i\ \text{rechazada}\}}{\max(R,1)}\Big]=\sum_{k=1}^{m}\frac{1}{k}\cdot\frac{\alpha k}{m}\,P(R^{0}_i=k)=\frac{\alpha}{m}\sum_{k=1}^{m}P(R^{0}_i=k)\le\frac{\alpha}{m}.$$
+Sumando sobre las $m_0$ hipótesis ciertas se obtiene la cota. [∎]{.fin-demo}
+:::
+
+La cota tiene una consecuencia práctica que el nombre del método esconde: **la cota es $\alpha$ por la fracción de hipótesis ciertas, y no $\alpha$ a secas**. Cuando casi todas las hipótesis son falsas, el procedimiento es mucho más conservador de lo que su $\alpha$ sugiere.
+
+```{pyodide}
+import numpy as np
+from math import erfc, sqrt
+
+def bh(p, alfa):
+    """Devuelve el numero de rechazos de Benjamini-Hochberg."""
+    m = len(p)
+    orden = np.sort(p)
+    i = np.arange(1, m + 1)
+    cumple = orden <= alfa * i / m
+    return int(i[cumple].max()) if cumple.any() else 0
+
+# El lema en el que se apoya la demostracion: si la prueba i se rechaza,
+# bajarle su valor p a cero NO cambia cuantos rechazos hay.
+rng = np.random.default_rng(61)
+m, alfa = 20, 0.1
+fallos, casos = 0, 0
+for _ in range(20000):
+    p = rng.random(m)
+    R = bh(p, alfa)
+    if R == 0:
+        continue
+    rechazadas = np.argsort(p)[:R]
+    for i in rechazadas:
+        q = p.copy(); q[i] = 0.0
+        casos += 1
+        fallos += int(bh(q, alfa) != R)
+print("lema: si la prueba i se rechaza, ponerle p_i = 0 deja el numero de")
+print("rechazos igual. Comprobado en %d casos de 20000 tandas:" % casos)
+print("   fallos encontrados: %d" % fallos)
+print()
+
+# Y el resultado: FDR <= alfa * m0 / m, no solo alfa.
+def experimento(m, m0, alfa, efecto, ensayos, semilla):
+    rng = np.random.default_rng(semilla)
+    V_sobre_R = []
+    for _ in range(ensayos):
+        z = rng.normal(size=m)
+        z[m0:] += efecto                       # las ultimas m - m0 son falsas
+        p = np.array([erfc(abs(v) / sqrt(2)) for v in z])   # dos colas, normal
+        R = bh(p, alfa)
+        if R == 0:
+            V_sobre_R.append(0.0)
+            continue
+        rechazadas = np.argsort(p)[:R]
+        V = int((rechazadas < m0).sum())
+        V_sobre_R.append(V / R)
+    return float(np.mean(V_sobre_R))
+
+m, alfa, ensayos = 40, 0.1, 4000
+print("m = %d pruebas, alfa = %.2f, %d ensayos por fila" % (m, alfa, ensayos))
+print("     m0   FDR medido   cota alfa*m0/m   la cumple")
+for m0 in [40, 30, 20, 10, 0]:
+    fdr = experimento(m, m0, alfa, 3.5, ensayos, 5)
+    cota = alfa * m0 / m
+    print("%7d %12.4f %16.4f %11s" % (m0, fdr, cota, bool(fdr <= cota + 0.01)))
+print()
+print("la cota no es alfa sino alfa por la FRACCION de nulas ciertas. Cuando")
+print("casi todas las hipotesis son falsas, BH es mucho mas conservador de lo")
+print("que su alfa sugiere, y esa holgura es lo que la demostracion explica")
+```
+
+El lema aguanta las $2449$ comprobaciones sin un solo fallo, y la cota resulta **casi exacta**: $0{,}0978$ contra $0{,}1000$, $0{,}0747$ contra $0{,}0750$, $0{,}0496$ contra $0{,}0500$. La cota se alcanza: no sobra nada.
+
+```{=html}
+<div class="viz-cota">
+  <div class="controles">
+    <label>Hipótesis ciertas m₀ <input id="co-m" type="range" min="0" max="40" step="1" value="30"> <span id="co-m-v">30</span> de 40</label>
+    <label>Nivel α <input id="co-a" type="range" min="0.01" max="0.20" step="0.01" value="0.10"> <span id="co-a-v">0.10</span></label>
+  </div>
+  <svg id="co-svg" viewBox="0 0 660 300" role="img" aria-label="La cota alfa por m cero entre m en función del número de hipótesis ciertas, sobre un eje fijo, con el punto elegido y la comparación contra alfa."></svg>
+  <p class="lectura" id="co-lectura"></p>
+</div>
+<style>
+.viz-cota { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-cota .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-cota label { display: flex; align-items: center; gap: .4rem; }
+.viz-cota input[type=range] { width: 170px; padding: 0; }
+.viz-cota svg { width: 100%; height: auto; display: block; }
+.viz-cota .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("co-svg"), lec = document.getElementById("co-lectura");
+  var cm = document.getElementById("co-m"), ca = document.getElementById("co-a");
+  var em = document.getElementById("co-m-v"), ea = document.getElementById("co-a-v");
+  // Marco anclado: m0 de 0 a 40, tasa de 0 a 0.20, siempre.
+  var X0 = 58, XW = 562, Y0 = 30, YH = 200, M = 40, TMAX = 0.20;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var px = function (m0) { return X0 + m0 / M * XW; };
+  var py = function (v) { return Y0 + (TMAX - Math.min(v, TMAX)) / TMAX * YH; };
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var m0 = +cm.value, alfa = +ca.value;
+    em.textContent = m0; ea.textContent = alfa.toFixed(2);
+    var t;
+    for (t = 0; t <= TMAX + 1e-9; t += 0.05) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(t).toFixed(1) + " L" + (X0 + XW) + " " + py(t).toFixed(1),
+        stroke: C_L, "stroke-width": 1, opacity: .5 }));
+      svg.appendChild(el("text", { x: X0 - 9, y: py(t) + 4, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .65 }, t.toFixed(2)));
+    }
+    [0, 10, 20, 30, 40].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y0 + YH + 17, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .65 }, v));
+    });
+    svg.appendChild(el("text", { x: X0, y: 20, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "la cota del FDR según cuántas hipótesis son ciertas"));
+
+    // alfa, la cota que uno cree tener
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(alfa).toFixed(1) + " L" + (X0 + XW) + " " + py(alfa).toFixed(1),
+      stroke: C_B, "stroke-width": 1.8, "stroke-dasharray": "6 4" }));
+    svg.appendChild(el("text", { x: X0 + XW - 4, y: py(alfa) - 7, "text-anchor": "end", "font-size": 11, fill: C_B },
+      "α = " + alfa.toFixed(2)));
+    // la cota de verdad
+    svg.appendChild(el("path", { d: "M" + px(0).toFixed(1) + " " + py(0).toFixed(1) +
+      " L" + px(M).toFixed(1) + " " + py(alfa).toFixed(1), stroke: C_A, "stroke-width": 2.6 }));
+    var v = alfa * m0 / M;
+    svg.appendChild(el("circle", { cx: px(m0).toFixed(1), cy: py(v).toFixed(1), r: 5, fill: C_G }));
+    svg.appendChild(el("path", { d: "M" + px(m0).toFixed(1) + " " + py(v).toFixed(1) +
+      " L" + px(m0).toFixed(1) + " " + py(alfa).toFixed(1), stroke: C_G, "stroke-width": 2 }));
+
+    lec.innerHTML = "Con <strong>" + m0 + "</strong> de " + M + " hipótesis ciertas y α = <strong>" + alfa.toFixed(2) +
+      "</strong>, la cota real del FDR es <strong>" + v.toFixed(4) + "</strong>, no " + alfa.toFixed(2) +
+      " (Proposición 22.2). El segmento ámbar es lo que sobra. " +
+      (m0 === M ? "Con todas ciertas las dos coinciden: ahí el FDR y el FWER son lo mismo, que es el caso que demostró Estadística 17."
+       : m0 === 0 ? "Sin ninguna cierta no puede haber falsos positivos y la cota es cero."
+       : "Cuantas más hipótesis sean falsas, más conservador resulta el procedimiento respecto de su propio α, y esa holgura es la que la demostración explica.");
+  }
+  cm.addEventListener("input", dibujar);
+  ca.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Lo que Benjamini-Hochberg no controla
+
+Controlar el FDR y controlar el FWER son cosas distintas, y conviene ver cuánto.
+
+```{pyodide}
+import numpy as np
+from math import erfc, sqrt
+
+def valores_p(z):
+    return np.array([erfc(abs(v) / sqrt(2)) for v in z])
+
+def sin_correccion(p, alfa):
+    return p <= alfa
+
+def bonferroni(p, alfa):
+    return p <= alfa / len(p)
+
+def holm(p, alfa):
+    m = len(p)
+    orden = np.argsort(p)
+    rechaza = np.zeros(m, dtype=bool)
+    for i, j in enumerate(orden):
+        if p[j] <= alfa / (m - i):
+            rechaza[j] = True
+        else:
+            break
+    return rechaza
+
+def benjamini(p, alfa):
+    m = len(p)
+    orden = np.argsort(p)
+    i = np.arange(1, m + 1)
+    cumple = p[orden] <= alfa * i / m
+    rechaza = np.zeros(m, dtype=bool)
+    if cumple.any():
+        k = int(i[cumple].max())
+        rechaza[orden[:k]] = True
+    return rechaza
+
+metodos = [("sin correccion", sin_correccion), ("Bonferroni", bonferroni),
+           ("Holm", holm), ("Benjamini-Hochberg", benjamini)]
+
+def compara(m, m0, efecto, alfa, ensayos, semilla):
+    rng = np.random.default_rng(semilla)
+    res = {n: {"fwer": 0, "fdr": [], "potencia": []} for n, _ in metodos}
+    for _ in range(ensayos):
+        z = rng.normal(size=m)
+        z[m0:] += efecto
+        p = valores_p(z)
+        for nombre, f in metodos:
+            r = f(p, alfa)
+            V = int(r[:m0].sum())            # falsos positivos
+            S = int(r[m0:].sum())            # aciertos
+            R = V + S
+            res[nombre]["fwer"] += int(V >= 1)
+            res[nombre]["fdr"].append(V / R if R else 0.0)
+            res[nombre]["potencia"].append(S / (m - m0) if m > m0 else 0.0)
+    return {n: (v["fwer"] / ensayos, float(np.mean(v["fdr"])), float(np.mean(v["potencia"])))
+            for n, v in res.items()}
+
+m, m0, alfa, ensayos = 50, 40, 0.05, 4000
+print("m = %d pruebas, %d nulas ciertas y %d efectos reales, alfa = %.2f"
+      % (m, m0, m - m0, alfa))
+print()
+for efecto in [2.5, 3.5]:
+    print("con efectos de tamano %.1f:" % efecto)
+    print("   metodo                 FWER      FDR   potencia")
+    for nombre, _ in metodos:
+        f, d, pot = compara(m, m0, efecto, alfa, ensayos, 3)[nombre]
+        print("   %-20s %7.4f %8.4f %10.4f" % (nombre, f, d, pot))
+    print()
+
+print("sin corregir, la probabilidad de al menos un falso positivo es enorme:")
+print("con 40 nulas ciertas al 5 por ciento, la teoria da 1 - 0.95^40 = %.4f"
+      % (1 - 0.95 ** 40))
+print()
+print("Bonferroni y Holm controlan el FWER y pagan en potencia. BH no controla")
+print("el FWER —su columna lo ensena— pero controla el FDR y encuentra bastante")
+print("mas. No es que uno sea mejor: controlan cosas distintas, y cual importa")
+print("depende de si un solo falso positivo arruina el trabajo o no")
+```
+
+Sin corregir, la probabilidad de al menos un falso positivo es $0{,}8622$ medida contra $0{,}8715$ de la fórmula $1-(1-\alpha)^{m_0}$, que es la Proposición 17.1 de Estadística 17.
+
+Bonferroni y Holm dejan el FWER en $0{,}036$, por debajo de $\alpha$. **Benjamini-Hochberg lo deja en $0{,}1782$ y en $0{,}3083$**: no lo controla, y no pretende hacerlo. Lo que sí controla es el FDR, que sale $0{,}0394$ y $0{,}0400$ contra la cota $\alpha m_0/m=0{,}04$ de la Proposición 22.2.
+
+A cambio, encuentra bastante más: con efectos de $3{,}5$, una potencia de $0{,}8068$ frente a $0{,}5837$. La elección entre los dos no es técnica: **depende de si un solo falso positivo arruina el trabajo o si lo que importa es la proporción de aciertos entre lo que se va a investigar después**.
+
+## 3. Valores p sin suponer nada
+
+Hasta aquí los valores p venían de una fórmula que supone una distribución para el estadístico. §13.5 propone construirlos a mano.
+
+::: {.definicion}
+**Definición 22.3 (valor p por permutación).** Sea $T$ un estadístico cualquiera y $T_{\text{obs}}$ su valor en los datos. Se generan $B$ permutaciones de las etiquetas de grupo, se calcula $T$ en cada una, y
+$$p=\frac{1+\#\{b:\ \lvert T_b\rvert\ge\lvert T_{\text{obs}}\rvert\}}{B+1}.$$
+:::
+
+::: {.proposicion}
+**Proposición 22.4 (es válido sin supuestos).** Si bajo la hipótesis nula las dos muestras son **intercambiables** —es decir, barajar las etiquetas no cambia la distribución conjunta—, entonces
+$$P(p\le\alpha)\ \le\ \alpha\qquad\text{para todo }\alpha,$$
+sea cual sea el estadístico $T$ y sea cual sea la distribución de los datos.
+:::
+
+::: {.demostracion}
+*Demostración.* Considérese el conjunto de $B+1$ valores formado por $\lvert T_{\text{obs}}\rvert$ y los $B$ valores permutados. Bajo intercambiabilidad, la etiqueta «este es el observado» es equiprobable entre los $B+1$: el observado no tiene ninguna posición privilegiada. Por tanto el rango de $\lvert T_{\text{obs}}\rvert$ dentro de ese conjunto, contando desde arriba, es uniforme sobre $\{1,\dots,B+1\}$ salvo empates, y $p$ es exactamente ese rango dividido entre $B+1$. Entonces
+$$P(p\le\alpha)=P\big(\text{rango}\le\alpha(B+1)\big)=\frac{\lfloor\alpha(B+1)\rfloor}{B+1}\le\alpha.$$
+Los empates solo pueden reducir la probabilidad, porque cuentan a favor del denominador. Nada de esto usa la forma de la distribución de $T$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+from math import erfc, sqrt
+
+def t_dos_muestras(a, b):
+    """El estadistico t de Welch, calculado a mano."""
+    na, nb = len(a), len(b)
+    va, vb = a.var(ddof=1) / na, b.var(ddof=1) / nb
+    return (a.mean() - b.mean()) / sqrt(va + vb)
+
+def p_normal(t):
+    """El valor p que saldria suponiendo que el estadistico es normal."""
+    return erfc(abs(t) / sqrt(2))
+
+def p_permutacion(a, b, B, rng):
+    """El valor p por remuestreo: no supone NINGUNA forma para el estadistico.
+
+    Las B barajadas se hacen de golpe: una matriz de permutaciones en lugar de
+    un bucle, que es la misma cuenta escrita para que corra.
+    """
+    obs = abs(t_dos_muestras(a, b))
+    junto = np.concatenate([a, b])
+    na, n = len(a), len(junto)
+    idx = np.argsort(rng.random((B, n)), axis=1)
+    M = junto[idx]
+    A, Bm = M[:, :na], M[:, na:]
+    va = A.var(axis=1, ddof=1) / na
+    vb = Bm.var(axis=1, ddof=1) / (n - na)
+    t = (A.mean(axis=1) - Bm.mean(axis=1)) / np.sqrt(va + vb)
+    # «al menos tan extremo» con tolerancia: alguna barajada reproduce la
+    # muestra original y ahi t == obs salvo por el ultimo bit, que no es el
+    # mismo en todas las versiones. Contar el empate es ademas lo correcto.
+    return (int((np.abs(t) >= obs - 1e-12).sum()) + 1) / (B + 1)
+
+# Bajo la nula, un valor p bien calibrado se reparte uniforme. Se mide con dos
+# poblaciones: una normal, donde la teoria acierta, y una de colas pesadas.
+def calibracion(genera, ensayos, n, B, semilla):
+    rng = np.random.default_rng(semilla)
+    pn, pp = [], []
+    for _ in range(ensayos):
+        a, b = genera(rng, n), genera(rng, n)
+        pn.append(p_normal(t_dos_muestras(a, b)))
+        pp.append(p_permutacion(a, b, B, rng))
+    return np.array(pn), np.array(pp)
+
+normal = lambda rng, n: rng.normal(size=n)
+pesada = lambda rng, n: rng.standard_t(2.5, size=n)   # colas muy pesadas
+
+print("bajo la nula, ¿que fraccion de valores p cae por debajo de cada nivel?")
+print("(con muestras de 8 por grupo, que es donde la teoria sufre)")
+print()
+for nombre, genera in [("normal", normal), ("colas pesadas", pesada)]:
+    pn, pp = calibracion(genera, 2000, 8, 199, 11)
+    print("poblacion %s:" % nombre)
+    print("   nivel   por la formula normal   por permutacion")
+    for nivel in [0.01, 0.05, 0.10]:
+        print("%8.2f %23.4f %17.4f"
+              % (nivel, float((pn <= nivel).mean()), float((pp <= nivel).mean())))
+    print()
+print("con ocho observaciones por grupo, la formula normal rechaza de mas en")
+print("las DOS poblaciones, incluida la normal: al nivel del 1 por ciento")
+print("rechaza el 1.75. No es culpa de las colas, es que con esa")
+print("muestra el estadistico no es normal ni siquiera con datos normales")
+print()
+print("la permutacion se queda cerca de su nivel en las dos, y por debajo")
+print("—es conservadora— porque el valor p se construye con (cuenta+1)/(B+1)")
+print()
+print("la razon es que la permutacion no supone nada sobre la forma: construye")
+print("la distribucion nula barajando las etiquetas, que es exactamente lo que")
+print("la hipotesis nula afirma que da igual")
+```
+
+El resultado es más contundente de lo que §13.5.3 sugiere. La fórmula normal se pasa **en las dos poblaciones**, incluida la normal: al nivel del $1\,\%$ rechaza el $1{,}75$. Con ocho observaciones por grupo el estadístico no es normal ni siquiera con datos normales —para eso está la $t$ de Student—, y la permutación no necesita saberlo.
+
+Su precio es el cómputo: $B$ permutaciones por prueba, y con miles de pruebas eso se nota. Su ventaja es que **no hay ningún supuesto que comprobar**, que es exactamente lo que hace falta cuando el estadístico es raro o la muestra pequeña.
+
+```{=html}
+<div class="viz-permuta">
+  <div class="controles">
+    <label>Permutaciones B <input id="pm-b" type="range" min="19" max="499" step="20" value="199"> <span id="pm-b-v">199</span></label>
+    <label>Separación real <input id="pm-d" type="range" min="0" max="2.5" step="0.05" value="1.2"> <span id="pm-d-v">1.20</span></label>
+  </div>
+  <svg id="pm-svg" viewBox="0 0 660 320" role="img" aria-label="El histograma de los estadísticos obtenidos barajando las etiquetas, con el estadístico observado marcado, y el valor p que resulta de contar cuántos lo igualan o superan."></svg>
+  <p class="lectura" id="pm-lectura"></p>
+</div>
+<style>
+.viz-permuta { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-permuta .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-permuta label { display: flex; align-items: center; gap: .4rem; }
+.viz-permuta input[type=range] { width: 180px; padding: 0; }
+.viz-permuta svg { width: 100%; height: auto; display: block; }
+.viz-permuta .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("pm-svg"), lec = document.getElementById("pm-lectura");
+  var cb = document.getElementById("pm-b"), cd = document.getElementById("pm-d");
+  var eb = document.getElementById("pm-b-v"), ed = document.getElementById("pm-d-v");
+  // Marco anclado: el estadistico de -5 a 5 siempre, y el histograma normalizado.
+  var X0 = 48, XW = 572, Y0 = 28, YH = 214, LO = -5, HI = 5, NB = 44;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var px = function (v) { return X0 + (v - LO) / (HI - LO) * XW; };
+  // 16 observaciones deterministas: 8 por grupo
+  var base = [], s = 13;
+  function r() { s = (s * 48271) % 2147483647; return s / 2147483647; }
+  for (var i = 0; i < 16; i++) {
+    var u1 = Math.max(1e-9, r()), u2 = r();
+    base.push(Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2));
+  }
+  function t_est(v, na) {
+    var i, ma = 0, mb = 0, nb = v.length - na;
+    for (i = 0; i < na; i++) ma += v[i];
+    for (i = na; i < v.length; i++) mb += v[i];
+    ma /= na; mb /= nb;
+    var va = 0, vb = 0;
+    for (i = 0; i < na; i++) va += (v[i] - ma) * (v[i] - ma);
+    for (i = na; i < v.length; i++) vb += (v[i] - mb) * (v[i] - mb);
+    va /= (na - 1) * na; vb /= (nb - 1) * nb;
+    return (ma - mb) / Math.sqrt(va + vb);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var B = +cb.value, sep = +cd.value;
+    eb.textContent = B; ed.textContent = sep.toFixed(2);
+    var datos = base.slice(), i, j;
+    for (i = 0; i < 8; i++) datos[i] += sep;          // el grupo A se desplaza
+    var obs = Math.abs(t_est(datos, 8));
+
+    // B barajadas deterministas
+    var ss = 77;
+    function rr() { ss = (ss * 48271) % 2147483647; return ss / 2147483647; }
+    var hist = new Array(NB).fill(0), cuenta = 0, valores = [];
+    for (i = 0; i < B; i++) {
+      var v = datos.slice();
+      for (j = v.length - 1; j > 0; j--) {
+        var k = Math.floor(rr() * (j + 1));
+        var tmp = v[j]; v[j] = v[k]; v[k] = tmp;
+      }
+      var t = t_est(v, 8);
+      valores.push(t);
+      if (Math.abs(t) >= obs - 1e-12) cuenta++;
+      var b = Math.floor((Math.min(HI - 1e-9, Math.max(LO, t)) - LO) / (HI - LO) * NB);
+      hist[b]++;
+    }
+    var mx = Math.max.apply(null, hist) || 1;
+    svg.appendChild(el("text", { x: X0, y: 18, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "los estadísticos que salen al barajar las etiquetas"));
+    for (i = 0; i < NB; i++) {
+      if (!hist[i]) continue;
+      var h = hist[i] / mx * YH;
+      var xi = X0 + i / NB * XW;
+      var centro = LO + (i + 0.5) / NB * (HI - LO);
+      svg.appendChild(el("rect", { x: xi.toFixed(1), y: (Y0 + YH - h).toFixed(1),
+        width: (XW / NB - 1).toFixed(1), height: h.toFixed(1),
+        fill: Math.abs(centro) >= obs ? C_B : C_A, "fill-opacity": Math.abs(centro) >= obs ? .55 : .3 }));
+    }
+    svg.appendChild(el("path", { d: "M" + X0 + " " + (Y0 + YH) + " L" + (X0 + XW) + " " + (Y0 + YH),
+      stroke: C_L, "stroke-width": 1 }));
+    [-4, -2, 0, 2, 4].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y0 + YH + 17, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .65 }, v));
+    });
+    [obs, -obs].forEach(function (v) {
+      if (v >= LO && v <= HI)
+        svg.appendChild(el("path", { d: "M" + px(v).toFixed(1) + " " + Y0 + " L" + px(v).toFixed(1) + " " + (Y0 + YH),
+          stroke: C_B, "stroke-width": 2.2, "stroke-dasharray": "5 4" }));
+    });
+
+    var p = (cuenta + 1) / (B + 1);
+    lec.innerHTML = "El estadístico observado vale <strong>" + obs.toFixed(3) +
+      "</strong> (rayas rojas). De las <strong>" + B + "</strong> barajadas, <strong>" + cuenta +
+      "</strong> lo igualan o superan en valor absoluto, así que p = (" + cuenta + " + 1)/(" + B +
+      " + 1) = <strong>" + p.toFixed(4) + "</strong>. " +
+      "El histograma <strong>es</strong> la distribución nula: no se ha supuesto ninguna. " +
+      (sep < 0.1 ? "Sin separación real, el observado cae en medio del montón y el valor p sale grande, como debe."
+       : "Subiendo B el valor p se afina, pero nunca baja de 1/(B+1) = " + (1 / (B + 1)).toFixed(4) +
+         ": con pocas permutaciones hay un suelo por debajo del cual no se puede afirmar nada.");
+  }
+  cb.addEventListener("input", dibujar);
+  cd.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Lo que esta lección cierra
+
+Con ella termina la **Fase 2 de ISLP**: los trece capítulos del libro quedan cubiertos o repartidos, con las omisiones nombradas una por una en las lecciones que tocan.
+
+Esta página **no repite** lo que ya está en Estadística 17 —la tasa de error por familia, Bonferroni, Holm, la definición del FDR y el enunciado de Benjamini-Hochberg—, sino que añade tres cosas: la demostración del caso general que allí quedó pendiente, la medición de lo que BH **no** controla, y el enfoque por remuestreo de §13.5.
+
+De §13.5 queda fuera **§13.5.2**, la estimación del FDR por remuestreo, que combina las dos mitades de esta lección y no añade ningún resultado nuevo que demostrar.
+
+## Ejercicios
+
+### Ejercicio 1, La cota que de verdad se tiene
+
+Se prueban $200$ hipótesis con Benjamini-Hochberg al $5\,\%$, y resulta que $150$ de ellas son ciertas. Calcular la cota real del FDR.
+
+```{pyodide}
+#| exercise: ex_cota
+alfa, m, m0 = 0.05, 200, 150
+
+cota = ______
+sobra = ______
+
+print(round(cota, 6), round(sobra, 6))
+round(cota, 6)
+```
+
+::: {.hint exercise="ex_cota"}
+La Proposición 22.2 da $\alpha\,m_0/m$. Lo que sobra respecto de $\alpha$ es la diferencia entre las dos.
+:::
+
+::: {.solution exercise="ex_cota"}
+```{pyodide}
+alfa, m, m0 = 0.05, 200, 150
+
+cota = alfa * m0 / m
+sobra = alfa - cota
+
+print(round(cota, 6), round(sobra, 6))
+round(cota, 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_cota
+#| check: true
+if abs(result - 0.0375) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: 0,0375 y no 0,05. Con una cuarta parte de las hipótesis falsas, el procedimiento ya es un 25 % más conservador de lo que su nivel indica.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.0375 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, El suelo del valor p por permutación
+
+Calcular el menor valor p alcanzable con $19$, $99$ y $999$ permutaciones, y cuántas hacen falta como mínimo para poder declarar algo por debajo de $0{,}01$.
+
+```{pyodide}
+#| exercise: ex_suelo
+from math import ceil
+
+suelos = ______
+minimo_para_001 = ______
+
+print([round(s, 6) for s in suelos], minimo_para_001)
+int(minimo_para_001)
+```
+
+::: {.hint exercise="ex_suelo"}
+El valor p por permutación es $(1+c)/(B+1)$, así que su mínimo es $1/(B+1)$. Para que ese mínimo llegue a $0{,}01$ hace falta $B+1\ge 100$.
+:::
+
+::: {.solution exercise="ex_suelo"}
+```{pyodide}
+from math import ceil
+
+suelos = [1 / (B + 1) for B in (19, 99, 999)]
+minimo_para_001 = ceil(1 / 0.01) - 1
+
+print([round(s, 6) for s in suelos], minimo_para_001)
+int(minimo_para_001)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_suelo
+#| check: true
+if result == 99:
+    feedback = {"correct": True, "message": "Correcto: con 99 permutaciones el menor valor p posible es exactamente 0,01. Con 19 el suelo es 0,05, así que ninguna prueba con 19 permutaciones puede sobrevivir a una corrección de Bonferroni.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 99 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 22**:
+
+1. Comprobar la Proposición 22.2 con valores p **dependientes** —por ejemplo, estadísticos correlacionados por un factor común— y anotar si la cota sigue cumpliéndose. Contrastar con lo que dice la literatura sobre Benjamini-Yekutieli y anotar qué cambia en la demostración cuando desaparece la independencia.
+2. Medir la potencia de la permutación frente a la fórmula teórica **cuando los supuestos de la fórmula sí se cumplen**, y anotar cuánto se paga por no suponer nada. Repetirlo con muestras de $8$, $30$ y $100$ por grupo.
+3. Implementar §13.5.2, la estimación del FDR por remuestreo, y compararla con la de Benjamini-Hochberg sobre los mismos datos. Anotar en `50-Errores/` en qué se diferencian las dos y cuál usarías si los valores p teóricos no fueran de fiar.
+
+## Del libro
+
+*An Introduction to Statistical Learning with Applications in Python* trata este material en §13.3.3 *Trade-Off Between the FWER and Power*, §13.4 *The False Discovery Rate* con §13.4.1 y §13.4.2, y §13.5 *A Re-Sampling Approach to p-Values and False Discovery Rates* con §13.5.1 y §13.5.3.
+
+**Esta lección no repite Estadística 17.** Aquella cubre §13.1 a §13.3 —la revisión de las pruebas, el problema de las pruebas múltiples, la tasa de error por familia, Bonferroni y Holm— y enuncia el procedimiento de Benjamini-Hochberg. Esta añade tres cosas: **la demostración del caso general**, que allí quedó declarada como pendiente en Fuentes; la medición de lo que Benjamini-Hochberg **no** controla; y el enfoque por remuestreo.
+
+**Con ella se cierra la Fase 2 de ISLP.**
+
+**Dos diferencias con el libro que conviene tener presentes.** La primera: el libro enuncia que Benjamini-Hochberg controla el FDR al nivel $\alpha$ y no subraya que la cota real es $\alpha m_0/m$. La diferencia importa: con la cuarta parte de las hipótesis falsas, el procedimiento ya es un $25\,\%$ más conservador de lo que su nivel sugiere, y la celda mide que la cota **se alcanza**.
+
+La segunda: §13.5.3 presenta el remuestreo como útil «cuando los supuestos teóricos son dudosos». La medición de la sección 3 es más rotunda: con ocho observaciones por grupo, la fórmula normal se pasa **también con datos normales**, porque el estadístico no es normal con esa muestra. El remuestreo no necesita saber cuál es la distribución correcta.
+
+**Preguntas para leer §13.3.3–13.5 con lápiz:**
+
+1. §13.4.1 explica el FDR con una analogía. Con la Proposición 22.2, ¿qué cantidad exacta acota el procedimiento, y por qué esa cantidad depende de algo que no se conoce?
+2. §13.4.2 presenta el umbral $\alpha i/m$ y lo compara con el de Bonferroni. Con la tabla de la sección 2, ¿a cambio de qué garantía se gana esa potencia?
+3. §13.5.1 construye el valor p barajando etiquetas. Con la Proposición 22.4, ¿qué supuesto exacto reemplaza a la normalidad, y en qué situación dejaría de cumplirse?
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/pruebas-multiples-ml.md`, enlazada a [[p-hacking]], [[pruebas-de-hipotesis]] y [[bootstrap]]. Conviene rehacer a mano la Proposición 22.2: el paso en que $\sum_k \frac{1}{k}\cdot\frac{\alpha k}{m}$ colapsa a $\frac{\alpha}{m}$ deja claro de una vez **por qué el umbral de Benjamini-Hochberg crece con el rango**, y no por qué sí.
+
+```
+¿Qué controla Bonferroni?::La probabilidad de al menos un falso positivo
+¿Y Benjamini-Hochberg?::La proporción esperada de falsos entre los hallazgos
+¿Cuál es la cota exacta de BH?::α·m₀/m, no α
+¿Qué es m₀?::Cuántas hipótesis son de verdad ciertas
+¿Se conoce m₀?::No, y por eso la cota real es desconocida pero siempre ≤ α
+¿Cuál es el lema de la demostración?::Bajar a cero el p de una rechazada no cambia el número de rechazos
+¿Para qué sirve ese lema?::Para que el suceso deje de depender de p_i y valga la independencia
+¿Controla BH el FWER?::No, y medido puede llegar al 30 %
+¿Qué se gana a cambio?::Potencia: 0,81 frente a 0,58 en el experimento de la lección
+¿Qué es un valor p por permutación?::(1 + cuántas barajadas superan al observado) / (B+1)
+¿Qué supone?::Solo intercambiabilidad bajo la nula; nada sobre la distribución
+¿Cuál es su suelo?::1/(B+1)
+¿Cuántas permutaciones para poder bajar de 0,01?::99
+¿Cuándo falla la fórmula normal?::Con muestras pequeñas, incluso con datos normales
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 22.1 se demuestra por el efecto de bajar un valor p sobre los rangos y los umbrales; se comprueba en $2449$ casos extraídos de $20\,000$ tandas, **sin un solo fallo**. La Proposición 22.2 se demuestra con el argumento de dejar fuera una prueba: el lema convierte el suceso en uno independiente de $p_i$, y la suma telescopa a $\alpha/m$ por hipótesis cierta; se comprueba en cinco valores de $m_0$, donde el FDR medido queda justo por debajo de la cota —$0{,}0978$ contra $0{,}1000$, $0{,}0747$ contra $0{,}0750$, $0{,}0496$ contra $0{,}0500$—, de modo que la cota **se alcanza**. La Proposición 22.4 se demuestra por intercambiabilidad y uniformidad del rango; se comprueba midiendo la calibración en dos poblaciones, donde la permutación queda por debajo de su nivel en las seis combinaciones. La sección 2 mide FWER, FDR y potencia de cuatro procedimientos en dos tamaños de efecto, con el FWER sin corregir en $0{,}8622$ contra los $0{,}8715$ de la fórmula de la Proposición 17.1. Los dos visuales recalculan estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** La tasa de error por familia, la distribución del menor valor p, Bonferroni y Holm son de Estadística 17, y **no se vuelven a demostrar**. La definición del FDR y el enunciado del procedimiento de Benjamini-Hochberg también están allí; aquí se retoma solo lo que quedó sin demostrar. El nivel de una prueba y qué significa que esté calibrada son de Estadística 10. El remuestreo como técnica es de Estadística 11.
+
+**Lo que se enuncia sin demostrar.** Que Benjamini-Hochberg sigue controlando el FDR bajo **dependencia positiva** de los valores p, y que bajo dependencia arbitraria hace falta el factor de Benjamini-Yekutieli, **no se demuestra ni se comprueba**: el reto 1 lo pide. De §13.5 queda fuera §13.5.2, la estimación del FDR por remuestreo, que combina las dos mitades de esta página sin añadir un resultado que demostrar. Y la Proposición 22.4 supone intercambiabilidad, que es un supuesto —más débil que la normalidad, pero un supuesto— y que falla, por ejemplo, con observaciones apareadas tratadas como independientes.
+
+**Lo que viene de los libros.**
+
+- [*An Introduction to Statistical Learning with Applications in Python*](https://www.statlearning.com/) (James, Witten, Hastie, Tibshirani, Taylor; Springer, 2023), §13.3.3 *Trade-Off Between the FWER and Power*, §13.4 *The False Discovery Rate* con sus dos subsecciones y §13.5 *A Re-Sampling Approach to p-Values and False Discovery Rates* con §13.5.1 y §13.5.3 — citadas por número y título, sin transcribir texto.
+
+**Lo que es mío, no del libro.** La demostración de la Proposición 22.2 por el lema de bajar a cero, que es lo que convierte el argumento en elemental: sin él hay que tratar un suceso que depende de $p_i$ y la independencia no se puede usar. La comprobación del lema por fuerza bruta sobre miles de tandas, que lo vuelve algo que se ve. El énfasis en que la cota es $\alpha m_0/m$ y **se alcanza**, con la tabla que lo mide y el visual que enseña cuánto sobra. Y la medición de la sección 3, que muestra que la fórmula normal falla también con datos normales cuando la muestra es pequeña: el libro justifica el remuestreo por los supuestos dudosos, y aquí falla el supuesto que nadie duda.
+
+[Índice de ISLP verificado el 13-09-2026 contra los marcadores del PDF oficial.]{.sello}
+:::
