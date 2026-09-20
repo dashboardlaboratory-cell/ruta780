@@ -37,7 +37,7 @@ Tres hitos de esta sesión:
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
 faltando lecciones por escribir: **ML va por 22 de 90**, **Series de tiempo
-va por 2 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
+va por 3 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
 
@@ -105,7 +105,7 @@ hay que empezar a hacer:
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
-| Series de tiempo | 2 | 11 | **2 de 2** | 3 a 11 |
+| Series de tiempo | 3 | 11 | **3 de 3** | 4 a 11 |
 | Machine Learning | 22 | 90 | **22 de 22** | la Fase 2 cerrada; quedan ESL y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
@@ -394,7 +394,7 @@ Lo que sigue, en orden de coste creciente:
    lección, y **no reaparece en ninguna fase posterior**. Deep Learning al
    menos se retoma en las lecciones 28 a 33; supervivencia no tiene red.
 
-3. **Series de tiempo ya no está vacía** —las lecciones 1 y 2 de 11 se
+3. **Series de tiempo ya no está vacía** —las lecciones 1 a 3 de 11 se
    publicaron el 19-09-2026, y no citan ningún libro porque ninguno del sitio
    cubre el tema—;
    **Inferencia causal sigue vacía** en el sidebar.
@@ -1805,6 +1805,53 @@ en un HTML suelto y no ve lo que el render completo hace con un bloque roto.
 `verificar/simbolos.py` encontró $\mu$, $\alpha$, $\gamma$, $\theta$,
 $\delta$, $L$ y $z$ usados en fórmula y sin declarar en la tabla de notación.
 Ese script no es un gate de CI, y merece correrse a mano en cada lección nueva.
+
+### 3.29 Series de tiempo 03: una identidad que no depende de los datos (19-09-2026)
+
+La lección abre con un resultado que casi nunca se enuncia y que ordena todo lo
+demás:
+
+> **3.2**: para **cualquier** serie de $n$ números, $\sum_{h=1}^{n-1}\hat\rho_h
+> = -1/2$ exactamente.
+
+Se demuestra en cinco renglones agrupando los pares $(t,s)$ por su diferencia, y
+se comprueba sobre cinco series que no se parecen en nada —ruido blanco, un
+paseo aleatorio, un seno puro y siete números escritos a mano—: las cinco dan
+$-0{,}500000000000$. **Es álgebra, no estadística**, y explica de una vez por
+qué la ACF muestral tira hacia abajo: en la misma tabla de la lección, el
+$\text{AR}(1)$ medido da $0{,}690121$ donde la teoría dice $0{,}700000$.
+
+El segundo visual la dibuja: la suma acumulada de la ACF, que los dibujos
+habituales cortan en el retardo veinte o treinta, llevada hasta $n-1$ para ver
+que **siempre aterriza en $-1/2$**.
+
+#### El espejo, medido
+
+La segunda tabla pone las cuatro columnas juntas sobre veinte mil réplicas: la
+ACF del $\text{MA}(2)$ se corta a $-0{,}002249$ tras el retardo dos mientras su
+PACF arrastra $+0{,}251687$, $-0{,}328103$, $+0{,}193680$; la PACF del
+$\text{AR}(1)$ cae a $-0{,}002800$ en el retardo dos mientras su ACF sigue viva
+en $0{,}474800$. La recursión de Durbin-Levinson está programada en la página.
+
+#### La banda que mide otra cosa
+
+Todo dibujo de ACF trae $\pm1{,}96/\sqrt{n}$, y esa banda supone **ruido
+blanco**. Sobre un $\text{MA}(1)$ con $\theta=0{,}8$, donde los retardos del dos
+en adelante son cero de verdad, marca el $9{,}83\,\%$ en lugar del $5\,\%$; la
+banda de Bartlett lo devuelve a $4{,}47\,\%$, y el control de ruido blanco sale
+en $4{,}56\,\%$. Traducido a la unidad que importa: **dos marcas espurias por
+cada veinte retardos dibujados**, cada una invitando a añadir un término al
+modelo.
+
+#### Sobre el proceso
+
+Las tres celdas se escribieron ya autocontenidas, con las funciones repetidas
+donde hacían falta, después de lo aprendido en la lección 2. Al darle semilla
+propia a la tercera celda las tasas cambiaron —$0{,}0972$ pasó a $0{,}0983$—, y
+eso arrastraba el valor del ejercicio 2, de $1{,}944$ a $1{,}966$: se corrigió
+**antes** de publicar porque los números se leyeron de la corrida, no de la
+memoria. Y `simbolos.py`, ya nombrado en `CLAUDE.md`, encontró $\sigma$ sin
+declarar.
 
 ---
 
