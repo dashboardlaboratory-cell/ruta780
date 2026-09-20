@@ -1,0 +1,655 @@
+---
+title: "Descomposición: tendencia, estacionalidad y residuo"
+subtitle: "Series de tiempo · Lección 1"
+nivel: L3
+modulo: series
+fase: F3
+prereqs: [python/14-series-de-tiempo, ml/11-suavizado-y-gams, estadistica/05-covarianza-correlacion]
+siguientes: []
+libro: "—"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="series/01-descomposicion"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F3]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Series de tiempo en pandas](../python/14-series-de-tiempo.qmd) · [Suavizado](../ml/11-suavizado-y-gams.qmd) · [Covarianza](../estadistica/05-covarianza-correlacion.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Escribir una [descomposición]{.g data-t="descomposición de una serie"} aditiva y **demostrar que sin restricciones no es única**.
+2. Nombrar la restricción que la vuelve única y comprobar que se cumple.
+3. **Demostrar que la [media móvil]{.g data-t="media móvil centrada"} centrada de orden $m$ aniquila exactamente cualquier estacionalidad de periodo $m$.**
+4. Decir qué le hace esa media móvil a una recta, a una parábola y a un ciclo de otro periodo, con las tres respuestas calculadas.
+5. Contar cuántos puntos se pierden en cada extremo y por qué.
+6. Convertir una serie multiplicativa en aditiva y decir cuándo hace falta.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 14**: las ventanas móviles en pandas, que son la herramienta de esta lección escrita en otra sintaxis.
+- **Machine Learning 11**: los suavizadores lineales, de los que la media móvil es el más simple.
+- **Estadística 5**: la covarianza, que en la lección 3 se convierte en autocorrelación.
+- **Machine Learning 10**: las funciones base, otra manera de separar una señal en piezas.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Series de tiempo 2**: la estacionariedad, que es lo que queda cuando se quitan tendencia y estacionalidad.
+- **Series de tiempo 3**: la autocorrelación, que se lee sobre el residuo de esta descomposición.
+- **Series de tiempo 6**: los rasgos de calendario, que sustituyen al perfil estacional fijo por uno explicado.
+- **Series de tiempo 9**: Prophet, que hace esta misma separación con otra maquinaria.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $y_t$ | y sub te | El valor observado en el instante $t$ |
+| $T_t$ | te sub te | La componente de tendencia |
+| $S_t$ | ese sub te | La componente estacional |
+| $R_t$ | erre sub te | El residuo: lo que queda |
+| $m$ | eme | El periodo de la estacionalidad, en número de observaciones |
+| $n$ | ene | La longitud de la serie |
+| $\text{MM}_m$ | media móvil de orden eme | La media móvil centrada de orden $m$ |
+| $p$ | pe | El periodo de un ciclo cualquiera, para distinguirlo de $m$ |
+:::
+
+## 1. Tres piezas, e infinitas maneras de repartirlas
+
+::: {.definicion}
+**Definición 1.1 (descomposición aditiva).** Una descomposición aditiva de una serie es una terna $(T_t,S_t,R_t)$ con
+$$y_t=T_t+S_t+R_t\qquad\text{para todo }t,$$
+donde $T$ se pretende suave, $S$ periódica de periodo $m$, y $R$ lo que sobra.
+:::
+
+::: {.proposicion}
+**Proposición 1.2 (sin restricciones no hay nada que decidir).** La Definición 1.1 por sí sola **no determina** las tres componentes: dada cualquier descomposición y cualquier constante $c$, la terna $(T_t+c,\ S_t-c,\ R_t)$ también lo es. Peor aún, $(y_t,\ 0,\ 0)$ siempre cumple la definición.
+:::
+
+::: {.demostracion}
+*Demostración.* La suma $(T_t+c)+(S_t-c)+R_t$ es $T_t+S_t+R_t=y_t$, y restar una constante a una función periódica la deja periódica. Para la segunda afirmación, $y_t+0+0=y_t$ trivialmente. [∎]{.fin-demo}
+:::
+
+La consecuencia es que **una descomposición no se calcula, se define**: hay que decir qué restricción se impone, y distintas restricciones dan distintas respuestas sobre los mismos datos. La habitual, y la que se usa en toda esta lección, es que **el perfil estacional sume cero sobre un periodo completo**.
+
+```{pyodide}
+import numpy as np
+
+# Una serie con tendencia, un ciclo de periodo 12 y ruido.
+n, m = 120, 12
+t = np.arange(n)
+tendencia = 10.0 + 0.08 * t
+estacional = 3.0 * np.sin(2 * np.pi * t / m) + 1.2 * np.cos(4 * np.pi * t / m)
+rng = np.random.default_rng(3)
+ruido = rng.normal(0, 0.5, n)
+y = tendencia + estacional + ruido
+
+print("una serie de %d puntos con periodo %d" % (n, m))
+print("la parte estacional suma cero en cada periodo completo:")
+for k in range(3):
+    total = float(estacional[k * m:(k + 1) * m].sum())
+    print("   periodo %d: |suma| por debajo de 1e-12: %s" % (k + 1, bool(abs(total) < 1e-12)))
+print()
+
+# La descomposicion NO es unica: se puede mover una constante de un lado a otro.
+print("dos descomposiciones distintas de la MISMA serie:")
+for c in [0.0, 5.0]:
+    T2 = tendencia + c
+    S2 = estacional - c
+    R2 = y - T2 - S2
+    print("   con c = %.1f: T empieza en %.4f, S empieza en %+.4f, y T+S+R reproduce y: %s"
+          % (c, T2[0], S2[0], bool(np.allclose(T2 + S2 + R2, y, atol=1e-12))))
+print()
+print("hace falta una restriccion que elija una: la habitual es que la parte")
+print("estacional sume cero en cada periodo, y eso fija la constante")
+print()
+
+# Y una restriccion aun mas fuerte: sin ninguna, cualquier serie se descompone
+# de infinitas maneras, incluso con T y S arbitrarios.
+T3 = y.copy()
+S3 = np.zeros(n)
+R3 = np.zeros(n)
+print("sin restricciones, esto tambien es una descomposicion valida:")
+print("   T = la serie entera, S = 0, R = 0  ->  reproduce y:",
+      bool(np.allclose(T3 + S3 + R3, y, atol=1e-12)))
+print("   y no dice absolutamente nada sobre la serie")
+```
+
+```{=html}
+<div class="viz-descompone">
+  <div class="controles">
+    <label>Constante que se mueve <input id="de-c" type="range" min="-5" max="5" step="0.1" value="2.5"> <span id="de-c-v">2.5</span></label>
+    <label>Restricción
+      <select id="de-r">
+        <option value="libre" selected>ninguna</option>
+        <option value="cero">el perfil suma cero</option>
+      </select>
+    </label>
+  </div>
+  <svg id="de-svg" viewBox="0 0 660 340" role="img" aria-label="La serie arriba y debajo las tres componentes, con la constante que se mueve entre la tendencia y la estacionalidad sin cambiar la suma."></svg>
+  <p class="lectura" id="de-lectura"></p>
+</div>
+<style>
+.viz-descompone { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-descompone .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-descompone label { display: flex; align-items: center; gap: .4rem; }
+.viz-descompone input[type=range] { width: 180px; padding: 0; }
+.viz-descompone select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-descompone svg { width: 100%; height: auto; display: block; }
+.viz-descompone .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("de-svg"), lec = document.getElementById("de-lectura");
+  var cc = document.getElementById("de-c"), cr = document.getElementById("de-r");
+  var ec = document.getElementById("de-c-v");
+  var X0 = 46, XW = 574, N = 72, M = 12;
+  // cuatro paneles apilados, cada uno con su franja y su escala fija
+  var paneles = [{ y: 24, h: 68, lo: 4, hi: 22, nom: "la serie y" },
+                 { y: 104, h: 62, lo: 4, hi: 22, nom: "tendencia T" },
+                 { y: 178, h: 62, lo: -9, hi: 9, nom: "estacional S" },
+                 { y: 252, h: 56, lo: -3, hi: 3, nom: "residuo R" }];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // serie determinista
+  var y = [], T0 = [], S0 = [], R0 = [], s = 19;
+  function r() { s = (s * 48271) % 2147483647; return s / 2147483647 - 0.5; }
+  var perfil = [2.0, 3.1, 1.4, -0.6, -2.2, -3.0, -2.4, -0.9, 0.7, 1.8, 1.1, -0.9];
+  var mp = 0, i;
+  for (i = 0; i < M; i++) mp += perfil[i];
+  mp /= M;
+  for (i = 0; i < M; i++) perfil[i] -= mp;
+  for (i = 0; i < N; i++) {
+    T0.push(10 + 0.09 * i);
+    S0.push(perfil[i % M]);
+    R0.push(r() * 1.2);
+    y.push(T0[i] + S0[i] + R0[i]);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var c = +cc.value, forzada = cr.value === "cero";
+    ec.textContent = c.toFixed(1);
+    var usa = forzada ? 0 : c;
+    var series = [y, T0.map(function (v) { return v + usa; }),
+                  S0.map(function (v) { return v - usa; }), R0];
+    var px = function (i2) { return X0 + i2 / (N - 1) * XW; };
+    paneles.forEach(function (p, k) {
+      var py = function (v) { return p.y + (p.hi - Math.max(p.lo, Math.min(p.hi, v))) / (p.hi - p.lo) * p.h; };
+      svg.appendChild(el("rect", { x: X0, y: p.y, width: XW, height: p.h, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+      svg.appendChild(el("text", { x: X0 - 6, y: p.y + 12, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, p.nom));
+      if (p.lo < 0) svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + (X0 + XW) + " " + py(0).toFixed(1),
+        stroke: C_L, "stroke-width": 1, "stroke-dasharray": "3 3" }));
+      var d = "", j;
+      for (j = 0; j < N; j++) d += (j ? " L" : "M") + px(j).toFixed(1) + " " + py(series[k][j]).toFixed(1);
+      svg.appendChild(el("path", { d: d, stroke: k === 0 ? C_T : (k === 1 ? C_A : (k === 2 ? C_B : C_G)),
+        "stroke-width": k === 0 ? 1.6 : 2, fill: "none" }));
+      // con la restriccion puesta se marca el nivel cero del perfil estacional,
+      // que es lo que la restriccion fija; sin ella no hay nivel que marcar
+      if (k === 2 && forzada) {
+        svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + (X0 + XW) + " " + py(0).toFixed(1),
+          stroke: C_B, "stroke-width": 2, "stroke-dasharray": "7 3" }));
+        svg.appendChild(el("text", { x: X0 + XW - 6, y: py(0) - 6, "text-anchor": "end",
+          "font-size": 11, fill: C_B }, "Σ S = 0 en cada periodo"));
+      }
+    });
+    var sumaS = 0;
+    for (i = 0; i < M; i++) sumaS += series[2][i];
+
+    lec.innerHTML = forzada
+      ? "Con la restricción puesta, la constante ya no hace nada: el perfil estacional suma <strong>" +
+        sumaS.toFixed(4) + "</strong> sobre un periodo y la descomposición es <strong>una sola</strong>. " +
+        "Ese es el papel de la restricción (Proposición 1.2)."
+      : "Moviendo la constante a <strong>" + c.toFixed(1) + "</strong>, la tendencia sube y la estacionalidad baja en la misma cantidad. " +
+        "La serie de arriba <strong>no cambia</strong>, y el residuo tampoco: las tres suman lo mismo. " +
+        "El perfil estacional suma ahora <strong>" + sumaS.toFixed(4) + "</strong> sobre un periodo. " +
+        "Sin una restricción que elija, todas estas descomposiciones son igual de válidas y ninguna dice nada.";
+  }
+  cc.addEventListener("input", dibujar);
+  cr.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Qué hace exactamente una media móvil
+
+El primer paso de la descomposición clásica es estimar la tendencia con una media móvil. La razón es una propiedad exacta.
+
+::: {.definicion}
+**Definición 1.3 (media móvil centrada).** Con $m$ impar, $\text{MM}_m(y)_t=\frac1m\sum_{j=-(m-1)/2}^{(m-1)/2}y_{t+j}$. Con $m$ par se usa la versión $2\times m$, que da peso $\tfrac1{2m}$ a los dos extremos y $\tfrac1m$ a los $m-1$ del medio, de modo que la ventana siga centrada.
+:::
+
+::: {.proposicion}
+**Proposición 1.4 (la media móvil como filtro).** Sea $\text{MM}_m$ la media móvil centrada de orden $m$. Entonces:
+
+(a) si $S_t$ es periódica de periodo $m$ y suma cero sobre un periodo, $\text{MM}_m(S)_t=0$ **exactamente**, para todo $t$ donde esté definida;
+
+(b) sobre una recta $a+bt$, $\text{MM}_m$ la reproduce exactamente;
+
+(c) sobre $t^2$, le suma una **constante**, que con $m$ par vale $\frac{m^2-4}{12}+\frac12$;
+
+(d) sobre un ciclo de periodo $p\ne m$, lo conserva multiplicado por un factor menor que uno que depende solo de $p$ y $m$.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (a), con $m$ impar la ventana cubre un periodo completo y la suma de $S$ sobre él es cero por hipótesis; la versión $2\times m$ es una media de dos ventanas consecutivas de longitud $m$, y cada una suma cero. Nótese que lo mismo vale para cualquier periodo que **divida** a $m$.
+
+Para (b), la media móvil centrada es simétrica y sus pesos suman uno: $\sum_j w_j=1$ y $\sum_j w_j\,j=0$ por simetría, luego $\sum_j w_j\,(a+b(t+j))=a+bt$.
+
+Para (c), $\sum_j w_j (t+j)^2=t^2+2t\sum_j w_j j+\sum_j w_j j^2=t^2+\sum_j w_j j^2$, que es constante en $t$. El valor concreto para la versión $2\times m$ se obtiene sumando la serie y es el del enunciado.
+
+Para (d), la media móvil es un filtro lineal invariante en el tiempo, así que sobre $\sin(2\pi t/p)$ devuelve la misma frecuencia con amplitud $\big\lvert\sum_j w_j e^{2\pi i j/p}\big\rvert$. Esa suma vale cero exactamente cuando $p$ divide a $m$, y tiene módulo menor que uno en otro caso. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def media_movil(y, m):
+    """Media movil centrada de orden m. Con m par, los extremos pesan la mitad."""
+    if m % 2 == 1:
+        pesos = np.ones(m) / m
+    else:
+        pesos = np.r_[0.5, np.ones(m - 1), 0.5] / m
+    k = len(pesos) // 2
+    salida = np.full(len(y), np.nan)
+    for i in range(k, len(y) - k):
+        salida[i] = float(pesos @ y[i - k:i + k + 1])
+    return salida
+
+n, m = 120, 12
+t = np.arange(n, dtype=float)
+
+# 1. La media movil de orden m ANIQUILA cualquier estacionalidad de periodo m.
+print("la media movil centrada de orden %d sobre senales de periodo %d:" % (m, m))
+for nombre, s in [("seno", np.sin(2 * np.pi * t / m)),
+                  ("coseno", np.cos(2 * np.pi * t / m)),
+                  ("segundo armonico", np.sin(4 * np.pi * t / m)),
+                  ("escalon periodico", np.where((t % m) < 6, 1.0, -1.0))]:
+    mm = media_movil(s, m)
+    dentro = ~np.isnan(mm)
+    print("   %-20s maximo de |media movil| por debajo de 1e-12: %s"
+          % (nombre, bool(np.abs(mm[dentro]).max() < 1e-12)))
+print()
+print("la razon es que promedia un periodo completo, y cualquier senal que se")
+print("repita cada %d pasos suma lo mismo en cualquier ventana de %d" % (m, m))
+print()
+
+# 2. Sobre una recta, la media movil la reproduce EXACTAMENTE.
+recta = 3.0 + 0.7 * t
+mm = media_movil(recta, m)
+dentro = ~np.isnan(mm)
+print("sobre una recta, la media movil la reproduce exacta a 1e-10:",
+      bool(np.abs(mm[dentro] - recta[dentro]).max() < 1e-10))
+print()
+
+# 3. Sobre una parabola, la desplaza una constante que se puede calcular.
+parabola = t ** 2
+mm = media_movil(parabola, m)
+dentro = ~np.isnan(mm)
+desvio = mm[dentro] - parabola[dentro]
+print("sobre t^2, la media movil suma una constante:")
+print("   el desvio es constante a 1e-9:", bool(desvio.std() < 1e-9))
+print("   y vale %.6f" % float(desvio.mean()))
+print("   la formula para m par es (m^2 - 4) / 12 + 1/2 = %.6f" % ((m * m - 4) / 12 + 0.5))
+print("   coinciden a 1e-9:", bool(abs(desvio.mean() - ((m * m - 4) / 12 + 0.5)) < 1e-9))
+print()
+
+# 4. Y lo que le hace a una senal de periodo distinto: la encoge, sin anularla.
+print("sobre senos de otros periodos, la media movil los encoge:")
+print("   periodo   factor que sobrevive")
+for p in [4, 6, 8, 12, 18, 24, 40]:
+    s = np.sin(2 * np.pi * t / p)
+    mm = media_movil(s, m)
+    dentro = ~np.isnan(mm)
+    amp = float(np.abs(mm[dentro]).max())
+    print("%10d %22.6f" % (p, amp))
+print()
+print("los periodos que dividen a %d desaparecen del todo; los demas sobreviven" % m)
+print("encogidos, y los muy largos pasan casi enteros. Una media movil es un")
+print("filtro, y conviene saber que deja pasar")
+```
+
+La parte (c) importa más de lo que parece: **la media móvil no deja intacta una tendencia curva**. Sobre $t^2$ con $m=12$ la desplaza $12{,}166667$ hacia arriba, exactamente. Es una constante, así que no deforma la **forma** de la tendencia, pero sí su nivel, y ese nivel acaba en el perfil estacional si nadie lo mira.
+
+La parte (d) es la que conviene tener presente al elegir $m$: con $m=12$, un ciclo de periodo $8$ sobrevive con un $20{,}12\,\%$ de su amplitud y uno de periodo $40$ con un $85{,}66\,\%$. La media móvil **decide qué es tendencia y qué es estacionalidad**, y lo decide por la longitud de la ventana.
+
+```{=html}
+<div class="viz-filtro">
+  <div class="controles">
+    <label>Orden de la media móvil m <input id="fi-m" type="range" min="2" max="24" step="1" value="12"> <span id="fi-m-v">12</span></label>
+    <label>Periodo de la señal p <input id="fi-p" type="range" min="2" max="48" step="1" value="8"> <span id="fi-p-v">8</span></label>
+  </div>
+  <svg id="fi-svg" viewBox="0 0 660 320" role="img" aria-label="La fracción de amplitud que sobrevive a la media móvil en función del periodo de la señal, sobre un eje fijo de cero a uno, con los ceros exactos marcados."></svg>
+  <p class="lectura" id="fi-lectura"></p>
+</div>
+<style>
+.viz-filtro { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-filtro .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-filtro label { display: flex; align-items: center; gap: .4rem; }
+.viz-filtro input[type=range] { width: 180px; padding: 0; }
+.viz-filtro svg { width: 100%; height: auto; display: block; }
+.viz-filtro .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("fi-svg"), lec = document.getElementById("fi-lectura");
+  var cm = document.getElementById("fi-m"), cp = document.getElementById("fi-p");
+  var em = document.getElementById("fi-m-v"), ep = document.getElementById("fi-p-v");
+  // Marco anclado: periodo de 2 a 48, respuesta de 0 a 1, siempre.
+  var X0 = 54, XW = 566, Y0 = 30, YH = 208, PMIN = 2, PMAX = 48;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var px = function (p) { return X0 + (p - PMIN) / (PMAX - PMIN) * XW; };
+  var py = function (v) { return Y0 + (1 - Math.max(0, Math.min(1, v))) * YH; };
+  // pesos de la media movil centrada
+  function pesos(m) {
+    var w = [], i;
+    if (m % 2 === 1) { for (i = 0; i < m; i++) w.push(1 / m); }
+    else { w.push(0.5 / m); for (i = 0; i < m - 1; i++) w.push(1 / m); w.push(0.5 / m); }
+    return w;
+  }
+  function respuesta(m, p) {
+    var w = pesos(m), k = (w.length - 1) / 2, re = 0, im = 0, j;
+    for (j = 0; j < w.length; j++) {
+      var d = j - k;
+      re += w[j] * Math.cos(2 * Math.PI * d / p);
+      im += w[j] * Math.sin(2 * Math.PI * d / p);
+    }
+    return Math.hypot(re, im);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var m = +cm.value, p = +cp.value;
+    em.textContent = m; ep.textContent = p;
+    var t;
+    for (t = 0; t <= 1.001; t += 0.25) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(t).toFixed(1) + " L" + (X0 + XW) + " " + py(t).toFixed(1),
+        stroke: C_L, "stroke-width": 1, opacity: .5 }));
+      svg.appendChild(el("text", { x: X0 - 9, y: py(t) + 4, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .65 }, t.toFixed(2)));
+    }
+    [2, 12, 24, 36, 48].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y0 + YH + 17, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .65 }, v));
+    });
+    svg.appendChild(el("text", { x: X0, y: 20, "font-size": 11.5, fill: C_T, opacity: .75 },
+      "fracción de amplitud que sobrevive, según el periodo de la señal"));
+    var d = "", q;
+    for (q = PMIN; q <= PMAX; q += 0.05) d += (d ? " L" : "M") + px(q).toFixed(1) + " " + py(respuesta(m, q)).toFixed(1);
+    svg.appendChild(el("path", { d: d, stroke: C_A, "stroke-width": 2.2, fill: "none" }));
+    // los periodos que dividen a m se anulan exactamente
+    var ceros = [];
+    for (q = 2; q <= PMAX; q++) if (m % q === 0) ceros.push(q);
+    ceros.forEach(function (q2) {
+      svg.appendChild(el("circle", { cx: px(q2).toFixed(1), cy: py(0).toFixed(1), r: 4, fill: C_B }));
+    });
+    var v = respuesta(m, p);
+    svg.appendChild(el("path", { d: "M" + px(p).toFixed(1) + " " + Y0 + " L" + px(p).toFixed(1) + " " + (Y0 + YH),
+      stroke: C_G, "stroke-width": 1.4, "stroke-dasharray": "4 4" }));
+    svg.appendChild(el("circle", { cx: px(p).toFixed(1), cy: py(v).toFixed(1), r: 5, fill: C_G }));
+
+    lec.innerHTML = "Con m = <strong>" + m + "</strong>, una señal de periodo <strong>" + p +
+      "</strong> sobrevive con el <strong>" + (100 * v).toFixed(2) + " %</strong> de su amplitud. " +
+      "Los puntos rojos son los periodos que <strong>dividen a " + m + "</strong>: ahí la media móvil da cero exacto (Proposición 1.4a). " +
+      (v < 1e-9 ? "Este es uno de ellos: la señal desaparece del todo."
+       : p > 2 * m ? "Los periodos largos pasan casi enteros, y por eso acaban dentro de la tendencia."
+       : "Los periodos intermedios pasan encogidos: ni son tendencia ni desaparecen, y se reparten entre las tres componentes.");
+  }
+  cm.addEventListener("input", dibujar);
+  cp.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. La descomposición clásica, entera
+
+Con las dos piezas anteriores, el procedimiento completo son tres pasos: estimar la tendencia con $\text{MM}_m$, quitarla, y promediar lo que queda por posición dentro del ciclo imponiendo que sume cero.
+
+::: {.proposicion}
+**Proposición 1.5 (lo que cuesta y lo que arregla el logaritmo).** Con la media móvil centrada de orden $m$:
+
+(a) la tendencia **no está definida** en los $\lfloor m/2\rfloor$ primeros ni en los $\lfloor m/2\rfloor$ últimos instantes, porque la ventana se sale de la serie;
+
+(b) si la serie es **multiplicativa**, $y_t=T_t\cdot S_t\cdot R_t$ con $S$ y $R$ alrededor de uno, entonces $\log y_t=\log T_t+\log S_t+\log R_t$ es aditiva, y todo lo anterior se aplica a los logaritmos.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (a), la ventana centrada en $t$ necesita los índices de $t-\lfloor m/2\rfloor$ a $t+\lfloor m/2\rfloor$, que existen solo si $\lfloor m/2\rfloor\le t\le n-1-\lfloor m/2\rfloor$. Para (b), el logaritmo convierte productos en sumas, y una $S$ periódica de periodo $m$ da un $\log S$ periódico del mismo periodo. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def media_movil(y, m):
+    pesos = np.ones(m) / m if m % 2 else np.r_[0.5, np.ones(m - 1), 0.5] / m
+    k = len(pesos) // 2
+    salida = np.full(len(y), np.nan)
+    for i in range(k, len(y) - k):
+        salida[i] = float(pesos @ y[i - k:i + k + 1])
+    return salida
+
+def descompone(y, m):
+    """La descomposicion clasica, en tres pasos y con la restriccion declarada."""
+    T = media_movil(y, m)
+    sin_tendencia = y - T
+    # el perfil estacional: la media de cada posicion del ciclo
+    perfil = np.array([np.nanmean(sin_tendencia[j::m]) for j in range(m)])
+    perfil = perfil - perfil.mean()          # la restriccion: suma cero
+    S = np.tile(perfil, int(np.ceil(len(y) / m)))[:len(y)]
+    return T, S, y - T - S
+
+n, m = 144, 12
+t = np.arange(n, dtype=float)
+T_real = 10.0 + 0.05 * t
+perfil_real = np.array([2.0, 3.1, 1.4, -0.6, -2.2, -3.0, -2.4, -0.9, 0.7, 1.8, 1.1, -0.9])
+perfil_real = perfil_real - perfil_real.mean()
+S_real = np.tile(perfil_real, n // m)
+rng = np.random.default_rng(9)
+y = T_real + S_real + rng.normal(0, 0.4, n)
+
+T, S, R = descompone(y, m)
+dentro = ~np.isnan(T)
+
+print("serie de %d puntos, periodo %d" % (n, m))
+print("puntos que la media movil no puede calcular: %d de %d" % (int(np.isnan(T).sum()), n))
+print("   son %d en cada extremo, que es m/2 con m par" % (m // 2))
+print()
+print("la restriccion se cumple por construccion:")
+print("   la suma del perfil estacional esta por debajo de 1e-12: %s"
+      % bool(abs(float(S[:m].sum())) < 1e-12))
+print()
+print("lo recuperado contra lo verdadero, en la parte donde hay tendencia:")
+print("   error maximo de la tendencia : %.4f" % float(np.abs(T[dentro] - T_real[dentro]).max()))
+print("   error maximo del perfil      : %.4f" % float(np.abs(S[:m] - perfil_real).max()))
+print("   desviacion tipica del residuo: %.4f  (el ruido real era 0.4)" % float(R[dentro].std()))
+print()
+
+# La version multiplicativa se convierte en aditiva tomando logaritmos.
+y_mult = T_real * (1 + S_real / 20.0) * np.exp(rng.normal(0, 0.02, n))
+Tl, Sl, Rl = descompone(np.log(y_mult), m)
+dentro_l = ~np.isnan(Tl)
+print("una serie MULTIPLICATIVA, descompuesta sobre su logaritmo:")
+print("   reconstruida con exp(T+S+R) reproduce la serie a 1e-10: %s"
+      % bool(np.allclose(np.exp(Tl + Sl + Rl)[dentro_l], y_mult[dentro_l], atol=1e-10)))
+print("   y el perfil estacional pasa a ser un FACTOR, no un sumando:")
+print("      " + "  ".join("%.4f" % v for v in np.exp(Sl[:6])))
+print()
+print("por eso la eleccion entre aditiva y multiplicativa no es de gusto: se")
+print("mira si la amplitud del ciclo crece con el nivel de la serie. Si crece,")
+print("el logaritmo la vuelve aditiva y todo lo anterior se aplica igual")
+```
+
+Los $12$ puntos perdidos de $144$ son exactamente $6$ en cada extremo, y eso tiene una consecuencia práctica: **la descomposición clásica no dice nada sobre el final de la serie**, que es justo donde uno quiere pronosticar. Los métodos de las lecciones 5 y 9 existen en buena parte por eso.
+
+La recuperación es razonable pero no perfecta: la tendencia se estima con un error máximo de $0{,}2404$ y el perfil con $0{,}2492$, sobre un ruido real de desviación $0{,}4$. El residuo sale con desviación $0{,}3684$, algo por debajo del ruido verdadero, porque parte de él se ha ido al perfil estacional.
+
+**Y la elección entre aditiva y multiplicativa no es de gusto.** Se mira si la amplitud del ciclo crece con el nivel de la serie: si crece, el logaritmo la vuelve aditiva y el perfil estacional pasa a ser un **factor** —los $1{,}0913$, $1{,}1495$, $1{,}0799$ de la celda— en lugar de un sumando.
+
+## 4. Lo que esta lección no resuelve
+
+Conviene dejar dicho qué queda fuera, porque el resto del módulo existe en gran parte para eso:
+
+- **El periodo $m$ se supone conocido.** Aquí se fija a mano. Detectarlo desde los datos es de la lección 3, con la autocorrelación.
+- **El perfil estacional se supone fijo.** Si cambia con el tiempo —y suele—, esta descomposición lo promedia y esconde el cambio. Las lecciones 5 y 9 lo dejan variar.
+- **Los feriados y los eventos no encajan.** Un día festivo móvil no tiene periodo fijo, así que ningún perfil de periodo $m$ lo captura. Eso es la lección 6.
+- **Y esto no es un modelo de pronóstico.** Una descomposición describe el pasado; extenderla al futuro exige decir qué hace la tendencia después del último dato, que es lo que esta lección **no** contesta.
+
+## Ejercicios
+
+### Ejercicio 1, Lo que la media móvil le hace a una parábola
+
+Calcular en cuánto desplaza la media móvil centrada a la serie $t^2$ para varios órdenes, con las fórmulas de la Proposición 1.4c.
+
+```{pyodide}
+#| exercise: ex_parabola
+def desvio(m):
+    if m % 2 == 0:
+        return ______
+    return ______
+
+for m in (4, 7, 12, 24):
+    print(m, round(desvio(m), 6))
+round(desvio(12), 6)
+```
+
+::: {.hint exercise="ex_parabola"}
+Con $m$ par el desvío es $\frac{m^2-4}{12}+\frac12$. Con $m$ impar, la ventana tiene pesos iguales y el desvío es $\frac{m^2-1}{12}$.
+:::
+
+::: {.solution exercise="ex_parabola"}
+```{pyodide}
+def desvio(m):
+    if m % 2 == 0:
+        return (m * m - 4) / 12 + 0.5
+    return (m * m - 1) / 12
+
+for m in (4, 7, 12, 24):
+    print(m, round(desvio(m), 6))
+round(desvio(12), 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_parabola
+#| check: true
+if abs(result - 12.166667) < 1e-5:
+    feedback = {"correct": True, "message": "Correcto: 12,166667 con m = 12. El desvío crece con el cuadrado del orden: con m = 24 ya vale 48,166667, así que ventanas largas desplazan mucho el nivel de una tendencia curva.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 12.166667 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuánta serie se pierde
+
+Con una serie semanal de $520$ observaciones y periodo anual $m=52$, calcular cuántos puntos quedan sin tendencia estimada y cuántos son útiles.
+
+```{pyodide}
+#| exercise: ex_perdidos
+n, m = 520, 52
+
+perdidos = ______
+utiles = ______
+
+print(perdidos, utiles, round(100 * perdidos / n, 4))
+int(perdidos)
+```
+
+::: {.hint exercise="ex_perdidos"}
+La Proposición 1.5a dice que se pierden $\lfloor m/2\rfloor$ en cada extremo, así que el total es el doble.
+:::
+
+::: {.solution exercise="ex_perdidos"}
+```{pyodide}
+n, m = 520, 52
+
+perdidos = 2 * (m // 2)
+utiles = n - perdidos
+
+print(perdidos, utiles, round(100 * perdidos / n, 4))
+int(perdidos)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_perdidos
+#| check: true
+if result == 52:
+    feedback = {"correct": True, "message": "Correcto: 52 de 520, o sea el 10 % de la serie, y la mitad de esa pérdida está justo al final, que es donde interesa pronosticar. Con diez años de datos semanales se pierde medio año a cada lado.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 52 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Series 1**:
+
+1. Descomponer la misma serie con $m$ igual al periodo verdadero, a la mitad y al doble, y anotar qué le pasa al perfil estacional en cada caso. Relacionarlo con la Proposición 1.4a: ¿qué periodos se anulan con cada elección?
+2. Construir una serie cuyo perfil estacional **cambie** a la mitad del recorrido —por ejemplo, que se duplique su amplitud— y descomponerla con el método clásico. Medir el residuo antes y después del cambio, y anotar qué señal habría avisado de que el perfil no es fijo.
+3. Aplicar la descomposición aditiva a una serie claramente multiplicativa y anotar en `50-Errores/` qué forma toma el residuo. Contrastarla con la del mismo dato descompuesto sobre su logaritmo, y describir el patrón que delata la elección equivocada.
+
+## Del libro
+
+Esta lección **no sigue ningún libro**. El módulo de series de tiempo cubre lo que ni ISLP ni ESL tratan, y sus resultados se demuestran o se miden aquí.
+
+Lo más cercano en la bibliografía del sitio es **Machine Learning 11**, donde la media móvil aparece como el suavizador lineal más simple, y **Python 14**, donde las ventanas móviles se manejan con pandas. Esta página añade lo que allí no se dice: **qué frecuencia deja pasar exactamente cada ventana**, que es lo que convierte la elección de $m$ en una decisión con consecuencias calculables.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/descomposicion-series.md`, enlazada a [[series-de-tiempo-pandas]], [[suavizado-y-gams]] y [[covarianza-correlacion]]. Conviene rehacer a mano la Proposición 1.4a: ver que una ventana de longitud $m$ cubre un periodo completo, y que por tanto la suma es la misma la ponga uno donde la ponga, deja claro de una vez **por qué el orden de la media móvil tiene que ser el periodo de la estacionalidad** y no un número redondo.
+
+```
+¿Qué es una descomposición aditiva?::y = T + S + R, con S periódica
+¿Es única?::No: mover una constante entre T y S da otra igual de válida
+¿Qué restricción se usa?::Que el perfil estacional sume cero en cada periodo
+¿Qué hace la media móvil de orden m a un ciclo de periodo m?::Lo aniquila, exactamente
+¿Y a los periodos que dividen a m?::También los aniquila
+¿Y a una recta?::La reproduce exacta
+¿Y a una parábola?::La desplaza una constante, (m²−4)/12 + ½ con m par
+¿Y a un ciclo de otro periodo?::Lo encoge por un factor menor que uno
+¿Cuántos puntos se pierden?::⌊m/2⌋ en cada extremo
+¿Dónde duele esa pérdida?::Al final, que es donde se quiere pronosticar
+¿Qué hace el logaritmo?::Convierte una serie multiplicativa en aditiva
+¿Cuándo hace falta?::Cuando la amplitud del ciclo crece con el nivel
+¿Detecta esta lección el periodo m?::No: se supone conocido, y se detecta en la lección 3
+¿Es esto un modelo de pronóstico?::No: describe el pasado, no dice qué hace la tendencia después
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 1.2 se demuestra por sustitución directa; se comprueba con dos descomposiciones distintas de la misma serie, las dos exactas a $10^{-12}$, y con el caso degenerado $T=y$, $S=0$, $R=0$. La Proposición 1.4a se demuestra viendo que la ventana cubre un periodo completo; se comprueba con cuatro señales de periodo $12$ —dos senos, un coseno y un escalón—, todas aniquiladas por debajo de $10^{-12}$. La 1.4b y la 1.4c se demuestran con la simetría de los pesos; se comprueban reproduciendo una recta a $10^{-10}$ y midiendo el desvío constante sobre $t^2$, que sale $12{,}166667$ y coincide con la fórmula a $10^{-9}$. La 1.4d se demuestra con la respuesta en frecuencia del filtro; se comprueba en siete periodos, donde los divisores de $12$ dan cero y los demás dan factores entre $0{,}201184$ y $0{,}856628$. La Proposición 1.5a se demuestra contando índices; se comprueba con $12$ puntos perdidos de $144$. La 1.5b se demuestra por la propiedad del logaritmo; se comprueba reconstruyendo la serie multiplicativa a $10^{-10}$. La descomposición completa recupera la tendencia con error máximo $0{,}2404$ y el perfil con $0{,}2492$ sobre un ruido de $0{,}4$. Los dos visuales recalculan estas mismas fórmulas en todo el rango de sus controles.
+
+**Lo que se usa de otras lecciones sin repetir.** La media móvil como suavizador lineal y la lectura de su traza son de Machine Learning 11. El manejo de ventanas móviles en pandas es de Python 14. Que un filtro lineal invariante en el tiempo actúa sobre cada frecuencia multiplicándola por un número se **usa** en la demostración de la Proposición 1.4d y se toma como conocido.
+
+**Lo que se enuncia sin demostrar.** La fórmula cerrada del desvío sobre $t^2$ para la versión $2\times m$ se **enuncia y se comprueba**, pero la suma que la produce no se desarrolla paso a paso. Que la respuesta en frecuencia del filtro sea $\lvert\sum_j w_j e^{2\pi i j/p}\rvert$ es un resultado estándar de filtros lineales que aquí **no se demuestra**. Y nada de esta página justifica que la descomposición clásica sea un buen método: es el más simple, sus propiedades son exactas, y sus tres limitaciones quedan nombradas en la sección 4.
+
+**Lo que viene de los libros.** Nada. Esta lección no cita ninguno.
+
+**Lo que es mío, no del libro.** El tratamiento de la no unicidad como **primer resultado de la lección** en lugar de como una nota al pie: una descomposición no se calcula, se define, y la restricción es parte del método. La tabla de la Proposición 1.4d, que convierte «la media móvil suaviza» en una lista de factores por periodo, y el visual que la recorre entera. Y el énfasis en la Proposición 1.5a: los puntos perdidos no son un detalle de implementación, están **justo donde se quiere pronosticar**, y eso explica por qué el resto del módulo existe.
+:::

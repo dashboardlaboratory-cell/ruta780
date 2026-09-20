@@ -21,7 +21,7 @@ MOD = {"estadistica": "Estadística", "matematica": "Matemática",
 
 def secciones_existentes():
     hay = set()
-    for nb in ("F0-retos", "F1-retos", "F2-retos"):
+    for nb in ("F0-retos", "F1-retos", "F2-retos", "F3-retos"):
         d = json.loads((RAIZ/"proyectos"/"notebooks"/f"{nb}.ipynb").read_text(encoding="utf-8"))
         for c in d["cells"]:
             if c["cell_type"] != "markdown": continue
@@ -99,7 +99,7 @@ pendientes = {}
 for p in sorted(RAIZ.glob("*/[0-9]*.qmd")):
     nb, etiqueta, puntos = retos_de(p)
     if not nb: continue
-    mm = re.match(r"(Est|Mat|Py|Python|ML|Estadística|Matemática)\s*(\d+)", etiqueta)
+    mm = re.match(r"(Est|Mat|Py|Python|ML|Series|Estadística|Matemática)\s*(\d+)", etiqueta)
     if not mm: continue
     mod = {"Est":"Estadística","Mat":"Matemática","Py":"Python"}.get(mm.group(1), mm.group(1))
     num = int(mm.group(2))

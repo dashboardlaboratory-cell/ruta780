@@ -111,6 +111,7 @@ MIGRADAS = {
     "ml/20-pcr-y-pls.qmd",
     "ml/21-clustering.qmd",
     "ml/22-pruebas-multiples.qmd",
+    "series/01-descomposicion.qmd",
     "python/01-tipos-y-estructuras.qmd",
     "python/02-funciones-y-scope.qmd",
     "python/03-comprehensions.qmd",

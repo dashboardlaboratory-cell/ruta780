@@ -36,8 +36,8 @@ Tres hitos de esta sesión:
   las 33 secciones de retos y los 106 símbolos sin declarar.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
-faltando lecciones por escribir: **ML va por 22 de 90**, y **Series de tiempo e
-Inferencia causal están vacíos**. El detalle está en la tabla del punto 2.
+faltando lecciones por escribir: **ML va por 22 de 90**, **Series de tiempo
+empieza con 1 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
 
@@ -105,7 +105,7 @@ hay que empezar a hacer:
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
-| Series de tiempo | 0 | 11 | — | todas |
+| Series de tiempo | 1 | 11 | **1 de 1** | 2 a 11 |
 | Machine Learning | 22 | 90 | **22 de 22** | la Fase 2 cerrada; quedan ESL y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
@@ -394,7 +394,9 @@ Lo que sigue, en orden de coste creciente:
    lección, y **no reaparece en ninguna fase posterior**. Deep Learning al
    menos se retoma en las lecciones 28 a 33; supervivencia no tiene red.
 
-3. **Series de tiempo e Inferencia causal** están vacías en el sidebar.
+3. **Series de tiempo ya no está vacía** —la lección 1 de 11 se publicó el
+   19-09-2026, y no cita ningún libro porque ninguno del sitio cubre el tema—;
+   **Inferencia causal sigue vacía** en el sidebar.
    **ML ya no tiene bloqueo de citación**: el índice de ISLP se completó el
    13-09-2026 con sus 81 secciones, así que se puede citar `§4.3 Logistic
    Regression` y no solo el capítulo. Causal sigue necesitando *Causal Inference
@@ -1685,6 +1687,64 @@ empate cuenta.
 Los valores de los dos ejercicios se calcularon en una orden aparte antes de
 escribir los bloques `check`, y cuadraron a la primera —$0{,}0375$ y $99$—. Van
 dos lecciones seguidas sin corrección.
+
+### 3.27 Series de tiempo 01: el módulo vacío arranca (19-09-2026)
+
+El sidebar tenía dos módulos sin una sola página. Uno de los dos ya no.
+
+**Series de tiempo 01 — «Descomposición: tendencia, estacionalidad y residuo»** es
+la primera lección del proyecto que **no sigue ningún libro**. Los cuatro módulos
+anteriores se apoyan en un índice verificado —ISLP, MML, McKinney, Think Bayes,
+Think Stats—; aquí no hay ninguno que cubra el tema, así que cada resultado se
+enuncia y se demuestra o se mide en la página. El bloque «Del libro» lo dice con
+todas las letras y remite a lo más cercano que sí existe en el sitio: ML 11 —la
+media móvil como suavizador lineal— y Python 14 —ventanas móviles con pandas—.
+
+#### Lo que la lección añade
+
+La descomposición suele presentarse como una receta. Aquí se presenta como un
+problema mal planteado que hay que cerrar:
+
+> **1.2**: la definición por sí sola **no determina** las componentes. Si
+> $(T,S,R)$ sirve, $(T+c,\ S-c,\ R)$ también, y $(y_t,0,0)$ siempre cumple.
+
+Sin una restricción no hay nada que decidir, y de ahí sale la convención de que
+el perfil estacional sume cero.
+
+La pieza con contenido es la **1.4**, que trata la media móvil como filtro y dice
+exactamente qué le hace a cada frecuencia: **anula** el periodo $m$ sin error,
+**reproduce** las rectas, a $t^2$ le suma una constante que con $m$ par vale
+$\frac{m^2-4}{12}+\frac12$ —$12{,}166667$ para $m=12$— y **encoge** los ciclos de
+otro periodo por un factor que depende solo de $p$ y $m$. Eso es lo que convierte
+la elección del orden en una decisión con consecuencias calculables, en lugar de
+en un número redondo.
+
+La **1.5** cobra el precio —$\lfloor m/2\rfloor$ instantes perdidos en cada
+extremo— y enseña el arreglo del logaritmo para el caso multiplicativo.
+
+#### Un control roto, cazado por la regla 19b
+
+El primer visual tenía un desplegable para poner o quitar la restricción de suma
+cero. Con la constante en su valor por defecto —cero— poner y quitar la
+restricción **daba el mismo dibujo**, y `visuales.py --estricto` lo marcó:
+
+```
+✗ series/01-descomposicion.qmd [visual 0]   de-r   no cambia nada el dibujo
+```
+
+No era un falso positivo: era la regla 19b en su forma más pura. Un control que
+en su estado inicial no mueve un pixel es un control que el lector no aprende a
+usar. Se arregló por dos lados a la vez: la constante arranca en $2{,}5$, de modo
+que el desplegable siempre separa dos dibujos distintos, y con la restricción
+puesta aparece además **la línea del cero del perfil estacional**, que es
+justamente lo que la restricción fija. Ahora el control enseña lo que hace.
+
+#### El módulo, cableado entero
+
+Arrancar un módulo vacío es más que escribir una página: hubo que crear
+`proyectos/notebooks/F3-retos.ipynb`, añadir `"F3-retos"` al bucle de
+`proyectos/genera_retos.py` y enseñarle a la expresión de módulos a reconocer
+`Series`. Sin eso el reto de la lección no habría llegado a ningún cuaderno.
 
 ---
 
