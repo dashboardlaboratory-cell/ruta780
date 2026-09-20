@@ -37,7 +37,7 @@ Tres hitos de esta sesión:
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
 faltando lecciones por escribir: **ML va por 22 de 90**, **Series de tiempo
-va por 4 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
+va por 5 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
 
@@ -105,7 +105,7 @@ hay que empezar a hacer:
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
-| Series de tiempo | 4 | 11 | **4 de 4** | 5 a 11 |
+| Series de tiempo | 5 | 11 | **5 de 5** | 6 a 11 |
 | Machine Learning | 22 | 90 | **22 de 22** | la Fase 2 cerrada; quedan ESL y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
@@ -394,7 +394,7 @@ Lo que sigue, en orden de coste creciente:
    lección, y **no reaparece en ninguna fase posterior**. Deep Learning al
    menos se retoma en las lecciones 28 a 33; supervivencia no tiene red.
 
-3. **Series de tiempo ya no está vacía** —las lecciones 1 a 4 de 11 se
+3. **Series de tiempo ya no está vacía** —las lecciones 1 a 5 de 11 se
    publicaron el 19-09-2026, y no citan ningún libro porque ninguno del sitio
    cubre el tema—;
    **Inferencia causal sigue vacía** en el sidebar.
@@ -1911,6 +1911,51 @@ Proposición 4.7a se ve al pie de la letra —la diferencia estacional deja cero
 exacto— y subiéndolo se ve que **la aniquilación es exacta solo mientras el
 perfil lo sea**, que es justamente la advertencia que la sección necesitaba.
 Un control roto obligó a encontrar el control que faltaba.
+
+### 3.31 Series de tiempo 05: tres descripciones del mismo objeto (19-09-2026)
+
+El suavizado exponencial suele aparecer como una receta simpática, aparte de los
+modelos con nombre. La lección demuestra que es **el mismo objeto visto desde
+tres sitios**, y lo hace en las dos direcciones en lugar de mencionarlo:
+
+> **5.3**: el pronóstico de un $\text{ARIMA}(0,1,1)$ con $\theta=-(1-\alpha)$
+> coincide con el del suavizado exponencial de factor $\alpha$.
+
+Comprobado con diferencia máxima $0{,}000000000000$ sobre dos mil instantes y
+tres factores distintos.
+
+> **5.5**: la ganancia del filtro de Kalman del modelo de nivel local, en
+> régimen, vale $(-q+\sqrt{q^{2}+4q})/2$, que es ese mismo $\alpha$.
+
+Se demuestra resolviendo la ecuación de Riccati escalar —queda $x^2-qx-q=0$— y
+se comprueba iterándola dos mil veces: las dos columnas coinciden a diez
+decimales en cinco valores de $q$. Con $q=1$ sale $0{,}6180339887$, la razón
+áurea menos uno.
+
+#### La consecuencia que cambia cómo se usa
+
+De ahí sale $q=\alpha^{2}/(1-\alpha)$, y con ella la frase que ordena la
+lección: **elegir $\alpha$ no es ajustar un parámetro, es afirmar una razón
+señal-ruido**. Poner $\alpha=0{,}3$ por costumbre equivale a declarar que el
+nivel se mueve casi ocho veces menos que el ruido de medición, y eso ya es una
+afirmación que se puede discutir con datos.
+
+La otra traducción útil es la memoria: retardo medio $(1-\alpha)/\alpha$ y
+semivida $\log(1/2)/\log(1-\alpha)$. Con $\alpha=0{,}1$ son $9$ instantes y
+$6{,}578813$; con $0{,}8$, $0{,}25$ y $0{,}430677$.
+
+Y la Proposición 5.7 deja una asimetría que conviene ver: la varianza del error
+a $h$ pasos vale $\sigma^2(1+(h-1)\alpha^2)$, así que a veinte pasos
+$\alpha=0{,}2$ da $1{,}7600$ y $\alpha=0{,}5$ da $5{,}7500$. **Un suavizado más
+reactivo pronostica peor a largo plazo**, porque cada sacudida que mete en el
+nivel se queda ahí para siempre.
+
+#### Sobre el proceso
+
+Dos cosas se cazaron antes de publicar. El prerrequisito `estadistica/12` estaba
+mal —ese número es la normal multivariante, la regresión es la 13—, y la regla
+14 marcó un «no son parecidos, son la misma cuenta» en la prosa. Las dos
+salieron de correr las compuertas antes del commit, no después.
 
 ---
 

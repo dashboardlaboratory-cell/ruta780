@@ -1,0 +1,612 @@
+---
+title: "Suavizado exponencial y modelos de estado"
+subtitle: "Series de tiempo · Lección 5"
+nivel: L3
+modulo: series
+fase: F3
+prereqs: [series/04-arima, series/02-estacionariedad, estadistica/13-regresion-primeros-principios]
+siguientes: []
+libro: "—"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="series/05-suavizado-exponencial"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F3]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [ARIMA](04-arima.qmd) · [Estacionariedad](02-estacionariedad.qmd) · [Regresión](../estadistica/13-regresion-primeros-principios.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Escribir la recursión del [suavizado exponencial]{.g data-t="suavizado exponencial"} y **demostrar que es una media ponderada con pesos geométricos**.
+2. **Demostrar que ese suavizado es el pronóstico óptimo de un $\text{ARIMA}(0,1,1)$**, y comprobarlo a doce decimales.
+3. Escribir el [modelo de nivel local]{.g data-t="modelo de nivel local"} en forma de estado y observación.
+4. **Demostrar que la ganancia del [filtro de Kalman]{.g data-t="filtro de Kalman"} en régimen es exactamente ese mismo $\alpha$**, con la fórmula que lo liga a la razón señal-ruido.
+5. Traducir $\alpha$ a memoria efectiva, en retardo medio y en semivida.
+6. Calcular la anchura del intervalo de pronóstico a $h$ pasos y decir por qué crece.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Series de tiempo 4**: el $\text{ARIMA}(0,1,1)$, que esta lección demuestra que es el mismo objeto.
+- **Series de tiempo 2**: la raíz unitaria, que es lo que hace que el pronóstico sea plano.
+- **Estadística 13**: la regresión desde primeros principios, cuya estimación es el antecedente de actualizar con cada dato nuevo.
+- **Series de tiempo 1**: la descomposición, cuyo esquema tendencia más estacionalidad reaparece aquí en forma de estados.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Series de tiempo 7**: el backtesting, que sobre este modelo cuesta una operación por corte.
+- **Series de tiempo 9**: Prophet, que separa las mismas componentes con otra maquinaria.
+- **Series de tiempo 10**: la reconciliación jerárquica, que necesita pronósticos baratos en muchas series.
+- **Series de tiempo 11**: la evaluación, donde este modelo es la referencia que hay que batir.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $y_t$ | y sub te | El valor observado en el instante $t$ |
+| $n$ | ene | La longitud de la serie |
+| $h$ | hache | El horizonte del pronóstico, en pasos |
+| $\alpha$ | alfa | El factor de suavizado, entre cero y uno |
+| $\hat y_{t+1}$ | y con sombrero | El pronóstico a un paso hecho en el instante $t$ |
+| $\mu_t$ | mu sub te | El nivel latente del modelo de estado |
+| $\varepsilon_t$ | épsilon sub te | El ruido de medición |
+| $\eta_t$ | eta sub te | El ruido del nivel, que lo mueve de un instante al siguiente |
+| $\sigma^2$ | sigma cuadrado | La varianza del ruido de medición |
+| $q$ | cu | La razón señal-ruido: varianza del nivel entre varianza de medición |
+| $P_t$ | pe sub te | La varianza del error de estimación del nivel |
+| $K$ | ka | La ganancia del filtro de Kalman en régimen |
+| $L$ | ele mayúscula | El operador de retardo: $Ly_t=y_{t-1}$ |
+| $\theta$ | theta | El coeficiente de media móvil del $\text{ARIMA}(0,1,1)$ |
+:::
+
+## 1. Una media ponderada que se calcula sin memoria
+
+::: {.definicion}
+**Definición 5.1 (suavizado exponencial simple).** Dado $\alpha\in(0,1]$, el suavizado exponencial simple produce el pronóstico
+$$\hat y_{t+1}=\alpha\,y_t+(1-\alpha)\,\hat y_t,$$
+con un valor inicial $\hat y_1$ declarado aparte. El pronóstico a cualquier horizonte $h$ es el mismo valor $\hat y_{t+1}$.
+:::
+
+La recursión ocupa una línea y una sola variable de memoria, lo que explica que siga usándose donde hay cientos de miles de series. Lo que esconde es una media ponderada de todo el pasado.
+
+::: {.proposicion}
+**Proposición 5.2 (pesos geométricos).** Desarrollando la recursión,
+$$\hat y_{t+1}=\alpha\sum_{j=0}^{t-1}(1-\alpha)^{j}\,y_{t-j}\;+\;(1-\alpha)^{t}\,\hat y_1 ,$$
+y los pesos cumplen
+$$\alpha\sum_{j=0}^{t-1}(1-\alpha)^{j}=1-(1-\alpha)^{t}\ \xrightarrow[t\to\infty]{}\ 1 .$$
+El peso del valor inicial decae geométricamente y es lo único que impide que los pesos sumen uno.
+:::
+
+::: {.demostracion}
+*Demostración.* Por inducción: para $t=1$ la fórmula es la definición. Suponiéndola cierta en $t$, sustituir en $\hat y_{t+2}=\alpha y_{t+1}+(1-\alpha)\hat y_{t+1}$ multiplica cada peso por $1-\alpha$ y antepone $\alpha y_{t+1}$, que es exactamente la fórmula en $t+1$. La suma de los pesos es una serie geométrica finita de razón $1-\alpha$, cuyo valor es $\alpha\frac{1-(1-\alpha)^t}{1-(1-\alpha)}=1-(1-\alpha)^t$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+print("los pesos de un suavizado exponencial, alfa (1-alfa)^j")
+print("  alfa    j=0      j=1      j=2      j=5      j=10     suman (j<50)")
+for alfa in (0.1, 0.3, 0.6, 0.9):
+    w = [alfa * (1 - alfa) ** j for j in range(50)]
+    print("  %.1f   %.5f  %.5f  %.5f  %.5f  %.5f      %.10f"
+          % (alfa, w[0], w[1], w[2], w[5], w[10], sum(w)))
+print()
+print("la suma de los primeros 50 pesos ya vale uno salvo (1-alfa)^50, que con")
+print("alfa = 0.1 todavia vale %.6f: con alfa pequeno el arranque pesa mucho" % (0.9 ** 50))
+```
+
+Con $\alpha=0{,}9$ los cincuenta primeros pesos suman uno a diez decimales, y con $\alpha=0{,}1$ suman $0{,}9948462248$: falta el $0{,}005154$ que se lleva el valor inicial. **Con $\alpha$ pequeño, la elección de $\hat y_1$ sigue pesando después de cincuenta observaciones**, y por eso conviene declararla en lugar de dejarla a la biblioteca de turno.
+
+```{=html}
+<div class="viz-pesos">
+  <div class="controles">
+    <label>Factor α <input id="pe5-a" type="range" min="0.05" max="1" step="0.05" value="0.30"> <span id="pe5-a-v">0.30</span></label>
+    <label>Serie
+      <select id="pe5-s">
+        <option value="nivel" selected>nivel con un salto</option>
+        <option value="paseo">paseo aleatorio</option>
+        <option value="ruido">ruido alrededor de cero</option>
+      </select>
+    </label>
+    <label>Ruido <input id="pe5-r" type="range" min="0.2" max="2.5" step="0.1" value="1.0"> <span id="pe5-r-v">1.0</span></label>
+  </div>
+  <svg id="pe5-svg" viewBox="0 0 660 280" role="img" aria-label="Arriba la serie con su suavizado superpuesto y abajo el perfil de pesos geométricos que ese factor implica."></svg>
+  <p class="lectura" id="pe5-lectura"></p>
+</div>
+<style>
+.viz-pesos { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-pesos .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-pesos label { display: flex; align-items: center; gap: .4rem; }
+.viz-pesos input[type=range] { width: 150px; padding: 0; }
+.viz-pesos select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-pesos svg { width: 100%; height: auto; display: block; }
+.viz-pesos .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("pe5-svg"), lec = document.getElementById("pe5-lectura");
+  var ca = document.getElementById("pe5-a"), cs = document.getElementById("pe5-s"), cr = document.getElementById("pe5-r");
+  var ea = document.getElementById("pe5-a-v"), er = document.getElementById("pe5-r-v");
+  var X0 = 46, XW = 574, N = 120, PESOS = 24;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function sacudidas(n) {
+    var s = 515151, out = [], i, u1, u2;
+    function u() { s = (s * 48271) % 2147483647; return s / 2147483647; }
+    for (i = 0; i < n; i++) {
+      u1 = Math.max(u(), 1e-9); u2 = u();
+      out.push(Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2));
+    }
+    return out;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var a = +ca.value, tipo = cs.value, ruido = +cr.value;
+    ea.textContent = a.toFixed(2); er.textContent = ruido.toFixed(1);
+    var e = sacudidas(N), y = [], acu = 0, i;
+    for (i = 0; i < N; i++) {
+      if (tipo === "nivel") y.push((i < N / 2 ? 0 : 6) + ruido * e[i]);
+      else if (tipo === "paseo") { acu += 0.5 * e[i]; y.push(acu + ruido * e[(i + 37) % N] * 0.4); }
+      else y.push(ruido * e[i]);
+    }
+    var s = y[0], suav = [s];
+    for (i = 1; i < N; i++) { s = a * y[i - 1] + (1 - a) * s; suav.push(s); }
+
+    // marco anclado a un rango fijo: no sigue a los datos (regla 19b)
+    var LO = -9, HI = 13, PY = 20, PH = 140;
+    var px = function (i2) { return X0 + i2 / (N - 1) * XW; };
+    var py = function (v) { return PY + (HI - Math.max(LO, Math.min(HI, v))) / (HI - LO) * PH; };
+    svg.appendChild(el("rect", { x: X0, y: PY, width: XW, height: PH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + (X0 + XW) + " " + py(0).toFixed(1), stroke: C_L, "stroke-width": 1, "stroke-dasharray": "3 3" }));
+    var d1 = "", d2 = "";
+    for (i = 0; i < N; i++) {
+      d1 += (i ? " L" : "M") + px(i).toFixed(1) + " " + py(y[i]).toFixed(1);
+      d2 += (i ? " L" : "M") + px(i).toFixed(1) + " " + py(suav[i]).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: d1, stroke: C_T, "stroke-width": 1, fill: "none", opacity: .45 }));
+    svg.appendChild(el("path", { d: d2, stroke: C_B, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("text", { x: X0 - 6, y: PY + 12, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "y"));
+
+    var QY = 186, QH = 66;
+    var qy = function (v) { return QY + (1 - v) * QH; };
+    svg.appendChild(el("rect", { x: X0, y: QY, width: XW, height: QH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    for (i = 0; i < PESOS; i++) {
+      var w = a * Math.pow(1 - a, i), bx = X0 + (i + 0.5) / PESOS * XW;
+      svg.appendChild(el("path", { d: "M" + bx.toFixed(1) + " " + qy(0).toFixed(1) + " L" + bx.toFixed(1) + " " + qy(w).toFixed(1),
+        stroke: C_A, "stroke-width": 6 }));
+    }
+    svg.appendChild(el("text", { x: X0 - 6, y: QY + 12, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "peso"));
+    svg.appendChild(el("text", { x: X0 + XW, y: QY + QH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "retardo 0 … " + (PESOS - 1)));
+
+    var medio = (1 - a) / a, semi = Math.log(0.5) / Math.log(1 - a);
+    var cubierto = 1 - Math.pow(1 - a, PESOS);
+    lec.innerHTML = "Con α = <strong>" + a.toFixed(2) + "</strong>, el retardo medio de los pesos vale <strong>" + medio.toFixed(4) +
+      "</strong> y su semivida <strong>" + (isFinite(semi) ? semi.toFixed(4) : "0") + "</strong>. Los " + PESOS +
+      " retardos dibujados acumulan el <strong>" + (100 * cubierto).toFixed(2) + " %</strong> del total. " +
+      (a > 0.85
+        ? "Con α cerca de uno el suavizado copia la serie: no suaviza nada y el pronóstico es el último dato."
+        : a < 0.15
+          ? "Con α pequeño el suavizado casi no reacciona, y ante el salto de nivel tarda decenas de instantes en alcanzarlo."
+          : "El suavizado sigue al nivel con retraso: cuanto menor es α, más tarda en alcanzar un salto y menos le afecta el ruido.");
+  }
+  ca.addEventListener("input", dibujar);
+  cs.addEventListener("change", dibujar);
+  cr.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. El mismo objeto que un ARIMA
+
+::: {.proposicion}
+**Proposición 5.3 (suavizado exponencial $=$ $\text{ARIMA}(0,1,1)$).** Sea
+$$y_t=y_{t-1}+\varepsilon_t+\theta\,\varepsilon_{t-1},\qquad \theta=-(1-\alpha).$$
+El pronóstico óptimo a un paso de este modelo coincide **exactamente** con el del suavizado exponencial de factor $\alpha$, y su pronóstico a $h$ pasos es el mismo valor para todo $h$.
+:::
+
+::: {.demostracion}
+*Demostración.* La esperanza condicional de $y_{t+1}$ dado el pasado es $y_t+\theta\varepsilon_t$, porque $\varepsilon_{t+1}$ tiene media cero. Llamando $\hat y_{t+1}$ a ese pronóstico, el error a un paso es $\varepsilon_t=y_t-\hat y_t$, de modo que
+$$\hat y_{t+1}=y_t+\theta\,(y_t-\hat y_t)=(1+\theta)y_t-\theta\,\hat y_t .$$
+Con $\theta=-(1-\alpha)$ queda $\hat y_{t+1}=\alpha y_t+(1-\alpha)\hat y_t$, que es la Definición 5.1. Para $h>1$, aplicar la esperanza condicional otra vez anula también $\varepsilon_{t+1}$, y el pronóstico no cambia. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(91)
+n = 2000
+
+print("el pronostico de SES contra el del ARIMA(0,1,1) con theta = -(1-alfa)")
+print("   alfa    maxima diferencia en los ultimos 500 instantes")
+for alfa in (0.2, 0.4, 0.8):
+    th = -(1 - alfa)
+    e = rng.normal(0, 1, n + 1)
+    y = np.zeros(n)
+    y[0] = e[1] + th * e[0]
+    for t in range(1, n):
+        y[t] = y[t - 1] + e[t + 1] + th * e[t]
+    arima = np.array([y[t] + th * e[t + 1] for t in range(n - 1)])
+    s = y[0]
+    ses = []
+    for t in range(n - 1):
+        if t > 0:
+            s = alfa * y[t] + (1 - alfa) * s
+        ses.append(s)
+    ses = np.array(ses)
+    print("   %.1f       %.12f" % (alfa, np.abs(arima[-500:] - ses[-500:]).max()))
+print()
+print("no se parecen: son la misma cuenta. El suavizado exponencial es el")
+print("pronostico optimo de un ARIMA(0,1,1), no una receta aparte")
+```
+
+Los tres factores dan diferencia $0{,}000000000000$, que es lo que cabe esperar de **dos escrituras de la misma cuenta**. La consecuencia es que todo lo que la lección 4 dice sobre los intervalos de un modelo con $d=1$ se aplica aquí, y que elegir $\alpha$ a ojo equivale a elegir $\theta$ a ojo.
+
+## 3. El mismo objeto, otra vez, como modelo de estado
+
+::: {.definicion}
+**Definición 5.4 (modelo de nivel local).** El modelo de nivel local separa lo que se mide de lo que se quiere estimar:
+$$y_t=\mu_t+\varepsilon_t,\qquad \mu_t=\mu_{t-1}+\eta_t,$$
+con $\varepsilon_t$ y $\eta_t$ independientes, de varianzas $\sigma^2$ y $q\,\sigma^2$. La constante $q$ es la **razón señal-ruido**: cuánto se mueve el nivel comparado con lo que ensucia la medición.
+:::
+
+Estimar $\mu_t$ a partir de las observaciones hasta $t$ se hace con una recursión de dos pasos —predecir y corregir— llamada filtro de Kalman. En este modelo la corrección tiene la forma
+$$\hat\mu_t=\hat\mu_{t-1}+K_t\,(y_t-\hat\mu_{t-1}),\qquad K_t=\frac{P_{t-1}+q\sigma^2}{P_{t-1}+q\sigma^2+\sigma^2},$$
+y $P_t=(1-K_t)(P_{t-1}+q\sigma^2)$. La ganancia $K_t$ dice cuánto hacerle caso a la observación nueva.
+
+::: {.proposicion}
+**Proposición 5.5 (la ganancia en régimen es $\alpha$).** La sucesión $P_t$ converge, y su límite da una ganancia constante
+$$K=\frac{-q+\sqrt{q^{2}+4q}}{2},$$
+que es exactamente el factor $\alpha$ del suavizado exponencial. Elegir $\alpha$ equivale, pues, a declarar una razón señal-ruido $q=\alpha^2/(1-\alpha)$.
+:::
+
+::: {.demostracion}
+*Demostración.* Tómese $\sigma^2=1$ sin pérdida de generalidad y escríbase $x_t=P_{t-1}+q$, la varianza de predicción. La recursión es $P_t=x_t/(x_t+1)$, de donde en el límite $x=P+q$ cumple
+$$x=\frac{x}{x+1}+q\ \Longleftrightarrow\ x^{2}+x=x+qx+q\ \Longleftrightarrow\ x^{2}-qx-q=0,$$
+cuya raíz positiva es $x=(q+\sqrt{q^2+4q})/2$. Sustituyendo, $K=x/(x+1)$, y un cálculo directo —multiplicar en cruz y usar que $(\sqrt{q^2+4q})^2=q^2+4q$— da $K=(\sqrt{q^2+4q}-q)/2$. Despejando $q$ de esa igualdad se obtiene $q=K^{2}/(1-K)$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def alfa_de_q(q):
+    """El alfa que sale de una razon senal-ruido q, por la ecuacion de Riccati."""
+    return (-q + np.sqrt(q * q + 4 * q)) / 2
+
+print("el filtro de Kalman del modelo de nivel local, en regimen")
+print("      q       ganancia iterando Riccati      formula cerrada")
+for q in (0.01, 0.1, 0.5, 1.0, 4.0):
+    P = 1.0
+    for _ in range(2000):
+        P = (P + q) / (P + q + 1.0)
+    K = (P + q) / (P + q + 1.0)
+    print("   %5.2f         %.10f               %.10f" % (q, K, alfa_de_q(q)))
+print()
+print("elegir alfa es exactamente declarar cuanto ruido de medicion se supone:")
+print("con q = 0.5 sale alfa = 0.5, y con q = 1 sale 0.6180339887, que es la")
+print("razon aurea menos uno")
+```
+
+Las dos columnas coinciden a diez decimales. La lectura práctica es que **$\alpha$ no es un parámetro libre de ajuste sino una afirmación sobre los datos**: con $q=0{,}01$ —un nivel que casi no se mueve frente a una medición ruidosa— sale $\alpha=0{,}0951249220$, y con $q=4$ sale $0{,}8284271247$. Y con $q=1$, cuando las dos varianzas son iguales, aparece $0{,}6180339887$, la razón áurea menos uno.
+
+Las tres descripciones —una recursión de una línea, un $\text{ARIMA}(0,1,1)$ y un modelo de estado con dos ruidos— son el mismo objeto visto desde tres sitios. La tercera es la única que dice **qué significa** el parámetro.
+
+```{=html}
+<div class="viz-kalman">
+  <div class="controles">
+    <label>Razón señal-ruido q <input id="ka-q" type="range" min="0.01" max="4" step="0.01" value="0.30"> <span id="ka-q-v">0.30</span></label>
+    <label>Longitud n <input id="ka-n" type="range" min="60" max="240" step="20" value="140"> <span id="ka-n-v">140</span></label>
+    <label>Semilla <input id="ka-s" type="range" min="1" max="10" step="1" value="3"> <span id="ka-s-v">3</span></label>
+  </div>
+  <svg id="ka-svg" viewBox="0 0 660 250" role="img" aria-label="El nivel latente, las observaciones ruidosas y la estimación del filtro, cuya ganancia depende de la razón señal-ruido elegida."></svg>
+  <p class="lectura" id="ka-lectura"></p>
+</div>
+<style>
+.viz-kalman { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-kalman .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-kalman label { display: flex; align-items: center; gap: .4rem; }
+.viz-kalman input[type=range] { width: 150px; padding: 0; }
+.viz-kalman svg { width: 100%; height: auto; display: block; }
+.viz-kalman .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("ka-svg"), lec = document.getElementById("ka-lectura");
+  var cq = document.getElementById("ka-q"), cn = document.getElementById("ka-n"), cs = document.getElementById("ka-s");
+  var eq = document.getElementById("ka-q-v"), en = document.getElementById("ka-n-v"), es = document.getElementById("ka-s-v");
+  var X0 = 46, XW = 574, Y0 = 20, YH = 190, LO = -11, HI = 11;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function sacudidas(semilla, n) {
+    var s = semilla * 9176 + 31, out = [], i, u1, u2;
+    function u() { s = (s * 48271) % 2147483647; return s / 2147483647; }
+    for (i = 0; i < n; i++) {
+      u1 = Math.max(u(), 1e-9); u2 = u();
+      out.push(Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2));
+    }
+    return out;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var q = +cq.value, n = +cn.value, sem = +cs.value;
+    eq.textContent = q.toFixed(2); en.textContent = n; es.textContent = sem;
+    // el nivel verdadero NO depende de q: solo cambia el filtro
+    var eta = sacudidas(sem, n), eps = sacudidas(sem + 50, n);
+    var mu = [], y = [], acu = 0, i;
+    for (i = 0; i < n; i++) { acu += 0.35 * eta[i]; mu.push(acu); y.push(acu + eps[i]); }
+
+    var alfa = (-q + Math.sqrt(q * q + 4 * q)) / 2;
+    var s = y[0], filtro = [s];
+    for (i = 1; i < n; i++) { s = s + alfa * (y[i] - s); filtro.push(s); }
+
+    var px = function (i2) { return X0 + i2 / (n - 1) * XW; };
+    var py = function (v) { return Y0 + (HI - Math.max(LO, Math.min(HI, v))) / (HI - LO) * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + (X0 + XW) + " " + py(0).toFixed(1), stroke: C_L, "stroke-width": 1, "stroke-dasharray": "3 3" }));
+    var d0 = "", d1 = "", d2 = "", err = 0;
+    for (i = 0; i < n; i++) {
+      d0 += (i ? " L" : "M") + px(i).toFixed(1) + " " + py(y[i]).toFixed(1);
+      d1 += (i ? " L" : "M") + px(i).toFixed(1) + " " + py(mu[i]).toFixed(1);
+      d2 += (i ? " L" : "M") + px(i).toFixed(1) + " " + py(filtro[i]).toFixed(1);
+      err += (filtro[i] - mu[i]) * (filtro[i] - mu[i]);
+    }
+    err = Math.sqrt(err / n);
+    svg.appendChild(el("path", { d: d0, stroke: C_T, "stroke-width": 0.9, fill: "none", opacity: .35 }));
+    svg.appendChild(el("path", { d: d1, stroke: C_A, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("path", { d: d2, stroke: C_B, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("text", { x: X0 + 6, y: Y0 + 14, "font-size": 10.5, fill: C_A }, "nivel verdadero"));
+    svg.appendChild(el("text", { x: X0 + 6, y: Y0 + 27, "font-size": 10.5, fill: C_B }, "estimación del filtro"));
+    svg.appendChild(el("text", { x: X0 + XW - 4, y: Y0 + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 },
+      "error cuadrático medio: " + err.toFixed(4)));
+
+    lec.innerHTML = "Con q = <strong>" + q.toFixed(2) + "</strong>, la ganancia en régimen vale α = <strong>" + alfa.toFixed(6) +
+      "</strong> y el filtro se aparta del nivel verdadero en <strong>" + err.toFixed(4) + "</strong> de media cuadrática. " +
+      (q < 0.1
+        ? "Con q pequeño el filtro supone que el nivel casi no se mueve, y por eso ignora las observaciones nuevas y llega tarde a los cambios."
+        : q > 2
+          ? "Con q grande el filtro supone que el nivel se mueve mucho, hace demasiado caso a cada observación y arrastra el ruido de medición."
+          : "El mínimo del error está donde la q supuesta coincide con la verdadera; moviéndola a los extremos se ve el precio de equivocarse en cualquiera de los dos sentidos.");
+  }
+  cq.addEventListener("input", dibujar);
+  cn.addEventListener("input", dibujar);
+  cs.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Cuánta memoria, y cuánta incertidumbre
+
+::: {.proposicion}
+**Proposición 5.6 (memoria efectiva).** Los pesos $\alpha(1-\alpha)^{j}$ tienen retardo medio
+$$\sum_{j\ge0} j\,\alpha(1-\alpha)^{j}=\frac{1-\alpha}{\alpha},$$
+y su semivida —el retardo en el que el peso cae a la mitad del primero— vale $\log(1/2)/\log(1-\alpha)$.
+:::
+
+::: {.proposicion}
+**Proposición 5.7 (anchura del intervalo).** Para el modelo de la Proposición 5.3, la varianza del error de pronóstico a $h$ pasos vale
+$$\sigma^{2}\bigl(1+(h-1)\alpha^{2}\bigr),$$
+que crece linealmente en $h$ con pendiente $\alpha^2$.
+:::
+
+::: {.demostracion}
+*Demostración.* Para la 5.6, $\sum_j j x^j=x/(1-x)^2$ con $x=1-\alpha$, y multiplicando por $\alpha$ queda $(1-\alpha)/\alpha$. Para la 5.7, el error a $h$ pasos es $\varepsilon_{t+h}+\alpha(\varepsilon_{t+h-1}+\dots+\varepsilon_{t+1})$, suma de términos independientes: uno con coeficiente $1$ y $h-1$ con coeficiente $\alpha$, de donde la varianza $\sigma^2(1+(h-1)\alpha^2)$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+print("memoria efectiva de un suavizado exponencial")
+print("  alfa   retardo medio   semivida de los pesos")
+for alfa in (0.1, 0.2, 0.3, 0.5, 0.8):
+    print("  %.1f      %8.6f        %8.6f" % (alfa, (1 - alfa) / alfa, np.log(0.5) / np.log(1 - alfa)))
+print()
+print("varianza del error a h pasos, que vale 1 + (h-1) alfa^2 con sigma = 1")
+print("  alfa      h=1      h=2      h=5     h=10     h=20")
+for alfa in (0.2, 0.5):
+    print("  %.1f    %s" % (alfa, "  ".join("%7.4f" % (1 + (h - 1) * alfa ** 2) for h in (1, 2, 5, 10, 20))))
+print()
+
+B = 40000
+rng = np.random.default_rng(93)
+print("comprobacion por simulacion, cuarenta mil series:")
+for alfa in (0.2, 0.5):
+    th = -(1 - alfa)
+    e = rng.normal(0, 1, (B, 80))
+    y = np.zeros((B, 80))
+    y[:, 0] = e[:, 0]
+    for t in range(1, 80):
+        y[:, t] = y[:, t - 1] + e[:, t] + th * e[:, t - 1]
+    base = y[:, 39] + th * e[:, 39]
+    for h in (1, 5, 20):
+        print("  alfa=%.1f h=%2d   medida %.6f   formula %.6f"
+              % (alfa, h, (y[:, 39 + h] - base).var(), 1 + (h - 1) * alfa ** 2))
+```
+
+Con $\alpha=0{,}1$ el retardo medio es $9$ instantes y la semivida $6{,}578813$; con $\alpha=0{,}8$, $0{,}25$ y $0{,}430677$. **Ese par de números traduce el parámetro a la única unidad que se puede discutir con alguien**: cuántas observaciones hacia atrás pesan de verdad.
+
+Y la anchura del intervalo tiene una asimetría que conviene ver: a veinte pasos, con $\alpha=0{,}2$ la varianza vale $1{,}7600$ y con $\alpha=0{,}5$ vale $5{,}7500$. **Un suavizado más reactivo pronostica peor a largo plazo**, porque cada sacudida que incorpora al nivel se queda en él para siempre. La simulación sobre cuarenta mil series confirma las dos columnas.
+
+## 5. Lo que esta lección no resuelve
+
+- **La tendencia queda fuera.** El método de Holt añade un segundo estado para la pendiente y equivale a un $\text{ARIMA}(0,2,2)$; aquí solo se nombra.
+- **La estacionalidad también.** Holt-Winters añade un tercer estado, en versión aditiva o multiplicativa, y su equivalencia con un SARIMA no es tan limpia.
+- **La estimación de $\alpha$ no se trata.** Aquí se elige y se interpreta; ajustarlo minimizando el error a un paso es un problema de optimización con sus propias trampas, entre ellas que el óptimo suele caer en el borde.
+- **El filtro de Kalman general no se monta.** Esta página usa el caso escalar más simple, donde todo tiene fórmula cerrada. La versión matricial, con estados múltiples, necesita la maquinaria que Álgebra 6 solo empieza.
+- **Y el modelo supone que el nivel es lo único que hay.** Si la serie tiene ciclos o eventos, el filtro los mete en el nivel y los arrastra, que es justamente lo que las lecciones 6 y 9 evitan.
+
+## Ejercicios
+
+### Ejercicio 1, De alfa a memoria
+
+Con la Proposición 5.6, encontrar el $\alpha$ cuya semivida es de seis observaciones, redondeado a seis decimales.
+
+```{pyodide}
+#| exercise: ex_semivida
+import numpy as np
+
+def semivida(alfa):
+    return ______
+
+lo, hi = 0.001, 0.999
+for _ in range(200):
+    medio = (lo + hi) / 2
+    if semivida(medio) > 6:
+        lo = medio
+    else:
+        hi = medio
+
+print(round(medio, 6), round(semivida(medio), 6))
+round(medio, 6)
+```
+
+::: {.hint exercise="ex_semivida"}
+La semivida es $\log(1/2)/\log(1-\alpha)$. Es decreciente en $\alpha$, así que la bisección va en el sentido del código.
+:::
+
+::: {.solution exercise="ex_semivida"}
+```{pyodide}
+import numpy as np
+
+def semivida(alfa):
+    return np.log(0.5) / np.log(1 - alfa)
+
+lo, hi = 0.001, 0.999
+for _ in range(200):
+    medio = (lo + hi) / 2
+    if semivida(medio) > 6:
+        lo = medio
+    else:
+        hi = medio
+
+print(round(medio, 6), round(semivida(medio), 6))
+round(medio, 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_semivida
+#| check: true
+if abs(result - 0.109101) < 1e-5:
+    feedback = {"correct": True, "message": "Correcto: α ≈ 0,109101. Medio año de memoria sobre datos mensuales pide un factor de suavizado por debajo de 0,11, bastante menor que el 0,3 que se suele poner por costumbre.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.109101 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Qué señal-ruido se está declarando
+
+Con la Proposición 5.5, calcular la razón señal-ruido implícita en los factores de suavizado más comunes.
+
+```{pyodide}
+#| exercise: ex_q
+def q_de_alfa(alfa):
+    return ______
+
+for a in (0.1, 0.2, 0.3, 0.5):
+    print(a, round(q_de_alfa(a), 6))
+
+round(q_de_alfa(0.3), 6)
+```
+
+::: {.hint exercise="ex_q"}
+Despejando en $\alpha=(-q+\sqrt{q^2+4q})/2$ se obtiene $q=\alpha^2/(1-\alpha)$.
+:::
+
+::: {.solution exercise="ex_q"}
+```{pyodide}
+def q_de_alfa(alfa):
+    return alfa ** 2 / (1 - alfa)
+
+for a in (0.1, 0.2, 0.3, 0.5):
+    print(a, round(q_de_alfa(a), 6))
+
+round(q_de_alfa(0.3), 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_q
+#| check: true
+if abs(result - 0.128571) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: 0,128571. Poner α = 0,3 es afirmar que el nivel se mueve casi ocho veces menos que el ruido de medición, y eso sí es una afirmación discutible con datos.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.128571 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Series 5**:
+
+1. Ajustar $\alpha$ por mínimos cuadrados sobre el error a un paso, en una malla de cien valores, y dibujar la curva del error contra $\alpha$. Anotar si el mínimo cae en el interior o en un borde, y qué significaría cada caso.
+2. Simular un modelo de nivel local con $q$ conocido, filtrarlo con tres factores distintos —el correcto y dos equivocados— y medir el error contra el nivel verdadero. Anotar cuánto cuesta equivocarse en cada sentido.
+3. Aplicar el suavizado a una serie con un salto de nivel claro y anotar en `50-Errores/` cuántos instantes tarda en alcanzarlo con $\alpha=0{,}1$ y con $\alpha=0{,}5$. Relacionarlo con la semivida de la Proposición 5.6.
+
+## Del libro
+
+Esta lección **no sigue ningún libro**. Igual que el resto del módulo, sus resultados se demuestran o se miden aquí.
+
+Los puntos de contacto con el sitio son **Series de tiempo 4**, que aporta el $\text{ARIMA}(0,1,1)$ con el que esta página demuestra la equivalencia, y **Estadística 13**, de donde viene la idea de ajustar una estimación a los datos observados. Esta página añade lo que en aquellas no cabía: **que el factor de suavizado no es un ajuste sino una afirmación sobre la razón señal-ruido**, con la fórmula que lo traduce.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/suavizado-exponencial.md`, enlazada a [[arima]], [[estacionariedad]] y [[regresion-primeros-principios]]. Conviene rehacer a mano la Proposición 5.3: sustituir $\varepsilon_t=y_t-\hat y_t$ ocupa dos renglones y deja grabado que **la receta de una línea y el modelo con nombre son el mismo objeto**, lo que ahorra discusiones sobre cuál usar.
+
+```
+¿Cuál es la recursión del suavizado exponencial?::ŷ(t+1) = α·y(t) + (1−α)·ŷ(t)
+¿Qué pesos implica?::α(1−α)^j, geométricos decrecientes
+¿Cuánto suman esos pesos?::1 − (1−α)^t; lo que falta se lo lleva el valor inicial
+¿A qué ARIMA equivale?::ARIMA(0,1,1) con θ = −(1−α)
+¿Cómo es su pronóstico a h pasos?::Plano: el mismo valor para todo horizonte
+¿Qué es el modelo de nivel local?::y = μ + ε con μ un paseo aleatorio
+¿Qué es q?::La razón señal-ruido: varianza del nivel entre varianza de medición
+¿Cuánto vale la ganancia de Kalman en régimen?::(−q + √(q²+4q))/2, que es α
+¿Y al revés?::q = α²/(1−α)
+¿Qué α sale con q = 1?::0,6180339887, la razón áurea menos uno
+¿Retardo medio de los pesos?::(1−α)/α
+¿Semivida de los pesos?::log(1/2)/log(1−α)
+¿Varianza del error a h pasos?::σ²(1 + (h−1)α²)
+¿Un α grande pronostica mejor a largo plazo?::No: cada sacudida se queda en el nivel para siempre
+¿Qué añade el método de Holt?::Un segundo estado para la pendiente; es un ARIMA(0,2,2)
+¿Qué supone el modelo?::Que el nivel es lo único que hay, sin ciclos ni eventos
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 5.2 se demuestra por inducción; se comprueba con la tabla de pesos, donde los cincuenta primeros suman $0{,}9948462248$ con $\alpha=0{,}1$ y uno a diez decimales con $\alpha=0{,}6$. La Proposición 5.3 se demuestra sustituyendo el error a un paso; se comprueba con diferencia máxima $0{,}000000000000$ para tres factores distintos sobre dos mil instantes. La Proposición 5.5 se demuestra resolviendo la ecuación de Riccati escalar; se comprueba iterándola dos mil veces y comparando con la fórmula cerrada, con coincidencia a diez decimales en cinco valores de $q$. Las Proposiciones 5.6 y 5.7 se demuestran con sumas geométricas; la segunda se comprueba por simulación sobre cuarenta mil series, con $1{,}761675$ contra $1{,}760000$ y $5{,}767435$ contra $5{,}750000$. El filtro de Kalman escalar está programado en la página.
+
+**Lo que se usa de otras lecciones sin repetir.** El $\text{ARIMA}(0,1,1)$ y el carácter plano del pronóstico con $d=1$ son de Series de tiempo 4. La firma del exceso de diferencias es de Series de tiempo 2. La idea de ajustar una estimación a los datos observados es de Estadística 13.
+
+**Lo que se enuncia sin demostrar.** Que el filtro de Kalman da el estimador lineal de mínima varianza se **usa** sin demostrarlo: aquí se toma la recursión como dada y se estudia su régimen. La equivalencia entre el método de Holt y un $\text{ARIMA}(0,2,2)$ se **nombra** y no se demuestra ni se comprueba. Y la optimalidad del pronóstico por esperanza condicional se da por conocida de la lección 4.
+
+**Lo que viene de los libros.** Nada. Esta lección no cita ninguno.
+
+**Lo que es mío, no del libro.** Presentar las tres descripciones —recursión, $\text{ARIMA}$ y modelo de estado— como **el mismo objeto visto desde tres sitios**, con la equivalencia demostrada en las dos direcciones en lugar de mencionada. La fórmula $q=\alpha^2/(1-\alpha)$ puesta en el centro: elegir $\alpha$ es declarar una razón señal-ruido, y eso convierte un ajuste en una afirmación discutible. Y la traducción de $\alpha$ a retardo medio y semivida, que es la única unidad en la que el parámetro se puede defender ante alguien.
+:::
