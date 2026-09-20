@@ -37,7 +37,7 @@ Tres hitos de esta sesión:
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
 faltando lecciones por escribir: **ML va por 22 de 90**, **Series de tiempo
-va por 10 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
+está **completo, 11 de 11**, e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
 
@@ -105,7 +105,7 @@ hay que empezar a hacer:
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
-| Series de tiempo | 10 | 11 | **10 de 10** | 11 |
+| Series de tiempo | 11 | 11 | **11 de 11** | — |
 | Machine Learning | 22 | 90 | **22 de 22** | la Fase 2 cerrada; quedan ESL y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
@@ -394,9 +394,9 @@ Lo que sigue, en orden de coste creciente:
    lección, y **no reaparece en ninguna fase posterior**. Deep Learning al
    menos se retoma en las lecciones 28 a 33; supervivencia no tiene red.
 
-3. **Series de tiempo ya no está vacía** —las lecciones 1 a 10 de 11 se
-   publicaron el 19-09-2026, y no citan ningún libro porque ninguno del sitio
-   cubre el tema—;
+3. **Series de tiempo está completo**: las once lecciones se publicaron el
+   19 y el 20-09-2026, y ninguna cita un libro porque ninguno de los
+   verificados cubre el tema;
    **Inferencia causal sigue vacía** en el sidebar.
    **ML ya no tiene bloqueo de citación**: el índice de ISLP se completó el
    13-09-2026 con sus 81 secciones, así que se puede citar `§4.3 Logistic
@@ -2233,6 +2233,62 @@ es el total que las hojas—, con el marco anclado a una constante; en el segund
 la escala se sustituyó por el **número de grupos**, y las barras se miden contra
 el error del pronóstico base, que es una cantidad determinada por los parámetros
 y no por los datos dibujados. Los dos cambios mejoraron lo que el visual enseña.
+
+### 3.37 Series de tiempo 11: el módulo cerrado, y la métrica como decisión (20-09-2026)
+
+La última lección del módulo trata las métricas como lo que son: **la
+definición de qué pronóstico se considera bueno**. La forma precisa de decirlo
+es preguntar qué constante minimiza cada una.
+
+> **11.2**: el error cuadrático se minimiza en la media, el absoluto en la
+> mediana, y el porcentual en la mediana ponderada por $1/y$, que en una
+> distribución asimétrica cae **por debajo**.
+
+Sobre una lognormal los tres mínimos salen $1{,}3710$, $0{,}9980$ y $0{,}5260$
+contra una media de $1{,}370637$: **optimizar MAPE pide un pronóstico un
+$61{,}6\,\%$ por debajo de la media**. No es un sesgo corregible después; es lo
+que la métrica premia.
+
+> **11.3**: el sMAPE no es simétrico. Quedarse corto puntúa peor que pasarse en
+> la misma cantidad, con cociente $(2a+d)/(2a-d)$.
+
+Con desvío $90$ sobre verdad $100$ el cociente llega a $2{,}636364$. Y el sesgo
+va al revés que el del MAPE, de modo que las dos métricas tiran en direcciones
+opuestas.
+
+> **11.4**: para una serie de conteo con media por debajo de $\log 2 =
+> 0{,}693147$, el pronóstico óptimo en error absoluto es **cero**.
+
+Medido: con $\lambda=0{,}4$ el óptimo es cero con error $0{,}3969$, mejor que el
+$0{,}5339$ del pronóstico que acierta la media. **Una métrica puede premiar no
+pronosticar nada**, y en demanda intermitente eso no es una anécdota.
+
+#### La cifra del título
+
+Cinco series de **la misma calidad** y distinta escala dan MAPE de $0{,}025380$
+a $0{,}871477$. El promedio de los cinco vale $0{,}269435$ y el MAPE del total
+agregado $0{,}035924$: **un factor de $7{,}50$**, y las dos cifras se presentan
+como «el error del pronóstico». La serie más pequeña aporta el
+$\mathbf{64{,}69\,\%}$ del promedio y el $\mathbf{2{,}66\,\%}$ del error real.
+Los MASE, en cambio, salen entre $0{,}706690$ y $0{,}717086$: casi idénticos,
+porque miden calidad y no escala.
+
+#### El módulo, cerrado
+
+**Once lecciones en dos días, ninguna citando un libro**, porque ninguno de los
+índices verificados cubre series de tiempo. Todo lo que afirman está demostrado
+o medido en la propia página, y el verificador reejecuta cada número en cada
+publicación.
+
+Las once se sostienen sobre la misma idea: cada elección técnica —el orden de
+una media móvil, el número de diferencias, los armónicos, el esquema de
+validación, la métrica— **es una afirmación sobre los datos que se puede
+escribir, demostrar o medir**.
+
+El procedimiento cazó un valor escrito a mano en **siete** de las once
+lecciones, y la regla 19b marcó controles muertos en **cinco**; en todos los
+casos el arreglo mejoró lo que el visual enseñaba, en lugar de limitarse a
+silenciar el aviso.
 
 ---
 

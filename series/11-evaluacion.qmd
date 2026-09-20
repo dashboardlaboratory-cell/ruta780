@@ -1,0 +1,585 @@
+---
+title: "Evaluación: MAPE, MASE y por qué el promedio miente"
+subtitle: "Series de tiempo · Lección 11"
+nivel: L4
+modulo: series
+fase: F3
+prereqs: [series/10-jerarquicos, series/07-validacion-temporal, estadistica/04-esperanza-varianza-momentos]
+siguientes: []
+libro: "—"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="series/11-evaluacion"}
+[[L4]{.nivel .nivel-L4} **From scratch**]{.item}
+[**Fase** F3]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Jerárquicos](10-jerarquicos.qmd) · [Validación temporal](07-validacion-temporal.qmd) · [Esperanza y varianza](../estadistica/04-esperanza-varianza-momentos.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Escribir las métricas habituales de pronóstico y decir qué mide cada una.
+2. **Demostrar qué punto minimiza cada métrica**, y que el [MAPE]{.g data-t="mape"} pide un pronóstico por debajo de la media.
+3. **Demostrar que el llamado error simétrico no lo es**, con el cociente medido.
+4. **Demostrar que por debajo de una media de $\log 2$ el pronóstico óptimo en error absoluto es cero**, y ver qué implica.
+5. Explicar por qué el promedio de errores porcentuales está dominado por las series pequeñas, y usar [MASE]{.g data-t="mase"} en su lugar.
+6. Elegir una métrica sabiendo qué comportamiento premia.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Series de tiempo 7**: el backtesting, que produce los errores que aquí se resumen.
+- **Series de tiempo 10**: la jerarquía, cuyas series de distinta escala son el caso en que el promedio engaña.
+- **Estadística 4**: la esperanza, la mediana y qué minimiza cada una, que es la base de todo el capítulo.
+- **Series de tiempo 8**: la comparación pareada, que aquí se aplica a las métricas elegidas.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 16**: la calibración, que mide otra propiedad de las mismas predicciones.
+- **Machine Learning 11**: los modelos aditivos, cuya evaluación comparte estos problemas.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $y_t$ | y sub te | El valor observado en el instante $t$ |
+| $\hat y_t$ | y con sombrero | El pronóstico para ese instante |
+| $e_t$ | e sub te | El error, $y_t-\hat y_t$ |
+| $n$ | ene | El número de errores que se resumen |
+| $c$ | ce | Un pronóstico constante candidato |
+| $Y$ | y mayúscula | La variable aleatoria que genera los valores |
+| $\lambda$ | lambda | La media de una distribución de conteo |
+| $m$ | eme | El número de series que se promedian |
+| $s$ | ese | La escala de una serie |
+| $q_t$ | cu sub te | El error escalado por el del pronóstico ingenuo |
+:::
+
+## 1. Cada métrica pide un pronóstico distinto
+
+::: {.definicion}
+**Definición 11.1 (las métricas habituales).** Con errores $e_t=y_t-\hat y_t$,
+$$\text{MAE}=\frac1n\sum_t\lvert e_t\rvert,\qquad
+\text{RMSE}=\sqrt{\frac1n\sum_t e_t^{2}},\qquad
+\text{MAPE}=\frac1n\sum_t\frac{\lvert e_t\rvert}{\lvert y_t\rvert},$$
+$$\text{sMAPE}=\frac1n\sum_t\frac{200\,\lvert e_t\rvert}{\lvert y_t\rvert+\lvert\hat y_t\rvert},\qquad
+\text{MASE}=\frac{\text{MAE}}{\frac{1}{n-1}\sum_{t\ge2}\lvert y_t-y_{t-1}\rvert}.$$
+:::
+
+Una métrica no es una manera neutra de mirar el error: **es la definición de qué pronóstico se considera bueno**. La forma precisa de decirlo es preguntar qué constante la minimiza.
+
+::: {.proposicion}
+**Proposición 11.2 (qué punto minimiza cada métrica).** Sea $Y$ una variable aleatoria positiva.
+
+(a) $\mathbb{E}[(Y-c)^2]$ se minimiza en $c=\mathbb{E}[Y]$.
+
+(b) $\mathbb{E}\lvert Y-c\rvert$ se minimiza en la **mediana** de $Y$.
+
+(c) $\mathbb{E}\bigl[\lvert Y-c\rvert/Y\bigr]$ se minimiza en la **mediana de la distribución con densidad proporcional a $f(y)/y$**, que para una distribución asimétrica a la derecha cae **por debajo** de la mediana de $Y$.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (a), derivando, $\frac{d}{dc}\mathbb{E}[(Y-c)^2]=-2\mathbb{E}[Y-c]$, que se anula en la media. Para (b) y (c), obsérvese que $\mathbb{E}[w(Y)\lvert Y-c\rvert]$ con peso $w>0$ tiene derivada
+$$\frac{d}{dc}=\mathbb{E}\bigl[w(Y)\,\operatorname{sgn}(c-Y)\bigr]=\int_{y<c}w\,f-\int_{y>c}w\,f,$$
+que se anula cuando $c$ deja la mitad de la masa **ponderada por $w$** a cada lado. Con $w=1$ eso es la mediana; con $w=1/y$ es la mediana de la densidad proporcional a $f(y)/y$, que da más peso a los valores pequeños y por tanto queda a su izquierda. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(201)
+y = rng.lognormal(0.0, 0.8, 400000)
+rejilla = np.linspace(0.2, 3.0, 2801)
+mae = np.array([np.abs(y - c).mean() for c in rejilla])
+rmse = np.array([np.sqrt(((y - c) ** 2).mean()) for c in rejilla])
+mape = np.array([(np.abs(y - c) / y).mean() for c in rejilla])
+
+print("una distribucion asimetrica: lognormal de parametros 0 y 0.8")
+print("  media %.6f    mediana %.6f" % (y.mean(), np.median(y)))
+print()
+print("  el punto que minimiza cada metrica:")
+print("    RMSE en c = %.4f" % rejilla[int(np.argmin(rmse))])
+print("    MAE  en c = %.4f" % rejilla[int(np.argmin(mae))])
+print("    MAPE en c = %.4f" % rejilla[int(np.argmin(mape))])
+print()
+print("elegir MAPE como metrica es pedir un pronostico %.1f %% por debajo de la"
+      % (100 * (1 - rejilla[int(np.argmin(mape))] / y.mean())))
+print("media. No es un defecto del modelo: es lo que la metrica premia")
+```
+
+Los tres mínimos caen en $1{,}3710$, $0{,}9980$ y $0{,}5260$, contra una media de $1{,}370637$ y una mediana de $0{,}998021$. Los dos primeros reproducen la proposición a cuatro decimales. El tercero es el que importa: **optimizar MAPE pide un pronóstico un $61{,}6\,\%$ por debajo de la media**.
+
+Eso no es un fallo del modelo ni un sesgo que se pueda corregir después. Es lo que la métrica premia, y un equipo que optimice MAPE producirá pronósticos sistemáticamente bajos haciendo exactamente lo que se le pidió.
+
+```{=html}
+<div class="viz-metricas">
+  <div class="controles">
+    <label>Asimetría σ <input id="me-s" type="range" min="0.1" max="1.4" step="0.05" value="0.80"> <span id="me-s-v">0.80</span></label>
+    <label>Métrica
+      <select id="me-m">
+        <option value="todas" selected>las tres juntas</option>
+        <option value="rmse">solo RMSE</option>
+        <option value="mae">solo MAE</option>
+        <option value="mape">solo MAPE</option>
+      </select>
+    </label>
+    <label>Rejilla <input id="me-n" type="range" min="40" max="240" step="20" value="120"> <span id="me-n-v">120</span></label>
+  </div>
+  <svg id="me-svg" viewBox="0 0 660 260" role="img" aria-label="La pérdida esperada de cada métrica en función del pronóstico constante, con el mínimo de cada una marcado sobre el eje."></svg>
+  <p class="lectura" id="me-lectura"></p>
+</div>
+<style>
+.viz-metricas { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-metricas .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-metricas label { display: flex; align-items: center; gap: .4rem; }
+.viz-metricas input[type=range] { width: 140px; padding: 0; }
+.viz-metricas select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-metricas svg { width: 100%; height: auto; display: block; }
+.viz-metricas .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("me-svg"), lec = document.getElementById("me-lectura");
+  var cs = document.getElementById("me-s"), cm = document.getElementById("me-m"), cn = document.getElementById("me-n");
+  var es = document.getElementById("me-s-v"), en = document.getElementById("me-n-v");
+  var X0 = 46, XW = 574, Y0 = 20, YH = 190, CMAX = 3.2;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // cuadratura sobre la densidad lognormal: nada aleatorio, todo determinista
+  function nodos(sig, K) {
+    var xs = [], ws = [], i, lo = -4 * sig, hi = 4 * sig, h = (hi - lo) / K, z, y, f;
+    for (i = 0; i < K; i++) {
+      z = lo + (i + 0.5) * h;
+      y = Math.exp(z);
+      f = Math.exp(-z * z / (2 * sig * sig)) / (sig * Math.sqrt(2 * Math.PI));
+      xs.push(y); ws.push(f * h);
+    }
+    return [xs, ws];
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var sig = +cs.value, cual = cm.value, K = +cn.value;
+    es.textContent = sig.toFixed(2); en.textContent = K;
+    var nw = nodos(sig, 400), xs = nw[0], ws = nw[1], i, j;
+    var media = 0, masa = 0;
+    for (i = 0; i < xs.length; i++) { media += xs[i] * ws[i]; masa += ws[i]; }
+    media /= masa;
+
+    var cs2 = [], L = { rmse: [], mae: [], mape: [] };
+    for (j = 0; j < K; j++) {
+      var c = 0.1 + (j + 0.5) / K * CMAX;
+      cs2.push(c);
+      var a = 0, b = 0, d = 0;
+      for (i = 0; i < xs.length; i++) {
+        var dif = xs[i] - c;
+        a += ws[i] * dif * dif; b += ws[i] * Math.abs(dif); d += ws[i] * Math.abs(dif) / xs[i];
+      }
+      L.rmse.push(Math.sqrt(a / masa)); L.mae.push(b / masa); L.mape.push(d / masa);
+    }
+    // cada curva se normaliza a su propio minimo: el marco es [1, 2.2] fijo
+    var LO = 1, HI = 2.2;
+    var px = function (c) { return X0 + (c - 0.1) / CMAX * XW; };
+    var py = function (v) { return Y0 + (HI - Math.max(LO, Math.min(HI, v))) / (HI - LO) * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+
+    var defs = [["rmse", C_A, "RMSE"], ["mae", C_B, "MAE"], ["mape", C_G, "MAPE"]];
+    var minimos = {};
+    defs.forEach(function (dd, k) {
+      var nom = dd[0], col = dd[1];
+      var mn = Math.min.apply(null, L[nom]), im = L[nom].indexOf(mn);
+      minimos[nom] = cs2[im];
+      if (cual !== "todas" && cual !== nom) return;
+      var d = "";
+      for (j = 0; j < K; j++) d += (j ? " L" : "M") + px(cs2[j]).toFixed(1) + " " + py(L[nom][j] / mn).toFixed(1);
+      svg.appendChild(el("path", { d: d, stroke: col, "stroke-width": 2, fill: "none" }));
+      svg.appendChild(el("path", { d: "M" + px(cs2[im]).toFixed(1) + " " + (Y0 + YH).toFixed(1) + " L" + px(cs2[im]).toFixed(1) + " " + (Y0 + YH - 16).toFixed(1),
+        stroke: col, "stroke-width": 3 }));
+      svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 14 + 13 * k, "font-size": 10.5, fill: col }, dd[2] + ": mínimo en " + cs2[im].toFixed(4)));
+    });
+    svg.appendChild(el("path", { d: "M" + px(media).toFixed(1) + " " + Y0 + " L" + px(media).toFixed(1) + " " + (Y0 + YH), stroke: C_T, "stroke-width": 1, "stroke-dasharray": "4 3", opacity: .6 }));
+    svg.appendChild(el("text", { x: (px(media) + 5).toFixed(1), y: Y0 + YH - 6, "font-size": 10.5, fill: C_T, opacity: .7 }, "media " + media.toFixed(3)));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "pronóstico constante c"));
+
+    lec.innerHTML = "Con asimetría σ = <strong>" + sig.toFixed(2) + "</strong>, la media vale <strong>" + media.toFixed(4) +
+      "</strong> y los mínimos caen en RMSE <strong>" + minimos.rmse.toFixed(4) + "</strong>, MAE <strong>" + minimos.mae.toFixed(4) +
+      "</strong> y MAPE <strong>" + minimos.mape.toFixed(4) + "</strong>. " +
+      (sig < 0.2
+        ? "Con la distribución casi simétrica los tres mínimos coinciden: el problema aparece solo con asimetría."
+        : "El mínimo del MAPE queda <strong>" + (100 * (1 - minimos.mape / media)).toFixed(1) + " %</strong> por debajo de la media, y esa distancia crece con la asimetría.");
+  }
+  cs.addEventListener("input", dibujar);
+  cm.addEventListener("change", dibujar);
+  cn.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. El error que se llama simétrico
+
+::: {.proposicion}
+**Proposición 11.3 (el sMAPE no es simétrico).** Para un valor verdadero $a>0$ y un desvío $d$ con $0<d<a$,
+$$\text{sMAPE}(a,a-d)=\frac{200\,d}{2a-d}\;>\;\frac{200\,d}{2a+d}=\text{sMAPE}(a,a+d),$$
+y el cociente entre las dos vale $\dfrac{2a+d}{2a-d}$, que crece con $d$ y tiende a infinito cuando $d\to a$.
+:::
+
+::: {.demostracion}
+*Demostración.* Sustituyendo en la definición, el denominador $\lvert a\rvert+\lvert\hat y\rvert$ vale $2a+d$ al pasarse y $2a-d$ al quedarse corto, mientras el numerador es el mismo. El cociente de las dos expresiones es inmediato, y $2a-d\to a^{-}\cdot 0$ cuando $d\to a$ hace que la segunda crezca sin tope. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+def smape(a, f):
+    """El llamado error porcentual absoluto SIMETRICO."""
+    return 200 * abs(f - a) / (abs(a) + abs(f))
+
+print("el sMAPE con verdad 100, pasandose y quedandose corto en lo mismo")
+print("  desvio   pasarse    quedarse corto   cociente")
+for d in (10.0, 30.0, 50.0, 90.0):
+    arriba, abajo = smape(100.0, 100.0 + d), smape(100.0, 100.0 - d)
+    print("   %4.0f    %9.6f     %9.6f     %.6f" % (d, arriba, abajo, abajo / arriba))
+print()
+print("quedarse corto siempre puntua PEOR que pasarse en la misma cantidad,")
+print("y la diferencia crece con el desvio. La palabra simetrico del nombre")
+print("se refiere a la formula, no al comportamiento")
+```
+
+Con un desvío de $50$ sobre una verdad de $100$, pasarse puntúa $40{,}000000$ y quedarse corto $66{,}666667$: un cociente de $1{,}666667$. Con un desvío de $90$ el cociente llega a $2{,}636364$. **La simetría del nombre está en la fórmula, no en el comportamiento**, y el sesgo va justo al revés que el del MAPE: aquí la métrica premia pasarse.
+
+## 3. Cuando la métrica premia no pronosticar
+
+::: {.proposicion}
+**Proposición 11.4 (el umbral $\log 2$).** Sea $X\sim\text{Poisson}(\lambda)$. El pronóstico constante que minimiza el error absoluto esperado es la mediana de $X$, y
+$$\text{mediana}(X)=0\iff \mathbb{P}(X=0)=e^{-\lambda}>\tfrac12\iff \lambda<\log 2\approx0{,}693147 .$$
+Por debajo de ese umbral, **el pronóstico óptimo en error absoluto es cero para siempre**, y su error es menor que el del pronóstico que acierta la media.
+:::
+
+::: {.demostracion}
+*Demostración.* Que la mediana minimiza el error absoluto es la Proposición 11.2b. Para una variable de conteo, la mediana es cero exactamente cuando la masa en cero supera la mitad, y para la Poisson esa masa vale $e^{-\lambda}$. Despejando, $e^{-\lambda}>1/2$ equivale a $\lambda<\log 2$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(203)
+print("series de conteo: cual es el pronostico constante optimo en MAE")
+print("   lambda   media    optimo   MAE del optimo   MAE con la media")
+for lam in (0.2, 0.4, 0.8, 1.5, 3.0):
+    x = rng.poisson(lam, 200000)
+    cand = np.arange(0, 8)
+    err = np.array([np.abs(x - c).mean() for c in cand])
+    print("    %.1f    %.4f      %d        %.4f           %.4f"
+          % (lam, x.mean(), int(cand[int(np.argmin(err))]), err.min(), np.abs(x - x.mean()).mean()))
+print()
+print("el umbral es log(2) = %.6f: por debajo de esa media, el pronostico" % np.log(2))
+print("que minimiza el error absoluto es CERO para siempre, y bate al que")
+print("acierta la media. Una metrica puede premiar no pronosticar nada")
+```
+
+Las dos primeras filas tienen media por debajo de $\log 2$ y su óptimo es cero, con error $0{,}1997$ y $0{,}3969$ frente a los $0{,}3270$ y $0{,}5339$ del pronóstico que acierta la media. La tercera, con $\lambda=0{,}8$, ya cruza el umbral y su óptimo es uno.
+
+**Una métrica puede premiar no pronosticar nada.** Sobre series de demanda intermitente —y son muchas— un concurso de modelos juzgado por error absoluto lo gana el que predice cero, que además es cierto: nadie está haciendo trampa. Lo que falla es la pregunta.
+
+```{=html}
+<div class="viz-umbral">
+  <div class="controles">
+    <label>Media λ <input id="um-l" type="range" min="0.05" max="2.5" step="0.05" value="0.40"> <span id="um-l-v">0.40</span></label>
+    <label>Candidatos <input id="um-k" type="range" min="3" max="9" step="1" value="6"> <span id="um-k-v">6</span></label>
+    <label>Métrica
+      <select id="um-m">
+        <option value="mae" selected>error absoluto</option>
+        <option value="mse">error cuadrático</option>
+      </select>
+    </label>
+  </div>
+  <svg id="um-svg" viewBox="0 0 660 250" role="img" aria-label="La pérdida esperada de cada pronóstico entero para una distribución de conteo, con el umbral del logaritmo de dos marcado."></svg>
+  <p class="lectura" id="um-lectura"></p>
+</div>
+<style>
+.viz-umbral { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-umbral .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-umbral label { display: flex; align-items: center; gap: .4rem; }
+.viz-umbral input[type=range] { width: 140px; padding: 0; }
+.viz-umbral select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-umbral svg { width: 100%; height: auto; display: block; }
+.viz-umbral .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("um-svg"), lec = document.getElementById("um-lectura");
+  var cl = document.getElementById("um-l"), ck = document.getElementById("um-k"), cm = document.getElementById("um-m");
+  var el_ = document.getElementById("um-l-v"), ek = document.getElementById("um-k-v");
+  var X0 = 52, XW = 568, Y0 = 20, YH = 190;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var lam = +cl.value, K = +ck.value, met = cm.value;
+    el_.textContent = lam.toFixed(2); ek.textContent = K;
+    // la ley de Poisson, exacta: sin simulacion
+    var p = [], i, acum = 0, f = Math.exp(-lam);
+    for (i = 0; i <= 40; i++) { p.push(f); acum += f; f = f * lam / (i + 1); }
+    var perdidas = [], j;
+    for (j = 0; j < K; j++) {
+      var s = 0;
+      for (i = 0; i <= 40; i++) s += p[i] * (met === "mae" ? Math.abs(i - j) : (i - j) * (i - j));
+      perdidas.push(s);
+    }
+    // el marco se ancla a la perdida del peor candidato posible del control,
+    // calculada con la lambda maxima: una constante, no los datos dibujados
+    var tope = met === "mae" ? (2.5 + 9) : (2.5 + 81);
+    var px = function (j2) { return X0 + (j2 + 0.5) / K * XW; };
+    var py = function (v) { return Y0 + (1 - Math.min(v, tope) / tope) * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    var mn = Math.min.apply(null, perdidas), im = perdidas.indexOf(mn);
+    for (j = 0; j < K; j++) {
+      var w = XW / K * 0.5, bx = px(j);
+      var alto = Math.min(perdidas[j], tope) / tope * YH;
+      svg.appendChild(el("path", { d: "M" + (bx - w / 2).toFixed(1) + " " + (Y0 + YH).toFixed(1) + " L" + (bx - w / 2).toFixed(1) + " " + (Y0 + YH - alto).toFixed(1) +
+        " L" + (bx + w / 2).toFixed(1) + " " + (Y0 + YH - alto).toFixed(1) + " L" + (bx + w / 2).toFixed(1) + " " + (Y0 + YH).toFixed(1) + " Z",
+        fill: j === im ? C_B : C_A, opacity: j === im ? .9 : .55 }));
+      svg.appendChild(el("text", { x: bx.toFixed(1), y: (Y0 + YH + 14).toFixed(1), "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "" + j));
+      svg.appendChild(el("text", { x: bx.toFixed(1), y: (Y0 + YH - alto - 5).toFixed(1), "text-anchor": "middle", "font-size": 10, fill: j === im ? C_B : C_T, opacity: .8 }, perdidas[j].toFixed(3)));
+    }
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 },
+      "λ = " + lam.toFixed(2) + (lam < Math.log(2) ? "  <  log 2" : "  >  log 2")));
+
+    lec.innerHTML = "Con λ = <strong>" + lam.toFixed(2) + "</strong>, el pronóstico entero que minimiza el " +
+      (met === "mae" ? "error absoluto" : "error cuadrático") + " es <strong>" + im + "</strong>, con pérdida <strong>" + mn.toFixed(4) + "</strong>. " +
+      (met === "mae"
+        ? (lam < Math.log(2)
+            ? "Por debajo de log 2 = 0,693147 el óptimo es <strong>cero</strong>: la métrica premia no pronosticar nada."
+            : "Por encima de log 2 el óptimo deja de ser cero, y el umbral es exactamente ese: la Proposición 11.4.")
+        : "Con error cuadrático el óptimo entero es el más cercano a la media, y nunca se queda clavado en cero por debajo de log 2: el problema es de la métrica, no de la serie.");
+  }
+  cl.addEventListener("input", dibujar);
+  ck.addEventListener("input", dibujar);
+  cm.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Por qué el promedio miente
+
+::: {.proposicion}
+**Proposición 11.5 (el promedio de errores porcentuales está dominado por las series pequeñas).** Sean $m$ series con escalas $s_1,\dots,s_m$ y errores absolutos medios proporcionales a $\sqrt{s_i}$, como ocurre con datos de conteo. Entonces el error porcentual de la serie $i$ es proporcional a $1/\sqrt{s_i}$, de modo que el promedio $\frac1m\sum_i\text{MAPE}_i$ está dominado por las series de escala pequeña, **que son las que menos contribuyen al error total**.
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(202)
+escalas = np.array([1000.0, 300.0, 60.0, 12.0, 3.0])
+B = 40000
+mapes, mases, abs_err = [], [], []
+
+print("cinco series de la misma calidad y distinta escala")
+print("   escala     MAPE      MASE    error absoluto medio")
+for s in escalas:
+    v = np.maximum(s + np.sqrt(s) * rng.normal(0, 1, B), 0.5)   # ruido tipo conteo
+    e = np.abs(v - s)
+    ingenuo = np.abs(np.diff(v)).mean()
+    mapes.append(float((e / v).mean()))
+    mases.append(float(e.mean() / ingenuo))
+    abs_err.append(float(e.mean()))
+    print("   %7.1f  %.6f  %.6f    %10.6f" % (s, mapes[-1], mases[-1], abs_err[-1]))
+print()
+print("  promedio de MAPEs       : %.6f" % np.mean(mapes))
+print("  promedio de MASEs       : %.6f" % np.mean(mases))
+print("  MAPE del total agregado : %.6f" % (sum(abs_err) / escalas.sum()))
+print()
+print("  la serie de escala 3 aporta el %.2f %% del promedio de MAPEs" % (100 * mapes[-1] / sum(mapes)))
+print("  y solo el %.4f %% del error absoluto total" % (100 * abs_err[-1] / sum(abs_err)))
+print()
+print("el promedio de MAPEs y el MAPE del total difieren en un factor de %.2f."
+      % (np.mean(mapes) / (sum(abs_err) / escalas.sum())))
+print("MASE, en cambio, sale casi igual en las cinco: mide calidad, no escala")
+```
+
+Las cinco series tienen **exactamente la misma calidad de pronóstico** —el mismo modelo, el mismo tipo de ruido— y sus MAPE van de $0{,}025380$ a $0{,}871477$, un factor de treinta y cuatro. El promedio de los cinco vale $0{,}269435$ mientras el MAPE del total agregado vale $0{,}035924$: **difieren en un factor de $7{,}50$**, y las dos cifras se presentan como «el error del pronóstico».
+
+La cifra que cierra el argumento es el reparto: la serie de escala tres aporta el $\mathbf{64{,}69\,\%}$ del promedio de MAPEs y el $\mathbf{2{,}6635\,\%}$ del error absoluto total. Un esfuerzo dirigido por ese promedio se gasta casi entero en la serie que menos importa.
+
+Los MASE, en cambio, salen $0{,}708734$, $0{,}710785$, $0{,}707843$, $0{,}706690$ y $0{,}717086$: **casi idénticos**, porque miden calidad relativa al pronóstico ingenuo de cada serie y no arrastran la escala. Ese es el motivo de existir de la métrica, y por qué promediarla sí tiene sentido.
+
+## 5. Lo que esta lección no resuelve, y el cierre del módulo
+
+- **Las métricas de distribución quedan fuera.** Evaluar una banda de pronóstico, y no solo su centro, exige reglas de puntuación propias; la calibración de Machine Learning 16 es el primer paso.
+- **El coste asimétrico no se trata.** Cuando quedarse corto cuesta distinto que pasarse, ninguna de estas métricas sirve y hay que escribir la pérdida real.
+- **La agregación por horizonte tampoco.** Resumir en un número errores de horizontes distintos esconde exactamente lo que la lección 4 enseñó a mirar.
+- **Y ninguna métrica decide sola.** La comparación entre dos modelos necesita la diferencia pareada y su error típico de la lección 8, sobre la métrica que se haya elegido.
+
+Con esta lección se cierra el módulo. Las once páginas se sostienen sobre la misma idea, dicha de once maneras: **cada elección técnica —el orden de una media móvil, el número de diferencias, los armónicos, el esquema de validación, la métrica— es una afirmación sobre los datos que se puede escribir, demostrar o medir**. Ninguna de las once cita un libro, porque ninguno de los verificados cubre el tema; todo lo que afirman está demostrado o medido en la propia página, y el verificador vuelve a correr cada número en cada publicación.
+
+## Ejercicios
+
+### Ejercicio 1, El umbral exacto
+
+Con la Proposición 11.4, calcular para qué medias de una distribución de conteo el pronóstico óptimo en error absoluto es cero, y comprobar el umbral.
+
+```{pyodide}
+#| exercise: ex_umbral
+import numpy as np
+
+umbral = ______
+
+def optimo_es_cero(lam):
+    return ______
+
+for lam in (0.5, 0.69, 0.70, 1.0):
+    print(lam, optimo_es_cero(lam))
+
+round(umbral, 6)
+```
+
+::: {.hint exercise="ex_umbral"}
+La proposición dice que la mediana es cero cuando $e^{-\lambda}>1/2$, o sea cuando $\lambda<\log 2$.
+:::
+
+::: {.solution exercise="ex_umbral"}
+```{pyodide}
+import numpy as np
+
+umbral = np.log(2)
+
+def optimo_es_cero(lam):
+    return lam < umbral
+
+for lam in (0.5, 0.69, 0.70, 1.0):
+    print(lam, optimo_es_cero(lam))
+
+round(umbral, 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_umbral
+#| check: true
+if abs(result - 0.693147) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: 0,693147. Cualquier serie de conteo con media por debajo de ese número se pronostica óptimamente con un cero constante, si la métrica es el error absoluto.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.693147 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuánto pesa la serie pequeña
+
+Con la Proposición 11.5, calcular qué fracción del promedio de errores porcentuales aporta cada serie cuando el error relativo va como $1/\sqrt{s}$.
+
+```{pyodide}
+#| exercise: ex_peso
+escalas = [1000.0, 300.0, 60.0, 12.0, 3.0]
+
+relativos = ______
+total = sum(relativos)
+pesos = [r / total for r in relativos]
+
+for s, p in zip(escalas, pesos):
+    print(s, round(p, 6))
+
+round(pesos[-1], 6)
+```
+
+::: {.hint exercise="ex_peso"}
+El error relativo de la serie de escala $s$ es proporcional a $1/\sqrt{s}$, así que basta `[1 / s ** 0.5 for s in escalas]`.
+:::
+
+::: {.solution exercise="ex_peso"}
+```{pyodide}
+escalas = [1000.0, 300.0, 60.0, 12.0, 3.0]
+
+relativos = [1 / s ** 0.5 for s in escalas]
+total = sum(relativos)
+pesos = [r / total for r in relativos]
+
+for s, p in zip(escalas, pesos):
+    print(s, round(p, 6))
+
+round(pesos[-1], 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_peso
+#| check: true
+if abs(result - 0.532374) < 1e-5:
+    feedback = {"correct": True, "message": "Correcto: 0,532374, o sea más de la mitad del promedio en manos de la serie más pequeña. La medición de la lección da 64,69 %, algo más porque el recorte en 0,5 engorda los errores relativos de esa serie.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.532374 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Series 11**:
+
+1. Tomar los errores de un backtesting propio y calcular las cinco métricas de la Definición 11.1. Anotar si ordenan igual a dos modelos, y si no, cuál cambia el orden.
+2. Simular una cartera de series de escalas muy distintas y comprobar la Proposición 11.5 con sus números. Anotar cuánto esfuerzo dirigiría cada métrica hacia la serie más pequeña.
+3. Escribir la pérdida real de un problema concreto —con su coste de quedarse corto y de pasarse— y encontrar el pronóstico óptimo para ella. Guardar en `50-Errores/` la distancia entre ese óptimo y el que darían MAE y MAPE.
+
+## Del libro
+
+Esta lección **no sigue ningún libro**, como el resto del módulo.
+
+Los puntos de contacto con el sitio son **Estadística 4**, de donde viene que la media minimiza el error cuadrático y la mediana el absoluto, y **Series de tiempo 7**, que produce los errores que aquí se resumen. Esta página añade lo que en aquellas no cabía: **qué pronóstico pide cada métrica**, con los tres mínimos calculados sobre la misma distribución, y la cuenta que separa el promedio de errores porcentuales del error porcentual del total.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/evaluacion-pronosticos.md`, enlazada a [[esperanza-varianza-momentos]], [[validacion-temporal]] y [[reconciliacion]]. Conviene rehacer a mano la Proposición 11.2: derivar $\mathbb{E}[w(Y)\lvert Y-c\rvert]$ ocupa dos renglones y deja grabado que **cada peso define su propia mediana**, que es la manera rápida de saber qué pide una métrica antes de adoptarla.
+
+```
+¿Qué punto minimiza el error cuadrático?::La media
+¿Y el absoluto?::La mediana
+¿Y el porcentual absoluto?::La mediana ponderada por 1/y, que cae por debajo
+¿Cuánto por debajo, en el ejemplo?::Un 61,6 % de la media
+¿Es eso un defecto del modelo?::No: es lo que la métrica premia
+¿Es simétrico el sMAPE?::No: quedarse corto puntúa peor, hasta 2,64 veces
+¿Hacia dónde sesga el sMAPE?::Hacia pasarse, al revés que el MAPE
+¿Cuándo es cero el pronóstico óptimo en MAE?::Cuando la media de conteo está por debajo de log 2
+¿Cuánto vale ese umbral?::0,693147
+¿Por qué importa?::Porque en demanda intermitente la métrica premia no pronosticar nada
+¿Qué domina el promedio de MAPEs?::Las series de escala pequeña
+¿Cuánto aportó la serie más pequeña del ejemplo?::El 64,69 % del promedio y el 2,66 % del error real
+¿En cuánto difieren el promedio de MAPEs y el MAPE del total?::Un factor de 7,50
+¿Qué arregla MASE?::Escala el error por el del pronóstico ingenuo de cada serie
+¿Qué significa MASE = 1?::Tan bueno como el pronóstico ingenuo
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 11.2 se demuestra derivando la pérdida ponderada; se comprueba sobre una lognormal, con mínimos en $1{,}3710$, $0{,}9980$ y $0{,}5260$ contra media $1{,}370637$ y mediana $0{,}998021$. La Proposición 11.3 se demuestra sustituyendo en la definición; se comprueba con cocientes de $1{,}105263$ a $2{,}636364$. La Proposición 11.4 se demuestra con la masa en cero de la Poisson; se comprueba en cinco valores de $\lambda$, donde el óptimo pasa de cero a uno al cruzar $\log 2=0{,}693147$. La Proposición 11.5 se comprueba con cinco series de la misma calidad, cuyos MAPE van de $0{,}025380$ a $0{,}871477$ mientras sus MASE se mantienen entre $0{,}706690$ y $0{,}717086$.
+
+**Lo que se usa de otras lecciones sin repetir.** Que la media minimiza el error cuadrático y la mediana el absoluto es de Estadística 4, y aquí se reusa y se extiende al caso ponderado. Los errores que se resumen vienen del backtesting de Series de tiempo 7. La comparación pareada entre modelos es de Series de tiempo 8.
+
+**Lo que se enuncia sin demostrar.** La Proposición 11.5 se **enuncia bajo un supuesto** —error absoluto proporcional a la raíz de la escala— y se comprueba en ese caso; no se demuestra para una relación cualquiera entre escala y error. Las propiedades de MASE como métrica comparable entre series se **usan** sin derivarlas.
+
+**Lo que viene de los libros.** Nada. Esta lección no cita ninguno.
+
+**Lo que es mío, no del libro.** Presentar la elección de métrica como **la elección del pronóstico que se considera bueno**, con los tres mínimos calculados sobre la misma distribución para que la diferencia se vea en una sola tabla. El umbral $\log 2$ enunciado como proposición con su demostración de dos líneas, en lugar de como anécdota sobre demanda intermitente. Y el reparto del promedio de MAPEs —$64{,}69\,\%$ contra $2{,}6635\,\%$— que convierte «el promedio miente» en una cifra que se puede llevar a una reunión.
+:::
