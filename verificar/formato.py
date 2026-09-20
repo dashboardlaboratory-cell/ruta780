@@ -117,6 +117,7 @@ MIGRADAS = {
     "series/04-arima.qmd",
     "series/05-suavizado-exponencial.qmd",
     "series/06-calendario.qmd",
+    "series/07-validacion-temporal.qmd",
     "python/01-tipos-y-estructuras.qmd",
     "python/02-funciones-y-scope.qmd",
     "python/03-comprehensions.qmd",

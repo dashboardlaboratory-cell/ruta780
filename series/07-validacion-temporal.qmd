@@ -1,0 +1,597 @@
+---
+title: "Validación temporal: backtesting sin fuga"
+subtitle: "Series de tiempo · Lección 7"
+nivel: L3
+modulo: series
+fase: F3
+prereqs: [series/06-calendario, series/04-arima, estadistica/16-calibracion]
+siguientes: []
+libro: "—"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="series/07-validacion-temporal"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F3]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Calendario](06-calendario.qmd) · [ARIMA](04-arima.qmd) · [Calibración](../estadistica/16-calibracion.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Describir el [backtesting]{.g data-t="backtesting"} de origen móvil y decir en qué se diferencia de una partición aleatoria.
+2. **Demostrar que la validación cruzada aleatoria contesta una pregunta a un paso**, y medir cuánto optimismo produce.
+3. Reconocer una [fuga de información]{.g data-t="fuga de información"} en la construcción de una columna.
+4. **Demostrar que una ventana centrada de anchura $w$ explica exactamente $1/w$ de la varianza de una serie impredecible.**
+5. Explicar por qué los errores de pronósticos solapados no son independientes, y calcular cuántos pronósticos independientes equivalen.
+6. Decidir cuántos orígenes usar sabiendo qué se gana con cada uno.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Series de tiempo 6**: las columnas de calendario, que son las que hay que construir sin mirar el futuro.
+- **Series de tiempo 4**: la varianza del error a $h$ pasos, que es la cantidad que un backtesting honesto estima.
+- **Series de tiempo 2**: la regresión espuria, primer aviso de que el ajuste alto no significa nada sobre series con memoria.
+- **Estadística 16**: la calibración, que mide otra propiedad de las mismas predicciones.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Series de tiempo 8**: el gradient boosting, cuyas columnas de retardo son el sitio clásico donde se filtra el futuro.
+- **Series de tiempo 9**: Prophet, que se evalúa exactamente con este esquema.
+- **Series de tiempo 10**: la reconciliación jerárquica, que necesita errores medidos en muchas series a la vez.
+- **Series de tiempo 11**: la evaluación, que toma de aquí los errores y discute con qué métrica resumirlos.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $y_t$ | y sub te | El valor observado en el instante $t$ |
+| $n$ | ene | La longitud de la serie |
+| $h$ | hache | El horizonte del pronóstico, en pasos |
+| $k$ | ka | El número de partes de una validación cruzada |
+| $w$ | doble ve | La anchura de una ventana móvil |
+| $m$ | eme | El número de orígenes de un backtesting |
+| $d$ | de | La distancia temporal al punto de entrenamiento más cercano |
+| $\sigma^2$ | sigma cuadrado | La varianza de la sacudida de la serie |
+| $\varphi$ | fi | El coeficiente autorregresivo de orden uno |
+| $R^2$ | erre cuadrado | La fracción de varianza que una regresión explica |
+| $\rho_j$ | ro sub jota | La autocorrelación entre errores separados por $j$ orígenes |
+| $L$ | ele mayúscula | La longitud de una ventana de ajuste deslizante |
+:::
+
+## 1. Dos maneras de partir los datos
+
+::: {.definicion}
+**Definición 7.1 (backtesting de origen móvil).** Dado un horizonte $h$, se eligen $m$ orígenes $t_1<\dots<t_m$. Para cada uno, el modelo se ajusta **solo con las observaciones hasta $t_i$** y se evalúa contra $y_{t_i+h}$. La ventana de ajuste puede ser **expandible** —todo el pasado— o **deslizante** —las últimas $L$ observaciones—.
+:::
+
+La alternativa que se usa en el resto del aprendizaje automático es repartir las observaciones al azar en $k$ partes. Sobre datos sin orden esa elección es correcta y la otra sería un desperdicio. Sobre una serie con memoria, las dos responden preguntas distintas.
+
+::: {.proposicion}
+**Proposición 7.2 (la validación cruzada aleatoria interpola).** Repartiendo al azar los índices en $k$ partes, el punto de entrenamiento más cercano a un punto de prueba está, en esperanza, a distancia
+$$\mathbb{E}[d]=\sum_{j\ge1} j\,\Bigl(1-\tfrac1k\Bigr)\Bigl(\tfrac1k\Bigr)^{\,j-1}\cdot(\text{corrección de borde})\;\approx\;1+\tfrac{2}{k},$$
+de modo que sobre un paseo aleatorio el error cuadrático medio de un predictor de vecino más cercano vale $\sigma^2\mathbb{E}[d]$, mientras que el error honesto a $h$ pasos vale $h\sigma^2$. El cociente de raíces es $\sqrt{h/\mathbb{E}[d]}$, que con $k=5$ y $h=12$ vale aproximadamente $3{,}4$.
+:::
+
+::: {.demostracion}
+*Demostración.* Para un paseo aleatorio, $y_t-y_{t-d}$ es la suma de $d$ sacudidas independientes, de varianza $d\sigma^2$; promediando sobre la distribución de $d$ queda $\sigma^2\mathbb{E}[d]$. Con partición aleatoria, el vecino inmediato $t\pm1$ está en el entrenamiento salvo que caiga en la misma parte, lo que ocurre con probabilidad $1/k$ por lado, de donde $\mathbb{E}[d]$ está cerca de uno. Para el pronóstico a $h$ pasos desde el último dato, la diferencia es la suma de $h$ sacudidas y su varianza es $h\sigma^2$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def vecino_del_pasado(ent, prueba, y):
+    """Predice cada punto de prueba con el valor del punto de entrenamiento
+    temporalmente mas cercano, y devuelve tambien esa distancia."""
+    ent = np.sort(np.asarray(ent))
+    pos = np.searchsorted(ent, prueba)
+    izq = ent[np.clip(pos - 1, 0, len(ent) - 1)]
+    der = ent[np.clip(pos, 0, len(ent) - 1)]
+    elige = np.where(np.abs(prueba - izq) <= np.abs(prueba - der), izq, der)
+    return y[elige], np.abs(prueba - elige)
+
+rng = np.random.default_rng(121)
+n, k, B, h = 600, 5, 400, 12
+
+def genera(nombre, r):
+    if nombre == "paseo aleatorio":
+        return np.cumsum(r.normal(0, 1, n))
+    if nombre == "ruido blanco":
+        return r.normal(0, 1, n)
+    e = r.normal(0, 1, n)
+    y = np.empty(n)
+    y[0] = e[0]
+    for t in range(1, n):
+        y[t] = 0.95 * y[t - 1] + e[t]
+    return y
+
+print("el mismo modelo evaluado de dos maneras: k-fold aleatorio y origen movil")
+print("  serie              RMSE k-fold   RMSE a 12 pasos   cociente")
+dist_media = []
+for nombre in ("paseo aleatorio", "AR(1) phi=0.95", "ruido blanco"):
+    ek, ef = [], []
+    for _ in range(B):
+        y = genera(nombre, rng)
+        perm = rng.permutation(n)
+        errs = []
+        for f in range(k):
+            pr = np.sort(perm[f::k])
+            en = np.setdiff1d(np.arange(n), pr)
+            pred, d = vecino_del_pasado(en, pr, y)
+            errs.append((y[pr] - pred) ** 2)
+            dist_media.append(d.mean())
+        ek.append(np.sqrt(np.concatenate(errs).mean()))
+        origenes = np.arange(n - 120, n - h, 6)
+        ef.append(np.sqrt(np.mean((y[origenes + h] - y[origenes]) ** 2)))
+    print("  %-16s     %.6f        %.6f        %.4f"
+          % (nombre, np.mean(ek), np.mean(ef), np.mean(ef) / np.mean(ek)))
+print()
+print("distancia media al vecino de entrenamiento con k = 5: %.6f" % np.mean(dist_media))
+print("o sea que k-fold contesta una pregunta a un paso mientras el informe")
+print("dice doce. Sobre ruido blanco no hay diferencia: sin autocorrelacion")
+print("no hay nada que filtrar, y ese control es lo que prueba el mecanismo")
+```
+
+Sobre un paseo aleatorio la validación cruzada informa $1{,}016005$ y la realidad a doce pasos es $3{,}402812$: **un factor de $3{,}3492$ de optimismo**. Sobre el $\text{AR}(1)$ casi tres. Y sobre ruido blanco el cociente es $1{,}0119$, o sea nada.
+
+Esa última fila es la que cierra el argumento. **La validación cruzada aleatoria no está rota en general**, y cuando la serie no tiene memoria funciona igual de bien que el backtesting. Falla exactamente en la medida en que haya autocorrelación que explotar, porque entonces cada punto de prueba tiene vecinos suyos en el entrenamiento. La distancia media al vecino, $1{,}040963$, dice lo que de verdad se está midiendo: una pregunta a un paso.
+
+```{=html}
+<div class="viz-particion">
+  <div class="controles">
+    <label>Esquema
+      <select id="pa-e">
+        <option value="kfold" selected>k-fold aleatorio</option>
+        <option value="expand">origen móvil, ventana expandible</option>
+        <option value="desliza">origen móvil, ventana deslizante</option>
+      </select>
+    </label>
+    <label>Cortes <input id="pa-m" type="range" min="2" max="8" step="1" value="5"> <span id="pa-m-v">5</span></label>
+    <label>Horizonte <input id="pa-h" type="range" min="1" max="12" step="1" value="6"> <span id="pa-h-v">6</span></label>
+  </div>
+  <svg id="pa-svg" viewBox="0 0 660 250" role="img" aria-label="Una fila por corte, con las observaciones de entrenamiento, las de prueba y las que quedan sin usar, para cada esquema de partición."></svg>
+  <p class="lectura" id="pa-lectura"></p>
+</div>
+<style>
+.viz-particion { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-particion .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-particion label { display: flex; align-items: center; gap: .4rem; }
+.viz-particion input[type=range] { width: 130px; padding: 0; }
+.viz-particion select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-particion svg { width: 100%; height: auto; display: block; }
+.viz-particion .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("pa-svg"), lec = document.getElementById("pa-lectura");
+  var ce = document.getElementById("pa-e"), cm = document.getElementById("pa-m"), ch = document.getElementById("pa-h");
+  var em = document.getElementById("pa-m-v"), eh = document.getElementById("pa-h-v");
+  var X0 = 46, XW = 574, Y0 = 24, N = 60, L = 20;
+  // el alto de fila se acota para dejar sitio a las dos barras de abajo
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function sorteo(n, m) {   // reparto reproducible en m partes
+    var s = 9091, out = [], i;
+    function u() { s = (s * 48271) % 2147483647; return s / 2147483647; }
+    for (i = 0; i < n; i++) out.push(Math.floor(u() * m));
+    return out;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var esquema = ce.value, m = +cm.value, h = +ch.value;
+    em.textContent = m; eh.textContent = h;
+    var alto = Math.min(20, 165 / m), hueco = 5;
+    var ancho = XW / N, parte = sorteo(N, m), i, f;
+    var distancias = [], usados = 0, probados = 0;
+
+    for (f = 0; f < m; f++) {
+      var y = Y0 + f * (alto + hueco);
+      var primerPrueba = -1;
+      for (i = 0; i < N; i++) {
+        var papel;   // 0 sin usar, 1 entrenamiento, 2 prueba
+        if (esquema === "kfold") {
+          papel = parte[i] === f ? 2 : 1;
+        } else {
+          var corte = Math.floor(N * (0.45 + 0.5 * (f + 1) / (m + 1)));
+          if (i < corte) papel = (esquema === "desliza" && i < corte - L) ? 0 : 1;
+          else if (i === corte + h - 1) papel = 2;
+          else papel = 0;
+        }
+        if (papel === 1) usados++;
+        if (papel === 2) { probados++; if (primerPrueba < 0) primerPrueba = i; }
+        svg.appendChild(el("rect", {
+          x: (X0 + i * ancho).toFixed(1), y: y.toFixed(1),
+          width: (ancho - 0.8).toFixed(1), height: alto.toFixed(1),
+          fill: papel === 2 ? C_B : (papel === 1 ? C_A : C_L),
+          opacity: papel === 0 ? .35 : (papel === 1 ? .55 : 1)
+        }));
+      }
+      // distancia del punto de prueba al entrenamiento mas cercano
+      if (esquema === "kfold") {
+        for (i = 0; i < N; i++) if (parte[i] === f) {
+          var d = 1;
+          while (i - d >= 0 && parte[i - d] === f) d++;
+          var d2 = 1;
+          while (i + d2 < N && parte[i + d2] === f) d2++;
+          distancias.push(Math.min(d, d2));
+        }
+      } else if (primerPrueba >= 0) {
+        distancias.push(h);
+      }
+      svg.appendChild(el("text", { x: X0 - 6, y: (y + alto * 0.75).toFixed(1), "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, "corte " + (f + 1)));
+    }
+    var med = distancias.length ? distancias.reduce(function (a, b) { return a + b; }, 0) / distancias.length : 0;
+    // la barra del horizonte se dibuja SIEMPRE, porque el informe promete h
+    // pasos con cualquier esquema; en k-fold no tiene contrapartida en la
+    // particion, y eso es justamente lo que hay que ver
+    var yb = Y0 + m * (alto + hueco) + 10;
+    var xb = X0 + XW - h * ancho;
+    svg.appendChild(el("path", { d: "M" + xb.toFixed(1) + " " + yb.toFixed(1) + " L" + (X0 + XW).toFixed(1) + " " + yb.toFixed(1),
+      stroke: C_B, "stroke-width": 3 }));
+    svg.appendChild(el("path", { d: "M" + xb.toFixed(1) + " " + (yb - 4).toFixed(1) + " L" + xb.toFixed(1) + " " + (yb + 4).toFixed(1),
+      stroke: C_B, "stroke-width": 2 }));
+    svg.appendChild(el("text", { x: (xb - 6).toFixed(1), y: (yb + 4).toFixed(1), "text-anchor": "end", "font-size": 10.5, fill: C_B },
+      "el horizonte que promete el informe: " + h + " pasos"));
+    // y la barra de la pregunta que el esquema contesta de verdad
+    var xq = X0 + XW - Math.max(1, med) * ancho;
+    svg.appendChild(el("path", { d: "M" + xq.toFixed(1) + " " + (yb + 14).toFixed(1) + " L" + (X0 + XW).toFixed(1) + " " + (yb + 14).toFixed(1),
+      stroke: C_A, "stroke-width": 3 }));
+    svg.appendChild(el("text", { x: (xq - 6).toFixed(1), y: (yb + 18).toFixed(1), "text-anchor": "end", "font-size": 10.5, fill: C_A },
+      "la que contesta el esquema: " + med.toFixed(2) + " pasos"));
+    svg.appendChild(el("text", { x: X0, y: Y0 - 8, "font-size": 10.5, fill: C_A }, "entrenamiento"));
+    svg.appendChild(el("text", { x: X0 + 90, y: Y0 - 8, "font-size": 10.5, fill: C_B }, "prueba"));
+    svg.appendChild(el("text", { x: X0 + 140, y: Y0 - 8, "font-size": 10.5, fill: C_T, opacity: .5 }, "sin usar"));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 - 8, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 },
+      "distancia media al entrenamiento: " + med.toFixed(2)));
+
+    var texto;
+    if (esquema === "kfold") texto = "Con k-fold aleatorio, cada punto de prueba tiene entrenamiento <strong>a los dos lados</strong>: la distancia media al vecino es <strong>" + med.toFixed(2) + "</strong>. Las dos barras de abajo separan lo que el informe promete —" + h + " pasos— de lo que el esquema mide. El modelo interpola.";
+    else if (esquema === "expand") texto = "Con ventana expandible, cada corte entrena con todo el pasado y prueba a <strong>" + h + "</strong> pasos. La distancia al dato más reciente es " + med.toFixed(2) + ", que es la pregunta que el modelo tendrá que contestar en producción.";
+    else texto = "Con ventana deslizante solo entran las últimas " + L + " observaciones: se pierde historia a cambio de olvidar regímenes viejos. La distancia de prueba sigue siendo " + med.toFixed(2) + ".";
+    lec.innerHTML = texto + " Se usan " + usados + " observaciones de entrenamiento en total y se evalúan " + probados + ".";
+  }
+  ce.addEventListener("change", dibujar);
+  cm.addEventListener("input", dibujar);
+  ch.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Construir una columna sin mirar el futuro
+
+::: {.definicion}
+**Definición 7.3 (fuga de información).** Hay fuga cuando una columna del conjunto de entrenamiento —o del de prueba— se construye con información que en el instante de la predicción todavía no existía.
+:::
+
+La fuga más frecuente no está en la partición sino en la construcción de las columnas, y la ventana centrada es el caso limpio: una media móvil de anchura $w$ centrada en $t$ usa observaciones hasta $t+\lfloor w/2\rfloor$. El efecto tiene fórmula exacta.
+
+::: {.proposicion}
+**Proposición 7.4 (cuánto explica una ventana centrada).** Sea $y_t$ ruido blanco de varianza $\sigma^2$ y $x_t$ la media de la ventana centrada de anchura $w$ en $t$. Entonces
+$$\operatorname{Cov}(y_t,x_t)=\frac{\sigma^2}{w},\qquad \operatorname{Var}(x_t)=\frac{\sigma^2}{w},\qquad R^2=\frac{1}{w}\ \text{exactamente.}$$
+La misma ventana construida solo con el pasado estricto tiene $R^2=0$.
+:::
+
+::: {.demostracion}
+*Demostración.* La ventana centrada contiene $y_t$ con peso $1/w$ y otras $w-1$ observaciones independientes de él con el mismo peso, así que $\operatorname{Cov}(y_t,x_t)=\tfrac1w\operatorname{Var}(y_t)=\sigma^2/w$ y $\operatorname{Var}(x_t)=w\cdot\tfrac1{w^2}\sigma^2=\sigma^2/w$. El coeficiente de determinación de una regresión simple es $\operatorname{Cov}^2/(\operatorname{Var}\cdot\operatorname{Var})=(\sigma^2/w)^2/(\sigma^2\cdot\sigma^2/w)=1/w$. Con ventana retrasada, $y_t$ no aparece en $x_t$ y todas las observaciones son independientes, de donde covarianza cero. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(131)
+n, B = 2000, 200
+
+print("una columna construida con una ventana CENTRADA sobre ruido blanco puro")
+print("  ventana   R2 con ventana centrada    1/w      R2 con ventana retrasada")
+for w in (3, 7, 15):
+    r2c, r2r = [], []
+    for _ in range(B):
+        y = rng.normal(0, 1, n)
+        k2 = w // 2
+        cen = np.array([y[max(0, t - k2):t + k2 + 1].mean() for t in range(n)])
+        ret = np.array([y[max(0, t - w):t].mean() if t > 0 else 0.0 for t in range(n)])
+        for x, dest in ((cen, r2c), (ret, r2r)):
+            xc = x - x.mean()
+            yc = y - y.mean()
+            b = (xc * yc).sum() / (xc * xc).sum()
+            res = yc - b * xc
+            dest.append(1 - (res * res).sum() / (yc * yc).sum())
+    print("    %2d            %.6f          %.6f         %.6f" % (w, np.mean(r2c), 1.0 / w, np.mean(r2r)))
+print()
+print("la serie es ruido blanco: NADA puede predecirla. La ventana centrada")
+print("explica 1/w de su varianza porque se contiene a si misma con peso 1/w")
+```
+
+Los tres anchos dan $0{,}334614$, $0{,}141940$ y $0{,}066782$ contra los $1/3$, $1/7$ y $1/15$ que predice la proposición. **La serie es ruido blanco, así que ningún modelo puede predecirla**, y sin embargo la columna centrada explica una tercera parte de su varianza. La versión retrasada da $0{,}000421$, que es cero con ruido de muestreo.
+
+Un $R^2$ de $0{,}33$ sobre una serie impredecible se parece mucho a un hallazgo. De ahí la regla que esta lección justifica: **cada columna se construye con lo que estaba disponible en el instante de la predicción**, y eso incluye las medias móviles, los rellenos de datos faltantes, la normalización y cualquier cosa que se calcule «sobre el conjunto entero».
+
+## 3. Cuántos pronósticos hacen falta
+
+Un backtesting con muchos orígenes parece más fiable que uno con pocos. Lo es, pero mucho menos de lo que sugiere el recuento, porque los pronósticos que se solapan comparten casi todo el camino de la serie.
+
+::: {.proposicion}
+**Proposición 7.5 (los errores solapados repiten información).** Con orígenes separados por un paso menor que el horizonte, los errores de pronóstico comparten sacudidas y por tanto están correlacionados. La varianza de la media de $m$ errores cuadráticos no vale $\operatorname{Var}/m$ sino
+$$\frac{\operatorname{Var}}{m}\Bigl(1+2\sum_{j=1}^{m-1}\bigl(1-\tfrac{j}{m}\bigr)\rho_j\Bigr),$$
+de modo que el número de pronósticos **equivalentes a independientes** es menor que $m$, y deja de crecer al acercar los orígenes.
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(141)
+h, B, n = 12, 4000, 400
+
+print("cuantos pronosticos solapados hacen falta para evaluar bien")
+print("   paso   pronosticos   desviacion de la media de errores^2   equivalentes")
+base = None
+for paso in (12, 6, 3, 1):
+    medias = []
+    for _ in range(B):
+        y = np.cumsum(rng.normal(0, 1, n))
+        origenes = np.arange(200, n - h, paso)
+        medias.append(((y[origenes + h] - y[origenes]) ** 2).mean())
+    m = len(np.arange(200, n - h, paso))
+    sd = float(np.std(medias))
+    if base is None:
+        base = (m, sd)
+    equiv = base[0] * (base[1] / sd) ** 2
+    print("    %2d        %4d                  %.6f                    %.1f" % (paso, m, sd, equiv))
+print()
+print("pasar de 16 a 188 pronosticos multiplica el trabajo por doce y la")
+print("precision de la evaluacion apenas mejora: los solapados comparten")
+print("casi todo el camino de la serie, asi que repiten informacion")
+```
+
+Con orígenes separados por el horizonte entero salen $16$ pronósticos y una desviación de $4{,}315135$. Acercándolos hasta el paso uno salen $188$, doce veces más trabajo, y la desviación baja solo a $3{,}439229$: **esos $188$ pronósticos equivalen a unos $25$ independientes**.
+
+La consecuencia práctica es doble. Por un lado, no merece la pena evaluar en cada instante cuando el horizonte es largo. Por otro, y más importante: **para distinguir dos modelos hace falta mucha más serie de la que el recuento de pronósticos sugiere**, y un backtesting con cien pronósticos solapados puede no tener potencia para separar dos métodos que difieren en un cinco por ciento.
+
+```{=html}
+<div class="viz-optimismo">
+  <div class="controles">
+    <label>Coeficiente φ <input id="op7-f" type="range" min="0" max="1" step="0.02" value="0.90"> <span id="op7-f-v">0.90</span></label>
+    <label>Horizonte h <input id="op7-h" type="range" min="1" max="24" step="1" value="12"> <span id="op7-h-v">12</span></label>
+    <label>Partes k <input id="op7-k" type="range" min="2" max="10" step="1" value="5"> <span id="op7-k-v">5</span></label>
+  </div>
+  <svg id="op7-svg" viewBox="0 0 660 250" role="img" aria-label="El error que informa una validación cruzada aleatoria frente al error honesto a h pasos, en función del coeficiente autorregresivo."></svg>
+  <p class="lectura" id="op7-lectura"></p>
+</div>
+<style>
+.viz-optimismo { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-optimismo .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-optimismo label { display: flex; align-items: center; gap: .4rem; }
+.viz-optimismo input[type=range] { width: 150px; padding: 0; }
+.viz-optimismo svg { width: 100%; height: auto; display: block; }
+.viz-optimismo .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("op7-svg"), lec = document.getElementById("op7-lectura");
+  var cf = document.getElementById("op7-f"), ch = document.getElementById("op7-h"), ck = document.getElementById("op7-k");
+  var ef = document.getElementById("op7-f-v"), eh = document.getElementById("op7-h-v"), ek = document.getElementById("op7-k-v");
+  var X0 = 46, XW = 574, Y0 = 20, YH = 190, HI = 5.2;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // error cuadratico medio a j pasos de un AR(1); con fi = 1 es el paseo
+  function varError(fi, j) {
+    if (Math.abs(1 - fi) < 1e-9) return j;
+    return (1 - Math.pow(fi, 2 * j)) / (1 - fi * fi);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var fi = +cf.value, H = +ch.value, k = +ck.value;
+    ef.textContent = fi.toFixed(2); eh.textContent = H; ek.textContent = k;
+    var dmed = 1 + 2 / k;      // distancia media al vecino de entrenamiento
+    var kfold = Math.sqrt(varError(fi, dmed));
+
+    var px = function (j) { return X0 + (j - 1) / Math.max(1, (24 - 1)) * XW; };
+    var py = function (v) { return Y0 + (HI - Math.max(0, Math.min(HI, v))) / HI * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+
+    var d = "", j;
+    for (j = 1; j <= 24; j++) d += (j > 1 ? " L" : "M") + px(j).toFixed(1) + " " + py(Math.sqrt(varError(fi, j))).toFixed(1);
+    svg.appendChild(el("path", { d: d, stroke: C_T, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(kfold).toFixed(1) + " L" + (X0 + XW) + " " + py(kfold).toFixed(1),
+      stroke: C_A, "stroke-width": 2, "stroke-dasharray": "6 3" }));
+    var honesto = Math.sqrt(varError(fi, H));
+    svg.appendChild(el("path", { d: "M" + px(H).toFixed(1) + " " + py(0).toFixed(1) + " L" + px(H).toFixed(1) + " " + py(honesto).toFixed(1),
+      stroke: C_B, "stroke-width": 2 }));
+    svg.appendChild(el("path", { d: "M" + (px(H) - 4).toFixed(1) + " " + py(honesto).toFixed(1) + " L" + (px(H) + 4).toFixed(1) + " " + py(honesto).toFixed(1),
+      stroke: C_B, "stroke-width": 3 }));
+    svg.appendChild(el("text", { x: X0 + 6, y: py(kfold) - 6, "font-size": 10.5, fill: C_A }, "lo que informa k-fold: " + kfold.toFixed(4)));
+    svg.appendChild(el("text", { x: X0 + XW - 4, y: Y0 + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "RMSE honesto por horizonte"));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "horizonte 1 … 24"));
+
+    var coc = honesto / kfold;
+    lec.innerHTML = "Con φ = <strong>" + fi.toFixed(2) + "</strong>, k-fold informa <strong>" + kfold.toFixed(4) +
+      "</strong> y el error honesto a " + H + " pasos vale <strong>" + honesto.toFixed(4) + "</strong>: un factor de <strong>" +
+      coc.toFixed(4) + "</strong>. " +
+      (fi < 0.05
+        ? "Sin autocorrelación las dos coinciden: la validación cruzada aleatoria <strong>no está rota en general</strong>, falla solo cuando hay memoria que filtrar."
+        : Math.abs(1 - fi) < 1e-9
+          ? "Con φ = 1 la serie no olvida y la curva honesta crece como √h sin tope, mientras k-fold sigue contestando una pregunta a un paso."
+          : "El optimismo crece con φ y con el horizonte, y se anula cuando cualquiera de los dos se va a cero.");
+  }
+  cf.addEventListener("input", dibujar);
+  ch.addEventListener("input", dibujar);
+  ck.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Lo que esta lección no resuelve
+
+- **La elección entre ventana expandible y deslizante no se decide aquí.** Depende de si el proceso cambia de régimen, y medir eso es otro problema.
+- **No se trata la selección de hiperparámetros dentro del backtesting.** Elegir un modelo mirando los mismos cortes con los que se informa el error vuelve a producir optimismo, por la vía de Estadística 17.
+- **El coste computacional se ignora.** Reajustar en cada origen es caro; hacerlo cada varios orígenes introduce un sesgo que esta página no mide.
+- **Las series múltiples quedan fuera.** Con muchas series a la vez aparece la pregunta de si los cortes deben ser comunes, que es de la lección 10.
+- **Y nada de esto dice con qué métrica resumir los errores.** Esa discusión, incluida la razón por la que el promedio miente, es la lección 11.
+
+## Ejercicios
+
+### Ejercicio 1, Cuánto optimismo produce una partición aleatoria
+
+Con la Proposición 7.2 y las fórmulas de la lección 4, calcular el cociente entre el error honesto a $h$ pasos y el que informa una validación cruzada, para un $\text{AR}(1)$.
+
+```{pyodide}
+#| exercise: ex_optimismo
+def var_error(fi, j):
+    """Varianza del error a j pasos de un AR(1)."""
+    return ______
+
+fi, k, h = 0.9, 5, 12
+d_medio = 1 + 2 / k
+
+cociente = ______
+
+print(round(d_medio, 6), round(cociente, 6))
+round(cociente, 6)
+```
+
+::: {.hint exercise="ex_optimismo"}
+La varianza del error a $j$ pasos es $(1-\varphi^{2j})/(1-\varphi^2)$. El cociente de los RMSE es la raíz del cociente de varianzas, con $j=h$ arriba y $j=\mathbb{E}[d]$ abajo.
+:::
+
+::: {.solution exercise="ex_optimismo"}
+```{pyodide}
+def var_error(fi, j):
+    """Varianza del error a j pasos de un AR(1)."""
+    return (1 - fi ** (2 * j)) / (1 - fi ** 2)
+
+fi, k, h = 0.9, 5, 12
+d_medio = 1 + 2 / k
+
+cociente = (var_error(fi, h) / var_error(fi, d_medio)) ** 0.5
+
+print(round(d_medio, 6), round(cociente, 6))
+round(cociente, 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_optimismo
+#| check: true
+if abs(result - 1.897905) < 1e-5:
+    feedback = {"correct": True, "message": "Correcto: 1,897905. Con φ = 0,9 la validación cruzada informa un error casi dos veces menor que el real a doce pasos, y el informe no lleva ninguna advertencia de que sean preguntas distintas.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 1.897905 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, El $R^2$ que regala una ventana
+
+Con la Proposición 7.4, calcular qué ancho de ventana centrada haría falta para que la fuga quedara por debajo de un $R^2$ de $0{,}01$, y qué $R^2$ regala una ventana de siete.
+
+```{pyodide}
+#| exercise: ex_fuga
+objetivo = 0.01
+
+w_minimo = ______
+r2_de_siete = ______
+
+print(w_minimo, round(r2_de_siete, 6))
+int(w_minimo)
+```
+
+::: {.hint exercise="ex_fuga"}
+La proposición dice $R^2=1/w$, así que hay que despejar $1/w<0{,}01$ y evaluar en $w=7$. El ancho es entero.
+:::
+
+::: {.solution exercise="ex_fuga"}
+```{pyodide}
+objetivo = 0.01
+
+w_minimo = int(1 / objetivo) + 1
+r2_de_siete = 1 / 7
+
+print(w_minimo, round(r2_de_siete, 6))
+int(w_minimo)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_fuga
+#| check: true
+if result == 101:
+    feedback = {"correct": True, "message": "Correcto: haría falta una ventana de 101 para que la fuga bajara del 1 %, y una de siete regala 0,142857. Conviene recordar que el remedio no es ensanchar la ventana sino retrasarla.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 101 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Series 7**:
+
+1. Montar un backtesting de origen móvil sobre una serie propia, con ventana expandible y deslizante, y comparar los errores. Anotar si la deslizante gana, y a partir de qué longitud de ventana.
+2. Repetir la medición de la Proposición 7.4 con una columna de rellenado de faltantes por interpolación lineal. Anotar cuánto $R^2$ regala sobre ruido blanco y por qué.
+3. Evaluar el mismo modelo con $k$-fold y con origen móvil sobre una serie con tendencia clara, y guardar en `50-Errores/` los dos números junto con la frase que los distingue: qué pregunta contesta cada uno.
+
+## Del libro
+
+Esta lección **no sigue ningún libro**. Igual que el resto del módulo, sus resultados se demuestran o se miden aquí.
+
+Los puntos de contacto con el sitio son **Series de tiempo 4**, que aporta la varianza del error a $h$ pasos contra la que se compara todo, y **Estadística 17**, de donde viene la idea de que mirar muchas veces los mismos datos infla lo que se encuentra. Esta página añade lo que en aquellas no cabía: **que la validación cruzada aleatoria no está rota sino que contesta otra pregunta**, con el cociente medido, y que una ventana centrada regala exactamente $1/w$ de $R^2$ sobre una serie que nadie puede predecir.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/validacion-temporal.md`, enlazada a [[arima]], [[calendario]] y [[p-hacking]]. Conviene rehacer a mano la Proposición 7.4: la cuenta ocupa tres renglones y deja grabado que **una columna que se contiene a sí misma explica $1/w$**, que es la manera rápida de reconocer una fuga sin tener que razonar sobre el flujo de datos.
+
+```
+¿Qué es un backtesting de origen móvil?::Ajustar solo con el pasado de cada origen y evaluar h pasos después
+¿Ventana expandible o deslizante?::Todo el pasado, o las últimas L observaciones
+¿Por qué falla k-fold aleatorio en series?::Porque deja vecinos del punto de prueba en el entrenamiento
+¿A qué distancia queda el vecino con k=5?::Alrededor de 1,04: es una pregunta a un paso
+¿Cuánto optimismo produce con un paseo y h=12?::Un factor de 3,3492 en el RMSE
+¿Falla k-fold sobre ruido blanco?::No: el cociente es 1,0119, porque no hay memoria que filtrar
+¿Qué es una fuga de información?::Usar en una columna algo que no existía al momento de predecir
+¿Qué R² regala una ventana centrada de ancho w?::Exactamente 1/w, sobre una serie impredecible
+¿Y una ventana retrasada?::Cero
+¿Cuál es la regla general?::Cada columna se construye con lo disponible en el instante de la predicción
+¿Son independientes los errores de pronósticos solapados?::No: comparten casi todo el camino de la serie
+¿Cuántos independientes equivalen 188 solapados?::Alrededor de 25
+¿Conviene evaluar en cada instante?::No con horizonte largo: multiplica el trabajo sin mejorar la precisión
+¿Basta un backtesting con cien pronósticos para elegir modelo?::No necesariamente: el recuento exagera la potencia
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 7.2 se demuestra con la varianza de una suma de sacudidas y la distribución de la distancia al vecino; se comprueba sobre cuatrocientas réplicas de tres procesos, con cocientes $3{,}3492$, $2{,}9345$ y $1{,}0119$, y una distancia media medida de $1{,}040963$. La Proposición 7.4 se demuestra calculando covarianza y varianza de la ventana; se comprueba con $0{,}334614$, $0{,}141940$ y $0{,}066782$ contra $1/3$, $1/7$ y $1/15$, y con la ventana retrasada en $0{,}000421$. La Proposición 7.5 se comprueba con cuatro pasos entre orígenes, donde $188$ pronósticos equivalen a unos $25$ independientes.
+
+**Lo que se usa de otras lecciones sin repetir.** La varianza del error a $h$ pasos, para el $\text{AR}(1)$ y para el paseo aleatorio, es de Series de tiempo 4. Las columnas de calendario que hay que construir con cuidado son de Series de tiempo 6. La idea de que mirar repetidamente los mismos datos infla los hallazgos es de Estadística 17.
+
+**Lo que se enuncia sin demostrar.** La fórmula de la varianza de una media de errores correlacionados se **enuncia** en la Proposición 7.5 y no se deriva; es la expresión estándar para una suma con autocovarianzas, y aquí se usa para nombrar el fenómeno que la medición cuantifica. La corrección de borde en el cálculo de $\mathbb{E}[d]$ se deja indicada y se mide en lugar de desarrollarse.
+
+**Lo que viene de los libros.** Nada. Esta lección no cita ninguno.
+
+**Lo que es mío, no del libro.** Incluir el **control de ruido blanco** en la tabla del optimismo: sin él la conclusión sería que la validación cruzada aleatoria está rota, y con él queda claro que falla exactamente en la medida en que haya memoria. Convertir la fuga por ventana centrada en una **fórmula exacta** —$R^2=1/w$— en lugar de una advertencia, lo que permite reconocerla sin razonar sobre el flujo de datos. Y traducir el solapamiento a un número de pronósticos equivalentes, que es lo que decide si un backtesting tiene potencia para elegir entre dos modelos.
+:::

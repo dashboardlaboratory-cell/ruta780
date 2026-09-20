@@ -37,7 +37,7 @@ Tres hitos de esta sesión:
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
 faltando lecciones por escribir: **ML va por 22 de 90**, **Series de tiempo
-va por 6 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
+va por 7 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
 
@@ -105,7 +105,7 @@ hay que empezar a hacer:
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
-| Series de tiempo | 6 | 11 | **6 de 6** | 7 a 11 |
+| Series de tiempo | 7 | 11 | **7 de 7** | 8 a 11 |
 | Machine Learning | 22 | 90 | **22 de 22** | la Fase 2 cerrada; quedan ESL y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
@@ -394,7 +394,7 @@ Lo que sigue, en orden de coste creciente:
    lección, y **no reaparece en ninguna fase posterior**. Deep Learning al
    menos se retoma en las lecciones 28 a 33; supervivencia no tiene red.
 
-3. **Series de tiempo ya no está vacía** —las lecciones 1 a 6 de 11 se
+3. **Series de tiempo ya no está vacía** —las lecciones 1 a 7 de 11 se
    publicaron el 19-09-2026, y no citan ningún libro porque ninguno del sitio
    cubre el tema—;
    **Inferencia causal sigue vacía** en el sidebar.
@@ -2021,6 +2021,65 @@ $10^{-10}$?— y las dos versiones volvieron a coincidir.
 El gate de visuales avisó de que el control de años no movía ningún trazo,
 porque las bandas de incertidumbre estaban dibujadas como `rect`. Se pasaron a
 trazo, que además se ve mejor.
+
+### 3.33 Series de tiempo 07: la validación cruzada no está rota, contesta otra pregunta (20-09-2026)
+
+La lección podía haberse escrito como una advertencia —«no uses k-fold en
+series»— y en su lugar mide el fenómeno y nombra su mecanismo.
+
+> **7.2**: repartiendo los índices al azar en $k$ partes, el vecino de
+> entrenamiento queda a distancia media $\approx1{,}04$, así que el informe
+> contesta una pregunta **a un paso** mientras dice $h$.
+
+La tabla tiene tres filas y la tercera es la que sostiene el argumento:
+
+| serie | RMSE k-fold | RMSE a 12 pasos | cociente |
+|---|---|---|---|
+| paseo aleatorio | $1{,}016005$ | $3{,}402812$ | $3{,}3492$ |
+| AR(1) $\varphi=0{,}95$ | $1{,}030932$ | $3{,}025224$ | $2{,}9345$ |
+| **ruido blanco** | $1{,}413577$ | $1{,}430459$ | $\mathbf{1{,}0119}$ |
+
+**Sobre ruido blanco no hay optimismo ninguno.** Sin esa fila la conclusión
+sería que la validación cruzada aleatoria está rota; con ella queda claro que
+falla exactamente en la medida en que haya memoria que filtrar. El control que
+prueba el mecanismo vale más que el efecto.
+
+#### La fuga, convertida en fórmula
+
+> **7.4**: una ventana **centrada** de anchura $w$ explica exactamente $1/w$ de
+> la varianza de una serie impredecible.
+
+Medido: $0{,}334614$, $0{,}141940$ y $0{,}066782$ contra $1/3$, $1/7$ y $1/15$,
+con la ventana retrasada en $0{,}000421$. La serie es ruido blanco, así que
+**nadie puede predecirla**, y aun así la columna centrada regala un tercio de
+$R^2$. Eso permite reconocer una fuga sin razonar sobre el flujo de datos: si
+una columna se contiene a sí misma con peso $1/w$, ahí está el $R^2$.
+
+#### Cuántos pronósticos valen de verdad
+
+> **7.5**: los errores de pronósticos solapados repiten información.
+
+Con orígenes separados por el horizonte salen $16$ pronósticos; acercándolos al
+paso uno salen $188$ —doce veces más trabajo— y **equivalen a unos $25$
+independientes**. La consecuencia es que un backtesting con cien pronósticos
+solapados puede no tener potencia para separar dos modelos que difieren en un
+cinco por ciento.
+
+#### El control muerto, otra vez, y otra vez mejoró el visual
+
+`visuales.py` marcó el deslizador de horizonte: en el esquema por defecto
+—k-fold— el horizonte no significa nada, así que no movía un píxel. Cierto y
+además **es el punto de la lección**.
+
+El arreglo fue dibujar, debajo de los cortes y en todos los esquemas, **dos
+barras**: la del horizonte que el informe promete y la de la pregunta que el
+esquema contesta de verdad. Con origen móvil coinciden; con k-fold la primera
+mide $h$ y la segunda $1{,}04$, y la distancia entre las dos barras **es** la
+Proposición 7.2 dibujada. Van dos lecciones seguidas en que un control roto
+obligó a encontrar el control que faltaba.
+
+Y el valor del ejercicio 1 estaba escrito a mano en $2{,}033888$; la corrida dio
+$1{,}897905$.
 
 ---
 
