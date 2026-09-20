@@ -1,7 +1,7 @@
 # Estado de Ruta 780 y qué sigue
 
-Última actualización: **19-09-2026**, tras una sesión larga que publicó **veintidós
-lecciones** y cerró **cuatro deudas**.
+Última actualización: **19-09-2026**, tras una sesión larga que publicó **veintitrés
+lecciones** y cerró **cinco deudas**.
 
 Las lecciones: **ML 7** (selección de subconjuntos, ISLP §6.1), **ML 8**
 (encogimiento, §6.2), **ML 9** (alta dimensión, §6.4), **ML 10** (bases y
@@ -9,10 +9,11 @@ splines, §7.1–7.4), **ML 11** (suavizado y GAMs, §7.5–7.7), **ML 12** (ár
 decisión, §8.1), **ML 13** (bagging, bosques e impulso, §8.2), **ML 14** (margen
 máximo, §9.1–9.2), **ML 15** (núcleos y pérdida bisagra, §9.3–9.5), **ML 16** (redes neuronales,
 §10.1–10.2, §10.6 y §10.8), **ML 17** (censura y Kaplan-Meier, §11.1–11.4), **ML 18** (riesgos proporcionales
-y Cox, §11.5–11.7), **ML 19** (PCA, §12.1–12.3), **ML 20** (PCR y PLS, §6.3), **ML 21** (clustering, §12.4), y **Python 10** a **16** (carga y limpieza, uniones y reshape,
+y Cox, §11.5–11.7), **ML 19** (PCA, §12.1–12.3), **ML 20** (PCR y PLS, §6.3), **ML 21** (clustering, §12.4), **ML 22** (pruebas múltiples, §13.3–13.5), y
+**Python 10** a **16** (carga y limpieza, uniones y reshape,
 groupby, visualización, series de tiempo, rendimiento y anatomía de un proyecto).
 
-**Las 80 publicadas cumplen el molde: 80 de 80.**
+**Las 81 publicadas cumplen el molde: 81 de 81.**
 
 Tres hitos de esta sesión:
 
@@ -28,13 +29,14 @@ Tres hitos de esta sesión:
   **no están en el plan** y quedan anotadas como omisión deliberada. El
   **capítulo 11 queda cubierto entero**: §11.1–11.4 en ML 17 y §11.5–11.7 en
   ML 18, con tres subsecciones de §11.7 nombradas como omisión deliberada. Del
-  **12 queda cubierto entero**: §12.1–12.3 en ML 19 y §12.4 en ML 21. Queda solo
-  el **13**, que es la lección 22 y cierra la Fase 2 de ISLP.
+  **12 queda cubierto entero**: §12.1–12.3 en ML 19 y §12.4 en ML 21. Y el **13**
+  se reparte entre Estadística 17 —§13.1 a §13.3— y **ML 22** —§13.3.3 a §13.5—.
+  **Con ML 22 se cierra la Fase 2 de ISLP entera.**
 - **Las tres deudas abiertas se cerraron**: las colisiones del glosario (punto 6),
   las 33 secciones de retos y los 106 símbolos sin declarar.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
-faltando lecciones por escribir: **ML va por 21 de 90**, y **Series de tiempo e
+faltando lecciones por escribir: **ML va por 22 de 90**, y **Series de tiempo e
 Inferencia causal están vacíos**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -104,15 +106,15 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 0 | 11 | — | todas |
-| Machine Learning | 21 | 90 | **21 de 21** | la 22 de la Fase 2, y el resto |
+| Machine Learning | 22 | 90 | **22 de 22** | la Fase 2 cerrada; quedan ESL y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **80 lecciones** publicadas, **80** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 98 según el plan.
+- **81 lecciones** publicadas, **81** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 97 según el plan.
 - **Tres módulos cerrados**: Estadística 25/25, Álgebra 18/18 y **Python 16/16**.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
@@ -139,15 +141,15 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   marginales exactas, que es más fuerte que cualquier librería; y `np.trapz` se
   retiró del espacio de nombres en NumPy 2.0, así que las celdas nuevas no lo
   usan.
-- **169 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
+- **171 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
   Siguen los mismos cuatro avisos, todos anteriores: tres de no idempotencia
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. Los visuales de esta tanda no añaden ninguno.
-- **1853 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **433 celdas** que el gate ejecuta en cada build, y comprobadas **con las
+- **1873 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **438 celdas** que el gate ejecuta en cada build, y comprobadas **con las
   dos parejas de versiones** (ver el punto 5).
-- Glosario: **388 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **389 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -1619,6 +1621,70 @@ a la vez.
 
 Es el mismo patrón de ML 13 y ML 17: **la conclusión se escribe después de mirar
 la tabla, no antes**.
+
+### 3.26 ML 22: la Fase 2 de ISLP cerrada, y otra deuda pagada (19-09-2026)
+
+**Con ML 22 se cierra la Fase 2 de ISLP entera**: los trece capítulos quedan
+cubiertos o repartidos, con las omisiones nombradas una por una en las lecciones
+que tocan.
+
+Y se paga la segunda deuda declarada del proyecto. Estadística 17 enunció
+Benjamini-Hochberg y **demostró solo el caso en que todas las nulas son
+ciertas**, dejando el general escrito en su bloque de Fuentes como pendiente.
+ML 22 lo demuestra.
+
+#### La lección se diseñó para NO repetir
+
+Lo primero fue comprobar qué había ya en Estadística 17: FWER, Bonferroni, Holm,
+la definición del FDR, el enunciado de BH y un visual con los cuatro umbrales.
+Escribir ISLP 13 entero habría duplicado media lección. Así que ML 22 cubre
+**solo lo que añade**: §13.3.3, §13.4.2 en su caso general y §13.5. Se dice en
+«Del libro» y en el `.hilo`.
+
+Conviene recordar este paso: **antes de escribir una lección de un capítulo que
+toca un tema ya tratado, leer la lección anterior y decidir qué se añade.**
+
+#### La demostración
+
+La clave es un lema que hace elemental todo lo demás:
+
+> **22.1**: si Benjamini-Hochberg rechaza la hipótesis $i$, sustituir $p_i$ por
+> $0$ deja el mismo número de rechazos.
+
+Con él, el suceso $\{p_i\le t_k,\ R=k\}$ se reescribe como
+$\{p_i\le t_k,\ R^{0}_i=k\}$, donde $R^{0}_i$ **no depende de $p_i$**, y ahí ya
+se puede usar la independencia. La suma $\sum_k \frac1k\cdot\frac{\alpha k}{m}$
+colapsa a $\alpha/m$ por hipótesis cierta, y sumando salen $\alpha m_0/m$.
+
+El lema se comprueba por fuerza bruta en $2449$ casos sacados de $20\,000$
+tandas, **sin un solo fallo**. Y la cota resulta **casi exacta**: $0{,}0978$
+contra $0{,}1000$, $0{,}0747$ contra $0{,}0750$, $0{,}0496$ contra $0{,}0500$.
+
+#### Dos cosas medidas que el libro dice más flojo
+
+**BH no controla el FWER**, y la tabla enseña cuánto: $0{,}1782$ y $0{,}3083$
+frente a los $0{,}036$ de Bonferroni. A cambio, potencia $0{,}8068$ contra
+$0{,}5837$.
+
+**El remuestreo no es solo para supuestos dudosos.** §13.5.3 lo presenta así, y
+la medición es más rotunda: con ocho observaciones por grupo la fórmula normal se
+pasa **también con datos normales** —rechaza el $1{,}75$ al nivel del $1$—,
+porque el estadístico no es normal con esa muestra. Falla el supuesto que nadie
+duda.
+
+#### El contraste de versiones, otra vez útil
+
+La primera versión del valor p por permutación difería en un ensayo de $2000$
+entre los dos entornos. Causa: alguna barajada reproduce la muestra original y
+ahí $t$ iguala al observado salvo por el último bit. La comparación «al menos tan
+extremo» se hizo con tolerancia, que además es **la convención correcta**: el
+empate cuenta.
+
+#### La costumbre nueva, dos de dos
+
+Los valores de los dos ejercicios se calcularon en una orden aparte antes de
+escribir los bloques `check`, y cuadraron a la primera —$0{,}0375$ y $99$—. Van
+dos lecciones seguidas sin corrección.
 
 ---
 
