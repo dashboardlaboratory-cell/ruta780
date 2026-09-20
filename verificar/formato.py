@@ -120,6 +120,7 @@ MIGRADAS = {
     "series/07-validacion-temporal.qmd",
     "series/08-boosting.qmd",
     "series/09-prophet.qmd",
+    "series/10-jerarquicos.qmd",
     "python/01-tipos-y-estructuras.qmd",
     "python/02-funciones-y-scope.qmd",
     "python/03-comprehensions.qmd",

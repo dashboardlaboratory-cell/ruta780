@@ -37,7 +37,7 @@ Tres hitos de esta sesión:
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
 faltando lecciones por escribir: **ML va por 22 de 90**, **Series de tiempo
-va por 9 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
+va por 10 de 11** e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
 
@@ -105,7 +105,7 @@ hay que empezar a hacer:
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
-| Series de tiempo | 9 | 11 | **9 de 9** | 10 y 11 |
+| Series de tiempo | 10 | 11 | **10 de 10** | 11 |
 | Machine Learning | 22 | 90 | **22 de 22** | la Fase 2 cerrada; quedan ESL y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
@@ -394,7 +394,7 @@ Lo que sigue, en orden de coste creciente:
    lección, y **no reaparece en ninguna fase posterior**. Deep Learning al
    menos se retoma en las lecciones 28 a 33; supervivencia no tiene red.
 
-3. **Series de tiempo ya no está vacía** —las lecciones 1 a 9 de 11 se
+3. **Series de tiempo ya no está vacía** —las lecciones 1 a 10 de 11 se
    publicaron el 19-09-2026, y no citan ningún libro porque ninguno del sitio
    cubre el tema—;
    **Inferencia causal sigue vacía** en el sidebar.
@@ -2186,6 +2186,53 @@ Escalar el tiempo a $[0,1]$ —que es lo que hace Prophet— lo arregló.
 Y el gate de visuales avisó de que el deslizador de evento movía tres vértices
 perdidos en un trazo de ciento cuarenta puntos. Ahora los eventos tienen tallo
 propio, con su altura escrita al lado.
+
+### 3.36 Series de tiempo 10: reconciliar es proyectar, con su teorema (20-09-2026)
+
+La reconciliación jerárquica suele contarse como un arreglo para que los
+números cuadren en un informe. La lección la presenta como lo que es: **una
+proyección ortogonal, con la garantía que eso trae**.
+
+> **10.5**: si $y$ es la verdad, que es coherente, y $P$ la proyección
+> ortogonal sobre el subespacio coherente, entonces
+> $\lVert P\hat y-y\rVert\le\lVert\hat y-y\rVert$, **siempre**.
+
+La demostración cabe en dos renglones —$Py=y$, y proyectar no aleja— y la
+comprobación sale sin excepciones: de veinte mil casos, el error total mejora
+en **los veinte mil**, con reducción media $4{,}335308$.
+
+#### La cifra que explica la desconfianza
+
+En el **$99{,}86\,\%$ de los casos alguna serie individual queda peor**. Quien
+mira una sola serie ve empeoramientos reales y tiene razón; quien mira el
+conjunto ve una mejora garantizada y también la tiene. Poner las dos cifras
+juntas es lo que convierte una discusión de pasillo en un hecho.
+
+#### Y el régimen donde abajo-arriba gana
+
+| régimen | base | ols | ponderada | abajo-arriba |
+|---|---|---|---|---|
+| ruido igual | $12{,}9689$ | $8{,}6041$ | $8{,}6041$ | $26{,}0637$ |
+| ruido ~ √nivel | $25{,}9346$ | $15{,}8869$ | $13{,}4198$ | $26{,}0637$ |
+| ruido ~ nivel | $86{,}3830$ | $50{,}5957$ | $19{,}7488$ | $\mathbf{26{,}0637}$ |
+
+La proyección ortogonal **siempre** bate al pronóstico base, que es el teorema;
+pero en la última fila **abajo-arriba la bate a ella**, porque con agregados muy
+ruidosos lo razonable es descartarlos. Enseñar ese régimen evita confundir «no
+puede empeorar» con «es lo mejor».
+
+#### Dos controles muertos, y la misma causa
+
+`visuales.py` marcó los deslizadores de ruido de **los dos** visuales. La causa
+era la misma y es exactamente la que la regla 19b nombra: **el marco seguía a
+los datos**. Los errores escalan con $\sigma^2$ y el marco también, así que
+mover el ruido dejaba el dibujo idéntico.
+
+En el primero el control pasó a ser **dónde está el ruido** —cuánto más ruidoso
+es el total que las hojas—, con el marco anclado a una constante; en el segundo,
+la escala se sustituyó por el **número de grupos**, y las barras se miden contra
+el error del pronóstico base, que es una cantidad determinada por los parámetros
+y no por los datos dibujados. Los dos cambios mejoraron lo que el visual enseña.
 
 ---
 

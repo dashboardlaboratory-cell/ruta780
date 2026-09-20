@@ -1,0 +1,627 @@
+---
+title: "Forecasts jerárquicos y reconciliación"
+subtitle: "Series de tiempo · Lección 10"
+nivel: L3
+modulo: series
+fase: F3
+prereqs: [series/09-prophet, matematica/05-proyeccion-ortogonal, matematica/06-minimos-cuadrados]
+siguientes: []
+libro: "—"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="series/10-jerarquicos"}
+[[L3]{.nivel .nivel-L3} **From scratch**]{.item}
+[**Fase** F3]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Prophet](09-prophet.qmd) · [Mínimos cuadrados](../matematica/06-minimos-cuadrados.qmd) · [Proyección ortogonal](../matematica/05-proyeccion-ortogonal.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Escribir una jerarquía de series con su [matriz de suma]{.g data-t="matriz de suma"} y decir en qué subespacio viven.
+2. **Demostrar que pronosticar cada serie por separado nunca da un conjunto [coherente]{.g data-t="coherencia jerárquica"}.**
+3. **Demostrar que la [reconciliación]{.g data-t="reconciliación"} por mínimos cuadrados es la proyección ortogonal sobre el subespacio coherente.**
+4. **Demostrar que esa reconciliación no puede aumentar el error cuadrático total**, y comprobarlo sin excepciones.
+5. Reconocer que la garantía es global y no serie a serie, con la frecuencia medida.
+6. Escribir abajo-arriba y la reconciliación ponderada como casos de la misma fórmula, y decir cuándo gana cada uno.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Álgebra 5**: la proyección ortogonal sobre un subespacio y su matriz, que es toda la maquinaria de esta lección.
+- **Álgebra 6**: los mínimos cuadrados, cuyo problema es el que aquí se resuelve con otra forma.
+- **Series de tiempo 9**: los modelos por componente, que son los que producen los pronósticos base.
+- **Series de tiempo 7**: el backtesting, que es como se estiman las varianzas que la versión ponderada necesita.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Series de tiempo 11**: la evaluación, que mide por nivel de la jerarquía y descubre los repartos desiguales.
+- **Machine Learning 19**: el análisis de componentes principales, que usa la misma geometría de proyección.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $m$ | eme | El número de series de base, u hojas |
+| $n$ | ene | El número total de series de la jerarquía |
+| $b$ | be | El vector de las $m$ series de base |
+| $y$ | y | El vector de las $n$ series, con $y=Sb$ |
+| $S$ | ese mayúscula | La matriz de suma, de $n\times m$ |
+| $\hat y$ | y con sombrero | Los pronósticos base, uno por serie |
+| $\tilde y$ | y con tilde | Los pronósticos reconciliados |
+| $P$ | pe mayúscula | La matriz de reconciliación, de $n\times n$ |
+| $W$ | doble ve | La matriz de pesos de la reconciliación |
+| $\Sigma$ | sigma mayúscula | La matriz de covarianzas de los errores base |
+| $\varepsilon$ | épsilon | El vector de errores de los pronósticos base |
+:::
+
+## 1. Una jerarquía es un subespacio
+
+::: {.definicion}
+**Definición 10.1 (matriz de suma).** Sea $b\in\mathbb{R}^{m}$ el vector de las series de base y $y\in\mathbb{R}^{n}$ el de todas las series de la jerarquía, agregados incluidos. La matriz de suma $S$ es la única matriz con
+$$y=S\,b,$$
+y tiene una fila por serie con unos en las hojas que la componen.
+:::
+
+::: {.definicion}
+**Definición 10.2 (coherencia).** Un vector de pronósticos $\hat y\in\mathbb{R}^{n}$ es **coherente** cuando existe $\hat b$ con $\hat y=S\hat b$; equivalentemente, cuando $\hat y$ pertenece al espacio columna de $S$.
+:::
+
+La jerarquía impone $n-m$ restricciones lineales. Con seis hojas, dos grupos y un total son nueve series viviendo en un subespacio de dimensión seis: **tres restricciones que cualquier conjunto coherente cumple exactamente**.
+
+::: {.proposicion}
+**Proposición 10.3 (los pronósticos base no son coherentes).** Si cada serie se pronostica por separado con errores de distribución continua, la probabilidad de que el conjunto resultante sea coherente es **cero**.
+:::
+
+::: {.demostracion}
+*Demostración.* Ser coherente es pertenecer a un subespacio propio de dimensión $m<n$, que tiene medida de Lebesgue nula en $\mathbb{R}^{n}$. Un vector con densidad continua cae en un conjunto de medida nula con probabilidad cero. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def matriz_suma():
+    """S lleva las 6 hojas a las 9 series: total, 2 grupos y las hojas."""
+    total = np.ones((1, 6))
+    grupos = np.array([[1, 1, 1, 0, 0, 0], [0, 0, 0, 1, 1, 1]], dtype=float)
+    return np.vstack([total, grupos, np.eye(6)])
+
+S = matriz_suma()
+print("la matriz de suma es de %d x %d y su rango es %d" % (S.shape[0], S.shape[1], np.linalg.matrix_rank(S)))
+print("las 9 series viven en un subespacio de dimension 6: hay 3 restricciones")
+print()
+
+rng = np.random.default_rng(192)
+inc = []
+for _ in range(20000):
+    b = rng.normal(10, 3, 6)
+    yhat = S @ b + rng.normal(0, 1.2, 9)      # un pronostico independiente por serie
+    inc.append(abs(yhat[0] - yhat[3:].sum()))
+inc = np.array(inc)
+print("pronosticando cada serie por su cuenta, |total - suma de las hojas|:")
+print("  media %.6f   maximo %.6f" % (inc.mean(), inc.max()))
+print("  fraccion de casos coherentes (por debajo de 1e-9): %.6f" % float((inc < 1e-9).mean()))
+print("la incoherencia no es un defecto del metodo: es lo que pasa siempre que")
+print("se pronostica cada serie sin mirar a las demas")
+```
+
+La discrepancia entre el pronóstico del total y la suma de los pronósticos de las hojas vale $2{,}549934$ de media y llega a $12{,}508776$, y **ninguno de los veinte mil casos sale coherente**. Presentar esas nueve cifras juntas en un informe obliga a explicar por qué no cuadran, y ahí empieza el problema que esta lección resuelve.
+
+## 2. Reconciliar es proyectar
+
+::: {.proposicion}
+**Proposición 10.4 (la reconciliación por mínimos cuadrados es una proyección ortogonal).** La matriz
+$$P=S\,(S^{\top}S)^{-1}S^{\top}$$
+es simétrica e idempotente, y su traza vale $m$. En consecuencia $\tilde y=P\hat y$ es la proyección ortogonal de $\hat y$ sobre el espacio columna de $S$, o sea **el vector coherente más próximo a los pronósticos base**.
+:::
+
+::: {.demostracion}
+*Demostración.* $P^{\top}=P$ por construcción, y $P^2=S(S^\top S)^{-1}S^\top S(S^\top S)^{-1}S^\top=S(S^\top S)^{-1}S^\top=P$. Una matriz simétrica e idempotente es la proyección ortogonal sobre su imagen, que aquí es el espacio columna de $S$; su traza es el rango, que vale $m$ porque $S$ tiene columnas independientes. La caracterización como punto más próximo es la del teorema de la proyección de Álgebra 5. [∎]{.fin-demo}
+:::
+
+::: {.proposicion}
+**Proposición 10.5 (reconciliar no puede empeorar el error total).** Sea $y$ la verdad, que es coherente, y $\hat y$ un pronóstico cualquiera. Entonces
+$$\lVert P\hat y-y\rVert\;\le\;\lVert \hat y-y\rVert,$$
+con igualdad solo si $\hat y$ ya era coherente. La desigualdad **no depende de la calidad de los pronósticos ni de la jerarquía**.
+:::
+
+::: {.demostracion}
+*Demostración.* Como $y$ es coherente, $Py=y$. Entonces $P\hat y-y=P(\hat y-y)$, y para una proyección ortogonal $\lVert Pv\rVert\le\lVert v\rVert$ por el teorema de Pitágoras aplicado a $v=Pv+(I-P)v$, cuyos dos sumandos son ortogonales. La igualdad exige $(I-P)(\hat y-y)=0$, o sea que $\hat y-y$ sea coherente, y como $y$ lo es, que $\hat y$ también. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def matriz_suma():
+    total = np.ones((1, 6))
+    grupos = np.array([[1, 1, 1, 0, 0, 0], [0, 0, 0, 1, 1, 1]], dtype=float)
+    return np.vstack([total, grupos, np.eye(6)])
+
+S = matriz_suma()
+P = S @ np.linalg.inv(S.T @ S) @ S.T
+
+print("la matriz de reconciliacion por minimos cuadrados")
+print("  idempotente: %s   simetrica: %s   traza %.6f"
+      % (bool(np.allclose(P @ P, P)), bool(np.allclose(P, P.T)), float(np.trace(P))))
+print("  o sea: la proyeccion ortogonal sobre el subespacio coherente")
+print()
+
+rng = np.random.default_rng(191)
+casos = 20000
+mejor = peor = igual = 0
+reduccion = []
+alguna_peor = 0
+for _ in range(casos):
+    b = rng.normal(10, 3, 6)
+    y = S @ b                                  # la verdad SIEMPRE es coherente
+    yhat = y + rng.normal(0, 1.2, 9)
+    ytil = P @ yhat
+    e0 = float(((yhat - y) ** 2).sum())
+    e1 = float(((ytil - y) ** 2).sum())
+    reduccion.append(e0 - e1)
+    if e1 < e0 - 1e-12:
+        mejor += 1
+    elif e1 > e0 + 1e-12:
+        peor += 1
+    else:
+        igual += 1
+    if (np.abs(ytil - y) > np.abs(yhat - y) + 1e-12).any():
+        alguna_peor += 1
+
+print("sobre %d casos:" % casos)
+print("  el error cuadratico TOTAL mejora en %d, empeora en %d, queda igual en %d" % (mejor, peor, igual))
+print("  reduccion media: %.6f" % np.mean(reduccion))
+print("  casos en que ALGUNA serie individual empeora: %d  (%.4f)" % (alguna_peor, alguna_peor / casos))
+print()
+print("la garantia es global y sin excepciones, porque la verdad esta en el")
+print("subespacio y proyectar no puede alejar. Pero no es una garantia serie")
+print("a serie: casi siempre hay alguna que empeora")
+```
+
+De veinte mil casos, el error cuadrático total mejora en **los veinte mil**, con una reducción media de $4{,}335308$. Eso no es un hallazgo empírico sino la Proposición 10.5, que no admite excepciones.
+
+La segunda cifra es la que conviene llevarse: en el $99{,}86\,\%$ de los casos **alguna serie individual queda peor** que antes de reconciliar. La reconciliación reparte el desajuste entre todas las series, de modo que casi ninguna sale intacta, y el total sale ganando. Quien mire una sola serie verá empeoramientos reales y tendrá razón; quien mire el conjunto verá una mejora garantizada y también la tendrá.
+
+```{=html}
+<div class="viz-proyeccion">
+  <div class="controles">
+    <label>Ruido del total, × el de las hojas <input id="pr-s" type="range" min="0.2" max="4" step="0.2" value="1.0"> <span id="pr-s-v">1.0</span></label>
+    <label>Casos dibujados <input id="pr-n" type="range" min="50" max="500" step="50" value="250"> <span id="pr-n-v">250</span></label>
+    <label>Hojas <input id="pr-h" type="range" min="2" max="8" step="1" value="6"> <span id="pr-h-v">6</span></label>
+  </div>
+  <svg id="pr-svg" viewBox="0 0 660 270" role="img" aria-label="Cada caso como un punto, con el error antes de reconciliar en el eje horizontal y después en el vertical: todos caen por debajo de la diagonal."></svg>
+  <p class="lectura" id="pr-lectura"></p>
+</div>
+<style>
+.viz-proyeccion { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-proyeccion .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-proyeccion label { display: flex; align-items: center; gap: .4rem; }
+.viz-proyeccion input[type=range] { width: 140px; padding: 0; }
+.viz-proyeccion svg { width: 100%; height: auto; display: block; }
+.viz-proyeccion .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("pr-svg"), lec = document.getElementById("pr-lectura");
+  var cs = document.getElementById("pr-s"), cn = document.getElementById("pr-n"), chh = document.getElementById("pr-h");
+  var es = document.getElementById("pr-s-v"), en = document.getElementById("pr-n-v"), eh = document.getElementById("pr-h-v");
+  var X0 = 46, XW = 574, Y0 = 20, YH = 200;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var semilla = 515;
+  function u() { semilla = (semilla * 48271) % 2147483647; return semilla / 2147483647; }
+  function normal() {
+    var u1 = Math.max(u(), 1e-9), u2 = u();
+    return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var rel = +cs.value, N = +cn.value, H = +chh.value;
+    var sd = 1.2;                       // el ruido de las hojas es fijo: el marco no sigue a los datos
+    es.textContent = rel.toFixed(1); en.textContent = N; eh.textContent = H;
+    semilla = 515;
+    // jerarquia de un total y H hojas: la proyeccion tiene forma cerrada
+    // el error del total se reparte entre las hojas a partes iguales
+    var n = H + 1, puntos = [], i, j, maxv = 0, peores = 0;
+    for (i = 0; i < N; i++) {
+      var e0 = 0, e1 = 0, err = [], suma = 0;
+      for (j = 0; j < n; j++) { err.push(sd * (j === 0 ? rel : 1) * normal()); }
+      for (j = 1; j < n; j++) suma += err[j];
+      var disc = err[0] - suma;              // incoherencia del pronostico
+      // proyeccion ortogonal sobre {y0 = suma de hojas}
+      var ajuste = disc / (1 + H);
+      var nuevo = [err[0] - ajuste];
+      for (j = 1; j < n; j++) nuevo.push(err[j] + ajuste);
+      for (j = 0; j < n; j++) { e0 += err[j] * err[j]; e1 += nuevo[j] * nuevo[j]; }
+      puntos.push([e0, e1]);
+      for (j = 0; j < n; j++) if (Math.abs(nuevo[j]) > Math.abs(err[j])) { peores++; break; }
+    }
+    // el marco se ancla a la varianza teorica del peor caso del control,
+    // no a los errores dibujados (regla 19b)
+    maxv = 4.5 * sd * sd * (H + 16);
+    var px = function (v) { return X0 + Math.min(v, maxv) / maxv * XW; };
+    var py = function (v) { return Y0 + (1 - Math.min(v, maxv) / maxv) * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    svg.appendChild(el("path", { d: "M" + px(0).toFixed(1) + " " + py(0).toFixed(1) + " L" + px(maxv).toFixed(1) + " " + py(maxv).toFixed(1),
+      stroke: C_B, "stroke-width": 2 }));
+    svg.appendChild(el("text", { x: X0 + XW - 6, y: Y0 + 16, "text-anchor": "end", "font-size": 10.5, fill: C_B }, "la diagonal: ningún punto la cruza"));
+    var arriba = 0;
+    for (i = 0; i < N; i++) {
+      if (puntos[i][1] > puntos[i][0] + 1e-12) arriba++;
+      svg.appendChild(el("circle", { cx: px(puntos[i][0]).toFixed(1), cy: py(puntos[i][1]).toFixed(1), r: 2.4, fill: C_A, opacity: .55 }));
+    }
+    svg.appendChild(el("text", { x: X0 - 6, y: Y0 + 12, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "después"));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "error cuadrático total antes"));
+
+    lec.innerHTML = "Con " + H + " hojas, un total " + rel.toFixed(1) + " veces más ruidoso que cada hoja y " + N + " casos, hay <strong>" + arriba +
+      "</strong> puntos por encima de la diagonal. La Proposición 10.5 dice que tiene que haber <strong>cero</strong>, sea cual sea el ruido o el tamaño de la jerarquía. " +
+      "En cambio, en <strong>" + peores + "</strong> de los " + N + " casos alguna serie individual queda peor: la garantía es del total, no de cada una. " +
+      (rel > 2
+        ? "Con el total muy ruidoso la nube se estira: los errores crecen, y la reconciliación sigue sin poder empeorarlos."
+        : "Subiendo el ruido del total se ve crecer la nube dentro de un marco fijo.");
+  }
+  cs.addEventListener("input", dibujar);
+  cn.addEventListener("input", dibujar);
+  chh.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. La misma fórmula, distintos pesos
+
+::: {.proposicion}
+**Proposición 10.6 (una familia con dos casos conocidos).** Para cualquier $W$ simétrica definida positiva,
+$$P_W=S\,(S^{\top}WS)^{-1}S^{\top}W$$
+cumple $P_W^2=P_W$ y $P_WS=S$, de modo que $\tilde y=P_W\hat y$ es coherente y deja fijos los vectores ya coherentes. Con $W=I$ se obtiene la proyección ortogonal de la Proposición 10.4, y **abajo-arriba** es el caso que se obtiene tomando $P=S\,[\,0\;\;I\,]$, idempotente pero no simétrico: una proyección **oblicua**.
+:::
+
+::: {.proposicion}
+**Proposición 10.7 (con la $W$ correcta se gana más).** Si los errores base tienen covarianza $\Sigma$, el error cuadrático total esperado de una reconciliación lineal $P$ vale $\operatorname{tr}(P\Sigma P^{\top})$. Minimizar esa traza sobre la familia de la Proposición 10.6 lleva a $W=\Sigma^{-1}$.
+:::
+
+```{pyodide}
+import numpy as np
+
+def matriz_suma():
+    total = np.ones((1, 6))
+    grupos = np.array([[1, 1, 1, 0, 0, 0], [0, 0, 0, 1, 1, 1]], dtype=float)
+    return np.vstack([total, grupos, np.eye(6)])
+
+S = matriz_suma()
+abajo = S @ np.hstack([np.zeros((6, 3)), np.eye(6)])
+
+def reconcilia(W):
+    return S @ np.linalg.inv(S.T @ W @ S) @ S.T @ W
+
+nivel = np.array([6.0, 3, 3, 1, 1, 1, 1, 1, 1])
+print("cuatro maneras de reconciliar, bajo tres regimenes de ruido")
+print("  regimen                 base       ols    ponderada   abajo-arriba")
+for nombre, sd in (("ruido igual", np.full(9, 1.2)),
+                   ("ruido ~ raiz(nivel)", 1.2 * np.sqrt(nivel)),
+                   ("ruido ~ nivel", 1.2 * nivel)):
+    Po, Pw = reconcilia(np.eye(9)), reconcilia(np.diag(1.0 / sd ** 2))
+    rng = np.random.default_rng(194)
+    acum = {k: [] for k in ("base", "ols", "pond", "abajo")}
+    for _ in range(20000):
+        b = rng.normal(10, 3, 6)
+        y = S @ b
+        yh = y + rng.normal(0, 1, 9) * sd
+        acum["base"].append(((yh - y) ** 2).sum())
+        acum["ols"].append(((Po @ yh - y) ** 2).sum())
+        acum["pond"].append(((Pw @ yh - y) ** 2).sum())
+        acum["abajo"].append(((abajo @ yh - y) ** 2).sum())
+    print("  %-20s %8.4f  %8.4f  %8.4f     %8.4f"
+          % (nombre, np.mean(acum["base"]), np.mean(acum["ols"]), np.mean(acum["pond"]), np.mean(acum["abajo"])))
+print()
+print("la proyeccion ortogonal siempre bate al pronostico base, que es el")
+print("teorema. Pero NO siempre es la mejor reconciliacion: con ruido")
+print("proporcional al nivel, abajo-arriba la bate, porque los agregados son")
+print("tan ruidosos que conviene tirarlos. La ponderada gana en los tres")
+print("regimenes, y con ruido igual coincide exactamente con la de minimos")
+print("cuadrados, como debe ser")
+```
+
+La tabla separa dos afirmaciones que se confunden con facilidad. **La proyección ortogonal siempre bate al pronóstico base** —$8{,}6041$ contra $12{,}9689$, $15{,}8869$ contra $25{,}9346$, $50{,}5957$ contra $86{,}3830$—, y eso es el teorema. **No siempre es la mejor reconciliación**: con ruido proporcional al nivel, abajo-arriba da $26{,}0637$ y la gana, porque cuando los agregados son mucho más ruidosos que las hojas, lo razonable es descartarlos.
+
+La reconciliación ponderada gana en los tres regímenes —$8{,}6041$, $13{,}4198$ y $19{,}7488$— y con ruido igual coincide **exactamente** con la de mínimos cuadrados, como exige la Proposición 10.7 cuando $\Sigma$ es un múltiplo de la identidad.
+
+De ahí sale lo que hay que llevarse. **Abajo-arriba es una elección de pesos**, con el supuesto implícito de que los agregados no aportan nada, y suele tomarse por la opción segura sin serlo. Ese supuesto se puede comprobar, y comprobarlo cuesta un backtesting de la lección 7.
+
+```{=html}
+<div class="viz-pesos10">
+  <div class="controles">
+    <label>Exponente del ruido <input id="pw-e" type="range" min="0" max="1.2" step="0.05" value="0.5"> <span id="pw-e-v">0.50</span></label>
+    <label>Grupos <input id="pw-s" type="range" min="2" max="5" step="1" value="2"> <span id="pw-s-v">2</span></label>
+    <label>Hojas por grupo <input id="pw-h" type="range" min="2" max="6" step="1" value="3"> <span id="pw-h-v">3</span></label>
+  </div>
+  <svg id="pw-svg" viewBox="0 0 660 250" role="img" aria-label="El error cuadrático total esperado de cuatro maneras de reconciliar, como barras, según el exponente que liga el ruido al nivel de la serie."></svg>
+  <p class="lectura" id="pw-lectura"></p>
+</div>
+<style>
+.viz-pesos10 { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-pesos10 .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-pesos10 label { display: flex; align-items: center; gap: .4rem; }
+.viz-pesos10 input[type=range] { width: 140px; padding: 0; }
+.viz-pesos10 svg { width: 100%; height: auto; display: block; }
+.viz-pesos10 .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("pw-svg"), lec = document.getElementById("pw-lectura");
+  var ce = document.getElementById("pw-e"), cs = document.getElementById("pw-s"), ch = document.getElementById("pw-h");
+  var ee = document.getElementById("pw-e-v"), es = document.getElementById("pw-s-v"), eh = document.getElementById("pw-h-v");
+  var X0 = 52, XW = 568, Y0 = 20, YH = 190;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function mul(A, B) {
+    var n = A.length, m = B[0].length, k = B.length, C = [], i, j, l, s;
+    for (i = 0; i < n; i++) { C.push([]); for (j = 0; j < m; j++) { s = 0; for (l = 0; l < k; l++) s += A[i][l] * B[l][j]; C[i].push(s); } }
+    return C;
+  }
+  function trans(A) {
+    var C = [], i, j;
+    for (j = 0; j < A[0].length; j++) { C.push([]); for (i = 0; i < A.length; i++) C[j].push(A[i][j]); }
+    return C;
+  }
+  function inv(A) {   // Gauss-Jordan sobre una matriz pequeña
+    var n = A.length, M = [], i, j, k;
+    for (i = 0; i < n; i++) { M.push(A[i].slice()); for (j = 0; j < n; j++) M[i].push(i === j ? 1 : 0); }
+    for (i = 0; i < n; i++) {
+      var p = i;
+      for (k = i + 1; k < n; k++) if (Math.abs(M[k][i]) > Math.abs(M[p][i])) p = k;
+      var tmp = M[i]; M[i] = M[p]; M[p] = tmp;
+      var piv = M[i][i];
+      for (j = 0; j < 2 * n; j++) M[i][j] /= piv;
+      for (k = 0; k < n; k++) if (k !== i) {
+        var f = M[k][i];
+        for (j = 0; j < 2 * n; j++) M[k][j] -= f * M[i][j];
+      }
+    }
+    return M.map(function (r) { return r.slice(n); });
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var expo = +ce.value, G = +cs.value, H = +ch.value;
+    var esc = 1.2;                      // la escala solo reescalaria: las alturas son relativas al base
+    ee.textContent = expo.toFixed(2); es.textContent = G; eh.textContent = H;
+    var m = G * H, n = 1 + G + m, i, j;
+    // S: total, dos grupos, m hojas
+    var S = [];
+    var fila = [];
+    for (j = 0; j < m; j++) fila.push(1);
+    S.push(fila);
+    for (var g = 0; g < G; g++) { fila = []; for (j = 0; j < m; j++) fila.push(Math.floor(j / H) === g ? 1 : 0); S.push(fila); }
+    for (i = 0; i < m; i++) { fila = []; for (j = 0; j < m; j++) fila.push(i === j ? 1 : 0); S.push(fila); }
+    var nivel = [m];
+    for (g = 0; g < G; g++) nivel.push(H);
+    for (i = 0; i < m; i++) nivel.push(1);
+    var sd = nivel.map(function (v) { return esc * Math.pow(v, expo); });
+
+    function proy(W) {
+      var St = trans(S);
+      var SW = mul(St, W);
+      return mul(mul(S, inv(mul(SW, S))), SW);
+    }
+    function diag(v) { return v.map(function (x, i2) { return v.map(function (_, j2) { return i2 === j2 ? x : 0; }); }); }
+    var I = diag(nivel.map(function () { return 1; }));
+    var Sig = diag(sd.map(function (x) { return x * x; }));
+    var Po = proy(I), Pw = proy(diag(sd.map(function (x) { return 1 / (x * x); })));
+    var sel = [];
+    for (i = 0; i < m; i++) { fila = []; for (j = 0; j < n; j++) fila.push(j === 1 + G + i ? 1 : 0); sel.push(fila); }
+    var Pb = mul(S, sel);
+    function traza(P) {
+      var M = mul(mul(P, Sig), trans(P)), s = 0;
+      for (i = 0; i < n; i++) s += M[i][i];
+      return s;
+    }
+    var base = sd.reduce(function (a, x) { return a + x * x; }, 0);
+    var vals = [["base", base, C_T], ["mínimos cuadrados", traza(Po), C_A], ["ponderada", traza(Pw), C_B], ["abajo-arriba", traza(Pb), C_G]];
+    // el marco se ancla al error del pronostico base, que es una cantidad
+    // determinada por los parametros y no por los datos (regla 19b)
+    var maxv = base * 1.12;
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    vals.forEach(function (v, k) {
+      var bx = X0 + (k + 0.5) / vals.length * XW, w = XW / vals.length * 0.45;
+      var alto = v[1] / maxv * YH;
+      svg.appendChild(el("path", { d: "M" + (bx - w / 2).toFixed(1) + " " + (Y0 + YH).toFixed(1) + " L" + (bx - w / 2).toFixed(1) + " " + (Y0 + YH - alto).toFixed(1) +
+        " L" + (bx + w / 2).toFixed(1) + " " + (Y0 + YH - alto).toFixed(1) + " L" + (bx + w / 2).toFixed(1) + " " + (Y0 + YH).toFixed(1) + " Z", fill: v[2], opacity: .75 }));
+      svg.appendChild(el("text", { x: bx.toFixed(1), y: (Y0 + YH - alto - 6).toFixed(1), "text-anchor": "middle", "font-size": 10.5, fill: v[2] }, v[1].toFixed(3)));
+      svg.appendChild(el("text", { x: bx.toFixed(1), y: (Y0 + YH + 14).toFixed(1), "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, v[0]));
+    });
+
+    var mejor = vals.slice(1).reduce(function (a, b) { return b[1] < a[1] ? b : a; });
+    lec.innerHTML = "Con exponente <strong>" + expo.toFixed(2) + "</strong> el ruido de una serie crece como su nivel elevado a ese número. " +
+      "Con " + G + " grupos de " + H + " hojas, el error esperado del pronóstico base vale <strong>" + base.toFixed(3) +
+      "</strong> y la mejor reconciliación es <strong>" + mejor[0] + "</strong>, con <strong>" + mejor[1].toFixed(3) +
+      "</strong>, o sea el <strong>" + (100 * mejor[1] / base).toFixed(1) + " %</strong> del base. " +
+      (expo < 0.05
+        ? "Con ruido igual en todas las series, la ponderada y la de mínimos cuadrados coinciden exactamente."
+        : "Al subir el exponente los agregados se vuelven más ruidosos y abajo-arriba mejora su posición relativa, mientras la ponderada sigue por delante.");
+  }
+  ce.addEventListener("input", dibujar);
+  cs.addEventListener("input", dibujar);
+  ch.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Lo que esta lección no resuelve
+
+- **La estimación de $\Sigma$ queda fuera.** La Proposición 10.7 pide la covarianza de los errores base, que hay que estimar de un backtesting, y con muchas series esa estimación es inestable: de ahí las versiones encogidas que aquí solo se nombran.
+- **Las jerarquías cruzadas no se tratan.** Cuando una serie pertenece a dos agrupaciones a la vez, $S$ crece y deja de tener esta forma sencilla, aunque la geometría no cambia.
+- **Los agregados temporales tampoco.** Reconciliar el mismo dato a nivel diario, semanal y mensual usa la misma maquinaria con otra $S$.
+- **No se discute qué pasa con la coherencia de los intervalos.** Reconciliar los puntos no reconcilia las bandas, y hacerlo bien exige la covarianza completa.
+- **Y la garantía es del error cuadrático.** Con otra función de pérdida —un error absoluto, por ejemplo— la Proposición 10.5 deja de aplicarse.
+
+## Ejercicios
+
+### Ejercicio 1, Cuántas restricciones impone una jerarquía
+
+Calcular cuántas series tiene una jerarquía de dos niveles con $g$ grupos de $h$ hojas cada uno, y cuántas restricciones impone.
+
+```{pyodide}
+#| exercise: ex_jerarquia
+def cuentas(g, h):
+    hojas = g * h
+    series = ______
+    restricciones = ______
+    return hojas, series, restricciones
+
+for g, h in ((2, 3), (5, 20), (12, 50)):
+    print(g, h, cuentas(g, h))
+
+int(cuentas(12, 50)[2])
+```
+
+::: {.hint exercise="ex_jerarquia"}
+Las series son el total, los $g$ grupos y las $g\cdot h$ hojas. Las restricciones son las series menos la dimensión del subespacio, que es el número de hojas.
+:::
+
+::: {.solution exercise="ex_jerarquia"}
+```{pyodide}
+def cuentas(g, h):
+    hojas = g * h
+    series = 1 + g + hojas
+    restricciones = series - hojas
+    return hojas, series, restricciones
+
+for g, h in ((2, 3), (5, 20), (12, 50)):
+    print(g, h, cuentas(g, h))
+
+int(cuentas(12, 50)[2])
+```
+:::
+
+```{pyodide}
+#| exercise: ex_jerarquia
+#| check: true
+if result == 13:
+    feedback = {"correct": True, "message": "Correcto: 13 restricciones, una por cada agregado. Con 612 series solo 600 son libres, y esa diferencia es toda la información que la reconciliación aprovecha.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 13 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuánto reparte la proyección
+
+En la jerarquía más simple —un total y $h$ hojas— la proyección ortogonal reparte la discrepancia. Calcular qué fracción se lleva el total y qué fracción cada hoja.
+
+```{pyodide}
+#| exercise: ex_reparto
+def reparto(h):
+    """El ajuste del total y el de cada hoja, por unidad de discrepancia."""
+    al_total = ______
+    a_cada_hoja = ______
+    return al_total, a_cada_hoja
+
+for h in (2, 6, 50):
+    a, b = reparto(h)
+    print(h, round(a, 6), round(b, 6), round(a + h * b, 6))
+
+round(reparto(6)[0], 6)
+```
+
+::: {.hint exercise="ex_reparto"}
+La discrepancia $d=\hat y_0-\sum_j\hat y_j$ se reparte de modo que el total baja $d/(1+h)$ y cada hoja sube $d/(1+h)$, con lo que la suma de ajustes recompone $d$.
+:::
+
+::: {.solution exercise="ex_reparto"}
+```{pyodide}
+def reparto(h):
+    """El ajuste del total y el de cada hoja, por unidad de discrepancia."""
+    al_total = 1 / (1 + h)
+    a_cada_hoja = 1 / (1 + h)
+    return al_total, a_cada_hoja
+
+for h in (2, 6, 50):
+    a, b = reparto(h)
+    print(h, round(a, 6), round(b, 6), round(a + h * b, 6))
+
+round(reparto(6)[0], 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_reparto
+#| check: true
+if abs(result - 0.142857) < 1e-5:
+    feedback = {"correct": True, "message": "Correcto: 0,142857, o sea un séptimo con seis hojas. Cuantas más hojas haya, menos se mueve cada una y más se mueve el total en términos relativos, que es justo lo que mucha gente no espera.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.142857 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Series 10**:
+
+1. Construir una jerarquía de tres niveles y comprobar la Proposición 10.5 sobre ella. Anotar si aparece algún caso por encima de la diagonal y por qué no puede aparecer.
+2. Estimar $\Sigma$ con un backtesting de la lección 7 en lugar de suponerla, y comparar la reconciliación ponderada resultante con la de mínimos cuadrados. Anotar cuántos orígenes hacen falta para que la ponderada gane de forma distinguible.
+3. Medir, serie a serie, cuánto empeora cada una al reconciliar, y guardar en `50-Errores/` el histograma junto con la mejora total. Anotar qué serie sale peor parada y si eso tiene sentido.
+
+## Del libro
+
+Esta lección **no sigue ningún libro**. Igual que el resto del módulo, sus resultados se demuestran o se miden aquí.
+
+El punto de contacto con el sitio es **Álgebra 5**, de donde vienen la proyección ortogonal, su caracterización como punto más próximo y el teorema de Pitágoras que sostiene la Proposición 10.5. Esta página añade lo que en aquella no cabía: **que la reconciliación es esa proyección y hereda su garantía**, y que la garantía es del total y no de cada serie, con la frecuencia medida.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/reconciliacion.md`, enlazada a [[proyeccion-ortogonal]], [[prophet]] y [[validacion-temporal]]. Conviene rehacer a mano la Proposición 10.5: el argumento cabe en dos renglones —la verdad está en el subespacio, así que proyectar no puede alejar— y deja grabado por qué reconciliar no es un arreglo cosmético.
+
+```
+¿Qué es la matriz de suma?::La matriz S con y = S·b que lleva las hojas a todas las series
+¿En qué subespacio viven las series?::En el espacio columna de S, de dimensión igual al número de hojas
+¿Qué es un pronóstico coherente?::Uno que pertenece a ese subespacio
+¿Son coherentes los pronósticos hechos por separado?::Nunca: la probabilidad es cero
+¿Qué es la reconciliación por mínimos cuadrados?::La proyección ortogonal sobre el subespacio coherente
+¿Cómo se sabe que es una proyección?::Su matriz es simétrica e idempotente, y su traza es el número de hojas
+¿Puede empeorar el error cuadrático total?::No: la verdad es coherente y proyectar no aleja
+¿Con qué frecuencia mejora?::Siempre, sin excepciones: es un teorema
+¿Y serie a serie?::En el 99,86 % de los casos alguna empeora
+¿Qué es abajo-arriba?::Una reconciliación oblicua que descarta los pronósticos agregados
+¿Es la opción segura?::No: supone que los agregados no aportan nada, y eso se puede comprobar
+¿Cuál es la mejor W?::La inversa de la covarianza de los errores base
+¿Qué pasa si todos los errores tienen la misma varianza?::La ponderada coincide exactamente con la de mínimos cuadrados
+¿Vale la garantía con otra pérdida?::No: la Proposición 10.5 es del error cuadrático
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 10.3 se demuestra con el argumento de medida nula; se comprueba con veinte mil casos en los que **ninguno** sale coherente, con incoherencia media $2{,}549934$. La Proposición 10.4 se demuestra verificando simetría e idempotencia; se comprueba con traza $6{,}000000$. La Proposición 10.5 se demuestra por Pitágoras; se comprueba sobre veinte mil casos, con mejora en los veinte mil y reducción media $4{,}335308$, y con el contraste de que en el $99{,}86\,\%$ alguna serie individual empeora. La Proposición 10.7 se comprueba con la tabla de tres regímenes, donde la ponderada da $8{,}6041$, $13{,}4198$ y $19{,}7488$, y coincide con la de mínimos cuadrados cuando el ruido es igual en todas las series.
+
+**Lo que se usa de otras lecciones sin repetir.** La proyección ortogonal, su matriz y su caracterización como punto más próximo son de Álgebra 5. La resolución de sistemas por mínimos cuadrados es de Álgebra 6. El backtesting con el que se estimarían las varianzas es de Series de tiempo 7.
+
+**Lo que se enuncia sin demostrar.** La Proposición 10.7 se **enuncia y se comprueba**, pero la minimización de $\operatorname{tr}(P\Sigma P^{\top})$ sobre la familia no se desarrolla: exige derivar respecto a una matriz con la restricción $PS=S$, que queda fuera del alcance de esta página. La estimación de $\Sigma$ y sus versiones encogidas quedan nombradas.
+
+**Lo que es mío, no del libro.** Poner la Proposición 10.5 como **teorema con demostración de dos renglones** en lugar de como propiedad deseable, y comprobarla con el contador de excepciones en cero. Medir a la vez que **casi siempre alguna serie empeora**, que es lo que hace que la reconciliación parezca sospechosa a quien mira una sola. Y enseñar un régimen en el que **abajo-arriba bate a la proyección ortogonal**, para que quede claro que el teorema garantiza mejora sobre el pronóstico base, no optimalidad.
+:::
