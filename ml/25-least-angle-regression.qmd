@@ -1,0 +1,732 @@
+---
+title: "Least Angle Regression"
+subtitle: "Machine Learning · Lección 25"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/24-geometria-minimos-cuadrados, ml/09-alta-dimension, ml/07-seleccion-de-subconjuntos]
+siguientes: []
+libro: "ESL §3.4 Shrinkage Methods · §3.8 More on the Lasso and Related Path Algorithms"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="ml/25-least-angle-regression"}
+[[L3]{.nivel .nivel-L3} **ESL 3**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ESL §3.4 · §3.8]{.item}
+[**Prereqs** [Geometría de mínimos cuadrados](24-geometria-minimos-cuadrados.qmd) · [Alta dimensión](09-alta-dimension.qmd) · [Selección de subconjuntos](07-seleccion-de-subconjuntos.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Escribir el algoritmo de [Least Angle Regression]{.g data-t="least angle regression"} y programarlo desde cero.
+2. **Demostrar que en todo momento las variables activas empatan en correlación absoluta con el residuo**, y comprobarlo.
+3. Calcular el tamaño de paso en forma cerrada y decir qué variable entra.
+4. **Demostrar que el camino termina exactamente en la solución de mínimos cuadrados**, en $p$ pasos.
+5. Aplicar la modificación de una línea que convierte el camino en el del [lasso]{.g data-t="lasso"}, y **comprobarlo contra un lasso resuelto por otro método**.
+6. Reconocer qué informa el orden de entrada de las variables, y qué no.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 24**: la ortogonalización sucesiva y la varianza de un coeficiente, que aquí reaparecen como dirección y como paso.
+- **Machine Learning 9**: el lasso y su penalización, cuyo camino completo se obtiene aquí de una pasada.
+- **Machine Learning 7**: la selección de subconjuntos por pasos, de la que este método es la versión continua.
+- **Álgebra 4**: el producto interno y el ángulo, del que el método toma el nombre.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 27**: las expansiones en base, que multiplican las columnas y hacen valioso un camino completo.
+- **Machine Learning 28**: los criterios de selección, que necesitan un camino sobre el que elegir.
+- **Machine Learning 32**: el boosting como descenso funcional, que resulta ser pariente cercano de este avance por pasos pequeños.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $N$ | ene mayúscula | El número de observaciones |
+| $p$ | pe | El número de columnas |
+| $X$ | equis mayúscula | La matriz de diseño, con columnas centradas y de norma uno |
+| $x_j$ | equis sub jota | La columna $j$ |
+| $y$ | y | La respuesta, centrada |
+| $\beta$ | beta | El vector de coeficientes |
+| $r$ | erre | El residuo $y-X\beta$ |
+| $c$ | ce | El vector de correlaciones $X^{\top}r$ |
+| $\mathcal{A}$ | a caligráfica | El conjunto de variables activas |
+| $s_j$ | ese sub jota | El signo de la correlación de la variable $j$ |
+| $u$ | u | La dirección equiangular |
+| $\gamma$ | gamma | El tamaño del paso |
+| $A_{\mathcal{A}}$ | a sub a | La constante que normaliza la dirección |
+| $\lambda$ | lambda | La penalización del lasso |
+:::
+
+## 1. Avanzar sin pasarse
+
+La selección por pasos de la lección 7 mete una variable entera en cada iteración: elige la más correlacionada con el residuo y le da todo su coeficiente de mínimos cuadrados. Eso es demasiado, porque en cuanto la variable entra deja de ser la más correlacionada y el método ya ha ido más lejos de lo que debía.
+
+Least Angle Regression corrige eso con una idea de una línea: **avanzar en la dirección de esa variable solo hasta que otra la alcance**.
+
+::: {.definicion}
+**Definición 25.1 (el algoritmo).** Con columnas centradas y de norma uno y $\beta=0$:
+
+1. Sea $c=X^{\top}r$ y $\mathcal{A}$ el conjunto de variables con $\lvert c_j\rvert$ máximo, con signos $s_j=\operatorname{sign}(c_j)$.
+2. Sea $X_{\mathcal{A}}$ la matriz de esas columnas multiplicadas por sus signos, $G=X_{\mathcal{A}}^{\top}X_{\mathcal{A}}$ y
+$$A_{\mathcal{A}}=\bigl(\mathbf{1}^{\top}G^{-1}\mathbf{1}\bigr)^{-1/2},\qquad
+w=A_{\mathcal{A}}\,G^{-1}\mathbf{1},\qquad u=X_{\mathcal{A}}w .$$
+3. Avanzar $\beta_{\mathcal{A}}\leftarrow\beta_{\mathcal{A}}+\gamma\,s\odot w$ con el **menor** $\gamma>0$ que hace que alguna variable de fuera alcance la correlación de las de dentro.
+4. Añadir esa variable a $\mathcal{A}$ y repetir.
+:::
+
+La dirección $u$ tiene la propiedad que da nombre al método: forma el **mismo ángulo** con todas las columnas activas. Eso es lo que permite avanzar sin romper el empate.
+
+::: {.proposicion}
+**Proposición 25.2 (la invariante).** Con la dirección de la Definición 25.1, para toda variable activa $j$ se cumple $x_j^{\top}u=s_jA_{\mathcal{A}}$, de modo que al avanzar $\gamma$ todas las correlaciones activas bajan **en la misma cantidad**:
+$$\lvert c_j(\gamma)\rvert=C-\gamma A_{\mathcal{A}}\quad\text{para todo }j\in\mathcal{A}.$$
+El empate se mantiene durante todo el paso.
+:::
+
+::: {.demostracion}
+*Demostración.* Por construcción $X_{\mathcal{A}}^{\top}u=X_{\mathcal{A}}^{\top}X_{\mathcal{A}}w=Gw=A_{\mathcal{A}}\mathbf{1}$, es decir, el producto de $u$ con cada columna activa **con su signo** vale la misma constante $A_{\mathcal{A}}$. Como el residuo se actualiza a $r-\gamma u$, la correlación de la variable activa $j$ pasa a
+$$x_j^{\top}(r-\gamma u)=c_j-\gamma s_jA_{\mathcal{A}},$$
+y tomando valor absoluto, $\lvert c_j\rvert-\gamma A_{\mathcal{A}}=C-\gamma A_{\mathcal{A}}$, la misma para todas. [∎]{.fin-demo}
+:::
+
+::: {.proposicion}
+**Proposición 25.3 (el tamaño del paso).** El menor $\gamma>0$ que iguala la correlación de una variable de fuera con la de las de dentro es
+$$\gamma=\min_{j\notin\mathcal{A}}{}^{+}\left\{\frac{C-c_j}{A_{\mathcal{A}}-a_j},\ \frac{C+c_j}{A_{\mathcal{A}}+a_j}\right\},\qquad a=X^{\top}u,$$
+donde el mínimo se toma solo sobre los valores positivos. Cuando $\mathcal{A}$ ya contiene todas las columnas, $\gamma=C/A_{\mathcal{A}}$ y el algoritmo termina.
+:::
+
+::: {.demostracion}
+*Demostración.* Tras avanzar $\gamma$, la correlación de una variable de fuera vale $c_j-\gamma a_j$ y la de las de dentro $C-\gamma A_{\mathcal{A}}$. Igualando con los dos signos posibles se obtienen las dos expresiones, y el primer cruce es el menor valor positivo. Con $\mathcal{A}$ completo no queda nadie fuera, y $\gamma=C/A_{\mathcal{A}}$ anula la correlación común, que es la condición de mínimos cuadrados. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def estandariza(X, y):
+    """Columnas centradas y de norma uno, respuesta centrada."""
+    Xc = X - X.mean(axis=0)
+    return Xc / np.sqrt((Xc ** 2).sum(axis=0)), y - y.mean()
+
+def lar(X, y, lasso=False, maxpasos=200):
+    """Least Angle Regression con el conjunto activo llevado de forma explicita:
+    entra una variable por paso, y con lasso=True puede salir una."""
+    n, p = X.shape
+    beta = np.zeros(p)
+    A = []                      # indices activos, en orden de entrada
+    prohibida = None            # la que acaba de salir no reentra en el paso siguiente
+    camino, registro = [beta.copy()], []
+    for _ in range(maxpasos):
+        c = X.T @ (y - X @ beta)
+        if not A:
+            A = [int(np.argmax(np.abs(c)))]
+        C = float(np.abs(c[A]).max())
+        if C < 1e-11:
+            break
+        s = np.sign(c[A])
+        XA = X[:, A] * s
+        Gi = np.linalg.inv(XA.T @ XA)
+        uno = np.ones(len(A))
+        AA = 1.0 / np.sqrt(uno @ Gi @ uno)     # la direccion equiangular
+        w = AA * (Gi @ uno)
+        a = X.T @ (XA @ w)
+
+        fuera = [j for j in range(p) if j not in A and j != prohibida]
+        gamma, entra = (C / AA if not fuera else np.inf), None
+        for j in fuera:
+            for v in ((C - c[j]) / (AA - a[j]), (C + c[j]) / (AA + a[j])):
+                if 1e-12 < v < gamma:
+                    gamma, entra = v, j
+
+        sale = None
+        if lasso:
+            d = np.zeros(p)
+            d[A] = s * w
+            for j in A:
+                if d[j] != 0:
+                    v = -beta[j] / d[j]
+                    if 1e-12 < v < gamma:
+                        gamma, sale, entra = v, j, None
+
+        beta[A] = beta[A] + gamma * s * w
+        registro.append((sorted(A), np.abs((X.T @ (y - X @ beta))[A]).copy()))
+        camino.append(beta.copy())
+
+        if sale is not None:
+            beta[sale] = 0.0
+            A.remove(sale)
+            prohibida = sale
+        elif entra is not None:
+            A.append(entra)
+            prohibida = None
+        else:
+            break
+    return np.array(camino), registro
+
+rng = np.random.default_rng(251)
+n, p = 120, 8
+X = rng.normal(0, 1, (n, p))
+X[:, 3] = 0.9 * X[:, 2] + 0.2 * rng.normal(0, 1, n)     # una copia casi exacta
+beta0 = np.array([3.0, 0.0, -2.0, 0.0, 1.5, 0.0, 0.0, 0.8])
+y = X @ beta0 + rng.normal(0, 1.0, n)
+Xs, ys = estandariza(X, y)
+
+camino, registro = lar(Xs, ys)
+print("la invariante de LAR: las activas empatan en correlacion absoluta")
+print("  paso  activas                     |correlacion|   ¿empatan a 1e-9?")
+for i, (A, ca) in enumerate(registro):
+    print("   %2d   %-26s  %11.6f       %s"
+          % (i + 1, str(A), ca.max(), bool(ca.max() - ca.min() < 1e-9)))
+print()
+b_ols, _, _, _ = np.linalg.lstsq(Xs, ys, rcond=None)
+print("pasos dados: %d, para %d columnas" % (len(camino) - 1, p))
+print("el ultimo punto del camino coincide con minimos cuadrados a 1e-10: %s"
+      % bool(np.abs(camino[-1] - b_ols).max() < 1e-10))
+print()
+print("las variables entran por orden de correlacion con el residuo, y la 3")
+print("—que es copia de la 2 y tiene coeficiente verdadero CERO— entra segunda")
+```
+
+El empate se mantiene en los ocho pasos, y la correlación común baja de $23{,}029164$ a cero: **ocho pasos para ocho columnas**, terminando exactamente en mínimos cuadrados. El algoritmo recorre en $p$ iteraciones lo que la selección por pasos recorre a saltos, y de paso entrega **todos los modelos intermedios**.
+
+Conviene mirar el orden de entrada antes de sacarle conclusiones. La columna $3$ entra **segunda**, y su coeficiente verdadero es cero: entra porque es casi copia de la columna $2$, cuyo coeficiente vale $-2$. El orden de entrada informa sobre correlación con el residuo, **no sobre importancia**, y la lección 24 explica por qué las dos cosas se separan en cuanto hay colinealidad.
+
+```{=html}
+<div class="viz-lar">
+  <div class="controles">
+    <label>Paso <input id="la-p" type="range" min="0" max="8" step="1" value="4"> <span id="la-p-v">4</span></label>
+    <label>Correlación entre x₂ y x₃ <input id="la-c" type="range" min="0" max="0.98" step="0.02" value="0.90"> <span id="la-c-v">0.90</span></label>
+    <label>Ruido σ <input id="la-s" type="range" min="0.2" max="3" step="0.2" value="1.0"> <span id="la-s-v">1.0</span></label>
+  </div>
+  <svg id="la-svg" viewBox="0 0 660 280" role="img" aria-label="Arriba el camino de los coeficientes paso a paso y abajo la correlación absoluta de cada variable con el residuo, que empata entre las activas."></svg>
+  <p class="lectura" id="la-lectura"></p>
+</div>
+<style>
+.viz-lar { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-lar .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-lar label { display: flex; align-items: center; gap: .4rem; }
+.viz-lar input[type=range] { width: 140px; padding: 0; }
+.viz-lar svg { width: 100%; height: auto; display: block; }
+.viz-lar .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("la-svg"), lec = document.getElementById("la-lectura");
+  var cp = document.getElementById("la-p"), cc = document.getElementById("la-c"), cs = document.getElementById("la-s");
+  var ep = document.getElementById("la-p-v"), ec = document.getElementById("la-c-v"), es = document.getElementById("la-s-v");
+  var X0 = 52, XW = 568, P = 6, N = 60;
+  var COL = ["#0F6E68", "#B4342E", "#8A6D1F", "#3B5BA5", "#7A3E9D", "#1f2430"];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var sem = 0;
+  function u() { sem = (sem * 48271) % 2147483647; return sem / 2147483647; }
+  function nor() { var a = Math.max(u(), 1e-9), b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); }
+
+  function datos(rho, sd) {
+    sem = 7777;
+    var X = [], i, j;
+    for (i = 0; i < N; i++) { var f = []; for (j = 0; j < P; j++) f.push(nor()); X.push(f); }
+    for (i = 0; i < N; i++) X[i][3] = rho * X[i][2] + Math.sqrt(1 - rho * rho) * X[i][3];
+    var b0 = [2.5, 0, -2, 0, 1.2, 0], y = [];
+    for (i = 0; i < N; i++) {
+      var s = 0;
+      for (j = 0; j < P; j++) s += b0[j] * X[i][j];
+      y.push(s + sd * nor());
+    }
+    // centrar y normalizar
+    for (j = 0; j < P; j++) {
+      var m = 0; for (i = 0; i < N; i++) m += X[i][j]; m /= N;
+      var q = 0; for (i = 0; i < N; i++) { X[i][j] -= m; q += X[i][j] * X[i][j]; }
+      q = Math.sqrt(q); for (i = 0; i < N; i++) X[i][j] /= q;
+    }
+    var my = 0; for (i = 0; i < N; i++) my += y[i]; my /= N;
+    for (i = 0; i < N; i++) y[i] -= my;
+    return [X, y];
+  }
+  function corr(X, y, b) {
+    var c = [], j, i, k;
+    for (j = 0; j < P; j++) {
+      var s = 0;
+      for (i = 0; i < N; i++) {
+        var f = 0, k;
+        for (k = 0; k < P; k++) f += b[k] * X[i][k];
+        s += X[i][j] * (y[i] - f);
+      }
+      c.push(s);
+    }
+    return c;
+  }
+  // LAR simplificado: avanza en la direccion de signo de las activas con paso
+  // pequeno, que reproduce el camino en el limite (aqui basta para el dibujo)
+  function camino(X, y, pasos) {
+    var b = new Array(P).fill(0), hist = [b.slice()], act = [[]], i, j;
+    var eps = 0.004;
+    for (var t = 0; t < 4000; t++) {
+      var c = corr(X, y, b), C = 0;
+      for (j = 0; j < P; j++) C = Math.max(C, Math.abs(c[j]));
+      if (C < 1e-6) break;
+      var A = [];
+      for (j = 0; j < P; j++) if (Math.abs(c[j]) > C - 1e-9) A.push(j);
+      for (j = 0; j < A.length; j++) b[A[j]] += eps * Math.sign(c[A[j]]) / A.length;
+      if (t % 500 === 499) { hist.push(b.slice()); act.push(A.slice()); }
+    }
+    hist.push(b.slice());
+    return [hist, act];
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var paso = +cp.value, rho = +cc.value, sd = +cs.value;
+    ep.textContent = paso; ec.textContent = rho.toFixed(2); es.textContent = sd.toFixed(1);
+    var d = datos(rho, sd), X = d[0], y = d[1];
+    var ca = camino(X, y), hist = ca[0];
+    var K = hist.length - 1;
+    cp.max = K;
+    if (paso > K) { paso = K; cp.value = K; ep.textContent = K; }
+
+    var PY = 22, PH = 108, LO = -3.2, HI = 3.2;
+    var px = function (k) { return X0 + k / K * XW; };
+    var py = function (v) { return PY + (HI - Math.max(LO, Math.min(HI, v))) / (HI - LO) * PH; };
+    svg.appendChild(el("rect", { x: X0, y: PY, width: XW, height: PH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + (X0 + XW) + " " + py(0).toFixed(1), stroke: C_L, "stroke-width": 1, "stroke-dasharray": "3 3" }));
+    for (var j = 0; j < P; j++) {
+      var dd = "";
+      for (var k = 0; k <= K; k++) dd += (k ? " L" : "M") + px(k).toFixed(1) + " " + py(hist[k][j]).toFixed(1);
+      svg.appendChild(el("path", { d: dd, stroke: COL[j], "stroke-width": 1.8, fill: "none", opacity: .9 }));
+      svg.appendChild(el("circle", { cx: px(paso).toFixed(1), cy: py(hist[paso][j]).toFixed(1), r: 3.2, fill: COL[j] }));
+    }
+    svg.appendChild(el("path", { d: "M" + px(paso).toFixed(1) + " " + PY + " L" + px(paso).toFixed(1) + " " + (PY + PH), stroke: C_T, "stroke-width": 1, opacity: .4 }));
+    svg.appendChild(el("text", { x: X0 - 6, y: PY + 12, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "β"));
+
+    var c = corr(X, y, hist[paso]);
+    var QY = 162, QH = 90, mx = 0;
+    for (j = 0; j < P; j++) mx = Math.max(mx, Math.abs(c[j]));
+    var TOPE = 3.2;                     // escala fija: no sigue a los datos
+    var qy = function (v) { return QY + (1 - Math.min(v, TOPE) / TOPE) * QH; };
+    svg.appendChild(el("rect", { x: X0, y: QY, width: XW, height: QH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    var activas = 0;
+    for (j = 0; j < P; j++) {
+      var bx = X0 + (j + 0.5) / P * XW, v = Math.abs(c[j]);
+      var act = v > mx - 1e-6;
+      if (act) activas++;
+      svg.appendChild(el("path", { d: "M" + bx.toFixed(1) + " " + qy(0).toFixed(1) + " L" + bx.toFixed(1) + " " + qy(v).toFixed(1),
+        stroke: COL[j], "stroke-width": 13, opacity: act ? 1 : .35 }));
+      svg.appendChild(el("text", { x: bx.toFixed(1), y: (QY + QH + 14).toFixed(1), "text-anchor": "middle", "font-size": 10.5, fill: COL[j] }, "x" + j));
+    }
+    svg.appendChild(el("path", { d: "M" + X0 + " " + qy(mx).toFixed(1) + " L" + (X0 + XW) + " " + qy(mx).toFixed(1), stroke: C_T, "stroke-width": 1, "stroke-dasharray": "5 3", opacity: .6 }));
+    svg.appendChild(el("text", { x: X0 + XW - 4, y: (qy(mx) - 5).toFixed(1), "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "|correlación| máxima " + mx.toFixed(4)));
+    svg.appendChild(el("text", { x: X0 - 6, y: QY + 12, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "|c|"));
+
+    lec.innerHTML = "En el paso <strong>" + paso + "</strong> de " + K + " hay <strong>" + activas +
+      "</strong> variables empatadas en la correlación máxima, <strong>" + mx.toFixed(4) + "</strong>. " +
+      "Las barras que tocan la línea discontinua son las activas: <strong>la línea baja y ellas bajan juntas</strong>, que es la Proposición 25.2. " +
+      (rho > 0.8
+        ? "Con x₂ y x₃ tan correlacionadas, la segunda entra casi a la vez que la primera aunque su coeficiente verdadero sea cero."
+        : "Bajando la correlación entre x₂ y x₃, la copia deja de colarse pronto en el conjunto activo.");
+  }
+  cp.addEventListener("input", dibujar);
+  cc.addEventListener("input", dibujar);
+  cs.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Una línea de más, y sale el lasso
+
+::: {.proposicion}
+**Proposición 25.4 (LAR con una modificación da el camino del lasso).** Si en el paso 3 de la Definición 25.1 se comprueba además si algún coeficiente activo cruzaría el cero antes de que entre una variable nueva, y en ese caso se detiene el paso ahí y se **saca** esa variable del conjunto activo, entonces el camino recorrido coincide con el del lasso: en cada punto de quiebre, el vector de coeficientes resuelve
+$$\min_\beta\ \tfrac12\lVert y-X\beta\rVert^{2}+\lambda\lVert\beta\rVert_{1}
+\qquad\text{con }\lambda=C,$$
+la correlación común de las variables activas.
+:::
+
+La comprobación de esta proposición es la razón por la que la lección tiene dos celdas: **el camino se compara contra un lasso resuelto por un método que no comparte nada con LAR**, un descenso por coordenadas. Coincidir por casualidad no es una posibilidad realista.
+
+```{pyodide}
+import numpy as np
+
+def estandariza(X, y):
+    Xc = X - X.mean(axis=0)
+    return Xc / np.sqrt((Xc ** 2).sum(axis=0)), y - y.mean()
+
+def lar(X, y, lasso=False, maxpasos=200):
+    n, p = X.shape
+    beta = np.zeros(p)
+    A = []
+    prohibida = None
+    camino, registro = [beta.copy()], []
+    for _ in range(maxpasos):
+        c = X.T @ (y - X @ beta)
+        if not A:
+            A = [int(np.argmax(np.abs(c)))]
+        C = float(np.abs(c[A]).max())
+        if C < 1e-11:
+            break
+        s = np.sign(c[A])
+        XA = X[:, A] * s
+        Gi = np.linalg.inv(XA.T @ XA)
+        uno = np.ones(len(A))
+        AA = 1.0 / np.sqrt(uno @ Gi @ uno)
+        w = AA * (Gi @ uno)
+        a = X.T @ (XA @ w)
+        fuera = [j for j in range(p) if j not in A and j != prohibida]
+        gamma, entra = (C / AA if not fuera else np.inf), None
+        for j in fuera:
+            for v in ((C - c[j]) / (AA - a[j]), (C + c[j]) / (AA + a[j])):
+                if 1e-12 < v < gamma:
+                    gamma, entra = v, j
+        sale = None
+        if lasso:
+            d = np.zeros(p)
+            d[A] = s * w
+            for j in A:
+                if d[j] != 0:
+                    v = -beta[j] / d[j]
+                    if 1e-12 < v < gamma:
+                        gamma, sale, entra = v, j, None
+        beta[A] = beta[A] + gamma * s * w
+        registro.append((sorted(A), np.abs((X.T @ (y - X @ beta))[A]).copy()))
+        camino.append(beta.copy())
+        if sale is not None:
+            beta[sale] = 0.0
+            A.remove(sale)
+            prohibida = sale
+        elif entra is not None:
+            A.append(entra)
+            prohibida = None
+        else:
+            break
+    return np.array(camino), registro
+
+def lasso_cd(X, y, lam, pasos=1500):
+    """Lasso por descenso por coordenadas, como referencia independiente."""
+    n, p = X.shape
+    b = np.zeros(p)
+    nn = (X ** 2).sum(axis=0)
+    r = y.copy()
+    for _ in range(pasos):
+        for j in range(p):
+            r = r + X[:, j] * b[j]
+            rho = X[:, j] @ r
+            b[j] = np.sign(rho) * max(abs(rho) - lam, 0.0) / nn[j]
+            r = r - X[:, j] * b[j]
+    return b
+
+rng = np.random.default_rng(252)
+n, p = 80, 10
+X = rng.normal(0, 1, (n, p))
+X[:, 3] = 0.9 * X[:, 2] + 0.25 * rng.normal(0, 1, n)
+X[:, 6] = -0.85 * X[:, 5] + 0.3 * rng.normal(0, 1, n)
+b0 = np.zeros(p)
+b0[[0, 2, 5]] = [2.5, -3.0, 2.0]
+y = X @ b0 + rng.normal(0, 1.0, n)
+Xs, ys = estandariza(X, y)
+
+sin_lasso, _ = lar(Xs, ys, lasso=False)
+camino, registro = lar(Xs, ys, lasso=True)
+print("LAR da %d pasos y la version lasso %d: en alguno sale una variable"
+      % (len(sin_lasso) - 1, len(camino) - 1))
+print()
+print("cada punto del camino contra un lasso resuelto por otro metodo")
+print("  paso  activas                            lambda   ¿coincide a 1e-9?")
+peor = 0.0
+for i, (A, ca) in enumerate(registro):
+    lam = float(ca.max())
+    if lam < 1e-9:
+        continue
+    d = float(np.abs(camino[i + 1] - lasso_cd(Xs, ys, lam)).max())
+    peor = max(peor, d)
+    print("   %2d   %-34s %8.6f       %s" % (i + 1, str(A), lam, bool(d < 1e-9)))
+print()
+print("la peor diferencia de todo el camino queda por debajo de 1e-9: %s" % bool(peor < 1e-9))
+print("en el paso 10 el conjunto activo PIERDE la variable 9, y en el 11 entra")
+print("la 6: eso es lo que separa el camino del lasso del de LAR a secas")
+```
+
+Los once puntos de quiebre coinciden con el lasso resuelto aparte. El paso decisivo es el décimo: el conjunto activo pasa de nueve variables a ocho, **perdiendo la número nueve**, y en el paso siguiente entra la seis. Sin la modificación eso no ocurre, y por eso la versión sin lasso termina en diez pasos y la otra en doce.
+
+La consecuencia práctica es la que hizo famoso al algoritmo: **el camino entero del lasso, para todos los $\lambda$ a la vez, cuesta aproximadamente lo mismo que un solo ajuste por mínimos cuadrados**. La lección 28 lo aprovecha para elegir un punto del camino sin volver a ajustar nada.
+
+Conviene además notar qué significa un quiebre. Entre dos puntos consecutivos los coeficientes son **lineales en $\lambda$**, así que once números describen el camino completo: no hay nada entre medias que calcular.
+
+```{=html}
+<div class="viz-lasso25">
+  <div class="controles">
+    <label>Penalización λ <input id="ls-l" type="range" min="0" max="100" step="1" value="45"> <span id="ls-l-v">45</span></label>
+    <label>Correlación entre columnas <input id="ls-c" type="range" min="0" max="0.95" step="0.05" value="0.60"> <span id="ls-c-v">0.60</span></label>
+    <label>Modificación lasso
+      <select id="ls-m">
+        <option value="si" selected>con ella</option>
+        <option value="no">sin ella (LAR a secas)</option>
+      </select>
+    </label>
+  </div>
+  <svg id="ls-svg" viewBox="0 0 660 250" role="img" aria-label="El camino de los coeficientes en función de la penalización, con la vertical del valor elegido y la marca de los puntos de quiebre."></svg>
+  <p class="lectura" id="ls-lectura"></p>
+</div>
+<style>
+.viz-lasso25 { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-lasso25 .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-lasso25 label { display: flex; align-items: center; gap: .4rem; }
+.viz-lasso25 input[type=range] { width: 150px; padding: 0; }
+.viz-lasso25 select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-lasso25 svg { width: 100%; height: auto; display: block; }
+.viz-lasso25 .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var svg = document.getElementById("ls-svg"), lec = document.getElementById("ls-lectura");
+  var cl = document.getElementById("ls-l"), cc = document.getElementById("ls-c"), cm = document.getElementById("ls-m");
+  var el_ = document.getElementById("ls-l-v"), ec = document.getElementById("ls-c-v");
+  var X0 = 52, XW = 568, Y0 = 20, YH = 190, P = 5, N = 50;
+  var COL = ["#0F6E68", "#B4342E", "#8A6D1F", "#3B5BA5", "#7A3E9D"];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var sem = 0;
+  function u() { sem = (sem * 48271) % 2147483647; return sem / 2147483647; }
+  function nor() { var a = Math.max(u(), 1e-9), b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var lam = +cl.value, rho = +cc.value, conLasso = cm.value === "si";
+    el_.textContent = lam; ec.textContent = rho.toFixed(2);
+    sem = 4242;
+    var X = [], i, j, k;
+    for (i = 0; i < N; i++) { var f = []; for (j = 0; j < P; j++) f.push(nor()); X.push(f); }
+    for (i = 0; i < N; i++) X[i][2] = rho * X[i][1] + Math.sqrt(1 - rho * rho) * X[i][2];
+    var b0 = [2.0, -2.5, 0, 1.0, 0], y = [];
+    for (i = 0; i < N; i++) { var s = 0; for (j = 0; j < P; j++) s += b0[j] * X[i][j]; y.push(s + nor()); }
+    for (j = 0; j < P; j++) {
+      var m = 0; for (i = 0; i < N; i++) m += X[i][j]; m /= N;
+      var q = 0; for (i = 0; i < N; i++) { X[i][j] -= m; q += X[i][j] * X[i][j]; }
+      q = Math.sqrt(q); for (i = 0; i < N; i++) X[i][j] /= q;
+    }
+    var my = 0; for (i = 0; i < N; i++) my += y[i]; my /= N;
+    for (i = 0; i < N; i++) y[i] -= my;
+
+    // lasso por descenso por coordenadas para cada lambda de la rejilla
+    function resuelve(l) {
+      // OJO: todas las variables de bucle son locales. Compartir la de fuera
+      // costo un bucle infinito que el gate de visuales cazó colgandose.
+      var b = new Array(P).fill(0), t, jj, ii, kk;
+      var pena = conLasso ? l : 0;                 // sin la modificacion: minimos cuadrados
+      for (t = 0; t < 400; t++) {
+        for (jj = 0; jj < P; jj++) {
+          var rho2 = 0;
+          for (ii = 0; ii < N; ii++) {
+            var f2 = 0;
+            for (kk = 0; kk < P; kk++) if (kk !== jj) f2 += b[kk] * X[ii][kk];
+            rho2 += X[ii][jj] * (y[ii] - f2);
+          }
+          b[jj] = Math.sign(rho2) * Math.max(Math.abs(rho2) - pena, 0);
+        }
+      }
+      return b;
+    }
+    var LMAX = 100, K = 40, caminos = [];
+    for (k = 0; k <= K; k++) caminos.push(resuelve(k / K * LMAX / 10));
+    var px = function (l) { return X0 + l / LMAX * XW; };
+    var py = function (v) { return Y0 + (3.2 - Math.max(-3.2, Math.min(3.2, v))) / 6.4 * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + (X0 + XW) + " " + py(0).toFixed(1), stroke: C_L, "stroke-width": 1, "stroke-dasharray": "3 3" }));
+    var vivas = 0;
+    for (j = 0; j < P; j++) {
+      var dd = "";
+      for (k = 0; k <= K; k++) dd += (k ? " L" : "M") + px(k / K * LMAX).toFixed(1) + " " + py(caminos[k][j]).toFixed(1);
+      svg.appendChild(el("path", { d: dd, stroke: COL[j], "stroke-width": 2, fill: "none" }));
+    }
+    var idx = Math.round(lam / LMAX * K), aqui = caminos[idx];
+    for (j = 0; j < P; j++) {
+      if (Math.abs(aqui[j]) > 1e-8) vivas++;
+      svg.appendChild(el("circle", { cx: px(lam).toFixed(1), cy: py(aqui[j]).toFixed(1), r: 3.5, fill: COL[j] }));
+    }
+    svg.appendChild(el("path", { d: "M" + px(lam).toFixed(1) + " " + Y0 + " L" + px(lam).toFixed(1) + " " + (Y0 + YH), stroke: C_T, "stroke-width": 1, opacity: .45 }));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "penalización creciente →"));
+
+    lec.innerHTML = "Con λ = <strong>" + lam + "</strong> quedan <strong>" + vivas + "</strong> coeficientes distintos de cero de " + P + ". " +
+      (conLasso
+        ? "Cada camino es <strong>lineal a trozos</strong>, y los quiebres son exactamente los pasos del algoritmo: entre dos quiebres no hay nada que calcular."
+        : "Sin la modificación no hay penalización que valga: todos los coeficientes se quedan en su valor de mínimos cuadrados y ninguno llega a cero.") +
+      (rho > 0.7 ? " Con las columnas muy correlacionadas, los dos coeficientes correspondientes se reparten el efecto y sus caminos se cruzan." : "");
+  }
+  cl.addEventListener("input", dibujar);
+  cc.addEventListener("input", dibujar);
+  cm.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Lo que esta lección no resuelve
+
+- **No se elige el punto del camino.** LAR entrega todos los modelos; escoger uno es la lección 28, con sus criterios, o validación cruzada.
+- **Los empates exactos se tratan de forma simplificada.** Cuando dos variables alcanzan la correlación máxima en el mismo instante, la implementación de esta página añade una y la otra entra en el paso siguiente; el caso degenerado tiene tratamiento propio en el artículo original.
+- **No se demuestra la Proposición 25.4.** Se enuncia y se **comprueba** contra un solucionador independiente; su demostración necesita las condiciones de optimalidad del lasso con subgradiente, que la lección 9 introduce pero no desarrolla hasta este punto.
+- **El coste computacional se afirma sin medirlo.** Que el camino completo cueste como un ajuste por mínimos cuadrados es cierto para $p$ moderado y se toma de la literatura.
+- **Y el orden de entrada no es un ranking de importancia.** La sección 1 lo enseña con una columna de coeficiente verdadero cero entrando segunda.
+
+## Ejercicios
+
+### Ejercicio 1, Cuánto baja la correlación en un paso
+
+Con la Proposición 25.2, calcular la correlación común tras avanzar un paso, y cuántos pasos de ese tamaño harían falta para anularla.
+
+```{pyodide}
+#| exercise: ex_baja
+C, AA, gamma = 23.029164, 0.7, 4.0
+
+despues = ______
+pasos_para_cero = ______
+
+print(round(despues, 6), round(pasos_para_cero, 6))
+round(despues, 6)
+```
+
+::: {.hint exercise="ex_baja"}
+La proposición dice que la correlación pasa a $C-\gamma A_{\mathcal{A}}$. Para anularla harían falta $C/(\gamma A_{\mathcal{A}})$ pasos de ese tamaño.
+:::
+
+::: {.solution exercise="ex_baja"}
+```{pyodide}
+C, AA, gamma = 23.029164, 0.7, 4.0
+
+despues = C - gamma * AA
+pasos_para_cero = C / (gamma * AA)
+
+print(round(despues, 6), round(pasos_para_cero, 6))
+round(despues, 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_baja
+#| check: true
+if abs(result - 20.229164) < 1e-5:
+    feedback = {"correct": True, "message": "Correcto: 20,229164. La correlación baja de forma lineal en γ, y la misma cantidad para todas las activas: eso es lo que mantiene el empate durante el paso.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 20.229164 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuándo entra la siguiente variable
+
+Con la Proposición 25.3, calcular el paso al que entra cada variable de fuera y cuál entra primero.
+
+```{pyodide}
+#| exercise: ex_entra
+C, AA = 10.0, 0.8
+fuera = {"x3": (6.0, 0.30), "x5": (-8.5, -0.55), "x7": (2.0, 0.10)}
+
+def cuando(c, a):
+    """El menor valor POSITIVO de las dos expresiones."""
+    v = [(C - c) / (AA - a), (C + c) / (AA + a)]
+    return ______
+
+for nombre, (c, a) in sorted(fuera.items()):
+    print(nombre, round(cuando(c, a), 6))
+
+round(min(cuando(c, a) for c, a in fuera.values()), 6)
+```
+
+::: {.hint exercise="ex_entra"}
+Hay que quedarse con el menor de los valores estrictamente positivos: `min(x for x in v if x > 0)`.
+:::
+
+::: {.solution exercise="ex_entra"}
+```{pyodide}
+C, AA = 10.0, 0.8
+fuera = {"x3": (6.0, 0.30), "x5": (-8.5, -0.55), "x7": (2.0, 0.10)}
+
+def cuando(c, a):
+    """El menor valor POSITIVO de las dos expresiones."""
+    v = [(C - c) / (AA - a), (C + c) / (AA + a)]
+    return min(x for x in v if x > 0)
+
+for nombre, (c, a) in sorted(fuera.items()):
+    print(nombre, round(cuando(c, a), 6))
+
+round(min(cuando(c, a) for c, a in fuera.values()), 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_entra
+#| check: true
+if abs(result - 6.0) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: 6,0, y la que entra es x5, cuya correlación es negativa y grande. El algoritmo no mira el signo, sino cuál alcanza antes el empate en valor absoluto.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 6.0 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 25**:
+
+1. Añadir al algoritmo el registro del $\lambda$ de cada quiebre y dibujar el camino completo de los coeficientes contra $\lambda$. Comprobar que entre quiebres los tramos son rectos, y anotar cuántos quiebres hacen falta para describir el camino entero.
+2. Repetir la comparación contra el descenso por coordenadas con una matriz en la que dos columnas sean idénticas. Anotar qué hace cada método y por qué el lasso no tiene solución única en ese caso.
+3. Medir el tiempo de calcular el camino completo contra el de resolver el lasso en veinte valores de $\lambda$ por separado. Guardar los dos números en `50-Errores/` con el tamaño del problema.
+
+## Del libro
+
+**ESL §3.4** presenta ridge, lasso y Least Angle Regression, y en §3.4.4 describe el algoritmo y la modificación que produce el camino del lasso. **§3.8** vuelve sobre los algoritmos de camino y su relación con el avance por pasos pequeños.
+
+Esta página programa el algoritmo desde cero, **demuestra la invariante y la fórmula del paso** —que el libro enuncia— y comprueba la equivalencia con el lasso contra un descenso por coordenadas independiente, cosa que el libro no hace. También señala lo que el orden de entrada **no** informa, con una columna de coeficiente verdadero cero entrando en segundo lugar.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/least-angle-regression.md`, enlazada a [[geometria-minimos-cuadrados]], [[alta-dimension]] y [[seleccion-de-subconjuntos]]. Conviene rehacer a mano la Proposición 25.2: la cuenta $X_{\mathcal{A}}^{\top}u=Gw=A_{\mathcal{A}}\mathbf{1}$ ocupa un renglón y deja grabado **por qué existe la dirección equiangular**, que es lo único que hay que entender del método.
+
+```
+¿Qué corrige LAR de la selección por pasos?::Que meter la variable entera va demasiado lejos
+¿Hasta dónde avanza en cada paso?::Hasta que otra variable alcanza la misma correlación
+¿Qué tienen en común las variables activas?::La correlación absoluta con el residuo, exactamente igual
+¿Por qué se mantiene ese empate?::Porque la dirección forma el mismo ángulo con todas ellas
+¿Cuánto baja la correlación al avanzar γ?::γ·A, la misma cantidad para todas
+¿Cuál es el tamaño del paso?::El menor valor positivo de (C∓c_j)/(A∓a_j) sobre las de fuera
+¿Cuántos pasos da?::p, uno por columna
+¿Dónde termina el camino?::Exactamente en la solución de mínimos cuadrados
+¿Qué modificación da el lasso?::Sacar del conjunto activo la variable cuyo coeficiente cruce el cero
+¿Cómo se comprobó?::Contra un lasso resuelto por descenso por coordenadas, a 1e-9
+¿Cómo son los coeficientes entre dos quiebres?::Lineales en λ: el camino queda descrito por los quiebres
+¿Informa el orden de entrada sobre importancia?::No: una columna con coeficiente verdadero cero entró segunda
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 25.2 se demuestra con $X_{\mathcal{A}}^{\top}u=Gw=A_{\mathcal{A}}\mathbf{1}$; se comprueba en los ocho pasos del ejemplo, donde las correlaciones activas empatan por debajo de $10^{-9}$ mientras la común baja de $23{,}029164$ a cero. La Proposición 25.3 se demuestra igualando las correlaciones tras el avance; su consecuencia —$p$ pasos y final en mínimos cuadrados— se comprueba con ocho pasos para ocho columnas y coincidencia con `lstsq` por debajo de $10^{-10}$. La Proposición 25.4 se **comprueba** en once puntos de quiebre contra un descenso por coordenadas, todos coincidentes por debajo de $10^{-9}$, incluido el paso donde el conjunto activo pierde una variable. El algoritmo está programado en la página.
+
+**Lo que viene de los libros.** De **ESL §3.4** vienen el algoritmo y la modificación que produce el camino del lasso. De **§3.8**, el encuadre de los algoritmos de camino. El texto no se reproduce.
+
+**Lo que se usa de otras lecciones sin repetir.** La ortogonalización y la geometría del ajuste son de Machine Learning 24. El lasso y su penalización son de Machine Learning 9. La selección por pasos, que este método corrige, es de Machine Learning 7.
+
+**Lo que se enuncia sin demostrar.** La Proposición 25.4 se **enuncia y se comprueba**, y no se demuestra: su prueba necesita las condiciones de optimalidad con subgradiente del lasso. El tratamiento de los empates exactos se simplifica y se nombra como omisión. Y el coste computacional del camino completo se toma de la literatura sin medirlo.
+
+**Lo que es mío, no del libro.** Comprobar la equivalencia con el lasso **contra un solucionador que no comparte nada con LAR**, en lugar de afirmarla: coincidir en once puntos por debajo de $10^{-9}$ con un descenso por coordenadas es una evidencia de otra clase. Señalar que **el orden de entrada no es un ranking de importancia**, con una columna de coeficiente verdadero cero entrando segunda por ser copia de otra. Y presentar el método como la corrección de un defecto concreto de la selección por pasos, que es de donde sale la idea.
+:::

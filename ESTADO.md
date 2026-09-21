@@ -36,7 +36,7 @@ Tres hitos de esta sesión:
   las 33 secciones de retos y los 106 símbolos sin declarar.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
-faltando lecciones por escribir: **ML va por 24 de 90**, **Series de tiempo
+faltando lecciones por escribir: **ML va por 25 de 90**, **Series de tiempo
 está **completo, 11 de 11**, e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -106,7 +106,7 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 11 | 11 | **11 de 11** | — |
-| Machine Learning | 24 | 90 | **24 de 24** | ESL 3 a 15 y deep learning |
+| Machine Learning | 25 | 90 | **25 de 25** | ESL 3 a 15 y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
@@ -2437,6 +2437,53 @@ La entrada «colinealidad» del glosario decía solo el caso exacto —una colum
 combinación lineal de otras, baja el rango—, y esta lección la usa en el caso
 aproximado. Como el enganche del glosario es global, la entrada habría mentido
 en esta página. Ahora cubre los dos casos y nombra la fórmula del segundo.
+
+### 3.42 ML 25: LAR, y dos fallos que encontraron los verificadores (20-09-2026)
+
+La lección programa Least Angle Regression desde cero, demuestra su invariante y
+comprueba la equivalencia con el lasso **contra un solucionador que no comparte
+nada con LAR**.
+
+> **25.2**: la dirección equiangular cumple $X_{\mathcal{A}}^{\top}u=Gw=
+> A_{\mathcal{A}}\mathbf{1}$, así que todas las correlaciones activas bajan la
+> misma cantidad y el empate se mantiene durante el paso.
+
+Comprobado en los ocho pasos del ejemplo, con las activas empatadas por debajo
+de $10^{-9}$ mientras la correlación común baja de $23{,}029164$ a cero, y con
+el último punto coincidiendo con `lstsq` por debajo de $10^{-10}$.
+
+> **25.4**: con una comprobación de más —sacar del conjunto activo el
+> coeficiente que cruce el cero— el camino es el del lasso.
+
+Los once puntos de quiebre coinciden con un **descenso por coordenadas**, todos
+por debajo de $10^{-9}$, incluido el paso 10, donde el conjunto activo pierde
+una variable y en el 11 entra otra.
+
+#### El primer fallo: mi LAR-lasso estaba mal
+
+La primera implementación rederivaba el conjunto activo de las correlaciones en
+cada iteración. Como la variable que acaba de salir **sigue empatada en
+correlación**, volvía a entrar en el paso siguiente y el borrado no servía de
+nada. El descenso por coordenadas lo delató: en el último punto encontraba un
+objetivo menor —$35{,}4460$ contra $35{,}4470$— con otro conjunto activo.
+
+Se rehízo llevando el conjunto activo de forma explícita, con una variable
+prohibida durante un paso. La lección de esto: **tener un oráculo independiente
+convierte un error silencioso en un error visible**. Sin el descenso por
+coordenadas, la tabla de la lección habría salido publicada con números
+plausibles y equivocados.
+
+#### El segundo: un bucle infinito en el visual
+
+El gate de visuales se colgó al cargar. La causa era de libro: en el segundo
+visual, el bucle interno de la función que resuelve el lasso usaba `k`, **la
+misma variable del bucle exterior** que recorría la rejilla de $\lambda$. Cada
+llamada devolvía `k` a 5 y el bucle de fuera no llegaba nunca a 40.
+
+Merece registrarse porque el gate **no lo detectó fallando sino colgándose**, y
+un tiempo de espera agotado es fácil de leer como un problema del entorno. El
+arreglo fue declarar locales todas las variables de bucle, y de paso salieron
+otros dos descuidos del mismo tipo en la misma página.
 
 ---
 

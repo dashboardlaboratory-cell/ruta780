@@ -113,6 +113,7 @@ MIGRADAS = {
     "ml/22-pruebas-multiples.qmd",
     "ml/23-panorama-supervisado.qmd",
     "ml/24-geometria-minimos-cuadrados.qmd",
+    "ml/25-least-angle-regression.qmd",
     "series/01-descomposicion.qmd",
     "series/02-estacionariedad.qmd",
     "series/03-autocorrelacion.qmd",
