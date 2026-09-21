@@ -1,0 +1,631 @@
+---
+title: "Métodos lineales de clasificación: LDA, logística y perceptrón"
+subtitle: "Machine Learning · Lección 26"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/25-least-angle-regression, ml/04-modelos-generativos, ml/03-regresion-logistica]
+siguientes: []
+libro: "ESL §4.2 Linear Regression of an Indicator Matrix · §4.3 Linear Discriminant Analysis · §4.5 Separating Hyperplanes"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="ml/26-metodos-lineales-clasificacion"}
+[[L3]{.nivel .nivel-L3} **ESL 4**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ESL §4.2 · §4.3 · §4.5]{.item}
+[**Prereqs** [Least Angle Regression](25-least-angle-regression.qmd) · [Modelos generativos](04-modelos-generativos.qmd) · [Regresión logística](03-regresion-logistica.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Escribir la clasificación como regresión de una matriz de indicadores y decir qué se está pidiendo con eso.
+2. **Demostrar que con tres clases alineadas la del medio nunca gana**, y medir el [enmascaramiento]{.g data-t="enmascaramiento"}.
+3. **Demostrar que con dos clases la dirección de LDA y la de la regresión de la indicadora coinciden salvo escala**, y comprobarlo.
+4. Escribir el [perceptrón]{.g data-t="perceptrón"} y su regla de corrección.
+5. **Demostrar la cota de Novikoff** y comprobar que se cumple, incluido lo que pasa cuando su hipótesis falla.
+6. Decir qué separa a estos tres métodos, que sobre dos clases bien portadas dan casi lo mismo.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 4**: LDA y los modelos generativos, cuya dirección aquí se compara con la de una regresión.
+- **Machine Learning 3**: la regresión logística, que aparece como el tercer método del trío.
+- **Machine Learning 24**: la geometría de mínimos cuadrados, que es lo que se aplica a las columnas indicadoras.
+- **Álgebra 5**: la proyección ortogonal, que explica por qué la recta de la clase del medio sale plana.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 14**: el margen máximo, que es la respuesta a la arbitrariedad del perceptrón.
+- **Machine Learning 27**: las expansiones en base, que convierten fronteras curvas en lineales sobre otras columnas.
+- **Machine Learning 31**: los modelos aditivos, que relajan la forma de la frontera sin abandonarla del todo.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $N$ | ene mayúscula | El número de observaciones |
+| $p$ | pe | El número de variables |
+| $K$ | ka mayúscula | El número de clases |
+| $Y$ | y griega mayúscula | La matriz de indicadores, de $N\times K$ |
+| $X$ | equis mayúscula | La matriz de diseño |
+| $\hat f_k(x)$ | efe sub ka | El valor ajustado para la clase $k$ |
+| $\mu_k$ | mu sub ka | El centro de la clase $k$ |
+| $\Sigma$ | sigma mayúscula | La covarianza común de las clases |
+| $w$ | doble ve | El vector normal al hiperplano |
+| $y_i$ | y sub i | La etiqueta $\pm1$ de la observación $i$ |
+| $R$ | erre | El radio: la mayor norma de los datos |
+| $\gamma$ | gamma | El margen del hiperplano separador |
+| $\hat\beta$ | beta con sombrero | El vector de coeficientes de la regresión de la indicadora |
+:::
+
+## 1. Clasificar regresando indicadores, y por qué falla
+
+::: {.definicion}
+**Definición 26.1 (regresión de la matriz de indicadores).** Constrúyase $Y\in\{0,1\}^{N\times K}$ con un uno en la columna de la clase de cada observación. Ajústese por mínimos cuadrados cada columna por separado, obteniendo $\hat f_1,\dots,\hat f_K$, y clasifíquese
+$$\hat G(x)=\arg\max_k\ \hat f_k(x).$$
+:::
+
+Es la extensión más directa posible de lo que la lección 24 hizo con una respuesta numérica, y con dos clases funciona. Con tres deja de funcionar, y no por poco.
+
+::: {.proposicion}
+**Proposición 26.2 (enmascaramiento).** Sea $K=3$ con una sola variable y centros $\mu_1<\mu_2<\mu_3$ igualmente espaciados y clases del mismo tamaño. Entonces la recta ajustada para la clase del medio es **constante**: $\hat f_2(x)=1/3$ para todo $x$, de modo que
+$$\hat f_2(x)=\tfrac13\quad\text{mientras}\quad \hat f_1(x)+\hat f_3(x)=\tfrac23,$$
+y la clase $2$ solo podría ganar si las otras dos empataran exactamente en $1/3$. En la práctica **nunca se predice**.
+:::
+
+::: {.demostracion}
+*Demostración.* Con una variable, el ajuste de $\hat f_2$ es la recta de mínimos cuadrados de la columna indicadora de la clase $2$ sobre $x$. Su pendiente es proporcional a la covarianza muestral entre esa indicadora y $x$, que vale
+$$\operatorname{Cov}(\mathbb{1}_{G=2},x)=\tfrac13\bigl(\mu_2-\bar\mu\bigr)=0,$$
+porque con centros igualmente espaciados y clases del mismo tamaño la media global $\bar\mu$ coincide con $\mu_2$. Pendiente nula y media $1/3$ dan $\hat f_2\equiv1/3$. Como las tres columnas suman uno en cada fila, sus ajustes también suman uno, de donde $\hat f_1+\hat f_3=2/3$; una de las dos supera $1/3$ salvo en el punto exacto donde se cruzan. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(261)
+n = 300
+centros = np.array([-4.0, 0.0, 4.0])
+x = np.concatenate([c + rng.normal(0, 1.0, n) for c in centros])
+clase = np.repeat([0, 1, 2], n)
+
+X = np.column_stack([np.ones(len(x)), x])
+Y = np.zeros((len(x), 3))
+Y[np.arange(len(x)), clase] = 1.0
+B, _, _, _ = np.linalg.lstsq(X, Y, rcond=None)    # una regresion por clase
+pred = np.argmax(X @ B, axis=1)
+
+print("tres clases alineadas, con centros en -4, 0 y 4 de una sola variable")
+print("  la regresion de indicadores predice cada clase:")
+for k in range(3):
+    print("     clase %d: %5d veces de %d" % (k, int((pred == k).sum()), len(x)))
+print("  aciertos totales: %.4f" % float((pred == clase).mean()))
+print()
+print("  las tres rectas ajustadas, evaluadas en los centros:")
+for c in centros:
+    v = np.array([1.0, c]) @ B
+    print("     x=%+5.1f  ->  %s   gana la %d" % (c, "  ".join("%+.4f" % q for q in v), int(np.argmax(v))))
+print()
+print("la clase del medio NUNCA gana, ni siquiera en su propio centro: su recta")
+print("ajustada es casi plana y las otras dos la tapan. Eso es el enmascaramiento")
+```
+
+La clase del medio se predice **cero veces de novecientas**, y los aciertos se quedan en $0{,}6667$, que es exactamente la fracción de las otras dos. En su propio centro, $x=0$, los tres valores ajustados son $0{,}3286$, $0{,}3332$ y $0{,}3382$: la clase correcta queda segunda por tres milésimas.
+
+Conviene ver lo que **no** es este fallo. No hay ruido, ni pocos datos, ni mala suerte: con mil veces más observaciones pasaría lo mismo, porque la pendiente de la recta del medio es cero por construcción. **El método está pidiendo algo que la geometría no puede dar**, y esa es la razón por la que ESL introduce el capítulo con este ejemplo antes de presentar nada.
+
+```{=html}
+<div class="viz-mascara">
+  <div class="controles">
+    <label>Clases <input id="ma26-k" type="range" min="2" max="5" step="1" value="3"> <span id="ma26-k-v">3</span></label>
+    <label>Separación <input id="ma26-s" type="range" min="1" max="8" step="0.5" value="4.0"> <span id="ma26-s-v">4.0</span></label>
+    <label>Ruido <input id="ma26-r" type="range" min="0.3" max="3" step="0.1" value="1.0"> <span id="ma26-r-v">1.0</span></label>
+  </div>
+  <svg id="ma26-svg" viewBox="0 0 660 260" role="img" aria-label="Las rectas ajustadas para cada clase sobre una sola variable, con la región en que cada una gana marcada debajo."></svg>
+  <p class="lectura" id="ma26-lectura"></p>
+</div>
+<style>
+.viz-mascara { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-mascara .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-mascara label { display: flex; align-items: center; gap: .4rem; }
+.viz-mascara input[type=range] { width: 140px; padding: 0; }
+.viz-mascara svg { width: 100%; height: auto; display: block; }
+.viz-mascara .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)";
+  var svg = document.getElementById("ma26-svg"), lec = document.getElementById("ma26-lectura");
+  var ck = document.getElementById("ma26-k"), cs = document.getElementById("ma26-s"), cr = document.getElementById("ma26-r");
+  var ek = document.getElementById("ma26-k-v"), es = document.getElementById("ma26-s-v"), er = document.getElementById("ma26-r-v");
+  var X0 = 46, XW = 574, Y0 = 20, YH = 150, NC = 120;
+  var COL = ["#0F6E68", "#B4342E", "#8A6D1F", "#3B5BA5", "#7A3E9D"];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var sem = 0;
+  function u() { sem = (sem * 48271) % 2147483647; return sem / 2147483647; }
+  function nor() { var a = Math.max(u(), 1e-9), b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var K = +ck.value, sep = +cs.value, sd = +cr.value;
+    ek.textContent = K; es.textContent = sep.toFixed(1); er.textContent = sd.toFixed(1);
+    sem = 31337;
+    var xs = [], cls = [], i, k;
+    for (k = 0; k < K; k++) {
+      var c = (k - (K - 1) / 2) * sep;
+      for (i = 0; i < NC; i++) { xs.push(c + sd * nor()); cls.push(k); }
+    }
+    var N = xs.length;
+    // minimos cuadrados con intercepto sobre una sola variable, por clase
+    var mx = 0, i2;
+    for (i2 = 0; i2 < N; i2++) mx += xs[i2];
+    mx /= N;
+    var sxx = 0;
+    for (i2 = 0; i2 < N; i2++) sxx += (xs[i2] - mx) * (xs[i2] - mx);
+    var A = [];
+    for (k = 0; k < K; k++) {
+      var my = 0, sxy = 0;
+      for (i2 = 0; i2 < N; i2++) { var yk = cls[i2] === k ? 1 : 0; my += yk; }
+      my /= N;
+      for (i2 = 0; i2 < N; i2++) { var yk2 = cls[i2] === k ? 1 : 0; sxy += (xs[i2] - mx) * (yk2 - my); }
+      var b1 = sxy / sxx, b0 = my - b1 * mx;
+      A.push([b0, b1]);
+    }
+    var LX = (K - 1) / 2 * sep + 3 * sd + 1;
+    var px = function (v) { return X0 + (v + LX) / (2 * LX) * XW; };
+    var py = function (v) { return Y0 + (1.15 - Math.max(-0.35, Math.min(1.15, v))) / 1.5 * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + (X0 + XW) + " " + py(0).toFixed(1), stroke: C_L, "stroke-width": 1, "stroke-dasharray": "3 3" }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(1).toFixed(1) + " L" + (X0 + XW) + " " + py(1).toFixed(1), stroke: C_L, "stroke-width": 1, "stroke-dasharray": "3 3" }));
+    for (k = 0; k < K; k++) {
+      var d = "M" + px(-LX).toFixed(1) + " " + py(A[k][0] + A[k][1] * (-LX)).toFixed(1) +
+              " L" + px(LX).toFixed(1) + " " + py(A[k][0] + A[k][1] * LX).toFixed(1);
+      svg.appendChild(el("path", { d: d, stroke: COL[k], "stroke-width": 2.2, fill: "none" }));
+    }
+    // la banda de quien gana
+    var BY = Y0 + YH + 16, M = 240, gana = [], cuenta = new Array(K).fill(0);
+    for (i = 0; i < M; i++) {
+      var xv = -LX + (i + 0.5) / M * 2 * LX, mejor = 0;
+      for (k = 1; k < K; k++) if (A[k][0] + A[k][1] * xv > A[mejor][0] + A[mejor][1] * xv) mejor = k;
+      gana.push(mejor);
+      svg.appendChild(el("path", { d: "M" + px(xv).toFixed(1) + " " + BY + " L" + px(xv).toFixed(1) + " " + (BY + 18),
+        stroke: COL[mejor], "stroke-width": XW / M + 0.6 }));
+    }
+    for (i = 0; i < N; i++) cuenta[gana[Math.min(M - 1, Math.max(0, Math.floor((xs[i] + LX) / (2 * LX) * M)))]]++;
+    var nunca = [];
+    for (k = 0; k < K; k++) if (gana.indexOf(k) < 0) nunca.push(k);
+    svg.appendChild(el("text", { x: X0 - 6, y: (BY + 13).toFixed(1), "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "gana"));
+    svg.appendChild(el("text", { x: X0 + XW, y: (BY + 34).toFixed(1), "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "una sola variable, de izquierda a derecha"));
+
+    lec.innerHTML = "Con <strong>" + K + "</strong> clases alineadas, <strong>" + nunca.length +
+      "</strong> de ellas no ganan en ningún punto de la recta" +
+      (nunca.length ? " (las de color " + nunca.map(function (q) { return "<span style='color:" + COL[q] + "'>■</span>"; }).join(" ") + ")" : "") + ". " +
+      (K === 2
+        ? "Con dos clases no hay enmascaramiento: la regresión de indicadores clasifica igual que LDA."
+        : "Las clases interiores tienen recta casi plana y las de los extremos las tapan. <strong>Subiendo el número de clases empeora</strong>, y bajar el ruido o subir la separación no lo arregla.");
+  }
+  ck.addEventListener("input", dibujar);
+  cs.addEventListener("input", dibujar);
+  cr.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Con dos clases, el mismo método con otro nombre
+
+::: {.proposicion}
+**Proposición 26.3 (LDA y la regresión de la indicadora, con $K=2$).** Con dos clases, el vector de coeficientes de la regresión por mínimos cuadrados de la indicadora sobre $X$ es **proporcional** a la dirección discriminante de LDA,
+$$\hat\beta_{\text{reg}}\ \propto\ \hat\Sigma^{-1}(\hat\mu_2-\hat\mu_1),$$
+de modo que las dos reglas producen la **misma dirección** y difieren solo en el punto de corte.
+:::
+
+::: {.demostracion}
+*Demostración.* Escríbanse los datos centrados. La ecuación normal da $\hat\beta=(X^{\top}X)^{-1}X^{\top}y$ con $y$ la indicadora centrada. Descomponiendo $X^{\top}X$ en la suma de la dispersión **dentro** de las clases y la dispersión **entre** clases, y observando que $X^{\top}y$ es proporcional a $\hat\mu_2-\hat\mu_1$, se llega a
+$$\hat\beta\ \propto\ \bigl(\hat\Sigma_W+c\,(\hat\mu_2-\hat\mu_1)(\hat\mu_2-\hat\mu_1)^{\top}\bigr)^{-1}(\hat\mu_2-\hat\mu_1).$$
+El segundo sumando es de rango uno en la dirección $\hat\mu_2-\hat\mu_1$, de modo que al invertir solo cambia la **escala** a lo largo de esa misma dirección y no la gira. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(262)
+n, p = 200, 4
+mu1 = np.array([1.2, -0.8, 0.5, 0.3])
+S = np.eye(p) + 0.3 * np.ones((p, p))
+L = np.linalg.cholesky(S)
+X0 = rng.normal(0, 1, (n, p)) @ L.T
+X1 = rng.normal(0, 1, (n, p)) @ L.T + mu1
+Xa = np.vstack([X0, X1])
+ya = np.r_[np.zeros(n), np.ones(n)]
+
+m0, m1 = X0.mean(axis=0), X1.mean(axis=0)
+Sc = ((X0 - m0).T @ (X0 - m0) + (X1 - m1).T @ (X1 - m1)) / (2 * n - 2)
+w_lda = np.linalg.solve(Sc, m1 - m0)              # la direccion de LDA
+
+A = np.column_stack([np.ones(2 * n), Xa])
+b, _, _, _ = np.linalg.lstsq(A, ya, rcond=None)
+w_reg = b[1:]                                     # la de la regresion de la indicadora
+coc = w_reg / w_lda
+
+print("con DOS clases, LDA y la regresion de la indicadora dan la misma direccion")
+print("  LDA      :", "  ".join("%+.6f" % v for v in w_lda))
+print("  regresion:", "  ".join("%+.6f" % v for v in w_reg))
+print("  cociente :", "  ".join("%.6f" % v for v in coc))
+print("  ¿el cociente es el mismo en las cuatro componentes, a 1e-10?: %s"
+      % bool(np.abs(coc - coc[0]).max() < 1e-10))
+print()
+print("cambian en la escala y no en la direccion, asi que clasifican igual.")
+print("Con tres clases eso se rompe, y la celda anterior enseña como")
+```
+
+El cociente vale $0{,}156211$ en las cuatro componentes: **la misma dirección, otra escala**. Dos métodos que se presentan en capítulos distintos —uno por mínimos cuadrados, otro por un modelo de probabilidad con covarianza común— resultan ser el mismo vector.
+
+Eso explica también por qué el enmascaramiento no aparece con dos clases, y por qué aparece con tres: con $K=2$ hay una sola dirección que decidir, y con $K=3$ hay dos, pero la regresión de indicadores solo sabe buscar una a la vez.
+
+## 3. El perceptrón, y lo que su cota promete
+
+::: {.definicion}
+**Definición 26.4 (perceptrón).** Con etiquetas $y_i\in\{-1,+1\}$ y $w=0$, recórranse las observaciones; cada vez que $y_i\,\langle w,x_i\rangle\le0$, corríjase
+$$w\leftarrow w+y_i x_i,$$
+y repítase hasta que no quede ninguna mal clasificada.
+:::
+
+::: {.proposicion}
+**Proposición 26.5 (cota de Novikoff).** Supóngase que existe $w^{*}$ de norma uno y $\gamma>0$ con $y_i\langle w^{*},x_i\rangle\ge\gamma$ para todo $i$, y sea $R=\max_i\lVert x_i\rVert$. Entonces el perceptrón hace como mucho
+$$\Bigl(\frac{R}{\gamma}\Bigr)^{2}$$
+correcciones antes de separar los datos, **sea cual sea el orden en que los recorra**.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $w_t$ el vector tras $t$ correcciones. Por un lado, cada corrección avanza en la dirección buena:
+$$\langle w_{t+1},w^{*}\rangle=\langle w_t,w^{*}\rangle+y_i\langle x_i,w^{*}\rangle\ \ge\ \langle w_t,w^{*}\rangle+\gamma,$$
+de donde $\langle w_t,w^{*}\rangle\ge t\gamma$. Por otro, la norma crece poco, porque solo se corrige cuando $y_i\langle w_t,x_i\rangle\le0$:
+$$\lVert w_{t+1}\rVert^{2}=\lVert w_t\rVert^{2}+2y_i\langle w_t,x_i\rangle+\lVert x_i\rVert^{2}\ \le\ \lVert w_t\rVert^{2}+R^{2},$$
+de donde $\lVert w_t\rVert\le R\sqrt t$. Combinando con Cauchy-Schwarz, $t\gamma\le\langle w_t,w^{*}\rangle\le\lVert w_t\rVert\le R\sqrt t$, y despejando, $t\le(R/\gamma)^2$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def perceptron(X, y, maxpasadas=2000):
+    """Numero de correcciones hasta separar. None si no lo consigue."""
+    n, p = X.shape
+    w = np.zeros(p)
+    errores = 0
+    for _ in range(maxpasadas):
+        malos = 0
+        for i in range(n):
+            if y[i] * (X[i] @ w) <= 0:
+                w = w + y[i] * X[i]
+                errores += 1
+                malos += 1
+        if malos == 0:
+            return errores
+    return None
+
+def separables(n, p, gamma0, rng):
+    """Puntos con margen al menos gamma0 respecto de un hiperplano conocido."""
+    w = np.zeros(p)
+    w[0] = 1.0
+    Xs, ys = [], []
+    while len(Xs) < n:
+        z = rng.normal(0, 1, p)
+        s = 1.0 if z[0] > 0 else -1.0
+        if s * (z @ w) >= gamma0:
+            Xs.append(z)
+            ys.append(s)
+    return np.array(Xs), np.array(ys), w
+
+rng = np.random.default_rng(263)
+print("la cota de Novikoff: las correcciones no pasan de (R/gamma)^2")
+print("  margen    R        gamma     (R/gamma)^2   correcciones   ¿cumple?")
+for g0 in (1.0, 0.5, 0.25, 0.1):
+    X, y, w = separables(80, 4, g0, rng)
+    err = perceptron(X, y)
+    R = float(np.linalg.norm(X, axis=1).max())
+    gam = float((y * (X @ (w / np.linalg.norm(w)))).min())
+    cota = (R / gam) ** 2
+    print("   %.2f   %7.4f  %8.5f   %11.1f   %10s       %s"
+          % (g0, R, gam, cota, str(err), bool(err is not None and err <= cota)))
+print()
+
+rng = np.random.default_rng(264)
+Xn = np.vstack([rng.normal(0, 1, (40, 4)), rng.normal(0, 1, (40, 4)) + 1.0])
+yn = np.r_[-np.ones(40), np.ones(40)]
+print("y sobre datos NO separables, con 2000 pasadas: %s" % str(perceptron(Xn, yn)))
+print("el algoritmo no se detiene nunca: la cota vale solo si existe un")
+print("hiperplano que separe, y nada dentro del algoritmo comprueba eso")
+```
+
+La cota se cumple en los cuatro casos y con mucho margen: con $\gamma=0{,}1$ permite $1340{,}9$ correcciones y bastan $22$. **Es una garantía de peor caso**, y su valor está en que no depende del orden de recorrido ni del número de observaciones, sino solo de la geometría: cómo de grandes son los datos y cómo de ancha es la franja que los separa.
+
+La última línea es la otra mitad del resultado. Sobre datos no separables el perceptrón **no termina**, y el algoritmo no contiene nada que lo detecte: sigue corrigiendo indefinidamente. Esa es la razón de ser de la lección 14, donde el margen máximo sustituye «encuentra un separador» por «encuentra el mejor», y de la formulación con holguras que admite datos que se solapan.
+
+Conviene además notar lo que la cota **no** dice: nada sobre qué separador se obtiene. El perceptrón devuelve el primero que encuentra, y ese depende del orden de recorrido.
+
+```{=html}
+<div class="viz-perceptron">
+  <div class="controles">
+    <label>Margen γ <input id="pe26-g" type="range" min="0.05" max="1.2" step="0.05" value="0.40"> <span id="pe26-g-v">0.40</span></label>
+    <label>Observaciones <input id="pe26-n" type="range" min="10" max="120" step="10" value="40"> <span id="pe26-n-v">40</span></label>
+    <label>Orden de recorrido <input id="pe26-o" type="range" min="1" max="12" step="1" value="1"> <span id="pe26-o-v">1</span></label>
+  </div>
+  <svg id="pe26-svg" viewBox="0 0 660 270" role="img" aria-label="Los puntos de las dos clases con la franja del margen y el separador que encuentra el perceptrón, que cambia con el orden de recorrido."></svg>
+  <p class="lectura" id="pe26-lectura"></p>
+</div>
+<style>
+.viz-perceptron { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-perceptron .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-perceptron label { display: flex; align-items: center; gap: .4rem; }
+.viz-perceptron input[type=range] { width: 140px; padding: 0; }
+.viz-perceptron svg { width: 100%; height: auto; display: block; }
+.viz-perceptron .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("pe26-svg"), lec = document.getElementById("pe26-lectura");
+  var cg = document.getElementById("pe26-g"), cn = document.getElementById("pe26-n"), co = document.getElementById("pe26-o");
+  var eg = document.getElementById("pe26-g-v"), en = document.getElementById("pe26-n-v"), eo = document.getElementById("pe26-o-v");
+  var OX = 330, OY = 135, ESC = 52;      // marco fijo en unidades de los datos
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var sem = 0;
+  function u() { sem = (sem * 48271) % 2147483647; return sem / 2147483647; }
+  function nor() { var a = Math.max(u(), 1e-9), b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var gam = +cg.value, N = +cn.value, orden = +co.value;
+    eg.textContent = gam.toFixed(2); en.textContent = N; eo.textContent = orden;
+    sem = 909090;
+    var P = [], Y = [], i;
+    while (P.length < N) {
+      var a = 2.2 * nor(), b = 2.2 * nor();
+      var s = a > 0 ? 1 : -1;
+      if (s * a >= gam && Math.abs(a) < 2.6 && Math.abs(b) < 2.4) { P.push([a, b]); Y.push(s); }
+    }
+    // el orden de recorrido lo fija el control
+    var idx = [];
+    for (i = 0; i < N; i++) idx.push(i);
+    var s2 = orden * 7919 + 3;
+    function u2() { s2 = (s2 * 48271) % 2147483647; return s2 / 2147483647; }
+    for (i = N - 1; i > 0; i--) { var j = Math.floor(u2() * (i + 1)), t = idx[i]; idx[i] = idx[j]; idx[j] = t; }
+
+    var w = [0, 0], corr = 0, pasada;
+    var tocados = new Array(N).fill(0);       // sobre que puntos corrigio
+    for (pasada = 0; pasada < 400; pasada++) {
+      var malos = 0;
+      for (var q = 0; q < N; q++) {
+        var k = idx[q];
+        if (Y[k] * (w[0] * P[k][0] + w[1] * P[k][1]) <= 0) {
+          w[0] += Y[k] * P[k][0]; w[1] += Y[k] * P[k][1];
+          corr++; malos++; tocados[k]++;
+        }
+      }
+      if (!malos) break;
+    }
+    var px = function (v) { return OX + v * ESC; };
+    var py = function (v) { return OY - v * ESC; };
+    svg.appendChild(el("rect", { x: px(-2.8).toFixed(1), y: py(2.3).toFixed(1), width: (5.6 * ESC).toFixed(1), height: (4.6 * ESC).toFixed(1), fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    // la franja del margen verdadero, que es vertical
+    svg.appendChild(el("path", { d: "M" + px(-gam).toFixed(1) + " " + py(2.3).toFixed(1) + " L" + px(gam).toFixed(1) + " " + py(2.3).toFixed(1) +
+      " L" + px(gam).toFixed(1) + " " + py(-2.3).toFixed(1) + " L" + px(-gam).toFixed(1) + " " + py(-2.3).toFixed(1) + " Z", fill: C_T, opacity: .08 }));
+    var cuantos_tocados = 0;
+    for (i = 0; i < N; i++) {
+      svg.appendChild(el("circle", { cx: px(P[i][0]).toFixed(1), cy: py(P[i][1]).toFixed(1), r: 3.4, fill: Y[i] > 0 ? C_A : C_B, opacity: .85 }));
+      if (tocados[i]) {
+        cuantos_tocados++;
+        // el anillo marca los puntos sobre los que el algoritmo corrigio:
+        // cambian con el orden aunque los datos sean los mismos
+        svg.appendChild(el("circle", { cx: px(P[i][0]).toFixed(1), cy: py(P[i][1]).toFixed(1), r: 7.5 + 1.6 * tocados[i],
+          fill: "none", stroke: Y[i] > 0 ? C_A : C_B, "stroke-width": 2 }));
+      }
+    }
+    // el separador encontrado: w0*a + w1*b = 0
+    if (Math.abs(w[1]) > 1e-9 || Math.abs(w[0]) > 1e-9) {
+      var x1 = -2.8, x2 = 2.8, y1, y2;
+      if (Math.abs(w[1]) > 1e-9) { y1 = -w[0] * x1 / w[1]; y2 = -w[0] * x2 / w[1]; }
+      else { x1 = x2 = 0; y1 = -2.3; y2 = 2.3; }
+      y1 = Math.max(-2.3, Math.min(2.3, y1)); y2 = Math.max(-2.3, Math.min(2.3, y2));
+      svg.appendChild(el("path", { d: "M" + px(x1).toFixed(1) + " " + py(y1).toFixed(1) + " L" + px(x2).toFixed(1) + " " + py(y2).toFixed(1),
+        stroke: C_T, "stroke-width": 2.5 }));
+    }
+    var R = 0;
+    for (i = 0; i < N; i++) R = Math.max(R, Math.sqrt(P[i][0] * P[i][0] + P[i][1] * P[i][1]));
+    var cota = (R / gam) * (R / gam);
+    svg.appendChild(el("text", { x: 20, y: 30, "font-size": 11, fill: C_T }, "R = " + R.toFixed(3)));
+    svg.appendChild(el("text", { x: 20, y: 46, "font-size": 11, fill: C_T }, "γ = " + gam.toFixed(2)));
+    svg.appendChild(el("text", { x: 20, y: 62, "font-size": 11, fill: C_B }, "cota (R/γ)² = " + cota.toFixed(1)));
+    svg.appendChild(el("text", { x: 20, y: 78, "font-size": 11, fill: C_A }, "correcciones = " + corr));
+    svg.appendChild(el("text", { x: 20, y: 94, "font-size": 11, fill: C_T, opacity: .75 }, "puntos usados = " + cuantos_tocados));
+
+    lec.innerHTML = "Con margen <strong>" + gam.toFixed(2) + "</strong> y " + N + " puntos, el perceptrón necesita <strong>" + corr +
+      "</strong> correcciones y la cota permite <strong>" + cota.toFixed(1) + "</strong>. " +
+      "Los anillos marcan los <strong>" + cuantos_tocados + "</strong> puntos sobre los que corrigió. " +
+      "Moviendo el <strong>orden de recorrido</strong> cambian: son otros puntos, otro número de correcciones y otro separador, " +
+      "con los mismos datos. <strong>La respuesta depende del orden</strong>. " +
+      (gam < 0.15
+        ? "Con la franja tan estrecha la cota se dispara, porque va como 1/γ²."
+        : "La cota queda muy por encima de lo que hace falta: es una garantía de peor caso, no una predicción.");
+  }
+  cg.addEventListener("input", dibujar);
+  cn.addEventListener("input", dibujar);
+  co.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Lo que esta lección no resuelve
+
+- **La regresión logística se compara sin desarrollarse.** Su ajuste y su interpretación son de la lección 3; aquí solo entra como el tercer método del trío.
+- **No se trata el caso $K>2$ de LDA.** ESL §4.3 lo desarrolla con subespacios discriminantes, y la lección 19 aporta la parte de componentes.
+- **El remedio del enmascaramiento no se estudia.** Añadir términos polinómicos alivia el ejemplo de una variable y no el problema general; la solución razonable es no usar regresión de indicadores.
+- **La cota de Novikoff no dice nada sobre generalización.** Garantiza que el algoritmo para, no que lo que encuentre prediga bien.
+- **Y el perceptrón no elige entre separadores.** Devuelve el primero que encuentra; elegir el mejor es el margen máximo de la lección 14.
+
+## Ejercicios
+
+### Ejercicio 1, Dónde empata la clase del medio
+
+Con la Proposición 26.2, calcular los tres valores ajustados en el centro de la clase del medio y comprobar cuál gana.
+
+```{pyodide}
+#| exercise: ex_mascara
+# con centros simetricos, la recta del medio es constante en 1/3
+f2 = ______
+
+# las otras dos suman 2/3 y en el centro estan casi empatadas
+f1, f3 = 0.3286, 0.3382
+
+gana = ______
+
+print(round(f2, 6), gana)
+gana
+```
+
+::: {.hint exercise="ex_mascara"}
+La proposición dice que $\hat f_2\equiv1/3$. Para el ganador basta comparar los tres números y devolver el índice del mayor, contando desde uno.
+:::
+
+::: {.solution exercise="ex_mascara"}
+```{pyodide}
+# con centros simetricos, la recta del medio es constante en 1/3
+f2 = 1 / 3
+
+# las otras dos suman 2/3 y en el centro estan casi empatadas
+f1, f3 = 0.3286, 0.3382
+
+valores = [f1, f2, f3]
+gana = valores.index(max(valores)) + 1
+
+print(round(f2, 6), gana)
+gana
+```
+:::
+
+```{pyodide}
+#| exercise: ex_mascara
+#| check: true
+if result == 3:
+    feedback = {"correct": True, "message": "Correcto: gana la tercera, por menos de cinco milésimas. La clase del medio pierde en su propio centro, y ese margen ridículo es lo que hace que no gane en ningún punto de la recta.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 3 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuánto promete la cota
+
+Con la Proposición 26.5, calcular la cota de correcciones para varios márgenes y ver cómo crece al estrecharse la franja.
+
+```{pyodide}
+#| exercise: ex_cota
+R = 4.0
+
+def cota(gamma):
+    return ______
+
+for g in (2.0, 1.0, 0.5, 0.1):
+    print(g, round(cota(g), 4))
+
+int(cota(0.1))
+```
+
+::: {.hint exercise="ex_cota"}
+La proposición da $(R/\gamma)^2$. Al dividir $\gamma$ por diez, la cota se multiplica por cien.
+:::
+
+::: {.solution exercise="ex_cota"}
+```{pyodide}
+R = 4.0
+
+def cota(gamma):
+    return (R / gamma) ** 2
+
+for g in (2.0, 1.0, 0.5, 0.1):
+    print(g, round(cota(g), 4))
+
+int(cota(0.1))
+```
+:::
+
+```{pyodide}
+#| exercise: ex_cota
+#| check: true
+if result == 1600:
+    feedback = {"correct": True, "message": "Correcto: 1600 correcciones con margen 0,1. La cota va como 1/γ², así que estrechar la franja diez veces la multiplica por cien: la geometría manda mucho más que el número de datos, que no aparece en la fórmula.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 1600 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 26**:
+
+1. Reproducir el enmascaramiento con cuatro y cinco clases alineadas y anotar cuántas quedan sin predecirse nunca. Probar después añadiendo $x^2$ como columna y anotar qué cambia.
+2. Comprobar la Proposición 26.3 con covarianzas de clase **distintas** y anotar si el cociente sigue siendo constante. Relacionarlo con lo que LDA supone y la regresión no.
+3. Ejecutar el perceptrón sobre los mismos datos con veinte órdenes de recorrido distintos y guardar en `50-Errores/` el histograma de correcciones junto con la cota. Anotar cuánto varía el separador obtenido.
+
+## Del libro
+
+**ESL §4.2** introduce la regresión de la matriz de indicadores y su fallo con tres clases, que es la Proposición 26.2 y la figura con la que el capítulo empieza. **§4.3** desarrolla LDA y señala la coincidencia con la regresión de la indicadora cuando hay dos clases. **§4.5** presenta los hiperplanos separadores y el perceptrón con su resultado de convergencia.
+
+Esta página **demuestra** el enmascaramiento en el caso simétrico en lugar de ilustrarlo, comprueba la proporcionalidad entre las dos direcciones a diez decimales, y mide la cota de Novikoff junto con el caso donde su hipótesis falla, que es lo que le da sentido.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/metodos-lineales-clasificacion.md`, enlazada a [[modelos-generativos]], [[regresion-logistica]] y [[geometria-minimos-cuadrados]]. Conviene rehacer a mano la Proposición 26.2: ver que la covarianza entre la indicadora del medio y $x$ vale cero ocupa dos renglones y deja grabado que **el fallo es de construcción y no de ruido**, que es lo que impide buscarle un remedio con más datos.
+
+```
+¿Qué es la regresión de indicadores?::Ajustar una columna 0/1 por clase y quedarse con el argmax
+¿Qué pasa con tres clases alineadas?::La del medio nunca gana: enmascaramiento
+¿Por qué?::Su recta ajustada es constante en 1/3, porque su covarianza con x es cero
+¿Se arregla con más datos?::No: el fallo es de construcción
+¿Cuántas veces se predijo la clase del medio?::Cero de novecientas
+¿Qué pasa con dos clases?::LDA y la regresión de la indicadora dan la misma dirección
+¿En qué difieren entonces?::Solo en la escala, y por tanto en el punto de corte
+¿Cuál es la regla del perceptrón?::Si y·⟨w,x⟩ ≤ 0, entonces w ← w + y·x
+¿Cuántas correcciones hace como mucho?::(R/γ)², con R el radio y γ el margen
+¿Aparece N en esa cota?::No: solo la geometría
+¿Qué pasa si los datos no son separables?::No termina, y el algoritmo no lo detecta
+¿Elige el perceptrón un buen separador?::No: devuelve el primero, que depende del orden
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 26.2 se demuestra viendo que la covarianza entre la indicadora del medio y la variable vale cero con centros simétricos; se comprueba con la clase del medio predicha **cero veces de novecientas**, aciertos de $0{,}6667$ y los tres valores ajustados en su propio centro, $0{,}3286$, $0{,}3332$ y $0{,}3382$. La Proposición 26.3 se demuestra con la descomposición de la dispersión y el argumento de rango uno; se comprueba con un cociente de $0{,}156211$ idéntico en las cuatro componentes por debajo de $10^{-10}$. La Proposición 26.5 se demuestra acotando el producto con $w^{*}$ por abajo y la norma por arriba; se comprueba en cuatro márgenes, todos por debajo de la cota, y con el caso no separable donde el algoritmo no termina en dos mil pasadas.
+
+**Lo que viene de los libros.** De **ESL §4.2** viene el planteamiento de la regresión de indicadores y su fallo; de **§4.3**, LDA y su coincidencia con la regresión cuando hay dos clases; de **§4.5**, el perceptrón y su convergencia. El texto no se reproduce.
+
+**Lo que se usa de otras lecciones sin repetir.** LDA como modelo generativo con covarianza común es de Machine Learning 4. La regresión logística es de Machine Learning 3. La geometría del ajuste por mínimos cuadrados es de Machine Learning 24.
+
+**Lo que se enuncia sin demostrar.** La descomposición de $X^{\top}X$ en dispersión dentro y entre clases se **usa** sin desarrollarla término a término. Y la Proposición 26.2 se demuestra en el caso simétrico y de una variable; que el enmascaramiento persista en general se **comprueba** con el visual y no se demuestra.
+
+**Lo que es mío, no del libro.** Demostrar el enmascaramiento en el caso simétrico en lugar de ilustrarlo con una figura, que es lo que permite decir **por qué no se arregla con más datos**. Comprobar la proporcionalidad entre las dos direcciones a diez decimales, que convierte una afirmación del libro en algo verificable. Y poner el caso no separable junto a la cota de Novikoff: sin él, la cota parece una garantía general y es una garantía **condicional**.
+:::

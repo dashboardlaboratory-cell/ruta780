@@ -36,7 +36,7 @@ Tres hitos de esta sesión:
   las 33 secciones de retos y los 106 símbolos sin declarar.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
-faltando lecciones por escribir: **ML va por 25 de 90**, **Series de tiempo
+faltando lecciones por escribir: **ML va por 26 de 90**, **Series de tiempo
 está **completo, 11 de 11**, e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -106,7 +106,7 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 11 | 11 | **11 de 11** | — |
-| Machine Learning | 25 | 90 | **25 de 25** | ESL 3 a 15 y deep learning |
+| Machine Learning | 26 | 90 | **26 de 26** | ESL 5 a 15 y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
@@ -2484,6 +2484,56 @@ Merece registrarse porque el gate **no lo detectó fallando sino colgándose**, 
 un tiempo de espera agotado es fácil de leer como un problema del entorno. El
 arreglo fue declarar locales todas las variables de bucle, y de paso salieron
 otros dos descuidos del mismo tipo en la misma página.
+
+### 3.43 ML 26: el enmascaramiento, demostrado en vez de ilustrado (21-09-2026)
+
+ESL abre su capítulo 4 con una figura: tres clases alineadas y la del medio que
+nunca gana. La lección lo **demuestra** en el caso simétrico, que es lo que
+permite decir por qué no se arregla con más datos.
+
+> **26.2**: con tres clases igualmente espaciadas y del mismo tamaño, la
+> covarianza entre la indicadora de la clase del medio y $x$ vale **cero**, así
+> que su recta ajustada es la constante $1/3$.
+
+Medido: la clase del medio se predice **cero veces de novecientas**, los
+aciertos se quedan en $0{,}6667$ —la fracción exacta de las otras dos— y en su
+propio centro los tres valores son $0{,}3286$, $0{,}3332$ y $0{,}3382$: pierde
+por tres milésimas. **No hay ruido ni escasez de datos**; con mil veces más
+observaciones pasaría lo mismo.
+
+#### Dos métodos que son el mismo
+
+> **26.3**: con dos clases, la dirección de la regresión de la indicadora es
+> proporcional a la de LDA.
+
+Comprobado: el cociente vale $0{,}156211$ **idéntico en las cuatro
+componentes**, por debajo de $10^{-10}$. Dos métodos presentados en capítulos
+distintos —uno por mínimos cuadrados, otro por un modelo de probabilidad— dan
+el mismo vector. Y eso explica de paso por qué el enmascaramiento aparece con
+tres clases y no con dos: con $K=2$ hay una sola dirección que decidir.
+
+#### La cota de Novikoff, con su hipótesis al lado
+
+> **26.5**: el perceptrón hace como mucho $(R/\gamma)^2$ correcciones, sea cual
+> sea el orden de recorrido.
+
+Se cumple en los cuatro márgenes probados y con holgura: con $\gamma=0{,}1$ la
+cota permite $1340{,}9$ y bastan $22$. Pero la lección pone al lado el caso **no
+separable**, donde el algoritmo no termina en dos mil pasadas y nada dentro de
+él lo detecta. Sin ese contraste la cota parece una garantía general y es
+**condicional**.
+
+#### El control muerto, y lo que enseñó al arreglarlo
+
+`visuales.py` marcó el deslizador de orden de recorrido: cambiaba el número de
+correcciones pero la recta apenas se movía, porque el separador verdadero es
+vertical y el ruido es simétrico.
+
+El arreglo fue marcar con un anillo **los puntos sobre los que el algoritmo
+corrigió**. Esos sí cambian por completo con el orden, y enseñan algo que la
+prosa solo afirmaba: la respuesta del perceptrón la deciden un puñado de puntos
+que resultó encontrar primero. Van seis lecciones en que un control roto obligó
+a encontrar el control que faltaba.
 
 ---
 
