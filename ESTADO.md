@@ -36,7 +36,7 @@ Tres hitos de esta sesión:
   las 33 secciones de retos y los 106 símbolos sin declarar.
 
 Eso es una afirmación sobre el **molde**, no sobre el plan. Del plan siguen
-faltando lecciones por escribir: **ML va por 26 de 90**, **Series de tiempo
+faltando lecciones por escribir: **ML va por 27 de 90**, **Series de tiempo
 está **completo, 11 de 11**, e **Inferencia causal sigue vacío**. El detalle está en la tabla del punto 2.
 
 El 16-09-2026 se habían publicado Python 7, 8 y 9 y ML 4, 5 y 6.
@@ -106,7 +106,7 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 11 | 11 | **11 de 11** | — |
-| Machine Learning | 26 | 90 | **26 de 26** | ESL 5 a 15 y deep learning |
+| Machine Learning | 27 | 90 | **27 de 27** | ESL 7 a 15 y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
@@ -2534,6 +2534,54 @@ corrigió**. Esos sí cambian por completo con el orden, y enseñan algo que la
 prosa solo afirmaba: la respuesta del perceptrón la deciden un puñado de puntos
 que resultó encontrar primero. Van seis lecciones en que un control roto obligó
 a encontrar el control que faltaba.
+
+### 3.44 ML 27: splines, y una lección sobre cómo se cita un número (21-09-2026)
+
+ML 11 usaba el spline de suavizado como suavizador lineal. Esta lección lo
+**construye**: la base natural, la matriz de penalización y el suavizador, pieza
+a pieza.
+
+> **27.2**: la penalización $\Omega$ anula **exactamente** las funciones
+> lineales.
+
+Comprobado con norma $0{,}000\cdot10^{0}$ para la constante y la identidad, y
+dos autovalores nulos exactos. Esa propiedad decide el límite: **por mucho que
+se penalice, una recta sale gratis**, así que el ajuste más rígido posible es
+una recta y no una constante.
+
+> **27.4**: el suavizador tiene **exactamente dos** autovalores iguales a uno,
+> y su traza son los grados de libertad efectivos.
+
+Medido: dos, siempre, con la traza cayendo de $10{,}2116$ a $2{,}0000$.
+
+> **27.5**: al crecer $\lambda$ el ajuste tiende a la recta a velocidad
+> $O(1/\lambda)$.
+
+La distancia sale $6{,}540\cdot10^{-4}$, $6{,}547\cdot10^{-6}$,
+$6{,}547\cdot10^{-8}$: **la misma mantisa tres veces**, que es la firma exacta
+de ese orden.
+
+#### Lo que el verificador de dos versiones enseñó
+
+La primera versión calculaba la segunda derivada por **diferencias finitas**, y
+el núcleo de $\Omega$ salía de dimensión doce cuando debe ser dos: cancelación
+catastrófica al restar cubos. Se rehízo en forma cerrada —la segunda derivada de
+esta base es lineal a trozos— y de paso quedó claro que la regla de Simpson en
+cada tramo es **exacta**, porque el integrando es cuadrático a trozos.
+
+Aun así, el contraste entre las dos versiones de Python **falló en dos filas**:
+con $\lambda$ pequeño el mayor autovalor salía $1{,}73624572$ en una versión y
+$1{,}00060368$ en la otra. Un autovalor mayor que uno es imposible para este
+suavizador, y el culpable es la base de potencias truncadas, con
+$\operatorname{cond}(N^{\top}N)$ por encima de $10^{18}$.
+
+La solución no fue esconder las filas sino **dejar de imprimir sus dígitos**: la
+celda calcula el número de condición, decide si el resultado es de fiar y
+escribe `---` donde no lo es. Así el lector ve el fallo, ve por qué, y no ve
+ningún número que cambie con la versión de la biblioteca.
+
+Eso convierte una nota al pie del libro —que las implementaciones usan
+B-splines— en **una lección sobre cómo se cita un número**.
 
 ---
 

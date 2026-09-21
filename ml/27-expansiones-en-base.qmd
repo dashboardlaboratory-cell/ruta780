@@ -1,0 +1,722 @@
+---
+title: "Expansiones en base y splines de suavizado"
+subtitle: "Machine Learning · Lección 27"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/26-metodos-lineales-clasificacion, ml/11-suavizado-y-gams, matematica/05-proyeccion-ortogonal]
+siguientes: []
+libro: "ESL §5.2 Piecewise Polynomials and Splines · §5.4 Smoothing Splines"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="ml/27-expansiones-en-base"}
+[[L3]{.nivel .nivel-L3} **ESL 5**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ESL §5.2 · §5.4]{.item}
+[**Prereqs** [Métodos lineales de clasificación](26-metodos-lineales-clasificacion.qmd) · [Suavizado y GAMs](11-suavizado-y-gams.qmd) · [Proyección ortogonal](../matematica/05-proyeccion-ortogonal.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Construir la base de un [spline cúbico natural]{.g data-t="spline cúbico natural"} y contar sus grados de libertad.
+2. **Demostrar que la penalización de curvatura anula exactamente las funciones lineales**, y comprobarlo.
+3. Enunciar el teorema que reduce un problema sobre todas las funciones a uno de dimensión finita.
+4. **Demostrar que el suavizador tiene exactamente dos autovalores iguales a uno**, y leer su traza como grados de libertad efectivos.
+5. **Demostrar que al crecer la penalización el ajuste tiende a la recta de mínimos cuadrados**, y medir a qué velocidad.
+6. Reconocer cuándo los dígitos de este cálculo **no se pueden citar**, y por qué.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 11**: el spline de suavizado como suavizador lineal, que aquí se construye pieza a pieza en lugar de usarse.
+- **Machine Learning 26**: las fronteras lineales, que estas columnas permiten curvar sin abandonar el ajuste lineal.
+- **Álgebra 5**: la proyección ortogonal, de la que el suavizador es una versión encogida.
+- **Machine Learning 9**: la penalización cuadrática, que aquí penaliza curvatura en lugar de tamaño.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 28**: los criterios de selección, que usan la traza del suavizador como número de parámetros.
+- **Machine Learning 31**: los modelos aditivos y MARS, que combinan estas piezas por variable.
+- **Machine Learning 29**: la descomposición sesgo-varianza, donde la penalización decide el reparto.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $N$ | ene mayúscula | El número de observaciones, y también la matriz de la base |
+| $K$ | ka mayúscula | El número de nudos |
+| $\xi_k$ | xi sub ka | La posición del nudo $k$ |
+| $N_j(x)$ | ene sub jota | La función $j$ de la base natural |
+| $\Omega$ | omega mayúscula | La matriz de penalización, $\Omega_{jk}=\int N_j''N_k''$ |
+| $\lambda$ | lambda | El parámetro de suavizado |
+| $S_\lambda$ | ese sub lambda | La matriz del suavizador |
+| $\theta$ | theta | Los coeficientes sobre la base |
+| $f$ | efe | La función que se ajusta |
+| $(t)_+$ | te sub más | La parte positiva: $\max(0,t)$ |
+| $\rho_k$ | ro sub ka | Los autovalores de la penalización en la forma de Reinsch |
+:::
+
+## 1. Una base con las restricciones ya dentro
+
+Un spline cúbico con $K$ nudos necesita $K+4$ parámetros, y cerca de los extremos —donde hay pocos datos— esa flexibilidad se traduce en oscilaciones. La respuesta clásica es exigir que la función sea **lineal fuera de los nudos extremos**, lo que impone cuatro restricciones.
+
+::: {.definicion}
+**Definición 27.1 (base del spline cúbico natural).** Con nudos $\xi_1<\dots<\xi_K$, la base es $N_1(x)=1$, $N_2(x)=x$ y, para $k=1,\dots,K-2$,
+$$N_{k+2}(x)=d_k(x)-d_{K-1}(x),\qquad
+d_k(x)=\frac{(x-\xi_k)_+^{3}-(x-\xi_K)_+^{3}}{\xi_K-\xi_k}.$$
+:::
+
+::: {.proposicion}
+**Proposición 27.2 (grados de libertad y penalización).** La base de la Definición 27.1 tiene exactamente $K$ funciones, de modo que un spline natural con $K$ nudos gasta $K$ grados de libertad y no $K+4$. Además, la matriz
+$$\Omega_{jk}=\int N_j''(t)\,N_k''(t)\,dt$$
+es semidefinida positiva y su núcleo contiene **exactamente** las funciones lineales, que son las dos primeras de la base.
+:::
+
+::: {.demostracion}
+*Demostración.* Las $K$ funciones se cuentan directamente: dos más $K-2$. Que sean independientes se comprueba con el rango. Para la penalización, $N_1''=N_2''=0$ porque son la constante y la identidad, así que las dos primeras filas y columnas de $\Omega$ son nulas y las funciones lineales están en el núcleo. Que no haya nada más es la definición de $\Omega$ como forma cuadrática: $\theta^{\top}\Omega\theta=\int(f'')^2$ se anula solo si $f''\equiv0$, y una función con segunda derivada nula es afín. La semidefinición positiva es inmediata: es la integral de un cuadrado. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def base_natural(x, nudos):
+    """Base de spline cubico NATURAL: 1, x y K-2 funciones mas."""
+    x = np.asarray(x, dtype=float)
+    K = len(nudos)
+    def d(k):
+        p = np.maximum(0.0, x - nudos[k]) ** 3
+        q = np.maximum(0.0, x - nudos[K - 1]) ** 3
+        return (p - q) / (nudos[K - 1] - nudos[k])
+    cols = [np.ones_like(x), x]
+    for k in range(K - 2):
+        cols.append(d(k) - d(K - 2))
+    return np.column_stack(cols)
+
+def segunda(x, nudos):
+    """La segunda derivada de cada funcion de la base, en forma cerrada:
+    es lineal a trozos, y eso es lo que hace exacta la integral de abajo."""
+    x = np.asarray(x, dtype=float)
+    K = len(nudos)
+    def dd(k):
+        return 6.0 * (np.maximum(0.0, x - nudos[k]) - np.maximum(0.0, x - nudos[K - 1])) / (nudos[K - 1] - nudos[k])
+    cols = [np.zeros_like(x), np.zeros_like(x)]
+    for k in range(K - 2):
+        cols.append(dd(k) - dd(K - 2))
+    return np.column_stack(cols)
+
+def omega(nudos):
+    """Omega_jk = integral de N_j'' N_k''. El integrando es cuadratico a trozos
+    entre nudos, asi que la regla de Simpson en cada tramo es EXACTA."""
+    K = len(nudos)
+    W = np.zeros((K, K))
+    for i in range(K - 1):
+        a, b = nudos[i], nudos[i + 1]
+        m = 0.5 * (a + b)
+        for peso, pt in ((1 / 6, a), (4 / 6, m), (1 / 6, b)):
+            S = segunda(np.array([pt]), nudos)[0]
+            W += peso * (b - a) * np.outer(S, S)
+    return W
+
+rng = np.random.default_rng(271)
+n = 60
+x = np.sort(rng.uniform(0, 1, n))
+y = np.sin(3 * np.pi * x) * np.exp(-x) + rng.normal(0, 0.25, n)
+nudos = x.copy()                   # el spline de suavizado pone un nudo en cada dato
+N = base_natural(x, nudos)
+W = omega(nudos)
+
+print("una base natural con un nudo en cada uno de los %d datos" % n)
+print("  columnas de la base : %d" % N.shape[1])
+print("  rango de la base    : %d" % np.linalg.matrix_rank(N))
+print("  (un spline cubico sin restringir necesitaria %d columnas)" % (len(nudos) + 4))
+print()
+print("la penalizacion anula EXACTAMENTE las funciones lineales:")
+for nom, v in (("la constante", np.r_[1.0, np.zeros(len(nudos) - 1)]),
+               ("la identidad", np.r_[0.0, 1.0, np.zeros(len(nudos) - 2)])):
+    print("   Omega aplicada a %s: norma %.3e" % (nom, np.linalg.norm(W @ v)))
+ev = np.sort(np.linalg.eigvalsh(W))
+print("   sus dos autovalores mas pequenos: %+.3e  %+.3e" % (ev[0], ev[1]))
+print()
+print("por eso la penalizacion no puede empujar el ajuste por debajo de una")
+print("recta: las rectas le salen gratis")
+```
+
+La base tiene sesenta columnas y rango sesenta, frente a las sesenta y cuatro que necesitaría un spline cúbico sin restringir. Y la penalización aplicada a la constante y a la identidad da norma **exactamente cero**, con dos autovalores nulos exactos.
+
+Esa última propiedad decide el comportamiento en el límite: **por mucho que se penalice, una recta no cuesta nada**, así que el ajuste más penalizado posible es una recta y no una constante ni cero.
+
+## 2. Un problema infinito con solución finita
+
+Hasta aquí los nudos se han elegido a mano. El planteamiento del spline de suavizado no los elige: pide directamente la mejor función.
+
+::: {.proposicion}
+**Proposición 27.3 (el minimizador es un spline natural).** Entre **todas** las funciones con segunda derivada de cuadrado integrable, el minimizador de
+$$\sum_{i=1}^{N}\bigl(y_i-f(x_i)\bigr)^{2}+\lambda\int f''(t)^{2}\,dt$$
+es un spline cúbico natural con nudos en los $x_i$ distintos. El problema, planteado sobre un espacio de dimensión infinita, tiene solución en uno de dimensión $N$.
+:::
+
+::: {.demostracion}
+*Demostración (esquema).* Sea $g$ cualquier candidata y sea $f$ el spline natural que coincide con ella en los $N$ puntos. El primer sumando es idéntico para las dos, porque solo depende de los valores en los $x_i$. Para el segundo, escríbase $h=g-f$, que se anula en todos los nudos. Integrando por partes dos veces y usando que $f'''$ es constante a trozos y que $f''$ se anula fuera de los nudos extremos —la condición natural—, se obtiene $\int f''h''=0$. Entonces
+$$\int (g'')^{2}=\int (f''+h'')^{2}=\int (f'')^{2}+\int (h'')^{2}\ \ge\ \int (f'')^{2},$$
+con igualdad solo si $h''\equiv0$. Ninguna función que no sea el spline natural puede mejorar. [∎]{.fin-demo}
+:::
+
+Conviene detenerse en lo que esto significa. **No se ha restringido nada**: se ha pedido la mejor función entre todas, y la respuesta ha resultado tener forma conocida y $N$ parámetros. La condición «natural» que en la sección 1 parecía una conveniencia para los extremos aparece aquí **deducida**, como parte de la solución óptima.
+
+```{=html}
+<div class="viz-spline">
+  <div class="controles">
+    <label>log₁₀ λ <input id="sp-l" type="range" min="-6" max="2" step="0.25" value="-3"> <span id="sp-l-v">-3.00</span></label>
+    <label>Nudos <input id="sp-k" type="range" min="4" max="30" step="1" value="12"> <span id="sp-k-v">12</span></label>
+    <label>Ruido <input id="sp-r" type="range" min="0.05" max="0.6" step="0.05" value="0.25"> <span id="sp-r-v">0.25</span></label>
+  </div>
+  <svg id="sp-svg" viewBox="0 0 660 270" role="img" aria-label="Los datos con la función verdadera y el spline ajustado, cuya rigidez depende de la penalización elegida."></svg>
+  <p class="lectura" id="sp-lectura"></p>
+</div>
+<style>
+.viz-spline { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-spline .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-spline label { display: flex; align-items: center; gap: .4rem; }
+.viz-spline input[type=range] { width: 150px; padding: 0; }
+.viz-spline svg { width: 100%; height: auto; display: block; }
+.viz-spline .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("sp-svg"), lec = document.getElementById("sp-lectura");
+  var cl = document.getElementById("sp-l"), ck = document.getElementById("sp-k"), cr = document.getElementById("sp-r");
+  var el_ = document.getElementById("sp-l-v"), ek = document.getElementById("sp-k-v"), er = document.getElementById("sp-r-v");
+  var X0 = 46, XW = 574, Y0 = 20, YH = 200, N = 70, LO = -1.4, HI = 1.4;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var sem = 0;
+  function u() { sem = (sem * 48271) % 2147483647; return sem / 2147483647; }
+  function nor() { var a = Math.max(u(), 1e-9), b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); }
+  function verdad(t) { return Math.sin(3 * Math.PI * t) * Math.exp(-t); }
+
+  // resolucion de un sistema pequeno por eliminacion de Gauss
+  function resuelve(A, b) {
+    var m = A.length, i, j, k, M = [];
+    for (i = 0; i < m; i++) M.push(A[i].slice().concat([b[i]]));
+    for (i = 0; i < m; i++) {
+      var p = i;
+      for (k = i + 1; k < m; k++) if (Math.abs(M[k][i]) > Math.abs(M[p][i])) p = k;
+      var tmp = M[i]; M[i] = M[p]; M[p] = tmp;
+      var piv = M[i][i];
+      if (Math.abs(piv) < 1e-14) piv = 1e-14;
+      for (j = i; j <= m; j++) M[i][j] /= piv;
+      for (k = 0; k < m; k++) if (k !== i) {
+        var f = M[k][i];
+        for (j = i; j <= m; j++) M[k][j] -= f * M[i][j];
+      }
+    }
+    return M.map(function (r) { return r[m]; });
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var lam = Math.pow(10, +cl.value), K = +ck.value, sd = +cr.value;
+    el_.textContent = (+cl.value).toFixed(2); ek.textContent = K; er.textContent = sd.toFixed(2);
+    sem = 2718;
+    var xs = [], ys = [], i, j, k;
+    for (i = 0; i < N; i++) { var t = (i + 0.5) / N; xs.push(t); ys.push(verdad(t) + sd * nor()); }
+    var nudos = [];
+    for (k = 0; k < K; k++) nudos.push(0.02 + 0.96 * k / (K - 1));
+
+    function base(t) {
+      var c = [1, t], kk;
+      function d(q) {
+        var p1 = Math.max(0, t - nudos[q]), p2 = Math.max(0, t - nudos[K - 1]);
+        return (p1 * p1 * p1 - p2 * p2 * p2) / (nudos[K - 1] - nudos[q]);
+      }
+      for (kk = 0; kk < K - 2; kk++) c.push(d(kk) - d(K - 2));
+      return c;
+    }
+    function base2(t) {
+      var c = [0, 0], kk;
+      function dd(q) {
+        return 6 * (Math.max(0, t - nudos[q]) - Math.max(0, t - nudos[K - 1])) / (nudos[K - 1] - nudos[q]);
+      }
+      for (kk = 0; kk < K - 2; kk++) c.push(dd(kk) - dd(K - 2));
+      return c;
+    }
+    // N'N + lambda*Omega  y  N'y
+    var A = [], rhs = [];
+    for (i = 0; i < K; i++) { A.push(new Array(K).fill(0)); rhs.push(0); }
+    for (i = 0; i < N; i++) {
+      var b = base(xs[i]);
+      for (j = 0; j < K; j++) {
+        rhs[j] += b[j] * ys[i];
+        for (k = 0; k < K; k++) A[j][k] += b[j] * b[k];
+      }
+    }
+    for (var s = 0; s < K - 1; s++) {
+      var a0 = nudos[s], a1 = nudos[s + 1], mm = 0.5 * (a0 + a1);
+      [[1 / 6, a0], [4 / 6, mm], [1 / 6, a1]].forEach(function (par) {
+        var S = base2(par[1]);
+        for (j = 0; j < K; j++) for (k = 0; k < K; k++) A[j][k] += lam * par[0] * (a1 - a0) * S[j] * S[k];
+      });
+    }
+    var th = resuelve(A, rhs);
+
+    var px = function (t) { return X0 + t * XW; };
+    var py = function (v) { return Y0 + (HI - Math.max(LO, Math.min(HI, v))) / (HI - LO) * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + (X0 + XW) + " " + py(0).toFixed(1), stroke: C_L, "stroke-width": 1, "stroke-dasharray": "3 3" }));
+    for (k = 0; k < K; k++)
+      svg.appendChild(el("path", { d: "M" + px(nudos[k]).toFixed(1) + " " + (Y0 + YH - 8) + " L" + px(nudos[k]).toFixed(1) + " " + (Y0 + YH), stroke: C_T, "stroke-width": 1.5, opacity: .4 }));
+    for (i = 0; i < N; i++)
+      svg.appendChild(el("circle", { cx: px(xs[i]).toFixed(1), cy: py(ys[i]).toFixed(1), r: 2.4, fill: C_T, opacity: .35 }));
+    var dv = "", df = "", rss = 0, M2 = 200;
+    for (i = 0; i <= M2; i++) {
+      var t2 = i / M2, b2 = base(t2), f2 = 0;
+      for (j = 0; j < K; j++) f2 += th[j] * b2[j];
+      dv += (i ? " L" : "M") + px(t2).toFixed(1) + " " + py(verdad(t2)).toFixed(1);
+      df += (i ? " L" : "M") + px(t2).toFixed(1) + " " + py(f2).toFixed(1);
+    }
+    for (i = 0; i < N; i++) {
+      var bb = base(xs[i]), ff = 0;
+      for (j = 0; j < K; j++) ff += th[j] * bb[j];
+      rss += (ff - verdad(xs[i])) * (ff - verdad(xs[i]));
+    }
+    svg.appendChild(el("path", { d: dv, stroke: C_A, "stroke-width": 2, fill: "none", opacity: .85 }));
+    svg.appendChild(el("path", { d: df, stroke: C_B, "stroke-width": 2.4, fill: "none" }));
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 14, "font-size": 10.5, fill: C_A }, "función verdadera"));
+    svg.appendChild(el("text", { x: X0 + 110, y: Y0 + 14, "font-size": 10.5, fill: C_B }, "spline ajustado"));
+    svg.appendChild(el("text", { x: X0 + XW - 4, y: Y0 + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .75 },
+      "error contra la verdad: " + Math.sqrt(rss / N).toFixed(4)));
+
+    lec.innerHTML = "Con λ = <strong>10^" + (+cl.value).toFixed(2) + "</strong> y <strong>" + K +
+      "</strong> nudos, el ajuste se aparta de la función verdadera en <strong>" + Math.sqrt(rss / N).toFixed(4) + "</strong>. " +
+      (+cl.value > 0.5
+        ? "Con la penalización alta el spline se ha vuelto <strong>casi una recta</strong>: es el límite de la Proposición 27.5, y no una constante, porque las rectas no pagan penalización."
+        : +cl.value < -5
+          ? "Con la penalización casi nula el spline persigue el ruido: pasa cerca de cada punto y la curva verdadera queda enterrada."
+          : "Subiendo λ la curva se endereza y bajándolo persigue el ruido. <strong>Los nudos apenas importan</strong> una vez que hay bastantes: quien manda es λ.");
+  }
+  cl.addEventListener("input", dibujar);
+  ck.addEventListener("input", dibujar);
+  cr.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. El suavizador y sus autovalores
+
+::: {.proposicion}
+**Proposición 27.4 (estructura de $S_\lambda$).** Sea $S_\lambda=N(N^{\top}N+\lambda\Omega)^{-1}N^{\top}$. Entonces:
+
+(a) $S_\lambda$ es simétrica y semidefinida positiva;
+
+(b) sus autovalores caen en $[0,1]$, y **exactamente dos valen uno** para todo $\lambda>0$;
+
+(c) $\operatorname{tr}(S_\lambda)$ decrece con $\lambda$ desde $N$ hasta $2$, y se usa como número efectivo de parámetros.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (a), la simetría es inmediata porque $N^{\top}N+\lambda\Omega$ lo es. Para (b), escríbase el problema en la base que diagonaliza simultáneamente $N^{\top}N$ y $\Omega$: los autovalores de $S_\lambda$ toman la forma $1/(1+\lambda\rho_k)$ con $\rho_k\ge0$ los autovalores de la penalización relativos a $N^{\top}N$. Ese cociente vale uno exactamente cuando $\rho_k=0$, y por la Proposición 27.2 el núcleo de $\Omega$ tiene dimensión dos. Para (c), la traza es la suma de esos cocientes: con $\lambda\to0$ suma $N$ unos, y con $\lambda\to\infty$ sobreviven solo los dos términos con $\rho_k=0$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def base_natural(x, nudos):
+    x = np.asarray(x, dtype=float)
+    K = len(nudos)
+    def d(k):
+        p = np.maximum(0.0, x - nudos[k]) ** 3
+        q = np.maximum(0.0, x - nudos[K - 1]) ** 3
+        return (p - q) / (nudos[K - 1] - nudos[k])
+    cols = [np.ones_like(x), x]
+    for k in range(K - 2):
+        cols.append(d(k) - d(K - 2))
+    return np.column_stack(cols)
+
+def segunda(x, nudos):
+    x = np.asarray(x, dtype=float)
+    K = len(nudos)
+    def dd(k):
+        return 6.0 * (np.maximum(0.0, x - nudos[k]) - np.maximum(0.0, x - nudos[K - 1])) / (nudos[K - 1] - nudos[k])
+    cols = [np.zeros_like(x), np.zeros_like(x)]
+    for k in range(K - 2):
+        cols.append(dd(k) - dd(K - 2))
+    return np.column_stack(cols)
+
+def omega(nudos):
+    K = len(nudos)
+    W = np.zeros((K, K))
+    for i in range(K - 1):
+        a, b = nudos[i], nudos[i + 1]
+        m = 0.5 * (a + b)
+        for peso, pt in ((1 / 6, a), (4 / 6, m), (1 / 6, b)):
+            S = segunda(np.array([pt]), nudos)[0]
+            W += peso * (b - a) * np.outer(S, S)
+    return W
+
+rng = np.random.default_rng(271)
+n = 60
+x = np.sort(rng.uniform(0, 1, n))
+y = np.sin(3 * np.pi * x) * np.exp(-x) + rng.normal(0, 0.25, n)
+N = base_natural(x, x)
+W = omega(x)
+
+# el sistema se vuelve intratable con lambda pequeno, asi que primero se mira
+# el condicionamiento y solo se imprimen los digitos donde son de fiar
+print("los autovalores del suavizador S = N (N'N + lambda Omega)^-1 N'")
+print("  lambda   orden de cond   ¿fiable?    traza    ==1      mayor")
+for lam in (1e-8, 1e-6, 1e-4, 1e-2, 1.0, 1e4):
+    M = N.T @ N + lam * W
+    cond = float(np.linalg.cond(M))
+    S = N @ np.linalg.solve(M, N.T)
+    e = np.sort(np.linalg.eigvalsh(S))[::-1]
+    fiable = cond < 1e15 and e[0] <= 1 + 1e-9 and e[-1] > -1e-9
+    if fiable:
+        print("  %8.0e      1e%02d          si      %8.4f  %3d   %.8f"
+              % (lam, int(np.log10(cond)), np.trace(S), int((np.abs(e - 1) < 1e-8).sum()), e[0]))
+    else:
+        print("  %8.0e      1e%02d          NO       ---     ---      ---" % (lam, int(np.log10(cond))))
+print()
+print("cond(N'N) por si solo pasa de 1e18: la base de potencias truncadas esta")
+print("mal condicionada, y con lambda pequeno el mayor autovalor sale MAYOR que")
+print("uno, que es imposible para un suavizador. En esas filas no se imprime")
+print("ningun digito, porque cambian con la version de la biblioteca.")
+print()
+print("de las filas fiables sale lo que importa: EXACTAMENTE dos autovalores")
+print("valen uno, y la traza cae de %.4f a 2 al subir lambda"
+      % np.trace(N @ np.linalg.solve(N.T @ N + 1e-4 * W, N.T)))
+```
+
+En las filas fiables el resultado es limpio: **exactamente dos autovalores iguales a uno**, el mayor exactamente $1{,}00000000$, y la traza cayendo de $10{,}2116$ a $2{,}0000$. Los dos autovalores unitarios son la constante y la recta, que la penalización no toca.
+
+Las dos primeras filas merecen un párrafo aparte. El número de condición pasa de $10^{18}$, y el mayor autovalor sale **mayor que uno**, cosa imposible para esta matriz. La causa es la base de potencias truncadas: sus columnas son casi paralelas, $\operatorname{cond}(N^{\top}N)$ supera $10^{18}$, y con $\lambda$ pequeño la penalización no alcanza a arreglarlo.
+
+Por eso esta página **no imprime dígitos en esas filas**. Se comprobó que cambian entre versiones de la biblioteca, y un número que cambia con la versión no es un resultado. La solución real de las implementaciones serias es otra base —los B-splines, de soporte local— y esa es la razón técnica por la que existen.
+
+## 4. El límite, y a qué velocidad se llega
+
+::: {.proposicion}
+**Proposición 27.5 (el límite rígido es una recta).** Cuando $\lambda\to\infty$, el ajuste $S_\lambda y$ tiende a la recta de mínimos cuadrados, y lo hace a velocidad $O(1/\lambda)$.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Proposición 27.4b los autovalores son $1/(1+\lambda\rho_k)$. Los dos con $\rho_k=0$ quedan intactos, y los demás decaen como $1/(\lambda\rho_k)$. En el límite, $S_\lambda$ tiende a la proyección sobre el subespacio de las funciones lineales, que es la recta de mínimos cuadrados, y el término de error dominante es el mayor de los $1/(\lambda\rho_k)$, lineal en $1/\lambda$. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def base_natural(x, nudos):
+    x = np.asarray(x, dtype=float)
+    K = len(nudos)
+    def d(k):
+        p = np.maximum(0.0, x - nudos[k]) ** 3
+        q = np.maximum(0.0, x - nudos[K - 1]) ** 3
+        return (p - q) / (nudos[K - 1] - nudos[k])
+    cols = [np.ones_like(x), x]
+    for k in range(K - 2):
+        cols.append(d(k) - d(K - 2))
+    return np.column_stack(cols)
+
+def segunda(x, nudos):
+    x = np.asarray(x, dtype=float)
+    K = len(nudos)
+    def dd(k):
+        return 6.0 * (np.maximum(0.0, x - nudos[k]) - np.maximum(0.0, x - nudos[K - 1])) / (nudos[K - 1] - nudos[k])
+    cols = [np.zeros_like(x), np.zeros_like(x)]
+    for k in range(K - 2):
+        cols.append(dd(k) - dd(K - 2))
+    return np.column_stack(cols)
+
+def omega(nudos):
+    K = len(nudos)
+    W = np.zeros((K, K))
+    for i in range(K - 1):
+        a, b = nudos[i], nudos[i + 1]
+        m = 0.5 * (a + b)
+        for peso, pt in ((1 / 6, a), (4 / 6, m), (1 / 6, b)):
+            S = segunda(np.array([pt]), nudos)[0]
+            W += peso * (b - a) * np.outer(S, S)
+    return W
+
+rng = np.random.default_rng(271)
+n = 60
+x = np.sort(rng.uniform(0, 1, n))
+y = np.sin(3 * np.pi * x) * np.exp(-x) + rng.normal(0, 0.25, n)
+N = base_natural(x, x)
+W = omega(x)
+
+A = np.column_stack([np.ones(n), x])
+recta = A @ np.linalg.lstsq(A, y, rcond=None)[0]
+
+print("al crecer lambda, el ajuste tiende a la recta de minimos cuadrados")
+print("  lambda      max|ajuste - recta|   traza de S")
+for lam in (1e0, 1e2, 1e4, 1e6, 1e8):
+    S = N @ np.linalg.solve(N.T @ N + lam * W, N.T)
+    print("  %8.0e      %.3e           %8.5f" % (lam, np.abs(S @ y - recta).max(), np.trace(S)))
+print()
+print("cada vez que lambda se multiplica por cien, la distancia a la recta se")
+print("divide por cien: la convergencia es de orden 1/lambda, y la traza se")
+print("queda en 2, que son los grados de libertad de una recta")
+```
+
+Multiplicando $\lambda$ por cien, la distancia a la recta se divide por cien: $6{,}540\cdot10^{-4}$, luego $6{,}547\cdot10^{-6}$, luego $6{,}547\cdot10^{-8}$. **La misma mantisa tres veces**, que es la firma de una convergencia exactamente de orden $1/\lambda$.
+
+Y la traza se queda clavada en $2{,}00000$, los grados de libertad de una recta. El suavizador no colapsa a cero ni a una constante: colapsa a lo que la penalización deja gratis, que es exactamente lo que la Proposición 27.2 anticipaba desde la primera sección.
+
+```{=html}
+<div class="viz-autovalores">
+  <div class="controles">
+    <label>log₁₀ λ <input id="au-l" type="range" min="-4" max="4" step="0.25" value="-2"> <span id="au-l-v">-2.00</span></label>
+    <label>Nudos <input id="au-k" type="range" min="5" max="25" step="1" value="15"> <span id="au-k-v">15</span></label>
+    <label>Escala
+      <select id="au-e">
+        <option value="lineal" selected>lineal</option>
+        <option value="acum">traza acumulada</option>
+      </select>
+    </label>
+  </div>
+  <svg id="au-svg" viewBox="0 0 660 250" role="img" aria-label="Los autovalores del suavizador ordenados de mayor a menor, con los dos primeros en uno y el resto decreciendo."></svg>
+  <p class="lectura" id="au-lectura"></p>
+</div>
+<style>
+.viz-autovalores { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-autovalores .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-autovalores label { display: flex; align-items: center; gap: .4rem; }
+.viz-autovalores input[type=range] { width: 150px; padding: 0; }
+.viz-autovalores select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-autovalores svg { width: 100%; height: auto; display: block; }
+.viz-autovalores .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("au-svg"), lec = document.getElementById("au-lectura");
+  var cl = document.getElementById("au-l"), ck = document.getElementById("au-k"), ce = document.getElementById("au-e");
+  var el_ = document.getElementById("au-l-v"), ek = document.getElementById("au-k-v");
+  var X0 = 52, XW = 568, Y0 = 20, YH = 190;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var lam = Math.pow(10, +cl.value), K = +ck.value, modo = ce.value;
+    el_.textContent = (+cl.value).toFixed(2); ek.textContent = K;
+    // los autovalores tienen forma cerrada: 1/(1+lambda*rho_k), con dos rho nulos
+    // y el resto creciendo como k^4, que es lo que da una penalizacion de curvatura
+    var ev = [], k;
+    for (k = 0; k < K; k++) {
+      var rho = k < 2 ? 0 : Math.pow((k - 1) * Math.PI, 4) / Math.pow(K, 3);
+      ev.push(1 / (1 + lam * rho));
+    }
+    var px = function (i) { return X0 + (i + 0.5) / K * XW; };
+    var py = function (v) { return Y0 + (1 - Math.max(0, Math.min(1, v))) * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(1).toFixed(1) + " L" + (X0 + XW) + " " + py(1).toFixed(1), stroke: C_L, "stroke-width": 1, "stroke-dasharray": "4 3" }));
+    var traza = 0, unos = 0, acum = [];
+    for (k = 0; k < K; k++) { traza += ev[k]; acum.push(traza); if (Math.abs(ev[k] - 1) < 1e-9) unos++; }
+    for (k = 0; k < K; k++) {
+      var v = modo === "lineal" ? ev[k] : acum[k] / Math.max(traza, 1e-9);
+      var col = (modo === "lineal" && Math.abs(ev[k] - 1) < 1e-9) ? C_B : C_A;
+      svg.appendChild(el("path", { d: "M" + px(k).toFixed(1) + " " + py(0).toFixed(1) + " L" + px(k).toFixed(1) + " " + py(v).toFixed(1),
+        stroke: col, "stroke-width": Math.max(3, XW / K * 0.55) }));
+    }
+    svg.appendChild(el("text", { x: X0 - 6, y: py(1) + 4, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "1"));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "autovalores, de mayor a menor"));
+
+    lec.innerHTML = "Con λ = <strong>10^" + (+cl.value).toFixed(2) + "</strong> y " + K + " nudos, hay <strong>" + unos +
+      "</strong> autovalores iguales a uno y la traza vale <strong>" + traza.toFixed(4) + "</strong>, que son los grados de libertad efectivos. " +
+      (modo === "lineal"
+        ? "Los dos marcados en rojo son la constante y la recta: <strong>la penalización no los toca nunca</strong>, por grande que sea λ."
+        : "En acumulada se ve de dónde sale la traza: los primeros autovalores aportan casi todo y la cola no cuenta.") +
+      " Subiendo λ los demás caen como 1/(1+λρ) y la traza se acerca a 2.";
+  }
+  cl.addEventListener("input", dibujar);
+  ck.addEventListener("input", dibujar);
+  ce.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Lo que esta lección no resuelve
+
+- **No se elige $\lambda$.** ESL §5.5 lo hace con validación cruzada generalizada; la lección 11 ya usó validación cruzada y la 28 aporta los criterios.
+- **La base usada es la mala.** Las potencias truncadas sirven para escribir la teoría y son numéricamente pésimas, como la sección 3 mide. Las implementaciones usan B-splines, que esta página no construye.
+- **Solo hay una variable.** ESL §5.7 trata los splines en varias dimensiones, donde el número de funciones base crece como un producto y reaparece la maldición de la lección 23.
+- **No se trata la versión logística.** Penalizar curvatura dentro de una verosimilitud binomial es §5.6, y necesita iterar.
+- **Y la conexión con núcleos queda fuera.** Que estos splines sean un caso de un espacio de Hilbert con núcleo reproductor es §5.8, y enlaza con la lección 15.
+
+## Ejercicios
+
+### Ejercicio 1, Cuántos parámetros cuesta un spline
+
+Con la Proposición 27.2, calcular los grados de libertad de un spline cúbico con y sin la condición natural, para varios números de nudos.
+
+```{pyodide}
+#| exercise: ex_df
+def gl_natural(K):
+    return ______
+
+def gl_sin_restringir(K):
+    return ______
+
+for K in (4, 10, 25, 60):
+    print(K, gl_natural(K), gl_sin_restringir(K), gl_sin_restringir(K) - gl_natural(K))
+
+int(gl_sin_restringir(60) - gl_natural(60))
+```
+
+::: {.hint exercise="ex_df"}
+La proposición dice que el natural gasta $K$ y el libre $K+4$: la condición natural quita cuatro, dos en cada extremo.
+:::
+
+::: {.solution exercise="ex_df"}
+```{pyodide}
+def gl_natural(K):
+    return K
+
+def gl_sin_restringir(K):
+    return K + 4
+
+for K in (4, 10, 25, 60):
+    print(K, gl_natural(K), gl_sin_restringir(K), gl_sin_restringir(K) - gl_natural(K))
+
+int(gl_sin_restringir(60) - gl_natural(60))
+```
+:::
+
+```{pyodide}
+#| exercise: ex_df
+#| check: true
+if result == 4:
+    feedback = {"correct": True, "message": "Correcto: cuatro, siempre. La condición natural cuesta lo mismo con cuatro nudos que con sesenta, y por eso su efecto relativo se diluye: donde importa es en los extremos, con pocos datos.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 4 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuánto encoge cada autovalor
+
+Con la Proposición 27.4, calcular el autovalor del suavizador para varios $\rho$ y la penalización que lo deja en la mitad.
+
+```{pyodide}
+#| exercise: ex_encoge
+lam = 4.0
+
+def autovalor(rho):
+    return ______
+
+def lambda_mitad(rho):
+    """El lambda que deja ese autovalor en 1/2."""
+    return ______
+
+for rho in (0.0, 0.25, 1.0, 16.0):
+    print(rho, round(autovalor(rho), 6))
+
+round(lambda_mitad(0.25), 6)
+```
+
+::: {.hint exercise="ex_encoge"}
+La proposición da $1/(1+\lambda\rho)$. Igualando a $1/2$ sale $\lambda=1/\rho$.
+:::
+
+::: {.solution exercise="ex_encoge"}
+```{pyodide}
+lam = 4.0
+
+def autovalor(rho):
+    return 1.0 / (1.0 + lam * rho)
+
+def lambda_mitad(rho):
+    """El lambda que deja ese autovalor en 1/2."""
+    return 1.0 / rho
+
+for rho in (0.0, 0.25, 1.0, 16.0):
+    print(rho, round(autovalor(rho), 6))
+
+round(lambda_mitad(0.25), 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_encoge
+#| check: true
+if abs(result - 4.0) < 1e-9:
+    feedback = {"correct": True, "message": "Correcto: λ = 4. Y con ρ = 0 el autovalor vale uno para cualquier λ, que es justo lo que hace que la recta sobreviva a toda penalización.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 4.0 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 27**:
+
+1. Construir la base de B-splines cúbicos y comparar el número de condición de $N^{\top}N$ con el de la base de potencias truncadas, para varios números de nudos. Anotar a partir de cuántos nudos la diferencia deja de ser académica.
+2. Comprobar la Proposición 27.3 numéricamente: ajustar el spline de suavizado y verificar que su segunda derivada se anula fuera de los nudos extremos. Anotar hasta qué tolerancia.
+3. Dibujar la traza del suavizador contra $\log\lambda$ y guardar la curva en `50-Errores/` marcando dónde vale 2 y dónde vale $N$. Anotar en qué rango de $\lambda$ está la parte útil.
+
+## Del libro
+
+**ESL §5.2** construye los splines por trozos y la base natural, con su cuenta de grados de libertad. **§5.4** plantea el criterio penalizado sobre todas las funciones y demuestra que su minimizador es un spline natural con nudos en los datos, e introduce el suavizador y sus grados de libertad efectivos.
+
+Esta página construye la base y la matriz de penalización **desde cero**, comprueba que $\Omega$ anula exactamente las funciones lineales, verifica que hay **exactamente dos autovalores unitarios** y mide la convergencia a la recta. Añade además algo que el libro menciona de pasada y aquí se mide: **la base de potencias truncadas es inutilizable numéricamente**, y por eso las implementaciones reales usan otra.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/splines-suavizado.md`, enlazada a [[suavizado-y-gams]], [[proyeccion-ortogonal]] y [[alta-dimension]]. Conviene rehacer a mano la Proposición 27.2: ver que las dos primeras funciones de la base tienen segunda derivada nula ocupa un renglón y deja grabado **por qué el límite rígido es una recta y no una constante**, que es la pregunta que casi todo el mundo falla.
+
+```
+¿Cuántos parámetros tiene un spline cúbico con K nudos?::K+4 sin restringir, K si es natural
+¿Qué impone la condición natural?::Que la función sea lineal fuera de los nudos extremos
+¿Qué anula la matriz de penalización?::Exactamente las funciones lineales
+¿Qué se minimiza en un spline de suavizado?::RSS + λ∫(f'')², sobre TODAS las funciones
+¿Qué forma tiene el minimizador?::Un spline cúbico natural con nudos en los datos
+¿Se restringió algo para llegar ahí?::No: la forma sale como consecuencia
+¿Cómo son los autovalores del suavizador?::1/(1+λρ), todos en [0,1]
+¿Cuántos valen exactamente uno?::Dos: la constante y la recta
+¿Qué es la traza del suavizador?::Los grados de libertad efectivos
+¿A qué tiende el ajuste con λ grande?::A la recta de mínimos cuadrados
+¿A qué velocidad?::Como 1/λ: multiplicar λ por cien divide la distancia por cien
+¿Por qué no tiende a una constante?::Porque las rectas no pagan penalización
+¿Es buena la base de potencias truncadas?::No: cond(N'N) pasa de 1e18 y los dígitos dejan de ser fiables
+¿Qué se usa en su lugar?::B-splines, de soporte local
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 27.2 se demuestra contando la base y viendo que las dos primeras funciones tienen segunda derivada nula; se comprueba con rango $60$ sobre $60$ columnas, con $\lVert\Omega v\rVert$ exactamente $0{,}000\cdot10^{0}$ para la constante y la identidad, y con dos autovalores nulos exactos. La Proposición 27.3 se demuestra en esquema con la integración por partes y Pitágoras. La Proposición 27.4 se demuestra con la diagonalización simultánea; se comprueba en las filas numéricamente fiables, con **exactamente dos** autovalores iguales a uno y traza de $10{,}2116$ a $2{,}0000$. La Proposición 27.5 se comprueba con la distancia a la recta dividiéndose por cien cada vez que $\lambda$ se multiplica por cien.
+
+**Lo que viene de los libros.** De **ESL §5.2** vienen la base natural y su cuenta de grados de libertad; de **§5.4**, el criterio penalizado, el teorema del minimizador y los grados de libertad efectivos. El texto no se reproduce.
+
+**Lo que se usa de otras lecciones sin repetir.** El spline de suavizado como suavizador lineal es de Machine Learning 11, y aquí se construye en vez de usarse. La proyección ortogonal es de Álgebra 5. La penalización cuadrática es de Machine Learning 9.
+
+**Lo que se enuncia sin demostrar.** La Proposición 27.3 se demuestra **en esquema**: la integración por partes se indica y no se desarrolla con todos sus términos de frontera. La diagonalización simultánea de $N^{\top}N$ y $\Omega$ se **usa** apoyándose en que la primera es definida positiva, sin construirla. Y que los B-splines resuelvan el problema de condicionamiento se **afirma** sin implementarlos.
+
+**Lo que es mío, no del libro.** Comprobar que $\Omega$ anula las funciones lineales con norma exactamente cero, que es lo que explica el límite rígido y casi nunca se dice. Verificar que hay **exactamente dos** autovalores unitarios en lugar de afirmarlo. Y medir el fallo numérico de la base de potencias truncadas hasta el punto de **no imprimir dígitos donde no son de fiar**, que convierte una nota al pie del libro en una lección sobre cómo se cita un número.
+:::
