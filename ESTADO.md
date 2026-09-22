@@ -106,15 +106,15 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 11 | 11 | **11 de 11** | — |
-| Machine Learning | 29 | 90 | **29 de 29** | el resto de ESL y deep learning |
+| Machine Learning | 31 | 90 | **31 de 31** | el resto de ESL y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **99 lecciones** publicadas, **99** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 75 según el plan.
+- **101 lecciones** publicadas, **101** cumplen el molde nuevo: cero pendientes
+  de reescritura. Pendientes de **escribir** quedan 73 según el plan.
 - **Cuatro módulos cerrados**: Estadística 25/25, Álgebra 18/18, Python 16/16 y
   **Series de tiempo 11/11**, cerrado el 21-09-2026.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
@@ -126,6 +126,13 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   de `LogisticRegression` que aceptan a la vez el scikit-learn 0.24 de la máquina
   de trabajo y el 1.9 del CI; `penalty=None` no existe en el primero y está
   deprecado en el segundo. Anotado porque volverá a hacer falta en ML 04 y 05.
+
+  **Segundo caso, 22-09-2026, ML 31:** el criterio de `DecisionTreeRegressor` se
+  llamaba `"mse"` hasta la 1.0 y `"squared_error"` desde entonces, y las dos
+  máquinas están a un lado y otro de ese cambio. La salida es **no nombrarlo**:
+  el error cuadrático es el valor por omisión en las dos versiones. La regla
+  general que va quedando es preferir el valor por omisión a escribir su nombre
+  cuando el nombre ha cambiado de versión.
 - **Las 16 lecciones de nivel L3 tienen sección «Contraste con la librería»**
   (13-09-2026). Ese nivel promete «lo implementas en NumPy puro y empatas con la
   librería a 6 decimales», y hasta esa fecha la promesa era **incomprobable**,
@@ -155,7 +162,7 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   numpy 1.24 y en Python 3.14 con numpy 2.5.3. **Al rehacerlo faltaba
   `scikit-learn`**, y el gate lo dijo en vez de callarse: las celdas que lo
   importan salieron como REVENTÓ, no como aprobadas.
-- Glosario: **432 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **437 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -2814,6 +2821,59 @@ Eso deja una regla para las lecciones L3 que vengan: **para empatar con una
 librería hay que fijar el número de pasos, no la tolerancia**, siempre que el
 objetivo sea plano en el óptimo. Y `reg_covar` merece nombrarse en la prosa:
 existe precisamente para tapar la Proposición 30.6.
+
+---
+
+### 3.48 ML 31: el backfitting es Gauss-Seidel y CART es MARS (22-09-2026)
+
+Dos resultados del capítulo 9 de ESL que el libro enuncia de pasada y aquí se
+miden.
+
+> **31.1**: el backfitting es Gauss-Seidel sobre
+> $\begin{pmatrix}I & S_1\\ S_2 & I\end{pmatrix}$.
+> **31.2**: el error se multiplica en cada vuelta por $S_1S_2$, así que la
+> velocidad es $\rho(S_1S_2)$.
+
+Comprobado resolviendo el sistema de $2n$ ecuaciones de golpe: el punto fijo del
+backfitting lo resuelve a diez decimales. Y la velocidad, que es lo que se puede
+usar: el radio espectral vale $0{,}745725$ y la razón medida entre errores
+consecutivos vale $0{,}745725$, **los seis decimales impresos**. El error cae de
+$2{,}705\cdot10^{-1}$ a $7{,}187\cdot10^{-7}$ en cuarenta vueltas.
+
+Eso convierte la **concurvidad** en un número: si dos variables se parecen, los
+rangos de sus suavizadores se solapan, el radio se acerca a uno y el algoritmo
+se arrastra. En el límite el radio vale uno, y entonces no diverge pero el
+reparto entre $f_1$ y $f_2$ deja de estar determinado.
+
+#### El techo de lo aditivo, medido
+
+Con una verdad que incluye $2{,}5\,x_1x_2$, el paso hacia adelante de MARS con
+grado uno da $R^2$ de $0{,}894886$, $0{,}899814$ y $0{,}903098$ al pasar de cinco
+a trece términos: **duplicar los términos mueve cuatro milésimas**. Con grado
+dos, el tercer par elegido multiplica dos bisagras y el $R^2$ salta a
+$0{,}980471$ y $0{,}987375$. El estancamiento es la definición de aditivo puesta
+en números.
+
+#### El contraste con la librería, que aquí es el resultado
+
+> **31.5**: MARS con escalones en vez de bisagras, y con el hijo sustituyendo al
+> padre, **es** el árbol de regresión por mejor-primero.
+
+Programado a mano y enfrentado a `DecisionTreeRegressor`: las predicciones
+coinciden **punto a punto** en cinco tamaños, de dos hojas a treinta y dos, con
+el RSS bajando de $100{,}563416$ a $7{,}361585$. El libro dice que MARS
+generaliza a CART; aquí deja de ser una frase.
+
+Para que un empate así sea posible tienen que coincidir tres cosas, y la lección
+las nombra: el crecimiento por mejor-primero —que es lo que hace `scikit-learn`
+cuando se le fija `max_leaf_nodes`—, los umbrales en los puntos medios entre
+valores consecutivos distintos, y el desempate por orden de columna. Si
+cualquiera fallara, los dos árboles serían igual de buenos y distintos, y habría
+que comparar RSS en vez de predicciones.
+
+De paso apareció el segundo caso de nombres que cambian entre versiones de
+`scikit-learn`, anotado en el punto 2: `"mse"` contra `"squared_error"`. La
+salida fue no nombrar el criterio.
 
 ---
 

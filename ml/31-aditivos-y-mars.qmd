@@ -1,0 +1,704 @@
+---
+title: "Modelos aditivos y MARS"
+subtitle: "Machine Learning · Lección 31"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/11-suavizado-y-gams, ml/12-arboles-de-decision, ml/27-expansiones-en-base]
+siguientes: []
+libro: "ESL §9.1 Generalized Additive Models · §9.4 MARS: Multivariate Adaptive Regression Splines"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - scikit-learn
+---
+
+::: {.meta-leccion data-leccion="ml/31-aditivos-y-mars"}
+[[L3]{.nivel .nivel-L3} **ESL 9**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ESL §9.1 y §9.4]{.item}
+[**Prereqs** [Suavizado y GAMs](11-suavizado-y-gams.qmd) · [Árboles](12-arboles-de-decision.qmd) · [Expansiones en base](27-expansiones-en-base.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Demostrar que el [backfitting]{.g} es Gauss-Seidel** sobre un sistema de $pn$ ecuaciones, y comprobarlo contra la solución directa.
+2. **Predecir cuántas vueltas hace falta**: el error se divide en cada una por el radio espectral de $S_1S_2$, y medirlo.
+3. Decir qué pasa cuando dos variables se parecen demasiado, y por qué eso se llama [concurvidad]{.g}.
+4. Escribir la base de [bisagras]{.g data-t="bisagra"} de MARS y el paso hacia adelante.
+5. **Medir el techo de un modelo aditivo**: con grado uno el $R^2$ se estanca en un problema con interacción, y con grado dos sube.
+6. **Demostrar que MARS con escalones es CART**, y comprobar que las predicciones coinciden con las de `scikit-learn` en cinco tamaños de árbol.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 11**: los GAMs y los suavizadores lineales, cuyo ajuste conjunto se resuelve aquí.
+- **Machine Learning 12**: los árboles de regresión, que resultarán ser un caso de MARS.
+- **Machine Learning 27**: las bases de potencias truncadas, de las que la bisagra es la versión de grado uno.
+- **Álgebra 8**: los métodos iterativos para sistemas lineales, de donde sale Gauss-Seidel.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 32**: el boosting, que también construye la función término a término pero sin ajustar los anteriores.
+- **Machine Learning 35**: el bosque aleatorio, que ataca la varianza de los árboles que aquí aparecen.
+- **Machine Learning 28**: los criterios de información, que en MARS deciden la poda hacia atrás.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | El número de observaciones |
+| $p$ | pe | El número de variables |
+| $f_j$ | efe sub jota | La función de la variable $j$ en el modelo aditivo |
+| $S_j$ | ese sub jota | La matriz del suavizador de esa variable |
+| $\rho(A)$ | rho de A | El radio espectral: el mayor módulo de los autovalores |
+| $I$ | i mayúscula | La matriz identidad |
+| $(x-t)_+$ | equis menos te, más | La bisagra: $\max(0,x-t)$ |
+| $t$ | te | El nudo de una bisagra |
+| $B_m$ | be sub eme | La función $m$ de la base de MARS |
+| $R^2$ | erre cuadrado | La proporción de varianza explicada |
+:::
+
+## 1. El backfitting es un método iterativo de toda la vida
+
+El modelo aditivo $y=\sum_j f_j(x_j)+\varepsilon$ se ajusta recorriendo las variables y reajustando cada función sobre lo que las demás dejan sin explicar. Escrito con suavizadores lineales y dos variables, el punto fijo cumple
+$$f_1=S_1(y-f_2),\qquad f_2=S_2(y-f_1).$$
+
+::: {.proposicion}
+**Proposición 31.1 (backfitting es Gauss-Seidel).** Esas dos condiciones son exactamente el sistema lineal
+$$\begin{pmatrix}I & S_1\\ S_2 & I\end{pmatrix}\begin{pmatrix}f_1\\ f_2\end{pmatrix}=\begin{pmatrix}S_1y\\ S_2y\end{pmatrix},$$
+y el backfitting es el método de Gauss-Seidel aplicado a él: cada bloque se despeja usando el valor más reciente de los otros.
+:::
+
+::: {.demostracion}
+*Demostración.* Pasando $S_1f_2$ y $S_2f_1$ al lado izquierdo, las dos ecuaciones del punto fijo son las dos filas de bloques del sistema. Gauss-Seidel para un sistema por bloques despeja el bloque $i$ de la fila $i$ usando los valores ya actualizados de los bloques anteriores y los viejos de los posteriores, que es literalmente el recorrido del backfitting. [∎]{.fin-demo}
+:::
+
+::: {.proposicion}
+**Proposición 31.2 (la velocidad).** Con dos variables, el error del backfitting tras una vuelta completa queda multiplicado por la matriz $S_1S_2$. En consecuencia converge si $\rho(S_1S_2)<1$, y el error se divide en cada vuelta por un factor que tiende a $\rho(S_1S_2)$.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $e_k=f_1^{(k)}-f_1^{\ast}$ el error de la primera función. Restando el punto fijo de la iteración, $f_1^{(k+1)}-f_1^{\ast}=-S_1(f_2^{(k)}-f_2^{\ast})$ y $f_2^{(k)}-f_2^{\ast}=-S_2(f_1^{(k)}-f_1^{\ast})$. Componiendo, $e_{k+1}=S_1S_2\,e_k$. El comportamiento asintótico de las potencias de una matriz lo fija su radio espectral. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def suavizador(x, lam):
+    """Suavizador de nucleo, centrado: cada fila suma uno y se le quita la media."""
+    D = (x[:, None] - x[None, :]) ** 2
+    W = np.exp(-D / (2 * lam ** 2))
+    S = W / W.sum(axis=1, keepdims=True)
+    return S - S.mean(axis=0, keepdims=True)      # centrado, para que el ajuste sea identificable
+
+rng = np.random.default_rng(31)
+n = 200
+x1 = np.sort(rng.uniform(0, 1, n))
+x2 = 0.7 * x1 + 0.3 * rng.uniform(0, 1, n)        # correlacionada con x1 a proposito
+y = np.sin(6 * x1) + (x2 - 0.5) ** 2 * 6 + rng.normal(0, 0.3, n)
+y = y - y.mean()
+
+S1, S2 = suavizador(x1, 0.08), suavizador(x2, 0.08)
+
+# --- backfitting: cada funcion se reajusta sobre lo que la otra deja ---
+f1 = np.zeros(n); f2 = np.zeros(n)
+hist = []
+for _ in range(200):
+    f1 = S1 @ (y - f2)
+    f2 = S2 @ (y - f1)
+    hist.append(np.r_[f1, f2].copy())
+hist = np.array(hist)
+
+# --- el mismo problema resuelto de golpe, como un sistema lineal 2n x 2n ---
+I = np.eye(n)
+A = np.block([[I, S1], [S2, I]])
+b = np.r_[S1 @ y, S2 @ y]
+directo = np.linalg.solve(A, b)
+
+print("backfitting es Gauss-Seidel sobre un sistema de 2n ecuaciones")
+print("  el punto fijo del backfitting resuelve el sistema, a diez decimales: %s"
+      % bool(np.abs(hist[-1] - directo).max() < 5e-11))
+print()
+
+# la velocidad: el error se divide por el radio espectral de S1 S2 en cada vuelta
+err = np.abs(hist - directo).max(axis=1)
+radio = np.abs(np.linalg.eigvals(S1 @ S2)).max()
+print("  radio espectral de S1 S2                  : %.6f" % radio)
+razon = err[30] / err[29]
+print("  razon medida entre errores consecutivos   : %.6f" % razon)
+print("  las dos coinciden a cuatro decimales      : %s" % bool(abs(razon - radio) < 5e-5))
+print()
+print("  vuelta   error maximo")
+for i in (0, 1, 2, 5, 10, 20, 40):
+    print("    %3d     %.3e" % (i, err[i]))
+print()
+print("cuanto mas se parecen x1 y x2, mayor es ese radio y mas vueltas hacen")
+print("falta. Si fueran la misma variable, el radio valdria uno y el reparto")
+print("entre f1 y f2 no estaria determinado")
+```
+
+El punto fijo del backfitting resuelve el sistema a diez decimales, así que las dos rutas llegan al mismo sitio. Lo que las separa es el coste: resolver de golpe cuesta $(pn)^3$ operaciones y el backfitting cuesta $p$ suavizados por vuelta.
+
+La segunda mitad es la que se puede usar. El radio espectral vale $0{,}745725$ y la razón medida entre errores consecutivos vale $0{,}745725$: **coinciden en los seis decimales impresos**. El error cae de $2{,}705\cdot10^{-1}$ a $7{,}187\cdot10^{-7}$ en cuarenta vueltas, y cada una lo multiplica por ese mismo número.
+
+De ahí sale la lectura de la **concurvidad**. Si $x_1$ y $x_2$ se parecen, sus suavizadores tienen rangos casi iguales, el radio se acerca a uno y el backfitting se arrastra. En el límite en que son la misma variable el radio vale uno: el algoritmo no diverge, pero el reparto entre $f_1$ y $f_2$ deja de estar determinado, y lo que se obtenga depende de por dónde se empezó. Es el análogo aditivo de la colinealidad de Machine Learning 24.
+
+```{=html}
+<div class="viz-alternada">
+  <div class="controles">
+    <label>Ángulo entre los dos espacios <input id="al-a" type="range" min="8" max="88" step="2" value="34"> <span id="al-a-v">34°</span></label>
+    <label>Punto de partida <input id="al-p" type="range" min="-1" max="1" step="0.05" value="0.80"> <span id="al-p-v">0.80</span></label>
+  </div>
+  <svg id="al-svg" viewBox="0 0 660 270" role="img" aria-label="Dos rectas que representan los espacios de cada suavizador y la sucesión de proyecciones alternadas que converge a su intersección."></svg>
+  <p class="lectura" id="al-lectura"></p>
+</div>
+<style>
+.viz-alternada { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-alternada .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-alternada label { display: flex; align-items: center; gap: .4rem; }
+.viz-alternada input[type=range] { width: 160px; padding: 0; }
+.viz-alternada svg { width: 100%; height: auto; display: block; }
+.viz-alternada .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("al-svg"), lec = document.getElementById("al-lectura");
+  var ca = document.getElementById("al-a"), cp = document.getElementById("al-p");
+  var ea = document.getElementById("al-a-v"), ep = document.getElementById("al-p-v");
+  var CX = 330, CY = 150, ESC = 118;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(u) { return CX + u * ESC; }
+  function py(v) { return CY - v * ESC; }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var grados = +ca.value, t0 = +cp.value;
+    ea.textContent = grados + "°"; ep.textContent = t0.toFixed(2);
+    var a = grados * Math.PI / 180;
+    // dos rectas por el origen: una horizontal, otra girada un angulo a
+    var u = [1, 0], v = [Math.cos(a), Math.sin(a)];
+    var proy = function (w, e) { var c = w[0] * e[0] + w[1] * e[1]; return [c * e[0], c * e[1]]; };
+
+    svg.appendChild(el("path", { d: "M" + px(-2.2 * u[0]) + " " + py(-2.2 * u[1]) + " L" + px(2.2 * u[0]) + " " + py(2.2 * u[1]),
+      stroke: C_A, "stroke-width": 2 }));
+    svg.appendChild(el("path", { d: "M" + px(-2.2 * v[0]) + " " + py(-2.2 * v[1]) + " L" + px(2.2 * v[0]) + " " + py(2.2 * v[1]),
+      stroke: C_B, "stroke-width": 2 }));
+
+    var w = [t0 * 1.6, t0 * 1.6 * 0.75 + 0.9];      // un punto de partida fuera de las dos rectas
+    svg.appendChild(el("circle", { cx: px(w[0]), cy: py(w[1]), r: 4, fill: C_T }));
+    var pasos = 14, norma0 = Math.sqrt(w[0] * w[0] + w[1] * w[1]), d = "M" + px(w[0]) + " " + py(w[1]);
+    var actual = w, i;
+    for (i = 0; i < pasos; i++) {
+      actual = proy(actual, i % 2 === 0 ? u : v);
+      d += " L" + px(actual[0]) + " " + py(actual[1]);
+      svg.appendChild(el("circle", { cx: px(actual[0]), cy: py(actual[1]), r: 2.4,
+        fill: i % 2 === 0 ? C_A : C_B, opacity: Math.max(0.25, 1 - i / pasos) }));
+    }
+    svg.appendChild(el("path", { d: d, stroke: C_T, "stroke-width": 1.3, fill: "none", opacity: .65 }));
+    svg.appendChild(el("circle", { cx: px(0), cy: py(0), r: 3.4, fill: "none", stroke: C_T, "stroke-width": 1.6 }));
+    svg.appendChild(el("text", { x: px(2.05 * u[0]) - 8, y: py(2.05 * u[1]) - 7, "font-size": 10.5, fill: C_A }, "rango de S₁"));
+    svg.appendChild(el("text", { x: px(1.55 * v[0]) + 6, y: py(1.55 * v[1]), "font-size": 10.5, fill: C_B }, "rango de S₂"));
+
+    var tasa = Math.pow(Math.cos(a), 2);
+    var restante = Math.sqrt(actual[0] * actual[0] + actual[1] * actual[1]) / norma0;
+    var vueltas = Math.ceil(Math.log(1e-6) / Math.log(tasa));
+    lec.innerHTML = "Con los dos espacios a <strong>" + grados + "°</strong>, cada vuelta completa multiplica el error por " +
+      "cos²(ángulo) = <strong>" + tasa.toFixed(4) + "</strong>, que es el papel del radio espectral de S₁S₂. " +
+      "Tras siete vueltas queda el <strong>" + (100 * restante).toFixed(2) + " %</strong> de la distancia inicial, y bajar a una millonésima pide <strong>" +
+      vueltas + "</strong> vueltas. " +
+      (grados < 20
+        ? "Con los espacios casi pegados —dos variables que se parecen— la convergencia se arrastra: eso es la concurvidad."
+        : "Cuanto más perpendiculares, menos se estorban las dos funciones y antes acaba el reparto.");
+  }
+  ca.addEventListener("input", dibujar);
+  cp.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. MARS: bisagras elegidas por los datos
+
+Un GAM fija de antemano qué variable lleva qué suavizador. MARS construye la base sobre la marcha y admite productos, con lo que puede representar interacciones sin que nadie las nombre.
+
+::: {.definicion}
+**Definición 31.3 (la base de bisagras).** Para una variable $x$ y un nudo $t$, el **par de bisagras** es
+$$(x-t)_+=\max(0,x-t),\qquad (t-x)_+=\max(0,t-x).$$
+La base de MARS empieza en $\{1\}$ y crece añadiendo productos $B_m(x)\cdot(x_v-t)_+$ y $B_m(x)\cdot(t-x_v)_+$, donde $B_m$ es una función ya presente.
+:::
+
+::: {.proposicion}
+**Proposición 31.4 (una bisagra es una potencia truncada de grado uno).** El par de bisagras en $t$ genera el mismo espacio que $\{1,\;x,\;(x-t)_+\}$ menos la constante; es decir, añadir un par a un modelo que ya contiene la constante y la recta equivale a permitir un cambio de pendiente en $t$.
+:::
+
+::: {.demostracion}
+*Demostración.* $(t-x)_+=(x-t)_+-(x-t)=(x-t)_+-x+t$, de modo que la segunda bisagra es combinación lineal de la primera, de $x$ y de la constante. Recíprocamente $x=(x-t)_+-(t-x)_+ +t$. Los dos conjuntos generan el mismo espacio. [∎]{.fin-demo}
+:::
+
+El paso hacia adelante prueba, en cada vuelta, todas las combinaciones de base ya presente, variable y nudo, y se queda con la que más baja el RSS. El parámetro **grado** limita cuántos factores puede tener un producto: con grado uno el modelo es aditivo, y con grado dos aparecen interacciones entre pares de variables.
+
+```{pyodide}
+import numpy as np
+
+def bisagra(x, t, signo):
+    """Las dos mitades de un par de bisagras: max(0, x-t) y max(0, t-x)."""
+    return np.maximum(0.0, signo * (x - t))
+
+def rss(B, y):
+    coef, *_ = np.linalg.lstsq(B, y, rcond=None)
+    return float(((y - B @ coef) ** 2).sum())
+
+def mars_adelante(X, y, terminos, grado, nudos=20):
+    """Paso hacia adelante de MARS: en cada vuelta anade el par de bisagras que
+    mas baja el RSS, multiplicado por alguna base ya presente."""
+    n, p = X.shape
+    B = np.ones((n, 1))
+    padres = [((), 0)]                 # (variables usadas, grado) de cada base
+    elegidos = []
+    while B.shape[1] + 1 < terminos:
+        mejor = None
+        for m in range(B.shape[1]):
+            usadas, g = padres[m]
+            if g >= grado:
+                continue
+            for v in range(p):
+                if v in usadas:
+                    continue
+                cand = np.quantile(X[:, v], np.linspace(0.05, 0.95, nudos))
+                for t in cand:
+                    nuevo = np.column_stack([B,
+                                             B[:, m] * bisagra(X[:, v], t, +1),
+                                             B[:, m] * bisagra(X[:, v], t, -1)])
+                    r = rss(nuevo, y)
+                    if mejor is None or r < mejor[0]:
+                        mejor = (r, m, v, t)
+        if mejor is None:
+            break
+        _, m, v, t = mejor
+        usadas, g = padres[m]
+        B = np.column_stack([B, B[:, m] * bisagra(X[:, v], t, +1),
+                                B[:, m] * bisagra(X[:, v], t, -1)])
+        padres += [(usadas + (v,), g + 1)] * 2
+        elegidos.append((m, v, round(float(t), 3)))
+    coef, *_ = np.linalg.lstsq(B, y, rcond=None)
+    return B, coef, padres, elegidos
+
+def evalua(X, padres, elegidos, coef):
+    n = X.shape[0]
+    B = np.ones((n, 1))
+    for (m, v, t) in elegidos:
+        B = np.column_stack([B, B[:, m] * bisagra(X[:, v], t, +1),
+                                B[:, m] * bisagra(X[:, v], t, -1)])
+    return B @ coef
+
+rng = np.random.default_rng(311)
+n, p = 400, 4
+X = rng.uniform(0, 1, (n, p))
+verdad = lambda A: np.sin(3 * A[:, 0]) + 3 * (A[:, 1] - 0.5) ** 2 + 2.5 * A[:, 0] * A[:, 1]
+y = verdad(X) + rng.normal(0, 0.15, n)
+Xt = rng.uniform(0, 1, (2000, p))
+yt = verdad(Xt)
+
+print("la verdad tiene un termino de interaccion 2.5*x1*x2")
+print("  grado  terminos   R2 en prueba   terminos elegidos (base, variable, nudo)")
+for grado in (1, 2):
+    for terminos in (5, 9, 13):
+        B, coef, padres, elegidos = mars_adelante(X, y, terminos, grado)
+        pred = evalua(Xt, padres, elegidos, coef)
+        r2 = 1 - ((yt - pred) ** 2).sum() / ((yt - yt.mean()) ** 2).sum()
+        print("    %d      %2d        %.6f       %s" % (grado, B.shape[1], r2, elegidos[:3]))
+print()
+print("con grado 1 el modelo es aditivo y no puede representar el producto:")
+print("su R2 se estanca. Con grado 2 aparece una base que multiplica dos")
+print("bisagras de variables distintas, y el techo sube")
+```
+
+Las dos primeras filas de cada bloque son idénticas —$0{,}894886$ con cinco términos— porque hasta ahí los dos grados eligen lo mismo: el primer par de bisagras nunca es una interacción. La diferencia aparece después. **Con grado uno el $R^2$ se estanca**: $0{,}899814$ con nueve términos y $0{,}903098$ con trece, y duplicar los términos casi no lo mueve. Con grado dos, el tercer par elegido tiene como padre la base $2$ en vez de la constante —es decir, multiplica dos bisagras— y el $R^2$ salta a $0{,}980471$ y luego a $0{,}987375$.
+
+Ese estancamiento es la definición de aditivo puesta en números, y no una falta de flexibilidad que más nudos pudieran remediar. Ninguna suma de funciones de una variable reproduce $2{,}5\,x_1x_2$. La tabla mide el techo en vez de argumentarlo.
+
+```{=html}
+<div class="viz-bisagras">
+  <div class="controles">
+    <label>Pares de bisagras <input id="bs-k" type="range" min="1" max="6" step="1" value="3"> <span id="bs-k-v">3</span></label>
+    <label>Ruido <input id="bs-r" type="range" min="0" max="0.6" step="0.05" value="0.20"> <span id="bs-r-v">0.20</span></label>
+  </div>
+  <svg id="bs-svg" viewBox="0 0 660 260" role="img" aria-label="Los datos, la función verdadera y el ajuste de MARS con el número de pares de bisagras elegido, con los nudos marcados en el eje."></svg>
+  <p class="lectura" id="bs-lectura"></p>
+</div>
+<style>
+.viz-bisagras { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-bisagras .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-bisagras label { display: flex; align-items: center; gap: .4rem; }
+.viz-bisagras input[type=range] { width: 150px; padding: 0; }
+.viz-bisagras svg { width: 100%; height: auto; display: block; }
+.viz-bisagras .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("bs-svg"), lec = document.getElementById("bs-lectura");
+  var ck = document.getElementById("bs-k"), cr = document.getElementById("bs-r");
+  var ek = document.getElementById("bs-k-v"), er = document.getElementById("bs-r-v");
+  var X0 = 52, XW = 568, Y0 = 20, YH = 190, N = 90, LO = -2.4, HI = 2.4;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // ruido fijo y reproducible: no depende de Math.random, así que el dibujo es el mismo siempre
+  function ruido(i) { var s = Math.sin(i * 12.9898 + 4.1414) * 43758.5453; return 2 * (s - Math.floor(s)) - 1; }
+  function verdad(u) { return Math.sin(4.5 * u) + 0.8 * u; }
+
+  // minimos cuadrados por ecuaciones normales, con eliminacion gaussiana
+  function resolver(A, b) {
+    var k = b.length, i, j, r, M = [];
+    for (i = 0; i < k; i++) { M.push(A[i].slice()); M[i].push(b[i]); }
+    for (i = 0; i < k; i++) {
+      var piv = i;
+      for (r = i + 1; r < k; r++) if (Math.abs(M[r][i]) > Math.abs(M[piv][i])) piv = r;
+      var tmp = M[i]; M[i] = M[piv]; M[piv] = tmp;
+      if (Math.abs(M[i][i]) < 1e-10) { M[i][i] = 1e-10; }
+      for (r = i + 1; r < k; r++) {
+        var f = M[r][i] / M[i][i];
+        for (j = i; j <= k; j++) M[r][j] -= f * M[i][j];
+      }
+    }
+    var x = new Array(k).fill(0);
+    for (i = k - 1; i >= 0; i--) {
+      var s = M[i][k];
+      for (j = i + 1; j < k; j++) s -= M[i][j] * x[j];
+      x[i] = s / M[i][i];
+    }
+    return x;
+  }
+  function ajusta(cols, y) {
+    var k = cols.length, i, j, t, A = [], b = [];
+    for (i = 0; i < k; i++) {
+      A.push([]);
+      for (j = 0; j < k; j++) { var s = 0; for (t = 0; t < y.length; t++) s += cols[i][t] * cols[j][t]; A[i].push(s); }
+      var s2 = 0; for (t = 0; t < y.length; t++) s2 += cols[i][t] * y[t]; b.push(s2);
+    }
+    return resolver(A, b);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var K = +ck.value, sd = +cr.value;
+    ek.textContent = K; er.textContent = sd.toFixed(2);
+    var xs = [], ys = [], i, j;
+    for (i = 0; i < N; i++) { var u = i / (N - 1); xs.push(u); ys.push(verdad(u) + sd * ruido(i + 1)); }
+
+    // seleccion hacia adelante de pares de bisagras sobre una rejilla de nudos
+    var candidatos = [];
+    for (i = 1; i <= 18; i++) candidatos.push(i / 19);
+    var cols = [xs.map(function () { return 1; }), xs.slice()], nudos = [];
+    for (var paso = 0; paso < K; paso++) {
+      var mejor = null;
+      for (var c = 0; c < candidatos.length; c++) {
+        var t = candidatos[c];
+        if (nudos.indexOf(t) >= 0) continue;
+        var pruebas = cols.concat([xs.map(function (u) { return Math.max(0, u - t); })]);
+        var co = ajusta(pruebas, ys), r = 0;
+        for (i = 0; i < N; i++) { var yv = 0; for (j = 0; j < pruebas.length; j++) yv += co[j] * pruebas[j][i]; r += (ys[i] - yv) * (ys[i] - yv); }
+        if (mejor === null || r < mejor[0]) mejor = [r, t];
+      }
+      if (mejor === null) break;
+      nudos.push(mejor[1]);
+      cols.push(xs.map(function (u) { return Math.max(0, u - mejor[1]); }));
+    }
+    var coef = ajusta(cols, ys);
+    var pred = function (u) {
+      var v = coef[0] + coef[1] * u;
+      for (var q = 0; q < nudos.length; q++) v += coef[2 + q] * Math.max(0, u - nudos[q]);
+      return v;
+    };
+
+    var px = function (u) { return X0 + u * XW; };
+    var py = function (v) { return Y0 + (HI - Math.max(LO, Math.min(HI, v))) / (HI - LO) * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    for (i = 0; i < N; i++) svg.appendChild(el("circle", { cx: px(xs[i]).toFixed(1), cy: py(ys[i]).toFixed(1), r: 2, fill: C_T, opacity: .35 }));
+    var dv = "", dp = "";
+    for (i = 0; i <= 300; i++) { var u = i / 300; dv += (i ? " L" : "M") + px(u).toFixed(1) + " " + py(verdad(u)).toFixed(1); dp += (i ? " L" : "M") + px(u).toFixed(1) + " " + py(pred(u)).toFixed(1); }
+    svg.appendChild(el("path", { d: dv, stroke: C_A, "stroke-width": 1.8, fill: "none", "stroke-dasharray": "5 3" }));
+    svg.appendChild(el("path", { d: dp, stroke: C_B, "stroke-width": 2.3, fill: "none" }));
+    for (i = 0; i < nudos.length; i++)
+      svg.appendChild(el("path", { d: "M" + px(nudos[i]).toFixed(1) + " " + (Y0 + YH) + " L" + px(nudos[i]).toFixed(1) + " " + (Y0 + YH - 11), stroke: C_B, "stroke-width": 2 }));
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 14, "font-size": 10.5, fill: C_A }, "la función verdadera"));
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 27, "font-size": 10.5, fill: C_B }, "el ajuste, y sus nudos abajo"));
+
+    var rss = 0;
+    for (i = 0; i < N; i++) rss += (ys[i] - pred(xs[i])) * (ys[i] - pred(xs[i]));
+    var orden = nudos.slice().sort(function (a, b) { return a - b; }).map(function (t) { return t.toFixed(2); });
+    lec.innerHTML = "Con <strong>" + K + "</strong> " + (K === 1 ? "par" : "pares") + " de bisagras el RSS vale <strong>" + rss.toFixed(3) +
+      "</strong>, y los nudos elegidos son " + orden.join(", ") + ". " +
+      "El ajuste es <strong>lineal a trozos</strong>: cada bisagra permite un cambio de pendiente y nada más. " +
+      "Los nudos no se reparten a intervalos iguales: el paso hacia adelante los pone donde la función se dobla, " +
+      "y con más ruido se desplazan, porque lo que mira es el RSS y no la curvatura.";
+  }
+  ck.addEventListener("input", dibujar);
+  cr.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. MARS y CART son el mismo algoritmo con otra pieza
+
+::: {.proposicion}
+**Proposición 31.5 (CART es un caso de MARS).** Cámbiese en el paso hacia adelante la bisagra por el escalón, $(x_v>t)$ y $(x_v\le t)$, y oblíguese a que los dos hijos **sustituyan** a su padre en lugar de añadirse. El procedimiento resultante es exactamente el crecimiento por mejor-primero de un árbol de regresión.
+:::
+
+::: {.demostracion}
+*Demostración.* Con escalones y sustitución, cada función de la base es el indicador de una región, y las regiones son disjuntas y cubren el espacio, porque cada sustitución parte una región en dos. El ajuste por mínimos cuadrados sobre indicadores disjuntos es la media de $y$ en cada región. Elegir $(B_m,v,t)$ que minimiza el RSS total es elegir la hoja y el corte que más bajan el RSS, que es la regla del árbol. [∎]{.fin-demo}
+:::
+
+Lo que MARS añade sobre el árbol es doble. La bisagra deja pasar la pendiente, de modo que el ajuste es continuo en vez de escalonado; y **no sustituir al padre** permite que una variable siga interviniendo en todo el rango en vez de quedar confinada a una rama. Por eso MARS trata bien los efectos aditivos que a un árbol le cuestan: un árbol tiene que repetir el mismo corte en cada rama para representar un efecto que no interacciona.
+
+## 4. Contraste con la librería
+
+Esta lección es de nivel **L3**, y ese nivel promete implementar el resultado en NumPy puro y **empatar con la librería**. La celda comprueba la Proposición 31.5 de la forma más exigente posible: programa el paso hacia adelante con escalones y sustitución, y enfrenta sus predicciones con las de `DecisionTreeRegressor` en cinco tamaños de árbol.
+
+El único cuidado es el nombre del criterio. `scikit-learn` lo llamó `"mse"` hasta la versión 1.0 y `"squared_error"` desde entonces, y la máquina de trabajo y el runner del CI están cada uno a un lado de ese cambio; como el error cuadrático es el valor por omisión en las dos, la celda **no lo nombra**.
+
+```{pyodide}
+import numpy as np
+from sklearn.tree import DecisionTreeRegressor
+
+def mejor_corte(X, y, dentro):
+    """El corte que mas baja el RSS dentro de una region, probando los puntos
+    medios entre valores consecutivos distintos, que es lo que hace CART."""
+    idx = np.flatnonzero(dentro)
+    yy = y[idx]
+    base = float(((yy - yy.mean()) ** 2).sum())
+    mejor = None
+    for v in range(X.shape[1]):
+        o = idx[np.argsort(X[idx, v], kind="stable")]
+        xs, ys = X[o, v], y[o]
+        s1 = np.cumsum(ys)[:-1]; s2 = np.cumsum(ys ** 2)[:-1]
+        k = np.arange(1, len(o))
+        tot1, tot2 = ys.sum(), (ys ** 2).sum()
+        izq = s2 - s1 ** 2 / k
+        der = (tot2 - s2) - (tot1 - s1) ** 2 / (len(o) - k)
+        valido = xs[1:] > xs[:-1]                    # no se corta entre valores iguales
+        if not valido.any():
+            continue
+        suma = np.where(valido, izq + der, np.inf)
+        j = int(np.argmin(suma))
+        if mejor is None or suma[j] < mejor[0]:
+            mejor = (float(suma[j]), v, float((xs[j] + xs[j + 1]) / 2), base - float(suma[j]))
+    return mejor
+
+def cart(X, y, hojas):
+    """CART por mejor-primero: en cada vuelta parte la region cuyo corte mas baja
+    el RSS. Con funciones escalon y sustitucion del padre, esto ES el paso hacia
+    adelante de MARS."""
+    regiones = [np.ones(len(y), dtype=bool)]
+    for _ in range(hojas - 1):
+        opciones = [(mejor_corte(X, y, r), i) for i, r in enumerate(regiones)]
+        opciones = [(c, i) for c, i in opciones if c is not None]
+        if not opciones:
+            break
+        (_, v, t, ganancia), i = max(opciones, key=lambda o: o[0][3])
+        r = regiones.pop(i)
+        regiones += [r & (X[:, v] <= t), r & (X[:, v] > t)]
+    pred = np.zeros(len(y))
+    for r in regiones:
+        pred[r] = y[r].mean()
+    return pred, len(regiones)
+
+rng = np.random.default_rng(312)
+n, p = 300, 3
+X = rng.uniform(0, 1, (n, p))
+y = np.sin(4 * X[:, 0]) + 2 * (X[:, 1] > 0.6) + rng.normal(0, 0.2, n)
+
+print("MARS con escalones y sustitucion del padre ES el arbol de regresion")
+print("  hojas   a mano          scikit-learn     predicciones iguales")
+for hojas in (2, 4, 8, 16, 32):
+    mio, k = cart(X, y, hojas)
+    t = DecisionTreeRegressor(max_leaf_nodes=hojas, random_state=0)  # el criterio por omision es el error cuadratico en toda version
+    t.fit(X, y)
+    suyo = t.predict(X)
+    rss_mio = float(((y - mio) ** 2).sum())
+    rss_suyo = float(((y - suyo) ** 2).sum())
+    print("   %3d    RSS %9.6f   RSS %9.6f          %s"
+          % (k, rss_mio, rss_suyo, "si" if np.abs(mio - suyo).max() < 1e-12 else "NO"))
+print()
+print("no se parecen: son el mismo algoritmo. El paso hacia adelante de MARS,")
+print("con la bisagra cambiada por un escalon y obligando a que el hijo sustituya")
+print("al padre, recorre exactamente los mismos cortes que CART")
+```
+
+Las predicciones coinciden **punto a punto** en los cinco tamaños, de dos hojas a treinta y dos, con el RSS bajando de $100{,}563416$ a $7{,}361585$. Lo que hay ahí no es un parecido sino la misma sucesión de cortes, encontrada dos veces por caminos distintos.
+
+Conviene subrayar qué hace falta para que un empate así sea posible. La librería crece el árbol **por mejor-primero** cuando se le fija `max_leaf_nodes`, que es justo el orden del paso hacia adelante; los umbrales son los puntos medios entre valores consecutivos distintos, y la celda usa los mismos; y el desempate por orden de variable coincide porque las dos recorren las columnas de izquierda a derecha. Si cualquiera de esas tres cosas fuera distinta, los árboles serían igual de buenos y distintos, y la comparación habría que hacerla sobre el RSS y no sobre las predicciones.
+
+## 5. Lo que esta lección no resuelve
+
+- **La poda hacia atrás de MARS.** El paso hacia adelante sobreajusta a propósito y después se podan términos por validación cruzada generalizada. Aquí se fija el número de términos a mano; el criterio está en Machine Learning 28.
+- **El backfitting con más de dos variables.** Las proposiciones 31.1 y 31.2 se escriben con dos para que la matriz quepa; con $p$ bloques el argumento es idéntico y el radio espectral es el de un producto de $p$ factores.
+- **La concurvidad no se mide aquí.** Se nombra y se ve en la velocidad, pero diagnosticarla en un ajuste real pide mirar los rangos de los suavizadores, que esta página no hace.
+- **MARS en clasificación.** Todo está escrito con pérdida cuadrática; la versión logística existe y cambia el paso de ajuste, no la construcción de la base.
+- **PRIM y la mezcla jerárquica de expertos**, que son §9.3 y §9.5 del mismo capítulo, quedan fuera.
+
+## Ejercicios
+
+### Ejercicio 1, Cuántas vueltas de backfitting
+
+Con la Proposición 31.2, calcular cuántas vueltas hacen falta para dividir el error por un millón, según el radio espectral.
+
+```{pyodide}
+#| exercise: ex_vueltas
+from math import log, ceil
+
+def vueltas(radio):
+    """Vueltas para que el error quede por debajo de una millonesima del inicial."""
+    return ______
+
+for r in (0.2, 0.745725, 0.95):
+    print(r, vueltas(r))
+
+int(vueltas(0.745725))
+```
+
+::: {.hint exercise="ex_vueltas"}
+Tras $k$ vueltas el error se ha multiplicado por $\rho^k$. Hay que resolver $\rho^k\le 10^{-6}$, o sea $k\ge\log(10^{-6})/\log\rho$, y redondear hacia arriba.
+:::
+
+::: {.solution exercise="ex_vueltas"}
+```{pyodide}
+from math import log, ceil
+
+def vueltas(radio):
+    """Vueltas para que el error quede por debajo de una millonesima del inicial."""
+    return ceil(log(1e-6) / log(radio))
+
+for r in (0.2, 0.745725, 0.95):
+    print(r, vueltas(r))
+
+int(vueltas(0.745725))
+```
+:::
+
+```{pyodide}
+#| exercise: ex_vueltas
+#| check: true
+if result == 48:
+    feedback = {"correct": True, "message": "Correcto: 48 vueltas con el radio de la celda, frente a 9 si valiera 0,2 y 270 si valiera 0,95. El coste no crece poco a poco: se dispara cuando el radio se acerca a uno, que es lo que hace la concurvidad.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 48 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, La segunda bisagra es redundante
+
+Con la Proposición 31.4, comprobar que $(t-x)_+$ es combinación lineal de $(x-t)_+$, de $x$ y de la constante.
+
+```{pyodide}
+#| exercise: ex_bisagra
+import numpy as np
+
+x = np.linspace(0, 1, 11)
+t = 0.4
+
+izq = np.maximum(0.0, t - x)
+reconstruida = ______
+
+print(np.round(izq, 6))
+round(float(np.abs(izq - reconstruida).max()), 6)
+```
+
+::: {.hint exercise="ex_bisagra"}
+La demostración da $(t-x)_+=(x-t)_+-x+t$.
+:::
+
+::: {.solution exercise="ex_bisagra"}
+```{pyodide}
+import numpy as np
+
+x = np.linspace(0, 1, 11)
+t = 0.4
+
+izq = np.maximum(0.0, t - x)
+reconstruida = np.maximum(0.0, x - t) - x + t
+
+print(np.round(izq, 6))
+round(float(np.abs(izq - reconstruida).max()), 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_bisagra
+#| check: true
+if abs(result) < 1e-9:
+    feedback = {"correct": True, "message": "Correcto: la diferencia es cero, no pequeña. Por eso añadir un par de bisagras a un modelo que ya tiene la constante y la recta equivale a permitir un solo cambio de pendiente: la segunda mitad no aporta dirección nueva.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.0 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 31**:
+
+1. Medir la concurvidad: repetir la celda de la sección 1 haciendo variar cuánto se parecen $x_1$ y $x_2$, y dibujar el radio espectral y las vueltas necesarias contra esa semejanza. Anotar a partir de qué punto el backfitting deja de ser práctico.
+2. Añadir a MARS la poda hacia atrás con validación cruzada generalizada y comprobar cuántos términos sobreviven de los trece del paso hacia adelante. Comparar el $R^2$ en prueba antes y después.
+3. Enfrentar MARS de grado dos con un árbol del mismo número de parámetros efectivos sobre una función **aditiva sin interacciones**, y guardar en `50-Errores/` la comparación. Anotar cuántos cortes gasta el árbol en repetir el mismo efecto en ramas distintas.
+
+## Del libro
+
+**ESL §9.1** presenta los modelos aditivos y el backfitting, y observa que para suavizadores lineales el algoritmo es Gauss-Seidel sobre un sistema grande. **§9.4** introduce MARS, su base de bisagras, el paso hacia adelante con productos y la poda por validación cruzada generalizada, y dedica un apartado a la relación con CART.
+
+Esta página convierte las dos observaciones en cosas medidas. La primera, resolviendo el sistema de $2n$ ecuaciones y comprobando que el backfitting llega al mismo punto, y **midiendo la velocidad** contra el radio espectral: $0{,}745725$ predicho y $0{,}745725$ medido. La segunda, programando el caso degenerado de MARS y enfrentándolo a `DecisionTreeRegressor`, que da las **mismas predicciones** en cinco tamaños de árbol; el libro dice que MARS generaliza a CART, y aquí eso deja de ser una frase.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/aditivos-y-mars.md`, enlazada a [[suavizado-y-gams]], [[arboles-de-decision]] y [[expansiones-en-base]]. Conviene rehacer a mano la Proposición 31.2: componer las dos ecuaciones del error ocupa dos renglones y deja grabado que **la velocidad del backfitting es el radio espectral de un producto de suavizadores**, que es lo que convierte la concurvidad en un número y no en una intuición.
+
+```
+¿Qué resuelve el backfitting?::El sistema (I S1; S2 I)(f1;f2) = (S1 y; S2 y)
+¿Qué método es?::Gauss-Seidel por bloques
+¿Cuánto tarda?::El error se multiplica cada vuelta por el radio espectral de S1 S2
+¿Cuánto valía ahí?::0,745725, predicho y medido
+¿Qué es la concurvidad?::Que los rangos de dos suavizadores se parezcan: el radio se acerca a uno
+¿Qué pasa si el radio vale uno?::No diverge, pero el reparto entre f1 y f2 deja de estar determinado
+¿Qué es una bisagra?::max(0, x−t), y su reflejada max(0, t−x)
+¿Es la reflejada nueva?::No: (t−x)+ = (x−t)+ − x + t
+¿Qué limita el grado en MARS?::Cuántos factores puede tener un producto: grado 1 es aditivo
+¿Qué techo tiene el grado 1?::El que impone no poder representar interacciones: R² se estanca en 0,903098
+¿Qué es CART en este lenguaje?::MARS con escalones en vez de bisagras y el hijo sustituyendo al padre
+¿Qué añade MARS sobre el árbol?::Continuidad, y que una variable siga actuando fuera de su rama
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 31.1 es reordenar las dos ecuaciones del punto fijo; la 31.2 compone los dos errores; la 31.4 despeja la bisagra reflejada; la 31.5 observa que con escalones y sustitución la base son indicadores de regiones disjuntas. Todo se comprueba: el punto fijo del backfitting resuelve el sistema de $2n$ ecuaciones a diez decimales; el radio espectral $0{,}745725$ coincide con la razón medida entre errores consecutivos en los seis decimales impresos; el $R^2$ de grado uno se estanca en $0{,}903098$ mientras el de grado dos llega a $0{,}987375$; y las predicciones del MARS con escalones coinciden punto a punto con las de `DecisionTreeRegressor` en cinco tamaños.
+
+**Lo que viene de los libros.** De **ESL §9.1** vienen el modelo aditivo, el backfitting y su lectura como Gauss-Seidel; de **§9.4**, la base de bisagras, el paso hacia adelante y la relación con CART. El texto no se reproduce.
+
+**Lo que se usa de otras lecciones sin repetir.** Los suavizadores lineales y los GAMs son de Machine Learning 11. Los árboles de regresión son de Machine Learning 12. Las potencias truncadas son de Machine Learning 27. Gauss-Seidel y el radio espectral son de Álgebra 8.
+
+**Lo que se enuncia sin demostrar.** Que el comportamiento asintótico de las potencias de una matriz lo fija su radio espectral se usa como conocido. La convergencia del backfitting con $p>2$ bloques se afirma por analogía y no se comprueba. Y la poda hacia atrás de MARS se nombra sin programarla.
+
+**Lo que es mío, no del libro.** Medir la velocidad del backfitting contra el radio espectral en vez de solo citarlo, que es lo que convierte la concurvidad en un número. Medir el techo del grado uno en lugar de argumentarlo, con una tabla donde duplicar los términos mueve el $R^2$ cuatro milésimas. Y llevar la relación MARS–CART hasta el empate exacto con la librería, junto con la lista de las tres condiciones que hacen que ese empate sea posible: crecimiento por mejor-primero, umbrales en los puntos medios y el mismo desempate por orden de variable.
+:::
