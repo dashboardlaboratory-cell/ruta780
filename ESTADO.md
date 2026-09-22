@@ -106,15 +106,15 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 11 | 11 | **11 de 11** | — |
-| Machine Learning | 28 | 90 | **28 de 28** | el resto de ESL y deep learning |
+| Machine Learning | 29 | 90 | **29 de 29** | el resto de ESL y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **98 lecciones** publicadas, **98** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 76 según el plan.
+- **99 lecciones** publicadas, **99** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 75 según el plan.
 - **Cuatro módulos cerrados**: Estadística 25/25, Álgebra 18/18, Python 16/16 y
   **Series de tiempo 11/11**, cerrado el 21-09-2026.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
@@ -142,20 +142,20 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   marginales exactas, que es más fuerte que cualquier librería; y `np.trapz` se
   retiró del espacio de nombres en NumPy 2.0, así que las celdas nuevas no lo
   usan.
-- **205 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
+- **207 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
   Siguen los mismos cuatro avisos, todos anteriores: tres de no idempotencia
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. Los visuales de esta tanda no añaden ninguno.
-- **2163 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **532 celdas** que el gate ejecuta en cada build, y comprobadas **con las
+- **2181 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **537 celdas** que el gate ejecuta en cada build, y comprobadas **con las
   dos parejas de versiones** (ver el punto 5). El 22-09-2026 se rehízo el
   entorno de contraste —la limpieza de `/tmp` de macOS se había llevado su
-  `pyvenv.cfg` y casi todo numpy— y las 2163 vuelven a cuadrar en Python 3.8 con
+  `pyvenv.cfg` y casi todo numpy— y todas vuelven a cuadrar en Python 3.8 con
   numpy 1.24 y en Python 3.14 con numpy 2.5.3. **Al rehacerlo faltaba
   `scikit-learn`**, y el gate lo dijo en vez de callarse: las celdas que lo
   importan salieron como REVENTÓ, no como aprobadas.
-- Glosario: **429 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **432 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -2686,6 +2686,79 @@ no anclarlo.
 «la estacionariedad, sin la cual $\rho_h$ no es una sola función, es de Series
 de tiempo 2» disparaba el detector de la regla 14. Falso positivo del detector
 —el «es» era de otra oración—, pero la frase quedó mejor reescrita.
+
+---
+
+### 3.46 ML 29: lo que la lección 1 dejaba a medias (22-09-2026)
+
+Machine Learning 1 descompone el error en **un** punto y con polinomios. Esta
+lección promedia sobre el diseño, parte el sesgo en dos y enseña dónde la
+descomposición deja de servir.
+
+> **29.1**: la varianza del $k$-NN vale $\sigma^2/k$ **exactamente**, sea cual
+> sea $f$, y su traza vale $n/k$.
+
+La demostración ocupa dos renglones —la varianza de un promedio de $k$ variables
+incorreladas— y la medición la confirma: $0{,}159757$ contra $0{,}160000$ con un
+vecino, $0{,}007997$ contra $0{,}008000$ con veinte. Lo interesante es el enlace
+con ML 28: el número efectivo de parámetros del $k$-NN es $n/k$, de modo que
+**la traza de la lección anterior sale aquí de contar vecinos**.
+
+Con un vecino el sesgo es $0{,}000007$, o sea cero: el ajuste interpola. El
+fondo de la U resulta plano —$0{,}194514$ con cinco vecinos y $0{,}194581$ con
+diez—, lo que explica que errar el $k$ por poco cueste poco.
+
+#### El sesgo no es una cosa, son dos
+
+> **29.3**: sesgo total = sesgo de modelo + sesgo de estimación, punto a punto.
+
+El de modelo se queda clavado en $0{,}003944$ para los cinco valores de $\alpha$:
+mide la distancia entre $f$ y una clase que no ha cambiado. El de estimación
+arranca en $0{,}000000$ exacto —mínimos cuadrados apunta al mejor miembro de la
+clase— y sube a $0{,}188665$ mientras la varianza baja de $0{,}010667$ a
+$0{,}002810$. Ese $0{,}010667$ es $p\sigma^2/n$, que es la Proposición 28.3 otra
+vez.
+
+La lectura práctica es que **los dos sesgos se curan con cosas distintas**: el de
+estimación aflojando $\alpha$, el de modelo solo cambiando la clase, y ninguno
+de los dos con más datos.
+
+Un detalle de la regla 21b encontrado al releer: la lección usaba $p$ para el
+número de columnas en la sección 2 y para la probabilidad de la clase 1 en la
+3, dos secciones seguidas. El número de columnas pasó a $d$, que es como lo
+llama ML 28.
+
+#### Donde la descomposición deja de servir
+
+> **29.4**: con pérdida 0-1 y dos clases, el error en $x_0$ vale
+> $p+(1-2p)q$, con $q=P(\hat p(x_0)>1/2)$.
+
+El error es **afín en $q$**, y $q$ es lo único que ve de la distribución de
+$\hat p$. De ahí que un sesgo que empuje $\hat p$ hacia el lado correcto no
+cueste nada al clasificar y cueste cada vez más al medir distancias. Medido: el
+error cuadrático toca fondo con veinte vecinos y el 0-1 sigue bajando hasta
+cuarenta, donde el cuadrático es **9,51 veces el mínimo y aun así clasifica
+mejor**, a medio punto del suelo de Bayes.
+
+Y el extremo enseña lo contrario: con sesenta vecinos el promedio cae justo
+sobre $1/2$, el desempate manda todo a una clase y el error salta a
+$0{,}500000$. La curva del 0-1 no es una U sino una caída seguida de un
+desplome, y la caída no avisa.
+
+#### El contraste de versiones encontró un bit
+
+La primera versión elegía los vecinos por distancia. El gate de las dos
+versiones falló en una sola fila: $0{,}080589$ contra $0{,}080584$. La causa no
+era el promedio sino el umbral: **en la rejilla de sesenta puntos hay 518 pares
+de vecinos simétricos cuya distancia no empata en coma flotante**, así que el
+vecino elegido lo decidía el último bit, y después `p̂ > 0.5` lo amplificaba a un
+cambio de clase.
+
+La respuesta no fue dejar de imprimir el dígito. Sobre una rejilla uniforme los
+$k$ puntos más cercanos son los $k$ **índices** más cercanos, así que la
+vecindad se decide con enteros; y la clasificación compara `2*cuenta > k`, que
+también es entera. Con eso desaparecen el empate y la fragilidad, no solo el
+síntoma. Está anotado en el bloque de Fuentes de la lección.
 
 ---
 
