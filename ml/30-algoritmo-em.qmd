@@ -1,0 +1,732 @@
+---
+title: "El algoritmo EM"
+subtitle: "Machine Learning · Lección 30"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [estadistica/08-maxima-verosimilitud, ml/21-clustering, ml/29-sesgo-varianza-formal]
+siguientes: []
+libro: "ESL §8.5 The EM Algorithm"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - scikit-learn
+---
+
+::: {.meta-leccion data-leccion="ml/30-algoritmo-em"}
+[[L3]{.nivel .nivel-L3} **ESL 8**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ESL §8.5]{.item}
+[**Prereqs** [Máxima verosimilitud](../estadistica/08-maxima-verosimilitud.qmd) · [Clustering](21-clustering.qmd) · [Sesgo y varianza formal](29-sesgo-varianza-formal.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Escribir la verosimilitud de una [mezcla de gaussianas]{.g} y decir por qué no se deriva de frente.
+2. Escribir el paso E y el paso M, y programarlos en veinte líneas.
+3. **Demostrar que EM nunca baja la verosimilitud**, viéndolo como [ascenso por coordenadas]{.g data-t="ascenso por coordenadas"} sobre una cota que toca.
+4. **Demostrar que la verosimilitud de una mezcla no tiene máximo**, y medir cómo se va al infinito.
+5. Medir cuántos óptimos locales hay y con qué frecuencia un arranque al azar da con el mejor.
+6. **Demostrar que K-means es el límite de EM** cuando las componentes se estrechan.
+7. Empatar con `scikit-learn` a diez decimales, y decir qué hay que fijar para que ese empate sea posible.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Estadística 8**: la verosimilitud y su maximización, que aquí no se puede hacer derivando.
+- **Machine Learning 21**: K-means, que resultará ser el caso límite.
+- **Estadística 12**: la normal multivariante, cuya densidad es la pieza de cada componente.
+- **Matemática 16**: la convexidad y la desigualdad de Jensen, que sostiene la cota.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 34**: el clustering avanzado, donde la mezcla es el modelo generativo de referencia.
+- **Estadística 15**: los datos faltantes, que son el otro uso clásico del mismo algoritmo.
+- **Estadística 23**: el muestreo de Gibbs, que recorre la misma estructura de variables latentes por sorteo en vez de por promedio.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | El número de observaciones |
+| $K$ | ka mayúscula | El número de componentes |
+| $x_i$ | equis sub i | La observación $i$ |
+| $z_i$ | zeta sub i | La componente de la que salió $x_i$, no observada |
+| $\pi_k$ | pi sub ka | El peso de la componente $k$ |
+| $\mu_k,\sigma_k$ | mu y sigma sub ka | Su media y su desviación |
+| $\theta$ | theta | Todos los parámetros juntos |
+| $p(\cdot)$ | pe | Una densidad; $P(\cdot)$ con mayúscula, una probabilidad |
+| $\ell(\theta)$ | ele de theta | La log-verosimilitud observada |
+| $q_{ik}$ | cu sub i ka | La responsabilidad de la componente $k$ sobre $x_i$ |
+| $F(q,\theta)$ | efe de cu y theta | La cota inferior que EM maximiza |
+| $H(q)$ | hache de cu | La entropía de $q$ |
+:::
+
+## 1. La mezcla y el algoritmo
+
+::: {.definicion}
+**Definición 30.1 (mezcla de gaussianas).** Cada observación se genera en dos tiempos: primero se sortea una componente $z_i\in\{1,\dots,K\}$ con $P(z_i=k)=\pi_k$, y después se sortea $x_i\sim\mathcal{N}(\mu_{z_i},\sigma_{z_i}^2)$. Como $z_i$ no se observa, la densidad de lo que sí se ve es la suma
+$$p(x_i\mid\theta)=\sum_{k=1}^{K}\pi_k\,\mathcal{N}(x_i;\mu_k,\sigma_k^2),\qquad
+\ell(\theta)=\sum_{i=1}^{n}\log\sum_{k=1}^{K}\pi_k\,\mathcal{N}(x_i;\mu_k,\sigma_k^2).$$
+:::
+
+El obstáculo está a la vista: **un logaritmo de una suma**. Derivando, el logaritmo no se reparte entre los sumandos y las ecuaciones de score se enredan unas con otras. Si $z_i$ se conociera no habría problema, porque la verosimilitud completa sería una suma de logaritmos y cada componente se ajustaría por separado con los datos que le tocan.
+
+::: {.definicion}
+**Definición 30.2 (el algoritmo EM).** Partiendo de un $\theta$ cualquiera se repiten dos pasos:
+
+- **Paso E.** Calcular la [responsabilidad]{.g data-t="responsabilidad"} de cada componente sobre cada dato,
+  $$q_{ik}=P(z_i=k\mid x_i,\theta)=\frac{\pi_k\,\mathcal{N}(x_i;\mu_k,\sigma_k^2)}{\sum_{j}\pi_j\,\mathcal{N}(x_i;\mu_j,\sigma_j^2)} .$$
+- **Paso M.** Reajustar cada componente como si cada dato le perteneciera en la proporción $q_{ik}$:
+  $$n_k=\sum_i q_{ik},\quad \pi_k=\frac{n_k}{n},\quad
+  \mu_k=\frac{\sum_i q_{ik}x_i}{n_k},\quad
+  \sigma_k^2=\frac{\sum_i q_{ik}(x_i-\mu_k)^2}{n_k}.$$
+:::
+
+El paso M es la estimación de siempre con pesos: si las responsabilidades fueran ceros y unos, serían exactamente la media y la varianza de cada grupo.
+
+```{pyodide}
+import numpy as np
+
+def log_sum_exp(A):
+    """Suma de exponenciales en escala logaritmica, sin desbordar."""
+    m = A.max(axis=1, keepdims=True)
+    return (m + np.log(np.exp(A - m).sum(axis=1, keepdims=True)))[:, 0]
+
+def log_normal(x, mu, sd):
+    return -0.5 * np.log(2 * np.pi) - np.log(sd) - 0.5 * ((x - mu) / sd) ** 2
+
+def em(x, pi, mu, sd, pasos):
+    """Devuelve la verosimilitud de cada paso y los parametros finales."""
+    hist = []
+    for _ in range(pasos):
+        # paso E: la responsabilidad de cada componente sobre cada dato
+        L = np.log(pi) + log_normal(x[:, None], mu, sd)
+        tot = log_sum_exp(L)
+        hist.append(tot.sum())
+        r = np.exp(L - tot[:, None])
+        # paso M: cada componente se reajusta con esos pesos
+        nk = r.sum(axis=0)
+        pi = nk / len(x)
+        mu = (r * x[:, None]).sum(axis=0) / nk
+        sd = np.sqrt((r * (x[:, None] - mu) ** 2).sum(axis=0) / nk)
+    return np.array(hist), pi, mu, sd
+
+rng = np.random.default_rng(30)
+n = 1000
+pi_v, mu_v, sd_v = np.array([0.35, 0.65]), np.array([0.0, 3.0]), np.array([1.0, 0.8])
+z = rng.random(n) < pi_v[0]
+x = np.where(z, rng.normal(mu_v[0], sd_v[0], n), rng.normal(mu_v[1], sd_v[1], n))
+
+hist, pi, mu, sd = em(x, np.array([0.5, 0.5]), np.array([-2.0, 1.0]), np.array([3.0, 3.0]), 60)
+saltos = np.diff(hist)
+print("la verosimilitud sube en cada paso, y eso es un teorema, no una casualidad")
+print("  paso   log-verosimilitud     subida")
+for i in (0, 1, 2, 5, 10, 30, 59):
+    print("  %4d   %17.6f   %s" % (i, hist[i], "-" if i == 0 else "%.6f" % saltos[i - 1]))
+print()
+print("subidas negativas en 59 pasos: %d" % int((saltos < -1e-9).sum()))
+print("la mayor bajada observada es %.2e, o sea ninguna" % max(0.0, -saltos.min()))
+print()
+print("                 pi          mu          sigma")
+print("verdad    %9.4f  %10.4f  %11.4f" % (pi_v[0], mu_v[0], sd_v[0]))
+print("          %9.4f  %10.4f  %11.4f" % (pi_v[1], mu_v[1], sd_v[1]))
+print("EM        %9.4f  %10.4f  %11.4f" % (pi[0], mu[0], sd[0]))
+print("          %9.4f  %10.4f  %11.4f" % (pi[1], mu[1], sd[1]))
+```
+
+De un arranque deliberadamente malo, la verosimilitud pasa de $-2535{,}646645$ a $-1777{,}786097$ en sesenta pasos, y **no baja ni una sola vez**. El salto del primer paso vale $644{,}767669$ y el del último $0{,}000034$: el avance es enorme al principio y se agota despacio, que es la firma de la convergencia lineal.
+
+Los parámetros quedan en $\hat\pi_1=0{,}3458$ contra $0{,}35$, y $\hat\sigma_2=0{,}7665$ contra $0{,}8$. La media $\hat\mu_1=0{,}2148$ se aparta más de su $0{,}0$: con las dos componentes tan encabalgadas, los datos dicen poco sobre dónde acaba una y empieza la otra. Conviene retener que **EM maximiza la verosimilitud, no recupera la verdad**; que el máximo esté cerca de la verdad es cosa del problema, no del algoritmo.
+
+## 2. Por qué sube: una cota que toca
+
+La monotonía no es suerte ni un detalle de la mezcla. Sale de reescribir EM como la maximización de una sola función en dos bloques de variables.
+
+::: {.definicion}
+**Definición 30.3 (el objetivo de la maximización doble).** Para cualquier distribución $q$ sobre las componentes —un número $q_{ik}\ge 0$ por dato y componente, con $\sum_k q_{ik}=1$— sea
+$$F(q,\theta)=\sum_{i,k}q_{ik}\log p(x_i,z_i=k\mid\theta)\;+\;\underbrace{\Bigl(-\sum_{i,k}q_{ik}\log q_{ik}\Bigr)}_{H(q)} .$$
+El primer término es la verosimilitud completa promediada con $q$; el segundo es su entropía.
+:::
+
+::: {.proposicion}
+**Proposición 30.4 ($F$ es una cota que toca).** Para todo $q$ y todo $\theta$,
+$$F(q,\theta)\le\ell(\theta),$$
+con **igualdad** si y solo si $q_{ik}=P(z_i=k\mid x_i,\theta)$, que es justo lo que calcula el paso E.
+:::
+
+::: {.demostracion}
+*Demostración.* Escríbase $p(x_i,z_i=k\mid\theta)=p(x_i\mid\theta)\,P(z_i=k\mid x_i,\theta)$ y sepárese el logaritmo:
+$$F(q,\theta)=\sum_i\log p(x_i\mid\theta)+\sum_{i,k}q_{ik}\log\frac{P(z_i=k\mid x_i,\theta)}{q_{ik}}
+=\ell(\theta)-\sum_i D\bigl(q_i\,\|\,P(\cdot\mid x_i,\theta)\bigr),$$
+donde $D$ es la divergencia de Kullback-Leibler. Esta es no negativa y vale cero exactamente cuando las dos distribuciones coinciden, lo que da a la vez la desigualdad y el caso de igualdad. [∎]{.fin-demo}
+:::
+
+::: {.proposicion}
+**Proposición 30.5 (EM no baja la verosimilitud).** Sean $\theta_t$ los parámetros tras $t$ pasos. Entonces $\ell(\theta_{t+1})\ge\ell(\theta_t)$.
+:::
+
+::: {.demostracion}
+*Demostración.* El paso E fija $q_t$ igual a la posterior en $\theta_t$, de modo que $F(q_t,\theta_t)=\ell(\theta_t)$ por la Proposición 30.4. El paso M elige $\theta_{t+1}$ maximizando $F(q_t,\cdot)$, luego $F(q_t,\theta_{t+1})\ge F(q_t,\theta_t)$. Y otra vez por la Proposición 30.4, $\ell(\theta_{t+1})\ge F(q_t,\theta_{t+1})$. Encadenando,
+$$\ell(\theta_{t+1})\ \ge\ F(q_t,\theta_{t+1})\ \ge\ F(q_t,\theta_t)\ =\ \ell(\theta_t). \tag*{[∎]{.fin-demo}}$$
+:::
+
+Visto así, EM es **ascenso por coordenadas sobre $F$**: el paso E maximiza en $q$ con $\theta$ fijo, el paso M maximiza en $\theta$ con $q$ fijo. En el paso M la entropía $H(q)$ no depende de $\theta$, así que maximizar $F$ es maximizar la verosimilitud completa promediada, que es una suma de logaritmos y se resuelve a mano.
+
+```{pyodide}
+import numpy as np
+
+def log_sum_exp(A):
+    m = A.max(axis=1, keepdims=True)
+    return (m + np.log(np.exp(A - m).sum(axis=1, keepdims=True)))[:, 0]
+
+def log_normal(x, mu, sd):
+    return -0.5 * np.log(2 * np.pi) - np.log(sd) - 0.5 * ((x - mu) / sd) ** 2
+
+def conjunta(x, pi, mu, sd):
+    """log p(x_i, z=k) para cada dato y cada componente."""
+    return np.log(pi) + log_normal(x[:, None], mu, sd)
+
+def F(q, x, pi, mu, sd):
+    """El objetivo de la maximizacion doble: esperanza mas entropia."""
+    seguro = np.where(q > 0, q, 1.0)              # 0*log 0 = 0
+    return float((q * conjunta(x, pi, mu, sd)).sum() - (q * np.log(seguro)).sum())
+
+def verosimilitud(x, pi, mu, sd):
+    return float(log_sum_exp(conjunta(x, pi, mu, sd)).sum())
+
+rng = np.random.default_rng(30)
+n = 1000
+pi_v, mu_v, sd_v = np.array([0.35, 0.65]), np.array([0.0, 3.0]), np.array([1.0, 0.8])
+z = rng.random(n) < pi_v[0]
+x = np.where(z, rng.normal(mu_v[0], sd_v[0], n), rng.normal(mu_v[1], sd_v[1], n))
+
+pi, mu, sd = np.array([0.5, 0.5]), np.array([-2.0, 1.0]), np.array([3.0, 3.0])
+q = np.full((n, 2), 0.5)                          # una q cualquiera para empezar
+
+print("EM es subir en dos coordenadas por turnos: primero en q, luego en theta")
+print("  medio paso        F           log-verosimilitud   ¿F toca la verosimilitud?")
+iguales = True
+for paso in range(4):
+    # medio paso E: maximizar F en q con theta fijo. El optimo es la posterior
+    L = conjunta(x, pi, mu, sd)
+    q = np.exp(L - log_sum_exp(L)[:, None])
+    fe, ve = F(q, x, pi, mu, sd), verosimilitud(x, pi, mu, sd)
+    iguales = iguales and abs(fe - ve) < 1e-8
+    print("  %d E        %12.6f     %12.6f            %s" % (paso, fe, ve, "si" if abs(fe - ve) < 1e-8 else "no"))
+    # medio paso M: maximizar F en theta con q fijo. La entropia no depende de theta
+    nk = q.sum(axis=0)
+    pi = nk / n
+    mu = (q * x[:, None]).sum(axis=0) / nk
+    sd = np.sqrt((q * (x[:, None] - mu) ** 2).sum(axis=0) / nk)
+    fm, vm = F(q, x, pi, mu, sd), verosimilitud(x, pi, mu, sd)
+    print("  %d M        %12.6f     %12.6f            %s" % (paso, fm, vm, "si" if abs(fm - vm) < 1e-8 else "no"))
+print()
+print("tras cada paso E, F vale exactamente la log-verosimilitud: %s" % bool(iguales))
+print("tras cada paso M, F es mayor y la verosimilitud queda por encima de F.")
+print("de ahi sale el teorema: subir F nunca puede bajar la verosimilitud")
+```
+
+La tabla es la demostración en números. Después de cada paso E las dos columnas coinciden dígito a dígito —$-1890{,}878975$ y $-1890{,}878975$ en el paso 1— porque la cota toca. Después de cada paso M, $F$ ha subido y la verosimilitud está **por encima** de $F$: $-1874{,}329573$ contra $-1870{,}224378$. Ese hueco es lo que el siguiente paso E recupera, y es la razón de que la verosimilitud avance sin que nadie la maximice directamente.
+
+```{=html}
+<div class="viz-cota">
+  <div class="controles">
+    <label>θ actual <input id="ct-t" type="range" min="-2.2" max="2.2" step="0.05" value="-1.40"> <span id="ct-t-v">-1.40</span></label>
+    <label>Curvatura de la cota <input id="ct-c" type="range" min="1.2" max="6" step="0.1" value="1.60"> <span id="ct-c-v">1.60</span></label>
+  </div>
+  <svg id="ct-svg" viewBox="0 0 660 260" role="img" aria-label="La log-verosimilitud y la cota inferior que la toca en el punto actual, con el máximo de la cota marcado como siguiente iterado."></svg>
+  <p class="lectura" id="ct-lectura"></p>
+</div>
+<style>
+.viz-cota { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-cota .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-cota label { display: flex; align-items: center; gap: .4rem; }
+.viz-cota input[type=range] { width: 150px; padding: 0; }
+.viz-cota svg { width: 100%; height: auto; display: block; }
+.viz-cota .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("ct-svg"), lec = document.getElementById("ct-lectura");
+  var ct = document.getElementById("ct-t"), cc = document.getElementById("ct-c");
+  var et = document.getElementById("ct-t-v"), ec = document.getElementById("ct-c-v");
+  var X0 = 52, XW = 568, Y0 = 20, YH = 190, A = -2.4, B = 2.4, LO = -4.2, HI = 2.6;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // una log-verosimilitud de juguete, con un solo maximo y curvatura variable
+  function ele(t) { return 2 - 0.5 * (t - 0.7) * (t - 0.7) + 0.35 * Math.sin(2 * t); }
+  function dele(t) { return -(t - 0.7) + 0.7 * Math.cos(2 * t); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var t0 = +ct.value, c = +cc.value;
+    et.textContent = t0.toFixed(2); ec.textContent = c.toFixed(2);
+    var px = function (t) { return X0 + (t - A) / (B - A) * XW; };
+    var py = function (v) { return Y0 + (HI - Math.max(LO, Math.min(HI, v))) / (HI - LO) * YH; };
+    // la cota: toca en t0 con el mismo valor y la misma pendiente, y baja como una parabola
+    var cota = function (t) { return ele(t0) + dele(t0) * (t - t0) - c * (t - t0) * (t - t0); };
+    var t1 = t0 + dele(t0) / (2 * c);                     // donde la cota se maximiza
+    if (t1 < A) t1 = A; if (t1 > B) t1 = B;
+
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    var d1 = "", d2 = "", i, t;
+    for (i = 0; i <= 240; i++) {
+      t = A + (B - A) * i / 240;
+      d1 += (i ? " L" : "M") + px(t).toFixed(1) + " " + py(ele(t)).toFixed(1);
+      d2 += (i ? " L" : "M") + px(t).toFixed(1) + " " + py(cota(t)).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: d2, stroke: C_A, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("path", { d: d1, stroke: C_T, "stroke-width": 2.4, fill: "none" }));
+    svg.appendChild(el("circle", { cx: px(t0).toFixed(1), cy: py(ele(t0)).toFixed(1), r: 4, fill: C_T }));
+    svg.appendChild(el("circle", { cx: px(t1).toFixed(1), cy: py(cota(t1)).toFixed(1), r: 4, fill: C_A }));
+    svg.appendChild(el("path", { d: "M" + px(t1).toFixed(1) + " " + py(cota(t1)).toFixed(1) + " L" + px(t1).toFixed(1) + " " + py(ele(t1)).toFixed(1),
+      stroke: C_B, "stroke-width": 2.2 }));
+    svg.appendChild(el("circle", { cx: px(t1).toFixed(1), cy: py(ele(t1)).toFixed(1), r: 4, fill: C_B }));
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 14, "font-size": 10.5, fill: C_T }, "log-verosimilitud ℓ(θ)"));
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 27, "font-size": 10.5, fill: C_A }, "cota F(q, θ) del paso E"));
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 40, "font-size": 10.5, fill: C_B }, "lo que el siguiente paso E recupera"));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "θ"));
+
+    lec.innerHTML = "La cota toca en θ = <strong>" + t0.toFixed(2) + "</strong>, donde vale lo mismo que ℓ: " +
+      ele(t0).toFixed(4) + ". Maximizándola se llega a θ' = <strong>" + t1.toFixed(2) +
+      "</strong>, con cota " + cota(t1).toFixed(4) + " y verosimilitud <strong>" + ele(t1).toFixed(4) + "</strong>. " +
+      "La ganancia garantizada es la de la cota, " + (cota(t1) - ele(t0)).toFixed(4) +
+      ", y la real es <strong>" + (ele(t1) - ele(t0)).toFixed(4) + "</strong>, nunca menor. " +
+      "Una cota más cerrada sube menos por paso pero nunca se pasa; una más floja da pasos largos. " +
+      "En EM la curvatura no se elige: la pone el modelo.";
+  }
+  ct.addEventListener("input", dibujar);
+  cc.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Lo que EM no puede
+
+Que la verosimilitud suba siempre no dice adónde llega. Hay dos límites, y el primero es más severo de lo que suele contarse.
+
+::: {.proposicion}
+**Proposición 30.6 (la verosimilitud de una mezcla no tiene máximo).** Con $K\ge 2$ componentes y $n\ge 2$ datos distintos, fíjese $\mu_1=x_1$ y déjese $\sigma_1\to 0$ con $\pi_1>0$ fijo. Entonces $\ell(\theta)\to+\infty$.
+:::
+
+::: {.demostracion}
+*Demostración.* El sumando de $x_1$ contiene $\pi_1\mathcal{N}(x_1;x_1,\sigma_1^2)=\pi_1/(\sigma_1\sqrt{2\pi})$, que crece sin cota, así que $\log p(x_1\mid\theta)\ge\log\pi_1-\log\sigma_1-\tfrac12\log 2\pi\to+\infty$. Los demás sumandos están acotados por debajo por la contribución de las otras componentes, que no dependen de $\sigma_1$. La suma diverge. [∎]{.fin-demo}
+:::
+
+El corolario es incómodo: **«el estimador de máxima verosimilitud» de una mezcla no existe**. Lo que EM encuentra es un máximo local, y eso no es una limitación del algoritmo sino la única cosa sensata que se puede pedir.
+
+```{pyodide}
+import numpy as np
+
+def log_sum_exp(A, eje):
+    m = A.max(axis=eje, keepdims=True)
+    return m + np.log(np.exp(A - m).sum(axis=eje, keepdims=True))
+
+def log_normal(x, mu, sd):
+    return -0.5 * np.log(2 * np.pi) - np.log(sd) - 0.5 * ((x - mu) / sd) ** 2
+
+def verosimilitud(x, pi, mu, sd):
+    """Vale para un juego de parametros o para S juegos a la vez."""
+    L = np.log(pi)[..., None, :] + log_normal(x[:, None], mu[..., None, :], sd[..., None, :])
+    return log_sum_exp(L, -1)[..., 0].sum(axis=-1)
+
+def em_en_paralelo(x, pi, mu, sd, pasos):
+    """EM sobre S arranques a la vez: los arrays llevan el arranque en el eje 0."""
+    xc = x[None, :, None]
+    for _ in range(pasos):
+        L = np.log(pi)[:, None, :] + log_normal(xc, mu[:, None, :], sd[:, None, :])
+        r = np.exp(L - log_sum_exp(L, 2))
+        nk = r.sum(axis=1) + 1e-300
+        pi = nk / len(x)
+        mu = (r * xc).sum(axis=1) / nk
+        sd = np.maximum(np.sqrt((r * (xc - mu[:, None, :]) ** 2).sum(axis=1) / nk), 1e-3)
+    return pi, mu, sd
+
+rng = np.random.default_rng(30)
+n = 600
+u = rng.random(n)
+x = np.where(u < 0.35, rng.normal(0, 1, n),
+             np.where(u < 0.75, rng.normal(3, 0.8, n), rng.normal(5.5, 1.2, n)))
+
+print("1) la verosimilitud de una mezcla no tiene maximo")
+print("   una componente encima de x[0], estrechandose. Mientras sigma sea mayor")
+print("   que la distancia al dato vecino, el pico todavia los cubre a los dos;")
+print("   por debajo de eso empieza el regimen limpio.")
+print("   distancia de x[0] a su vecino mas cercano: %.6f"
+      % np.abs(np.sort(x) - x[0])[np.abs(np.sort(x) - x[0]) > 0].min())
+print("   sigma del pico   log-verosimilitud    subida por decada")
+ant = None
+for e in (-6, -8, -10, -12, -14):
+    s1 = 10.0 ** e
+    v = float(verosimilitud(x, np.array([0.05, 0.95]), np.array([x[0], x.mean()]),
+                            np.array([s1, x.std()])))
+    print("      1e%-3d        %14.6f        %s"
+          % (e, v, "-" if ant is None else "%.6f" % ((v - ant) / (ant_e - e))))
+    ant, ant_e = v, e
+print("   log(10) = %.6f: cada decada suma exactamente eso, y no para nunca" % np.log(10))
+print()
+
+print("2) EM encuentra un maximo LOCAL, y cual depende de donde empiece")
+print("   componentes   optimos distintos   veces que da con el mejor")
+S = 60
+for K in (2, 3, 4):
+    r2 = np.random.default_rng(1000 + K)
+    pi0 = np.full((S, K), 1.0 / K)
+    mu0 = r2.uniform(x.min(), x.max(), (S, K))
+    sd0 = r2.uniform(0.3, 3.0, (S, K))
+    pi, mu, sd = em_en_paralelo(x, pi0, mu0, sd0, 300)
+    fin = verosimilitud(x, pi, mu, sd)
+    mejor = fin.max()
+    distintos = 1 + int((np.diff(np.sort(fin)) > 0.01).sum())   # agrupa lo que dista menos de 0.01
+    print("        %d              %3d                 %3d de %d"
+          % (K, distintos, int((fin > mejor - 0.01).sum()), S))
+print()
+print("con dos componentes casi siempre acierta. Al crecer K se multiplican los")
+print("optimos locales y la mayoria de los arranques acaba en uno peor, asi que")
+print("en la practica EM se lanza muchas veces y se guarda el mejor")
+```
+
+La primera tabla mide la divergencia con precisión inesperada: las subidas por década valen $2{,}302581$, $2{,}302585$, $2{,}302585$ y $2{,}302585$, contra $\log 10=2{,}302585$. **Cada vez que $\sigma_1$ se divide por diez, la verosimilitud sube exactamente $\log 10$**, y nada impide seguir. La línea de la distancia al vecino más cercano, $0{,}000020$, explica por qué el régimen limpio empieza donde empieza: mientras el pico sea más ancho que esa distancia todavía cubre dos datos y la cuenta es otra.
+
+La segunda tabla mide el otro límite. Con dos componentes, $52$ de $60$ arranques al azar llegan al mejor óptimo; con tres, $26$; con cuatro, **$3$ de $60$**, y aparecen $26$ óptimos distintos. De ahí la costumbre de lanzar EM muchas veces y quedarse con el mejor, que no es un truco de implementación sino una consecuencia de la forma del problema.
+
+```{=html}
+<div class="viz-pico">
+  <div class="controles">
+    <label>σ del pico <input id="pk-s" type="range" min="-2.5" max="-0.1" step="0.05" value="-0.80"> <span id="pk-s-v">0.158</span></label>
+    <label>Peso del pico <input id="pk-w" type="range" min="0.02" max="0.3" step="0.01" value="0.10"> <span id="pk-w-v">0.10</span></label>
+  </div>
+  <svg id="pk-svg" viewBox="0 0 660 250" role="img" aria-label="Los datos marcados sobre el eje, la densidad de la mezcla con una componente estrecha sobre un solo dato, y el valor de la log-verosimilitud."></svg>
+  <p class="lectura" id="pk-lectura"></p>
+</div>
+<style>
+.viz-pico { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-pico .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-pico label { display: flex; align-items: center; gap: .4rem; }
+.viz-pico input[type=range] { width: 150px; padding: 0; }
+.viz-pico svg { width: 100%; height: auto; display: block; }
+.viz-pico .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("pk-svg"), lec = document.getElementById("pk-lectura");
+  var cs = document.getElementById("pk-s"), cw = document.getElementById("pk-w");
+  var es = document.getElementById("pk-s-v"), ew = document.getElementById("pk-w-v");
+  var X0 = 52, XW = 568, Y0 = 20, YH = 170, A = -3.2, B = 6.2, TOPE = 1.05;
+
+  // treinta datos fijos, generados una vez y escritos aquí para que el dibujo no dependa del azar
+  var datos = [-1.72, -1.18, -0.93, -0.61, -0.44, -0.21, -0.05, 0.12, 0.28, 0.47,
+               0.66, 0.81, 1.03, 1.24, 1.55, 2.11, 2.38, 2.62, 2.79, 2.91,
+               3.04, 3.18, 3.33, 3.51, 3.72, 3.95, 4.21, 4.58, 4.92, 5.41];
+  var PICO = datos[9];                       // el dato sobre el que se pone la componente estrecha
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function normal(v, mu, sd) { return Math.exp(-0.5 * Math.pow((v - mu) / sd, 2)) / (sd * Math.sqrt(2 * Math.PI)); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var sd1 = Math.pow(10, +cs.value), w = +cw.value;
+    es.textContent = sd1.toFixed(3); ew.textContent = w.toFixed(2);
+    var m2 = 0, s2 = 0, i;
+    for (i = 0; i < datos.length; i++) m2 += datos[i];
+    m2 /= datos.length;
+    for (i = 0; i < datos.length; i++) s2 += (datos[i] - m2) * (datos[i] - m2);
+    s2 = Math.sqrt(s2 / datos.length);
+    var dens = function (v) { return w * normal(v, PICO, sd1) + (1 - w) * normal(v, m2, s2); };
+    var px = function (v) { return X0 + (v - A) / (B - A) * XW; };
+    var py = function (v) { return Y0 + (TOPE - Math.max(0, Math.min(TOPE, v))) / TOPE * YH; };
+
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    var d = "";
+    for (i = 0; i <= 900; i++) { var v = A + (B - A) * i / 900; d += (i ? " L" : "M") + px(v).toFixed(1) + " " + py(dens(v)).toFixed(1); }
+    svg.appendChild(el("path", { d: d, stroke: C_T, "stroke-width": 2, fill: "none" }));
+    for (i = 0; i < datos.length; i++) {
+      svg.appendChild(el("path", { d: "M" + px(datos[i]).toFixed(1) + " " + (Y0 + YH) + " L" + px(datos[i]).toFixed(1) + " " + (Y0 + YH - 9),
+        stroke: datos[i] === PICO ? C_B : C_A, "stroke-width": datos[i] === PICO ? 2.6 : 1.4, opacity: datos[i] === PICO ? 1 : .75 }));
+    }
+    var ll = 0;
+    for (i = 0; i < datos.length; i++) ll += Math.log(dens(datos[i]));
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 14, "font-size": 10.5, fill: C_B }, "el dato bajo el pico"));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 22, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "los 30 datos"));
+
+    lec.innerHTML = "Con σ del pico = <strong>" + sd1.toFixed(3) + "</strong> y peso " + w.toFixed(2) +
+      ", la log-verosimilitud de los treinta datos vale <strong>" + ll.toFixed(4) + "</strong>. " +
+      "Estrechando el pico, el dato de debajo aporta cada vez más y los otros veintinueve no pierden nada: " +
+      "la suma <strong>no tiene tope</strong>. La curva se sale del marco enseguida porque la densidad en el pico " +
+      "vale " + (w * normal(PICO, PICO, sd1)).toFixed(2) + ", y el marco llega a " + TOPE.toFixed(2) + ".";
+  }
+  cs.addEventListener("input", dibujar);
+  cw.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. El límite duro: K-means
+
+::: {.proposicion}
+**Proposición 30.7 (K-means es el límite de EM).** Supóngase que todas las componentes comparten la misma desviación $\sigma$ y el mismo peso $\pi_k=1/K$. Cuando $\sigma\to 0$, la responsabilidad $q_{ik}$ tiende a $1$ para la componente con la media más cercana a $x_i$ y a $0$ para las demás. El paso M se convierte entonces en «la media de los puntos asignados», que es exactamente K-means.
+:::
+
+::: {.demostracion}
+*Demostración.* Con pesos y desviaciones comunes, los factores $\pi_k$ y $1/(\sigma\sqrt{2\pi})$ se cancelan en el cociente del paso E y queda
+$$q_{ik}=\frac{\exp\bigl(-(x_i-\mu_k)^2/2\sigma^2\bigr)}{\sum_j\exp\bigl(-(x_i-\mu_j)^2/2\sigma^2\bigr)} .$$
+Sea $k^\ast$ el índice de la media más cercana y supóngase que es única. Dividiendo arriba y abajo por el término $k^\ast$, cada otro término queda $\exp\bigl(-[(x_i-\mu_j)^2-(x_i-\mu_{k^\ast})^2]/2\sigma^2\bigr)$ con numerador positivo en el exponente negativo, de modo que tiende a cero cuando $\sigma\to0$. Luego $q_{ik^\ast}\to1$ y el resto a cero. Sustituyendo esas responsabilidades en la fórmula de $\mu_k$ del paso M se obtiene la media de los puntos asignados a $k$. [∎]{.fin-demo}
+:::
+
+Eso coloca a los dos algoritmos en una sola familia y explica sus parecidos: K-means también sube una función en cada paso, también depende del arranque y también se lanza varias veces. Lo que EM añade es la pertenencia gradual, y con ella componentes de anchuras distintas. El precio es que la anchura es un parámetro más que puede irse a cero, que es justo la Proposición 30.6.
+
+## 5. Contraste con la librería
+
+Esta lección es de nivel **L3**, y ese nivel promete implementar el resultado en NumPy puro y **empatar con la librería**. La celda enfrenta el EM de la sección 1 con `GaussianMixture` de `scikit-learn` sobre los mismos datos.
+
+El empate exige tres cuidados. Hay que darle a la librería **el mismo arranque**, porque el óptimo depende de él; hay que apagar `reg_covar`, que por omisión suma $10^{-6}$ a la varianza para evitar la Proposición 30.6; y hay que fijar **el mismo número de pasos** en vez de una tolerancia, por una razón que la propia celda mide al final.
+
+```{pyodide}
+import numpy as np
+from sklearn.mixture import GaussianMixture
+
+def log_sum_exp(A):
+    m = A.max(axis=1, keepdims=True)
+    return (m + np.log(np.exp(A - m).sum(axis=1, keepdims=True)))[:, 0]
+
+def log_normal(x, mu, sd):
+    return -0.5 * np.log(2 * np.pi) - np.log(sd) - 0.5 * ((x - mu) / sd) ** 2
+
+def verosimilitud(x, pi, mu, sd):
+    return float(log_sum_exp(np.log(pi) + log_normal(x[:, None], mu, sd)).sum())
+
+def em(x, pi, mu, sd, pasos):
+    for _ in range(pasos):
+        L = np.log(pi) + log_normal(x[:, None], mu, sd)
+        r = np.exp(L - log_sum_exp(L)[:, None])
+        nk = r.sum(axis=0)
+        pi = nk / len(x)
+        mu = (r * x[:, None]).sum(axis=0) / nk
+        sd = np.sqrt((r * (x[:, None] - mu) ** 2).sum(axis=0) / nk)
+    return pi, mu, sd
+
+rng = np.random.default_rng(30)
+n, PASOS = 1000, 300
+u = rng.random(n)
+x = np.where(u < 0.35, rng.normal(0.0, 1.0, n), rng.normal(3.0, 0.8, n))
+pi0, mu0, sd0 = np.array([0.5, 0.5]), np.array([-2.0, 1.0]), np.array([3.0, 3.0])
+
+# --- a mano, con el paso E y el paso M de la seccion 1 ---
+pi, mu, sd = em(x, pi0.copy(), mu0.copy(), sd0.copy(), PASOS)
+
+# --- la libreria, con el mismo arranque, los mismos pasos y sin regularizar ---
+g = GaussianMixture(n_components=2, covariance_type="full", tol=0.0, max_iter=PASOS,
+                    reg_covar=0.0, weights_init=pi0, means_init=mu0[:, None],
+                    precisions_init=(1.0 / sd0 ** 2)[:, None, None])
+g.fit(x[:, None])
+pil, mul, sdl = g.weights_, g.means_[:, 0], np.sqrt(g.covariances_[:, 0, 0])
+
+o, ol = np.argsort(mu), np.argsort(mul)
+print("                a mano                              scikit-learn")
+print("      pi            mu          sigma         pi            mu          sigma")
+for i in range(2):
+    a, b = o[i], ol[i]
+    print("  %.10f  %.10f  %.10f   %.10f  %.10f  %.10f"
+          % (pi[a], mu[a], sd[a], pil[b], mul[b], sdl[b]))
+dif = max(abs(pi[o] - pil[ol]).max(), abs(mu[o] - mul[ol]).max(), abs(sd[o] - sdl[ol]).max())
+print()
+print("empatan a diez decimales: %s" % bool(dif < 5e-11))
+print()
+
+# por que hace falta fijar los pasos: la verosimilitud es plana en el optimo
+mu_movida = mu.copy(); mu_movida[0] += 0.001
+print("verosimilitud en el optimo          : %.6f" % verosimilitud(x, pi, mu, sd))
+print("verosimilitud moviendo mu_1 en 0.001: %.6f" % verosimilitud(x, pi, mu_movida, sd))
+print()
+print("mover una media en una milesima cambia la verosimilitud en la cuarta cifra")
+print("decimal. Por eso, si cada implementacion para con su propio criterio sobre")
+print("la verosimilitud, los parametros pueden separarse mil veces mas que ella:")
+print("el empate exige fijar el arranque y el numero de pasos, no la tolerancia")
+```
+
+Las seis cantidades coinciden en los diez decimales impresos. El último bloque explica por qué el empate hay que provocarlo: mover $\mu_1$ una milésima cambia la verosimilitud de $-1777{,}785945$ a $-1777{,}786045$, o sea en la cuarta cifra decimal. Como la verosimilitud es cuadrática cerca del óptimo, **un error de $\varepsilon$ en los parámetros se nota como $\varepsilon^2$ en el objetivo**; parar cuando el objetivo deja de moverse deja los parámetros mucho menos determinados que el objetivo. Es la misma razón por la que la Proposición 29.4 avisaba de que no toda pérdida ordena igual: aquí el criterio de parada mide una cosa y el empate se juzga sobre otra.
+
+## 6. Lo que esta lección no resuelve
+
+- **La velocidad.** EM converge linealmente, y la tasa empeora cuanto más se solapan las componentes. Los métodos de segundo orden convergen más rápido, a cambio de calcular derivadas que EM evita.
+- **Cuántas componentes poner.** El número $K$ no se elige maximizando la verosimilitud, que siempre sube con $K$. Se elige con los criterios de Machine Learning 28.
+- **Las mezclas en varias dimensiones.** Todo está escrito en una variable; con varias, $\sigma_k^2$ pasa a ser una matriz de covarianza y el paso M sigue siendo el mismo promedio pesado, pero la Proposición 30.6 se vuelve peor: basta con degenerar una dirección.
+- **La regularización que la librería trae de fábrica.** `reg_covar` evita la divergencia sumando una constante a la varianza. Aquí se apaga para que el empate sea exacto; en un uso real conviene dejarla puesta y saber qué hace.
+- **Los errores estándar.** EM da el óptimo pero no su precisión; obtenerla exige la matriz de información observada, que el algoritmo no calcula por el camino.
+
+## Ejercicios
+
+### Ejercicio 1, El paso M con responsabilidades a mano
+
+Con la Definición 30.2, calcular el paso M para tres datos y dos componentes, partiendo de unas responsabilidades dadas.
+
+```{pyodide}
+#| exercise: ex_m
+import numpy as np
+
+x = np.array([1.0, 2.0, 6.0])
+q = np.array([[0.9, 0.1],
+              [0.8, 0.2],
+              [0.1, 0.9]])
+
+nk = ______
+pi = ______
+mu = ______
+
+print(np.round(nk, 6), np.round(pi, 6), np.round(mu, 6))
+round(float(mu[0]), 6)
+```
+
+::: {.hint exercise="ex_m"}
+$n_k$ es la suma de la columna $k$; $\pi_k=n_k/n$; y $\mu_k$ es el promedio de las $x$ pesado por esa columna.
+:::
+
+::: {.solution exercise="ex_m"}
+```{pyodide}
+import numpy as np
+
+x = np.array([1.0, 2.0, 6.0])
+q = np.array([[0.9, 0.1],
+              [0.8, 0.2],
+              [0.1, 0.9]])
+
+nk = q.sum(axis=0)
+pi = nk / len(x)
+mu = (q * x[:, None]).sum(axis=0) / nk
+
+print(np.round(nk, 6), np.round(pi, 6), np.round(mu, 6))
+round(float(mu[0]), 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_m
+#| check: true
+if abs(result - 1.722222) < 1e-5:
+    feedback = {"correct": True, "message": "Correcto: 1,722222. La primera componente se lleva casi todo el peso de los dos datos pequeños y casi nada del grande, así que su media queda entre 1 y 2. Con responsabilidades de ceros y unos esto sería la media del grupo, que es el paso de K-means.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 1.722222 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuánto sube el pico
+
+Con la Proposición 30.6, calcular cuánto crece la log-verosimilitud al estrechar la componente del pico, y comprobar que la subida por década es $\log 10$.
+
+```{pyodide}
+#| exercise: ex_pico
+from math import log, pi as PI
+
+peso = 0.05
+
+def aporte(sigma):
+    """El sumando del dato que está justo debajo del pico."""
+    return ______
+
+subida = aporte(1e-8) - aporte(1e-7)
+
+print(round(aporte(1e-7), 6), round(aporte(1e-8), 6))
+round(subida, 6)
+```
+
+::: {.hint exercise="ex_pico"}
+En $x_1$ la componente estrecha aporta $\pi_1/(\sigma\sqrt{2\pi})$, así que su logaritmo es $\log\pi_1-\log\sigma-\tfrac12\log 2\pi$.
+:::
+
+::: {.solution exercise="ex_pico"}
+```{pyodide}
+from math import log, pi as PI
+
+peso = 0.05
+
+def aporte(sigma):
+    """El sumando del dato que está justo debajo del pico."""
+    return log(peso) - log(sigma) - 0.5 * log(2 * PI)
+
+subida = aporte(1e-8) - aporte(1e-7)
+
+print(round(aporte(1e-7), 6), round(aporte(1e-8), 6))
+round(subida, 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_pico
+#| check: true
+if abs(result - 2.302585) < 1e-5:
+    feedback = {"correct": True, "message": "Correcto: 2,302585, que es log 10. No depende ni del peso ni del dato: cada década de sigma vale lo mismo, y por eso la verosimilitud no tiene tope.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 2.302585 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 30**:
+
+1. Comprobar la Proposición 30.7 numéricamente: correr EM con desviaciones comunes forzadas y hacerlas bajar, y verificar que las responsabilidades se vuelven ceros y unos y que la partición coincide con la de K-means. Anotar a partir de qué $\sigma$ las dos coinciden del todo.
+2. Repetir la segunda tabla de la sección 3 con la estrategia de la librería —varios arranques y quedarse con el mejor— y medir cuántos arranques hacen falta para que la probabilidad de fallar baje del uno por ciento con cuatro componentes.
+3. Aplicar EM a datos faltantes en vez de a una mezcla: con una normal bivariante y algunos valores ocultos, el paso E rellena con la esperanza condicional. Guardar en `50-Errores/` la comparación con eliminar las filas incompletas.
+
+## Del libro
+
+**ESL §8.5** presenta EM sobre el ejemplo de la mezcla de dos gaussianas, deriva el paso E y el paso M, y después lo reinterpreta como un procedimiento de maximización doble sobre una función que acota a la verosimilitud por debajo.
+
+Esta página sigue ese orden y añade dos cosas. La primera es medir la maximización doble en vez de dibujarla: una tabla donde se ve que la cota **toca** la verosimilitud tras cada paso E y se queda por debajo tras cada paso M, que es la demostración escrita en números. La segunda es la Proposición 30.6 con su medición: el libro menciona que la verosimilitud puede degenerar, y aquí se mide la velocidad exacta a la que lo hace, $\log 10$ por década de $\sigma$.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/algoritmo-em.md`, enlazada a [[maxima-verosimilitud]], [[clustering]] y [[seleccion-de-modelos]]. Conviene rehacer a mano la Proposición 30.4: separar el logaritmo de la conjunta ocupa dos renglones y deja grabado que **la diferencia entre la cota y la verosimilitud es una divergencia de Kullback-Leibler**, de donde sale todo lo demás sin esfuerzo.
+
+```
+¿Por qué no se deriva la verosimilitud de una mezcla?::Porque es un logaritmo de una suma, y no se reparte
+¿Qué calcula el paso E?::La responsabilidad de cada componente sobre cada dato
+¿Qué hace el paso M?::La media y la varianza de siempre, pesadas por esas responsabilidades
+¿Qué es F(q,θ)?::La verosimilitud completa promediada con q, más la entropía de q
+¿Qué relación hay entre F y la verosimilitud?::F ≤ ℓ siempre, con igualdad si q es la posterior
+¿Cuánto vale la diferencia?::La divergencia de Kullback-Leibler entre q y la posterior
+¿Por qué EM no baja nunca?::Porque sube una cota que toca: ℓ(θ') ≥ F(q,θ') ≥ F(q,θ) = ℓ(θ)
+¿Tiene máximo la verosimilitud de una mezcla?::No: poniendo una componente sobre un dato y estrechándola, va a infinito
+¿A qué velocidad diverge?::log 10 por cada década de sigma
+¿Qué encuentra EM entonces?::Un máximo local, que es lo único sensato que se puede pedir
+¿Qué es K-means en este lenguaje?::EM con desviaciones comunes en el límite sigma → 0
+¿Qué hay que fijar para empatar con la librería?::El arranque, el número de pasos y reg_covar = 0
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 30.4 se demuestra separando el logaritmo de la conjunta y reconociendo una divergencia de Kullback-Leibler; la 30.5 encadena esa desigualdad dos veces; la 30.6 acota por debajo el sumando del dato bajo el pico; la 30.7 divide numerador y denominador del paso E por el término más cercano. Todo se comprueba: sesenta pasos de EM sin una sola bajada, con la verosimilitud pasando de $-2535{,}646645$ a $-1777{,}786097$; la cota tocando la verosimilitud tras cada paso E; las subidas por década valiendo $2{,}302585$ contra $\log 10$; y $3$ de $60$ arranques dando con el mejor óptimo cuando hay cuatro componentes.
+
+**Lo que viene de los libros.** De **ESL §8.5** vienen el ejemplo de las dos gaussianas, la derivación de los dos pasos y la lectura de EM como maximización doble. El texto no se reproduce.
+
+**Lo que se usa de otras lecciones sin repetir.** La verosimilitud y su maximización son de Estadística 8. K-means es de Machine Learning 21. La densidad normal es de Estadística 12. La desigualdad de Jensen, de la que la no negatividad de la divergencia es un caso, es de Matemática 16.
+
+**Lo que se enuncia sin demostrar.** Que la divergencia de Kullback-Leibler sea no negativa y se anule solo en la igualdad se usa como conocido. Que EM converja —y no solo que no baje— exige condiciones sobre el espacio de parámetros que esta página no comprueba; lo que se demuestra es la monotonía, que es más débil.
+
+**Lo que es mío, no del libro.** Medir la maximización doble en vez de describirla, con la tabla de medios pasos donde la cota toca y se despega. Medir la velocidad de la divergencia de la Proposición 30.6 y encontrar que es exactamente $\log 10$ por década, junto con la observación de que el régimen limpio empieza por debajo de la distancia al dato vecino, $0{,}000020$ en este diseño. Y la parte final del contraste con la librería: que el empate exige fijar el número de pasos y no la tolerancia, porque un error $\varepsilon$ en los parámetros se nota como $\varepsilon^2$ en la verosimilitud.
+:::

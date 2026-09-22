@@ -2762,6 +2762,61 @@ síntoma. Está anotado en el bloque de Fuentes de la lección.
 
 ---
 
+### 3.47 ML 30: EM, y por qué el empate con la librería hay que provocarlo (22-09-2026)
+
+Primera lección **L3** de la tanda, así que lleva contraste con la librería. Y
+ahí apareció lo que más enseña.
+
+> **30.4**: $F(q,\theta)\le\ell(\theta)$ siempre, con igualdad si y solo si $q$
+> es la posterior.
+> **30.5**: de ahí, $\ell(\theta_{t+1})\ge F(q_t,\theta_{t+1})\ge F(q_t,\theta_t)=\ell(\theta_t)$.
+
+La demostración se escribió también **en números**: una tabla de medios pasos
+donde tras cada paso E las dos columnas coinciden dígito a dígito
+—$-1890{,}878975$ y $-1890{,}878975$— y tras cada paso M la cota se queda por
+debajo —$-1874{,}329573$ contra $-1870{,}224378$—. Ese hueco es justo lo que el
+siguiente paso E recupera. Sesenta pasos, ninguna bajada, de $-2535{,}646645$ a
+$-1777{,}786097$.
+
+#### La verosimilitud no tiene máximo, y se mide a qué velocidad
+
+> **30.6**: con $\mu_1=x_1$ y $\sigma_1\to0$, la verosimilitud diverge.
+
+Medido: las subidas por década valen $2{,}302581$ y luego $2{,}302585$ tres
+veces, contra $\log 10=2{,}302585$. **Cada división de $\sigma$ por diez suma
+exactamente $\log 10$, y no para.** El régimen limpio empieza por debajo de la
+distancia de $x_1$ a su vecino, $0{,}000020$ en ese diseño, y la celda imprime
+esa distancia para que se vea de dónde sale el codo de la tabla.
+
+El corolario es que **«el estimador de máxima verosimilitud» de una mezcla no
+existe**. Lo que EM encuentra es un máximo local, y con cuatro componentes
+solo **3 de 60** arranques al azar dan con el mejor.
+
+Y la Proposición 30.7 cierra el círculo con ML 21: K-means es EM con
+desviaciones comunes en el límite $\sigma\to0$, porque las responsabilidades se
+vuelven ceros y unos.
+
+#### Lo que costó empatar con scikit-learn
+
+Al principio el empate salía a **seis cifras, no a diez**, y la causa no era un
+error: cada implementación paraba con su propio criterio sobre la
+verosimilitud. `GaussianMixture` se detiene cuando la verosimilitud deja de
+moverse, y la verosimilitud es **cuadrática cerca del óptimo**, así que un error
+$\varepsilon$ en los parámetros se nota como $\varepsilon^2$ en el objetivo.
+Parar por el objetivo deja los parámetros mil veces menos determinados que él.
+
+La celda lo mide: mover $\mu_1$ una milésima lleva la verosimilitud de
+$-1777{,}785945$ a $-1777{,}786045$, o sea la cuarta cifra decimal. Con el mismo
+arranque, `tol=0.0`, el mismo número de pasos y `reg_covar=0`, las seis
+cantidades coinciden en los diez decimales impresos.
+
+Eso deja una regla para las lecciones L3 que vengan: **para empatar con una
+librería hay que fijar el número de pasos, no la tolerancia**, siempre que el
+objetivo sea plano en el óptimo. Y `reg_covar` merece nombrarse en la prosa:
+existe precisamente para tapar la Proposición 30.6.
+
+---
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
