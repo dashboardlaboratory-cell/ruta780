@@ -116,6 +116,7 @@ MIGRADAS = {
     "ml/25-least-angle-regression.qmd",
     "ml/26-metodos-lineales-clasificacion.qmd",
     "ml/27-expansiones-en-base.qmd",
+    "ml/28-seleccion-de-modelos.qmd",
     "series/01-descomposicion.qmd",
     "series/02-estacionariedad.qmd",
     "series/03-autocorrelacion.qmd",

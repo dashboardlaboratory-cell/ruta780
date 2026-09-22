@@ -106,16 +106,17 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 11 | 11 | **11 de 11** | — |
-| Machine Learning | 27 | 90 | **27 de 27** | ESL 7 a 15 y deep learning |
+| Machine Learning | 28 | 90 | **28 de 28** | el resto de ESL y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **81 lecciones** publicadas, **81** cumplen el molde nuevo: cero pendientes de
-  reescritura. Pendientes de **escribir** quedan 97 según el plan.
-- **Tres módulos cerrados**: Estadística 25/25, Álgebra 18/18 y **Python 16/16**.
+- **98 lecciones** publicadas, **98** cumplen el molde nuevo: cero pendientes de
+  reescritura. Pendientes de **escribir** quedan 76 según el plan.
+- **Cuatro módulos cerrados**: Estadística 25/25, Álgebra 18/18, Python 16/16 y
+  **Series de tiempo 11/11**, cerrado el 21-09-2026.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
   logística (§4.1–4.3, publicada), **04** modelos generativos (§4.4) y **05**
@@ -141,15 +142,20 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   marginales exactas, que es más fuerte que cualquier librería; y `np.trapz` se
   retiró del espacio de nombres en NumPy 2.0, así que las celdas nuevas no lo
   usan.
-- **171 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
+- **205 visuales** auditados por `visuales.py`; ningún fallo de la regla 19b.
   Siguen los mismos cuatro avisos, todos anteriores: tres de no idempotencia
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. Los visuales de esta tanda no añaden ninguno.
-- **1873 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **438 celdas** que el gate ejecuta en cada build, y comprobadas **con las
-  dos parejas de versiones** (ver el punto 5).
-- Glosario: **389 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- **2163 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **532 celdas** que el gate ejecuta en cada build, y comprobadas **con las
+  dos parejas de versiones** (ver el punto 5). El 22-09-2026 se rehízo el
+  entorno de contraste —la limpieza de `/tmp` de macOS se había llevado su
+  `pyvenv.cfg` y casi todo numpy— y las 2163 vuelven a cuadrar en Python 3.8 con
+  numpy 1.24 y en Python 3.14 con numpy 2.5.3. **Al rehacerlo faltaba
+  `scikit-learn`**, y el gate lo dijo en vez de callarse: las celdas que lo
+  importan salieron como REVENTÓ, no como aprobadas.
+- Glosario: **429 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -162,7 +168,12 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   marcadores del PDF oficial)**. Desde esa fecha `citas.py` admite **tres niveles**: se puede citar
   `ISLP §10.7.1 Backpropagation`. La función `rango()` se generalizó a cualquier profundidad, porque la anterior
   desempaquetaba dos valores del `split` y reventaba con el tercer nivel; se comprobó que los casos de dos niveles
-  siguen expandiéndose igual.
+  siguen expandiéndose igual. Y **ESL (18 capítulos y 134 secciones, traídas el
+  20-09-2026 con dos fuentes independientes** —los marcadores del PDF y el
+  índice impreso de las páginas 9 a 18— **porque los marcadores están
+  corrompidos**: meten tabuladores dentro de los números y pierden la sección
+  18.8. De las 133 comparables, 126 coinciden literalmente y las 7 restantes
+  difieren solo en los puntos suspensivos del impreso.
 
 Para el estado exacto en cualquier momento:
 
@@ -2582,6 +2593,99 @@ ningún número que cambie con la versión de la biblioteca.
 
 Eso convierte una nota al pie del libro —que las implementaciones usan
 B-splines— en **una lección sobre cómo se cita un número**.
+
+### 3.45 ML 28: de dónde sale el 2 de AIC (22-09-2026)
+
+Los criterios de información se suelen presentar como recetas con una constante
+puesta a mano. Esta lección los **deriva**, y el camino pasa por una identidad
+que casi nunca se comprueba.
+
+> **28.2**: el optimismo del error de entrenamiento vale
+> $\frac{2}{N}\sum_i\operatorname{Cov}(\hat y_i,y_i)$, **sin suponer nada
+> sobre el modelo**.
+
+> **28.3**: para un ajuste lineal $\hat y=Hy$ esa suma vale
+> $\sigma^2\operatorname{tr}(H)$, y para una proyección sobre $d$ columnas,
+> $d\sigma^2$.
+
+Medido sobre veinte mil repeticiones: la suma de covarianzas contra
+$d\sigma^2$ da cociente entre $0{,}995123$ y $1{,}008548$ en cuatro tamaños de
+modelo, y el optimismo sigue a $2d\sigma^2/N$. Con $d/N=1/4$ la fórmula da
+medio $\sigma^2$, y lo medido es $1{,}11933$ frente a $1{,}12500$.
+
+De ahí sale $C_p$ despejando, y AIC con él. **El $2$ es el $2$ de la
+Proposición 28.2**, no una constante de ajuste.
+
+#### El círculo que cierra con ML 27
+
+> **28.4**: para un suavizador $\hat y=Sy$, la misma cuenta da
+> $\sigma^2\operatorname{tr}(S)$.
+
+Cocientes entre $0{,}994545$ y $1{,}008602$, con trazas de $19{,}383$ a
+$1{,}491$. En ML 27 la traza apareció como la suma de los autovalores y se
+anunció como grados de libertad efectivos; aquí queda demostrado **por qué**
+merece ese nombre: es la cantidad exacta que el optimismo pide cuando no hay
+columnas que contar.
+
+#### «Consistente», convertido en tabla
+
+> **28.6**: BIC elige el modelo verdadero con probabilidad que tiende a uno;
+> AIC no.
+
+Mil repeticiones en cinco tamaños de muestra, con la verdad en tres columnas de
+diez candidatas:
+
+| $N$ | AIC acierta | BIC acierta |
+|---|---|---|
+| 50 | $0{,}6640$ | $0{,}9200$ |
+| 1600 | $0{,}7010$ | $0{,}9940$ |
+| 3200 | $0{,}6900$ | $0{,}9950$ |
+
+**AIC no mejora.** Se queda entre $0{,}6640$ y $0{,}7010$ por grande que sea la
+muestra, porque una columna inútil mejora el ajuste en algo del orden de una
+unidad y el $2$ de AIC tampoco crece. El $\log N$ de BIC sí.
+
+La lección dice en seguida lo que eso **no** significa: AIC estima error de
+predicción, no identifica el modelo verdadero. Cada criterio es óptimo para su
+pregunta.
+
+#### El tercer criterio del título
+
+La primera versión se llamaba «AIC, BIC y MDL derivados» y **no derivaba MDL**:
+lo nombraba en la lista de lo que la lección no resuelve. Un título que promete
+algo que la página no entrega es una cita inventada en pequeño, así que se
+escribió la sección.
+
+> **28.8**: con los parámetros transmitidos a precisión $1/\sqrt N$, la longitud
+> de descripción vale $\text{BIC}/2$.
+
+El $\tfrac12$ no se elige: sale de que el error de un estimador va como
+$1/\sqrt N$, y transmitir más decimales es pagar por dígitos que los datos no
+respaldan. Eso ordena los tres criterios en **dos familias** —bayesiana y de
+compresión dan la misma fórmula; predicción da otra— y explica por qué la tabla
+separa a AIC de BIC y no a BIC de MDL. La lección declara en Fuentes los dos
+ingredientes que da por buenos: el teorema de codificación de Shannon y la
+convención de la precisión.
+
+#### Lo que costó que la tabla existiera
+
+La primera versión ajustaba los diez modelos anidados uno a uno con `lstsq`:
+**8 m 41 s**. Con la descomposición QR el residuo de los diez modelos sale de
+una sola factorización —$\lVert y\rVert^2$ menos la suma acumulada de los
+coeficientes al cuadrado—, y baja a **11 s**. La celda comprueba antes que el
+atajo da lo mismo que ajustar cada modelo, porque un atajo sin oráculo es una
+suposición.
+
+El visual del optimismo empezó con un control de $\sigma$ y se quitó: como las
+dos curvas y el marco escalan todos con $\sigma^2$, mover ese control no movía
+nada. Es la regla 19b vista desde el otro lado —el marco no seguía a los datos,
+pero la cantidad dibujada era invariante—, y la respuesta fue quitar el control,
+no anclarlo.
+
+`verificar/formato.py` encontró además un retroceso en `series/03`: la frase
+«la estacionariedad, sin la cual $\rho_h$ no es una sola función, es de Series
+de tiempo 2» disparaba el detector de la regla 14. Falso positivo del detector
+—el «es» era de otra oración—, pero la frase quedó mejor reescrita.
 
 ---
 
