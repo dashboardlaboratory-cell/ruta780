@@ -3556,6 +3556,49 @@ revisa con `visuales.py --estricto ruta.qmd` nada más escribirla: la 7 y la 8
 salieron en verde a la primera, y el gate completo solo se lanzó una vez, antes
 de comitear.
 
+### 3.63 Fundamentos 9 y 10 (23-09-2026)
+
+**Fundamentos 9, «Cadenas de texto».** 3 def / 6 prop / 6 dem. Tres cosas que se
+demuestran en vez de enunciarse:
+
+· `split()` y `split(' ')` sobre `'uno   dos  tres'` dan **3** y **6** trozos.
+Y partir por un separador exacto da siempre **un trozo más** que separadores,
+contando los vacíos: `',a,b,'` da 4 para 3 comas, y volver a unirlos reconstruye
+el original exacto.
+
+· El orden de las cadenas es por **código**, no alfabético: `'Zapato' < 'ala'`
+es verdadero, y la celda lo justifica exhibiendo `ord('Z') = 90` y
+`ord('a') = 97` en vez de afirmarlo.
+
+· Concatenar con `+` en un bucle copia **35 caracteres** para producir 21. El
+coste queda contado, no advertido, y enlaza con la Proposición 8.9.
+
+**Un forward-reference cazado a tiempo.** El primer borrador ordenaba con
+`sorted(xs, key=str.lower)`, que pasa una función como valor —la Lección 10—.
+Se sustituyó por `ord` y una comparación explícita de las dos cadenas ya en
+minúsculas. La regla del módulo se sostiene sola si se relee cada celda
+preguntando «¿esto ya está enseñado?».
+
+**Fundamentos 10, «Funciones».** 3 def / 7 prop / 7 dem. Es la lección que el
+módulo llevaba nueve lecciones evitando a propósito, y por eso puede apoyarse en
+todo lo anterior: devolver varios valores **es devolver una tupla** (Prop. 6.2),
+`*args` y `**kwargs` son el desempaquetado de la Definición 6.4 visto desde el
+otro lado, y modificar un argumento mutable se ve fuera por la Proposición 4.9.
+
+**Una sección entera para el defecto mutable**, no una advertencia al margen.
+Tres llamadas a una función con `destino=[]` devuelven `[1]`, `[1, 2]` y
+`[1, 2, 3]`; con `destino=None` devuelven `[1]`, `[2]` y `[3]`. Se le dedica
+sección propia porque **produce resultados plausibles**, y por eso sobrevive
+meses sin que nadie lo note. El arreglo usa `is None` y no `if not destino`, por
+la Proposición 2.10, y la lección lo dice.
+
+**El patrón del §3.61, por cuarta vez.** El control `df-t` del segundo visual
+fallaba con cero llamadas, porque ahí los dos modos pintaban lo mismo. Arreglado
+dibujando **el objeto del defecto** aparte: con `[]` existe desde antes de la
+primera llamada y crece; con `None` no existe ninguno. Ya conviene escribirlo de
+entrada así: **un control tiene que mover algo con los demás en su posición
+inicial**, y lo que se mueve es dónde está algo, no su tamaño.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
