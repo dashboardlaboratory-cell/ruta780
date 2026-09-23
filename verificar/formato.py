@@ -153,6 +153,7 @@ MIGRADAS = {
     "python/14-series-de-tiempo.qmd",
     "python/15-rendimiento.qmd",
     "python/16-anatomia-de-un-proyecto.qmd",
+    "python/17-clases-y-protocolos.qmd",
     "matematica/01-vectores-y-espacios.qmd",
     "matematica/02-matriz-como-transformacion.qmd",
     "matematica/03-espacio-columna.qmd",

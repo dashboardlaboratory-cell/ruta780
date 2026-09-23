@@ -1,0 +1,794 @@
+---
+title: "Clases, objetos y protocolos"
+subtitle: "Python · Lección 17"
+nivel: L4
+modulo: python
+fase: F2
+prereqs: [python/01-tipos-y-estructuras, python/02-funciones-y-scope, python/03-comprehensions]
+siguientes: []
+libro: "—"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="python/17-clases-y-protocolos"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F2]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Objetos y nombres](01-tipos-y-estructuras.qmd) · [Ámbito y cierres](02-funciones-y-scope.qmd) · [Iteradores](03-comprehensions.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Demostrar el contrato del hash** y ver qué le pasa a un diccionario cuando se rompe.
+2. Explicar por qué definir `__eq__` sin `__hash__` deja a la clase fuera de los diccionarios.
+3. **Demostrar que `for`, `len` e `in` no piden una lista**, sino tres métodos, y escribir una clase que los cumpla sin guardar nada.
+4. **Demostrar que `__slots__` quita el diccionario de instancia**, y medir que el objeto deja de crecer.
+5. Leer el [orden de resolución de métodos]{.g data-t="orden de resolución de métodos"} de una jerarquía y decir qué atributo gana.
+6. **Demostrar que el cuerpo de una clase se ejecuta una sola vez**, y reconocer el error de compartir un mutable.
+7. Decir exactamente qué genera `@dataclass` y qué añade `frozen`.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 1**: qué exige un diccionario de sus claves, que aquí se cumple a mano.
+- **Python 2**: que el cuerpo de una función por defecto se evalúa una vez, que aquí se repite con el cuerpo de la clase.
+- **Python 3**: el protocolo de iteración, que aquí se implementa en vez de usarse.
+- **Python 15**: el coste de cada estructura, que aquí se decide al escribir la clase.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 18**: los decoradores, que son funciones que envuelven y aquí aparecen como `@dataclass`.
+- **Python 19**: el tipado gradual, que anota justamente estas clases.
+- **Python 23**: Parquet y Arrow, cuyas bibliotecas se usan a través de objetos con estos protocolos.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| `__eq__` | dunder eq | El método que decide si dos objetos son iguales |
+| `__hash__` | dunder hash | El que devuelve el entero con el que un dict coloca la clave |
+| `__iter__` | dunder iter | El que devuelve un iterador sobre el objeto |
+| `__len__` | dunder len | El que responde a `len()` |
+| `__contains__` | dunder contains | El que responde al operador `in` |
+| `__slots__` | dunder slots | La lista cerrada de atributos de una instancia |
+| `__mro__` | dunder mro | El orden en que se buscan los atributos |
+| `__dict__` | dunder dict | El diccionario donde una instancia guarda sus atributos |
+:::
+
+## 1. La igualdad y el hash van juntas
+
+::: {.definicion}
+**Definición 17.1 (clase, instancia y atributo).** Una **clase** es un objeto que sirve de fábrica y de espacio de nombres. Sus **atributos de clase** se escriben en el cuerpo y son únicos; los **atributos de instancia** se crean al asignarlos sobre una instancia, normalmente dentro de `__init__`, y hay uno por instancia.
+:::
+
+::: {.definicion}
+**Definición 17.2 (método especial y protocolo).** Un **método especial** es uno cuyo nombre lleva dobles guiones bajos a ambos lados y que el lenguaje busca por su cuenta: nadie lo llama, lo llaman `==`, `len`, `for` o `in`. Un **protocolo** es el conjunto de métodos especiales que una operación necesita. Cumplirlo basta; **no hace falta heredar de nada**, y esa es la diferencia con las interfaces de otros lenguajes.
+:::
+
+Un diccionario coloca cada clave en una cubeta elegida con su hash y, dentro de la cubeta, compara con `==`. De ahí sale una obligación que el lenguaje no puede comprobar por su cuenta.
+
+::: {.proposicion}
+**Proposición 17.3 (el contrato del hash).** Si $a=b$ entonces `hash(a)` debe ser igual a `hash(b)`. En consecuencia:
+
+1. definir `__eq__` sin definir `__hash__` deja la clase **sin hash**, y sus instancias no pueden ser claves;
+2. si se define un `__hash__` que mira algo que `__eq__` ignora, el diccionario guarda **dos entradas para claves iguales** y buscar una falla.
+:::
+
+::: {.demostracion}
+*Demostración.* Para (1): el `__hash__` heredado de `object` devuelve un valor derivado de la identidad, así que dos objetos distintos pero iguales según un `__eq__` que mire contenido tendrían hashes distintos y violarían el contrato. Python evita ese estado retirando el método: al definir `__eq__` pone `__hash__` en `None`, y llamar a `hash()` levanta `TypeError`.
+
+Para (2): al insertar, el diccionario calcula el hash y elige cubeta; solo compara con `==` dentro de esa cubeta. Si `hash(a)≠hash(b)` con $a=b$, las dos claves caen en cubetas distintas y la comparación nunca ocurre, de modo que ambas se guardan. Buscar $b$ mira la cubeta de $b$ y no encuentra a $a$. [∎]{.fin-demo}
+:::
+
+**Modo de falla.** Una caché con objetos propios como clave que crece sin límite y nunca acierta. Cada consulta calcula un hash distinto del que se guardó, así que el dato se vuelve a calcular y se vuelve a guardar; el programa funciona, solo que la caché no cachea y la memoria sube. No hay excepción ni aviso: el diccionario hace exactamente lo que se le pidió.
+
+```{pyodide}
+class Punto:
+    """Sin __eq__: dos puntos son iguales solo si son el MISMO objeto."""
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+class PuntoIgual:
+    """Con __eq__ y sin __hash__: Python retira el hash heredado."""
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+    def __eq__(self, otro):
+        return (self.x, self.y) == (otro.x, otro.y)
+
+class PuntoCompleto:
+    """Con los dos, y coherentes entre si."""
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+    def __eq__(self, otro):
+        return (self.x, self.y) == (otro.x, otro.y)
+    def __hash__(self):
+        return hash((self.x, self.y))
+
+class PuntoRoto:
+    """Los dos, pero el hash mira algo que la igualdad no mira."""
+    _serie = 0
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+        PuntoRoto._serie += 1
+        self._n = PuntoRoto._serie
+    def __eq__(self, otro):
+        return (self.x, self.y) == (otro.x, otro.y)
+    def __hash__(self):
+        return hash(self._n)
+
+def se_puede_hashear(o):
+    try:
+        hash(o); return True
+    except TypeError:
+        return False
+
+print("que pasa al definir __eq__ y olvidar __hash__")
+print("  clase            a == b    se puede hashear    claves en un dict con a y b")
+for C in (Punto, PuntoIgual, PuntoCompleto, PuntoRoto):
+    a, b = C(1, 2), C(1, 2)
+    hashea = se_puede_hashear(a)
+    if hashea:
+        d = {}
+        d[a] = "primero"; d[b] = "segundo"
+        claves = len(d)
+    else:
+        claves = "-"
+    print("  %-15s  %-8s  %-18s  %s" % (C.__name__, a == b, hashea, claves))
+print()
+print("Punto      : sin __eq__ compara identidad, asi que a y b son distintos")
+print("PuntoIgual : al definir __eq__, Python pone __hash__ en None y la")
+print("             instancia deja de servir como clave. El lenguaje lo hace a")
+print("             proposito: un hash heredado seria incoherente con la igualdad")
+print("PuntoCompleto: los dos coherentes, y el dict guarda UNA clave")
+print("PuntoRoto  : el hash mira un numero de serie que la igualdad ignora, asi")
+print("             que dos claves iguales caen en cubetas distintas y el dict")
+print("             guarda DOS. Nadie avisa: el diccionario simplemente miente")
+print()
+
+# lo que se pierde al romper el contrato: buscar deja de encontrar
+d = {}
+a, b = PuntoRoto(3, 4), PuntoRoto(3, 4)
+d[a] = "valor"
+print("con PuntoRoto, a == b vale %s pero b in d vale %s" % (a == b, b in d))
+c = PuntoCompleto(3, 4)
+e = {c: "valor"}
+print("con PuntoCompleto, la misma busqueda da %s" % (PuntoCompleto(3, 4) in e))
+```
+
+Las cuatro filas son los cuatro estados posibles. `Punto` compara por identidad, así que dos puntos con las mismas coordenadas son claves distintas y el diccionario guarda **dos**, cosa que al menos es coherente. `PuntoIgual` no se puede hashear. `PuntoCompleto` guarda **una**. Y `PuntoRoto` guarda **dos claves iguales**, que es el único de los cuatro que miente.
+
+Las dos últimas líneas lo dicen sin adornos: con `PuntoRoto`, `a == b` vale `True` y `b in d` vale `False`. Ninguna excepción, ningún aviso.
+
+```{=html}
+<div class="viz-cubetas">
+  <div class="controles">
+    <label>Cubetas <input id="cu-n" type="range" min="4" max="12" step="1" value="8"> <span id="cu-n-v">8</span></label>
+    <label>El hash respeta la igualdad
+      <select id="cu-c">
+        <option value="si" selected>sí, como debe</option>
+        <option value="no">no, mira otra cosa</option>
+      </select>
+    </label>
+  </div>
+  <svg id="cu-svg" viewBox="0 0 660 260" role="img" aria-label="Las cubetas de un diccionario y dónde cae cada clave, con dos claves iguales cayendo juntas o separadas según el hash respete la igualdad."></svg>
+  <p class="lectura" id="cu-lectura"></p>
+</div>
+<style>
+.viz-cubetas { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-cubetas .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-cubetas label { display: flex; align-items: center; gap: .4rem; }
+.viz-cubetas input[type=range] { width: 150px; padding: 0; }
+.viz-cubetas select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-cubetas svg { width: 100%; height: auto; display: block; }
+.viz-cubetas .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("cu-svg"), lec = document.getElementById("cu-lectura");
+  var cn = document.getElementById("cu-n"), cc = document.getElementById("cu-c");
+  var en = document.getElementById("cu-n-v");
+  // cinco claves: las dos primeras son IGUALES entre si
+  var CLAVES = [{t: "(1,2)", h: 37, serie: 1}, {t: "(1,2)", h: 37, serie: 2},
+                {t: "(3,4)", h: 91, serie: 3}, {t: "(5,6)", h: 14, serie: 4},
+                {t: "(7,8)", h: 60, serie: 5}];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var N = +cn.value, coherente = cc.value === "si";
+    en.textContent = N;
+    var ancho = 600 / N, Y0 = 60, ALTO = 120;
+    var dentro = [];
+    var i, j;
+    for (i = 0; i < N; i++) dentro.push([]);
+    for (i = 0; i < CLAVES.length; i++) {
+      var h = coherente ? CLAVES[i].h : CLAVES[i].h * 7 + CLAVES[i].serie * 13;
+      dentro[h % N].push({t: CLAVES[i].t, i: i});
+    }
+    for (i = 0; i < N; i++) {
+      var x = 30 + i * ancho;
+      svg.appendChild(el("rect", { x: x.toFixed(1), y: Y0, width: (ancho - 6).toFixed(1), height: ALTO,
+        fill: "none", stroke: C_L, "stroke-width": 1.2 }));
+      svg.appendChild(el("text", { x: (x + (ancho - 6) / 2).toFixed(1), y: Y0 + ALTO + 16, "text-anchor": "middle",
+        "font-size": 10, fill: C_T, opacity: .6 }, i + ""));
+      for (j = 0; j < dentro[i].length; j++) {
+        var k = dentro[i][j], repetida = k.i < 2;
+        svg.appendChild(el("rect", { x: (x + 3).toFixed(1), y: (Y0 + ALTO - 24 - j * 26).toFixed(1),
+          width: (ancho - 12).toFixed(1), height: 22, fill: repetida ? C_B : C_A, opacity: .5 }));
+        svg.appendChild(el("text", { x: (x + (ancho - 6) / 2).toFixed(1), y: (Y0 + ALTO - 9 - j * 26).toFixed(1),
+          "text-anchor": "middle", "font-size": 10, fill: C_T }, k.t));
+      }
+    }
+    svg.appendChild(el("text", { x: 30, y: 30, "font-size": 10.5, fill: C_B }, "las dos claves iguales, (1,2) y (1,2)"));
+    svg.appendChild(el("text", { x: 30, y: 44, "font-size": 10.5, fill: C_A }, "las demás, distintas entre sí"));
+    svg.appendChild(el("text", { x: 630, y: Y0 + ALTO + 16, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .6 }, "cubeta"));
+
+    var juntas = false;
+    for (i = 0; i < N; i++) {
+      var cuantas = 0;
+      for (j = 0; j < dentro[i].length; j++) if (dentro[i][j].i < 2) cuantas++;
+      if (cuantas === 2) juntas = true;
+    }
+    lec.innerHTML = "Con <strong>" + N + "</strong> cubetas y un hash " + (coherente ? "coherente" : "incoherente") +
+      " con la igualdad, las dos claves iguales caen " +
+      (juntas ? "<strong>en la misma cubeta</strong>: el diccionario las compara con == y guarda una sola."
+              : "<strong>en cubetas distintas</strong>: el diccionario nunca las compara y guarda las dos.") +
+      " Cambiar el número de cubetas mueve todo de sitio y no arregla nada: " +
+      "si el hash no respeta la igualdad, tarde o temprano separa lo que debería juntar. " +
+      "Por eso el contrato es sobre el hash y no sobre el tamaño de la tabla.";
+  }
+  cn.addEventListener("input", dibujar);
+  cc.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. `for`, `len` e `in` no piden una lista
+
+::: {.proposicion}
+**Proposición 17.4 (los protocolos).** `for x in o` no exige que `o` sea una secuencia: llama a `iter(o)`, que busca `type(o).__iter__`. Del mismo modo `len(o)` busca `__len__` y `x in o` busca `__contains__`, y solo si no lo encuentra recorre con `__iter__`. Un objeto que defina esos tres métodos se comporta como una colección **sin guardar sus elementos**.
+:::
+
+::: {.demostracion}
+*Demostración.* Es la definición de los protocolos en el lenguaje: las funciones y sentencias incorporadas están escritas contra esos métodos y no contra un tipo concreto. Que sea suficiente se comprueba construyendo la clase; que sea necesario se ve en que retirar `__iter__` hace fallar al `for`. [∎]{.fin-demo}
+:::
+
+::: {.definicion}
+**Definición 17.5 (`__slots__`).** Escribir `__slots__ = ("a", "b")` en el cuerpo de una clase declara de antemano los únicos atributos que sus instancias tendrán. Python les reserva un hueco fijo en el objeto en lugar de darle a cada instancia un diccionario.
+:::
+
+::: {.proposicion}
+**Proposición 17.6 (lo que ahorra `__slots__`).** Una instancia con `__slots__` **no tiene `__dict__`**, de modo que su tamaño queda fijado al definir la clase y no depende de cuántos datos represente. A cambio, asignar un atributo no declarado levanta `AttributeError`.
+:::
+
+::: {.demostracion}
+*Demostración.* Sin `__slots__`, cada instancia lleva un diccionario donde guarda sus atributos, y un diccionario crece al añadirle claves. Con `__slots__`, el tipo reserva descriptores para los nombres declarados y el objeto guarda los valores en posiciones fijas; al no existir el diccionario, no hay dónde poner un nombre que no estuviera declarado. [∎]{.fin-demo}
+:::
+
+**Modo de falla.** Escribir `__iter__` y olvidar `__len__`, y descubrirlo tarde porque muchas funciones sobreviven sin él. `list(o)` funciona, `sum(o)` funciona, y `len(o)` levanta `TypeError` el día que alguien lo llama. El caso peor es el contrario: definir `__len__` y que devuelva cero por un caso borde, porque entonces el objeto se vuelve **falso** en una condición y un `if o:` lo trata como vacío sin que nadie lo haya pedido.
+
+```{pyodide}
+import sys
+
+class Rango:
+    """Una sucesion aritmetica que NO guarda sus elementos. Implementa cuatro
+    metodos y con eso funciona en for, sum, len, in y al desempaquetar.
+    __slots__ fija de antemano los atributos: la instancia no lleva diccionario
+    y su tamano queda cerrado."""
+    __slots__ = ("desde", "hasta", "paso")
+    def __init__(self, desde, hasta, paso=1):
+        self.desde, self.hasta, self.paso = desde, hasta, paso
+    def __len__(self):
+        return max(0, -(-(self.hasta - self.desde) // self.paso))
+    def __iter__(self):
+        v = self.desde
+        while v < self.hasta:
+            yield v
+            v += self.paso
+    def __contains__(self, x):
+        return (self.desde <= x < self.hasta) and (x - self.desde) % self.paso == 0
+    def __repr__(self):
+        return "Rango(%d, %d, %d)" % (self.desde, self.hasta, self.paso)
+
+r = Rango(0, 10, 2)
+print("un objeto que no es una lista y se comporta como una")
+print("  repr            : %r" % r)
+print("  len(r)          : %d" % len(r))
+print("  list(r)         : %s" % list(r))
+print("  sum(r)          : %d" % sum(r))
+print("  max(r)          : %d" % max(r))
+print("  6 in r          : %s" % (6 in r))
+print("  7 in r          : %s" % (7 in r))
+a, b, *resto = r
+print("  al desempaquetar: a=%d b=%d resto=%s" % (a, b, resto))
+print()
+print("  for, sum, max y list no saben nada de listas: piden __iter__ y se")
+print("  conforman. len pide __len__ y el operador in prueba antes __contains__")
+print()
+
+# lo que se ahorra: el objeto no crece con el numero de elementos
+print("lo que ocupa cada cosa, en bytes")
+print("      elementos     lista     Rango")
+for n in (10, 1000, 100000):
+    lista = list(range(0, n, 1))
+    rg = Rango(0, n, 1)
+    print("  %12d  %8d  %8d" % (n, sys.getsizeof(lista), sys.getsizeof(rg)))
+print()
+print("la lista crece con n y el objeto no se mueve: con __slots__ ocupa 56")
+print("bytes siempre, porque guarda tres numeros y una regla para generar el")
+print("resto. Es la idea de los generadores de la leccion 3 puesta en una clase")
+print()
+
+# el operador in sin __contains__ recorre; con __contains__ decide
+class RangoLento(Rango):
+    """El mismo, pero con un __contains__ que recorre en vez de calcular."""
+    def __contains__(self, x):
+        for v in self:
+            if v == x:
+                return True
+        return False
+
+grande = Rango(0, 2000000, 1)
+lento = RangoLento(0, 2000000, 1)
+print("  1999998 in Rango      -> %s   (una cuenta, sin recorrer)" % (1999998 in grande))
+print("  1999998 in RangoLento -> %s   (recorre dos millones de valores)" % (1999998 in lento))
+print()
+print("los dos dan la misma respuesta. La diferencia es que uno responde con una")
+print("division y el otro recorre: implementar __contains__ no anade una funcion")
+print("nueva, cambia el coste de una que ya existia")
+```
+
+La primera mitad enseña lo que se compra: ocho funciones y sentencias distintas funcionan sobre un objeto que no es una lista, porque todas están escritas contra los protocolos. La segunda mide el precio: la lista pasa de $136$ a $800\,056$ bytes mientras el `Rango` se queda en **$56$ siempre**, porque `__slots__` le quita el diccionario de instancia y solo guarda tres números.
+
+La última parte es la más útil en la práctica. Las dos clases responden lo mismo a `1999998 in r`; una lo hace con una división y la otra recorriendo dos millones de valores. **Definir `__contains__` no añade una operación, cambia el coste de una que ya existía**, y esa es la razón de implementarlo aunque `__iter__` ya lo haga funcionar.
+
+## 3. De dónde sale un atributo
+
+::: {.proposicion}
+**Proposición 17.7 (orden de resolución).** Al pedir un atributo, Python recorre las clases en el orden de `type(o).__mro__`, que se calcula con la linealización C3. Ese orden cumple dos reglas: una clase aparece antes que sus bases, y se respeta el orden en que las bases se escribieron. Si no existe ningún orden que cumpla las dos, **la clase no se puede crear** y la definición levanta `TypeError`.
+:::
+
+::: {.proposicion}
+**Proposición 17.8 (el cuerpo se ejecuta una vez).** El cuerpo de una clase se ejecuta una sola vez, al definirla, y los nombres que crea quedan en la clase. Un objeto mutable creado ahí es **el mismo** para todas las instancias. Leer un atributo sube por el orden de resolución; asignarlo lo crea en la instancia y tapa al de la clase.
+:::
+
+::: {.demostracion}
+*Demostración.* La 17.8 sale de que `class` es una sentencia ejecutable: evalúa su cuerpo en un espacio de nombres nuevo y construye la clase con él. La asignación `o.attr = v` escribe en `o.__dict__` por definición del protocolo de atributos, mientras que la lectura consulta primero `o.__dict__` y después las clases del orden de resolución. La construcción de ese orden por C3 se enuncia y no se demuestra aquí. [∎]{.fin-demo}
+:::
+
+**Modo de falla.** Una clase con `cache = {}` o `errores = []` en el cuerpo, escrita pensando que cada instancia tendrá el suyo. En las pruebas hay una sola instancia y nada se nota; en producción hay muchas y todas escriben en la misma lista. El síntoma típico es un informe que acumula los errores de ejecuciones anteriores, y es el mismo error que el argumento por defecto mutable de la lección 2, con la misma causa.
+
+```{pyodide}
+class A:
+    quien = "A"
+    def saluda(self): return "A"
+
+class B(A):
+    def saluda(self): return "B"
+
+class C(A):
+    def saluda(self): return "C"
+
+class D(B, C):
+    pass
+
+print("el rombo: D hereda de B y de C, y las dos de A")
+print("  orden de resolucion de D: %s" % " -> ".join(c.__name__ for c in D.__mro__))
+print("  D().saluda() devuelve    : %s" % D().saluda())
+print()
+print("no gana la primera base a secas: gana el primero del orden de resolucion,")
+print("que Python calcula con la linealizacion C3. La regla es que una clase")
+print("aparece antes que sus bases y se respeta el orden en que se escribieron")
+print()
+
+# El texto del mensaje cambia entre versiones de Python, asi que se imprime
+# solo el tipo de la excepcion, que no cambia.
+try:
+    class Imposible(A, B):
+        pass
+    fallo = "ninguno"
+except TypeError:
+    fallo = "TypeError"
+print("  class Imposible(A, B) levanta: %s" % fallo)
+print("  porque B ya hereda de A: pedir A antes que B contradice el orden, y")
+print("  entonces no existe ninguna linealizacion que cumpla las dos reglas")
+print()
+
+# --- el atributo de clase se comparte; el de instancia no ---
+class Cesta:
+    articulos = []                      # UNO solo para todas las instancias
+    def anade(self, x):
+        self.articulos.append(x)
+
+class CestaBien:
+    def __init__(self):
+        self.articulos = []             # uno por instancia
+    def anade(self, x):
+        self.articulos.append(x)
+
+a, b = Cesta(), Cesta()
+a.anade("pan")
+c, d = CestaBien(), CestaBien()
+c.anade("pan")
+print("un atributo mutable escrito en el cuerpo de la clase se comparte")
+print("  Cesta     : a tiene %s y b tiene %s" % (a.articulos, b.articulos))
+print("  CestaBien : c tiene %s y d tiene %s" % (c.articulos, d.articulos))
+print("  a.articulos es b.articulos : %s" % (a.articulos is b.articulos))
+print("  c.articulos es d.articulos : %s" % (c.articulos is d.articulos))
+print()
+print("es el mismo error que el argumento por defecto mutable de la leccion 2, y")
+print("por la misma razon: el cuerpo de la clase se ejecuta UNA vez, al definirla")
+print()
+
+# leer no es escribir: la busqueda sube, la asignacion no
+class Config:
+    modo = "produccion"
+
+x, y = Config(), Config()
+antes = (x.modo, y.modo)
+x.modo = "prueba"                       # crea un atributo de INSTANCIA
+print("leer sube por la clase; asignar crea en la instancia")
+print("  antes           : x=%s  y=%s" % antes)
+print("  tras x.modo=... : x=%s  y=%s" % (x.modo, y.modo))
+print("  Config.modo sigue siendo %s" % Config.modo)
+print("  'modo' esta en el diccionario de x: %s ; y en el de y: %s"
+      % ("modo" in x.__dict__, "modo" in y.__dict__))
+```
+
+El orden de `D` es `D -> B -> C -> A -> object`, así que `saluda` devuelve `"B"`. Lo que conviene retener no es ese resultado sino la regla que lo produce: **no gana la primera base, gana el primero del orden**, y los dos coinciden aquí por casualidad. En jerarquías más profundas dejan de coincidir.
+
+La segunda parte es el modo de falla medido. `Cesta` comparte la lista —`a.articulos is b.articulos` vale `True`— y `CestaBien` no. Y la tercera enseña la asimetría que lo explica: leer `x.modo` sube hasta la clase, pero asignarlo escribe en la instancia, de modo que `y` sigue viendo el valor de la clase y `Config.modo` no cambia.
+
+```{=html}
+<div class="viz-mro">
+  <div class="controles">
+    <label>¿Quién define el método?
+      <select id="mr-q">
+        <option value="B" selected>solo B</option>
+        <option value="C">solo C</option>
+        <option value="BC">B y C</option>
+        <option value="A">solo A</option>
+      </select>
+    </label>
+    <label>Orden de las bases de D
+      <select id="mr-o">
+        <option value="BC" selected>class D(B, C)</option>
+        <option value="CB">class D(C, B)</option>
+      </select>
+    </label>
+  </div>
+  <svg id="mr-svg" viewBox="0 0 660 250" role="img" aria-label="La jerarquía en rombo con el camino del orden de resolución marcado y la clase que aporta el método resaltada."></svg>
+  <p class="lectura" id="mr-lectura"></p>
+</div>
+<style>
+.viz-mro { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-mro .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-mro label { display: flex; align-items: center; gap: .4rem; }
+.viz-mro select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-mro svg { width: 100%; height: auto; display: block; }
+.viz-mro .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("mr-svg"), lec = document.getElementById("mr-lectura");
+  var cq = document.getElementById("mr-q"), co = document.getElementById("mr-o");
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var quien = cq.value, orden = co.value;
+    var mro = orden === "BC" ? ["D", "B", "C", "A"] : ["D", "C", "B", "A"];
+    var define = { D: false, B: quien === "B" || quien === "BC", C: quien === "C" || quien === "BC", A: quien === "A" || quien === "BC" || quien === "B" || quien === "C" };
+    define.A = quien === "A" ? true : true;    // A siempre lo define, como caso base
+    var gana = null, i;
+    for (i = 0; i < mro.length; i++) if (define[mro[i]]) { gana = mro[i]; break; }
+
+    var pos = { D: [330, 40], B: [210, 110], C: [450, 110], A: [330, 180] };
+    var aristas = [["D", "B"], ["D", "C"], ["B", "A"], ["C", "A"]];
+    for (i = 0; i < aristas.length; i++) {
+      var p = pos[aristas[i][0]], q = pos[aristas[i][1]];
+      svg.appendChild(el("path", { d: "M" + p[0] + " " + p[1] + " L" + q[0] + " " + q[1],
+        stroke: C_L, "stroke-width": 1.4 }));
+    }
+    // el camino del orden de resolucion, hasta el que gana
+    var d = "", hasta = mro.indexOf(gana);
+    for (i = 0; i <= hasta; i++) {
+      var pp = pos[mro[i]];
+      d += (i ? " L" : "M") + pp[0] + " " + pp[1];
+    }
+    svg.appendChild(el("path", { d: d, stroke: C_B, "stroke-width": 3, fill: "none", opacity: .55 }));
+    var nombres = ["D", "B", "C", "A"];
+    for (i = 0; i < nombres.length; i++) {
+      var n = nombres[i], c = pos[n];
+      svg.appendChild(el("circle", { cx: c[0], cy: c[1], r: 24,
+        fill: n === gana ? C_B : (define[n] ? C_A : "none"), opacity: n === gana ? .55 : (define[n] ? .25 : 1),
+        stroke: n === gana ? C_B : C_L, "stroke-width": n === gana ? 2.4 : 1.4 }));
+      svg.appendChild(el("text", { x: c[0], y: c[1] + 5, "text-anchor": "middle", "font-size": 14, fill: C_T }, n));
+      svg.appendChild(el("text", { x: c[0], y: c[1] + 40, "text-anchor": "middle", "font-size": 10, fill: C_T, opacity: .6 },
+        "posición " + (mro.indexOf(n) + 1)));
+    }
+    svg.appendChild(el("text", { x: 30, y: 30, "font-size": 10.5, fill: C_T, opacity: .75 },
+      "orden: " + mro.join(" → ") + " → object"));
+    svg.appendChild(el("text", { x: 30, y: 44, "font-size": 10.5, fill: C_A }, "lo definen"));
+    svg.appendChild(el("text", { x: 30, y: 58, "font-size": 10.5, fill: C_B }, "gana"));
+
+    lec.innerHTML = "Con <code>class D(" + (orden === "BC" ? "B, C" : "C, B") + ")</code> el orden es <strong>" +
+      mro.join(" → ") + " → object</strong>, y el método que gana es el de <strong>" + gana + "</strong>. " +
+      (quien === "BC"
+        ? "B y C lo definen los dos, así que decide el orden de las bases y nada más."
+        : "Solo una clase intermedia lo define, así que el orden apenas se nota aquí; en jerarquías profundas sí.") +
+      " Cambiar el orden de las bases cambia el camino: <strong>no gana la clase más cercana en el dibujo, gana la primera del orden</strong>.";
+  }
+  cq.addEventListener("change", dibujar);
+  co.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Lo que genera `@dataclass`
+
+Todo lo de la sección 1 —`__init__`, `__repr__`, `__eq__` y `__hash__` coherentes— se escribe tantas veces que el lenguaje trae un generador. Conviene saber **exactamente** qué produce, porque la diferencia entre `frozen=True` y sin él decide si la clase sirve como clave.
+
+```{pyodide}
+from dataclasses import dataclass, FrozenInstanceError
+
+class AMano:
+    """Lo que hubo que escribir en la seccion 1 para que un punto se comporte."""
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+    def __repr__(self):
+        return "AMano(x=%r, y=%r)" % (self.x, self.y)
+    def __eq__(self, otro):
+        return isinstance(otro, AMano) and (self.x, self.y) == (otro.x, otro.y)
+    def __hash__(self):
+        return hash((self.x, self.y))
+
+@dataclass(frozen=True)
+class Generado:
+    x: int
+    y: int
+
+def tiene_propio(C, nombre):
+    """Si el metodo esta escrito en la clase y no heredado de object."""
+    return nombre in C.__dict__
+
+print("lo que genera @dataclass(frozen=True), metodo a metodo")
+print("  metodo       a mano   generado")
+for m in ("__init__", "__repr__", "__eq__", "__hash__"):
+    print("  %-12s  %-6s   %s" % (m, tiene_propio(AMano, m), tiene_propio(Generado, m)))
+print()
+
+a1, a2 = AMano(1, 2), AMano(1, 2)
+g1, g2 = Generado(1, 2), Generado(1, 2)
+print("  se comportan igual")
+print("    igualdad      : a mano %s   generado %s" % (a1 == a2, g1 == g2))
+print("    una clave     : a mano %d   generado %d" % (len({a1: 0, a2: 0}), len({g1: 0, g2: 0})))
+print("    repr          : %r   |   %r" % (a1, g1))
+print()
+
+print("  lo que frozen anade encima")
+try:
+    g1.x = 99
+    print("    asignar g1.x = 99 funciono")
+except FrozenInstanceError:
+    print("    asignar g1.x = 99 lanza FrozenInstanceError")
+a1.x = 99
+print("    asignar a1.x = 99 funciono, y ahora a1 == a2 vale %s" % (a1 == a2))
+print("    pero a1 sigue en un dict con su hash VIEJO, asi que buscarlo falla")
+d = {AMano(1, 2): "valor"}
+roto = AMano(1, 2); roto.x = 99
+print("    AMano(1,2) mutado a x=99, y ese objeto in d: %s" % (roto in d))
+print()
+print("una clave mutable es una bomba de relojeria: el dict la coloco con el hash")
+print("que tenia al entrar y no se entera de que cambio. frozen no es comodidad,")
+print("es lo que hace que la clase pueda ser clave sin riesgo")
+```
+
+Las cuatro filas de la primera tabla son `True` en las dos columnas: `@dataclass(frozen=True)` genera exactamente los cuatro métodos que hubo que escribir a mano, y el comportamiento coincide en igualdad, en número de claves y en `repr`.
+
+Lo que añade `frozen` está debajo, y es lo que justifica usarlo. Con la clase escrita a mano se puede hacer `a1.x = 99`, y a partir de ahí el objeto está en un diccionario **bajo su hash viejo**: buscarlo con un objeto idéntico devuelve `False`. Con `frozen=True` esa asignación levanta `FrozenInstanceError` y el problema no llega a existir.
+
+**Modo de falla.** Una `@dataclass` sin `frozen` usada como clave de un diccionario o dentro de un conjunto. Sin `frozen`, `@dataclass` genera `__eq__` y pone `__hash__` en `None`, así que el error salta en seguida y es benigno. El caso peligroso es escribir el `__hash__` a mano para «arreglarlo» sin congelar la clase: ahí el programa funciona y empieza a perder claves en silencio, que es la Proposición 17.3 otra vez.
+
+## 5. Lo que esta lección no resuelve
+
+- **La linealización C3 no se demuestra.** Se enuncian sus dos reglas y se comprueba que una jerarquía imposible no se crea; el algoritmo queda fuera.
+- **Los descriptores y `property`**, que son el mecanismo detrás de los atributos calculados, se nombran y no se tratan.
+- **Las metaclases**, que es lo que hay un nivel por encima de `type`, quedan fuera por completo.
+- **La herencia múltiple como diseño.** Aquí se usa para enseñar el orden de resolución; cuándo conviene y cuándo no es otra conversación.
+- **`__slots__` tiene letra pequeña**: impide añadir atributos nuevos y complica la herencia. Aquí se usa por su efecto en memoria y no se agota.
+
+## Ejercicios
+
+### Ejercicio 1, El contrato del hash
+
+Con la Proposición 17.3, decidir para cada clase si sirve como clave de un diccionario.
+
+```{pyodide}
+#| exercise: ex_hash
+class SoloEq:
+    def __init__(self, v): self.v = v
+    def __eq__(self, o): return self.v == o.v
+
+class Ambos:
+    def __init__(self, v): self.v = v
+    def __eq__(self, o): return self.v == o.v
+    def __hash__(self): return hash(self.v)
+
+def sirve_de_clave(C):
+    try:
+        {C(1): "x"}
+        return ______
+    except TypeError:
+        return ______
+
+print(sirve_de_clave(SoloEq), sirve_de_clave(Ambos))
+sirve_de_clave(Ambos)
+```
+
+::: {.hint exercise="ex_hash"}
+Si construir el diccionario funciona, la clase sirve; si levanta `TypeError`, no.
+:::
+
+::: {.solution exercise="ex_hash"}
+```{pyodide}
+class SoloEq:
+    def __init__(self, v): self.v = v
+    def __eq__(self, o): return self.v == o.v
+
+class Ambos:
+    def __init__(self, v): self.v = v
+    def __eq__(self, o): return self.v == o.v
+    def __hash__(self): return hash(self.v)
+
+def sirve_de_clave(C):
+    try:
+        {C(1): "x"}
+        return True
+    except TypeError:
+        return False
+
+print(sirve_de_clave(SoloEq), sirve_de_clave(Ambos))
+sirve_de_clave(Ambos)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_hash
+#| check: true
+if result is True:
+    feedback = {"correct": True, "message": "Correcto: SoloEq no sirve y Ambos sí. Y conviene notar que el fallo de SoloEq es el bueno: salta enseguida y con una excepción clara. El peligroso es el de un __hash__ incoherente, que no falla nunca y pierde claves en silencio.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba True y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Qué hace falta para un `for`
+
+Con la Proposición 17.4, comprobar qué método pide cada operación.
+
+```{pyodide}
+#| exercise: ex_proto
+class Solo:
+    """Define solo __iter__."""
+    def __iter__(self):
+        return iter([10, 20, 30])
+
+o = Solo()
+
+funciona_for = ______
+try:
+    len(o)
+    funciona_len = True
+except TypeError:
+    funciona_len = False
+
+print(funciona_for, funciona_len, 20 in o)
+funciona_len
+```
+
+::: {.hint exercise="ex_proto"}
+Con `__iter__` bastan `for`, `list`, `sum` y hasta el operador `in`, que recorre cuando no hay `__contains__`. `len` es el único que no se apaña.
+:::
+
+::: {.solution exercise="ex_proto"}
+```{pyodide}
+class Solo:
+    """Define solo __iter__."""
+    def __iter__(self):
+        return iter([10, 20, 30])
+
+o = Solo()
+
+funciona_for = list(o) == [10, 20, 30]
+try:
+    len(o)
+    funciona_len = True
+except TypeError:
+    funciona_len = False
+
+print(funciona_for, funciona_len, 20 in o)
+funciona_len
+```
+:::
+
+```{pyodide}
+#| exercise: ex_proto
+#| check: true
+if result is False:
+    feedback = {"correct": True, "message": "Correcto: con solo __iter__ funcionan for, list y hasta el operador in —que recorre cuando no encuentra __contains__—, y len es el único que falla. Por eso un objeto puede parecer completo durante meses y romperse el día que alguien llama a len.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba False y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Python 17**:
+
+1. Escribir una clase `Intervalo` con `__eq__`, `__hash__`, `__contains__` y `__len__` coherentes entre sí, y comprobar con un diccionario que dos intervalos iguales son una sola clave. Anotar qué pasa si se permite mutar los extremos después de usarlo como clave.
+2. Medir el coste de `in` sobre tres versiones de la misma colección —lista, conjunto y una clase con `__contains__` calculado— para tamaños crecientes, y anotar cuál de las tres no depende del tamaño.
+3. Construir una jerarquía de cuatro clases donde la primera base **no** sea la que aporta el método, guardar en `50-Errores/` el `__mro__` y el resultado, y anotar qué regla de la linealización lo explica.
+
+## Del libro
+
+Esta lección no cita ningún libro. McKinney trata las estructuras incorporadas y no los protocolos ni el modelo de objetos, y ningún otro texto del plan con índice verificado los cubre. El contenido sale del comportamiento del propio lenguaje, que es comprobable en cada celda.
+
+Por eso todo lo que se afirma aquí se mide en vez de citarse: el diccionario que guarda dos claves iguales, los $56$ bytes que ocupa el objeto con `__slots__` sea cual sea el número de elementos, el orden `D -> B -> C -> A -> object`, y los cuatro métodos que `@dataclass` genera.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/clases-y-protocolos.md`, enlazada a [[tipos-y-estructuras]], [[funciones-y-scope]] y [[comprehensions]]. Conviene rehacer a mano la Proposición 17.3: pensar cómo coloca un diccionario sus claves ocupa un párrafo y deja grabado **por qué la igualdad obliga al hash**, que es la duda que vuelve cada vez que se escribe una clase nueva.
+
+```
+¿Qué exige el contrato del hash?::Que si a == b entonces hash(a) == hash(b)
+¿Qué pasa si defino __eq__ y no __hash__?::Python pone __hash__ en None y la clase deja de servir como clave
+¿Por qué lo hace?::Porque el hash heredado es la identidad, incoherente con cualquier __eq__ de contenido
+¿Y si escribo un __hash__ incoherente?::El dict guarda dos claves iguales y buscar una falla, sin avisar
+¿Qué pide un for?::__iter__, no que el objeto sea una lista
+¿Y el operador in?::__contains__, y si no lo hay recorre con __iter__
+¿Para qué sirve entonces __contains__?::No añade la operación: cambia su coste
+¿Qué hace __slots__?::Fija los atributos y quita el diccionario de instancia
+¿En qué orden se busca un atributo?::En el de __mro__, la linealización C3
+¿Gana la primera base?::No: gana la primera del orden, que no siempre es la misma
+¿Cuántas veces se ejecuta el cuerpo de una clase?::Una, al definirla
+¿Qué genera @dataclass(frozen=True)?::__init__, __repr__, __eq__ y __hash__, y prohíbe asignar
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** Todo. La Proposición 17.3 se argumenta desde cómo un diccionario coloca y compara sus claves, y se comprueba con las cuatro clases de la sección 1: `Punto` guarda dos claves, `PuntoIgual` no se puede hashear, `PuntoCompleto` guarda una y `PuntoRoto` guarda dos iguales, con `a == b` valiendo `True` y `b in d` valiendo `False`. La 17.4 se comprueba construyendo una clase que funciona con ocho operaciones distintas sin guardar elementos, y que ocupa $56$ bytes con diez o con cien mil. La 17.7 se comprueba con el orden `D -> B -> C -> A -> object` y con una jerarquía que no se deja crear. La 17.8, con `a.articulos is b.articulos` valiendo `True`.
+
+**Lo que viene de los libros.** Nada. McKinney, que es el texto del módulo, no trata el modelo de objetos ni los protocolos, y no hay otro libro con índice verificado que lo haga. Antes que citar de memoria, la lección se apoya en lo que se puede ejecutar.
+
+**Lo que se usa de otras lecciones sin repetir.** Qué exige un diccionario de sus claves es de Python 1. Que un cuerpo se evalúe una sola vez es de Python 2, donde aparece con los argumentos por defecto. El protocolo de iteración y los generadores son de Python 3.
+
+**Lo que se enuncia sin demostrar.** La linealización C3: se dan sus dos reglas y se comprueba una consecuencia, pero el algoritmo no se desarrolla. Y que `__slots__` impida añadir atributos se usa sin explorar sus efectos sobre la herencia.
+
+**Lo que es mío, no del libro.** Poner los cuatro estados del contrato del hash en una sola tabla, que convierte una regla que se suele recitar en cuatro filas con su consecuencia. Medir los $56$ bytes constantes frente a los $800\,056$ de la lista, que es lo que hace visible para qué sirve un protocolo. Y cerrar con `@dataclass` enseñando que genera exactamente los métodos escritos a mano, de modo que el generador deja de ser magia y pasa a ser un atajo cuyo contenido se conoce.
+:::

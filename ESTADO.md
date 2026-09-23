@@ -104,7 +104,7 @@ hay que empezar a hacer:
 |---|---|---|---|---|
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
-| Python | 16 | 16 | **16 de 16** | — |
+| Python | 17 | 30 | **17 de 17** | 13 de ingeniería de datos |
 | Series de tiempo | 11 | 11 | **11 de 11** | — |
 | Machine Learning | 36 | 90 | **36 de 36** | deep learning, de la 37 en adelante |
 | Inferencia causal | 0 | 14 | — | todas |
@@ -113,10 +113,11 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **106 lecciones** publicadas, **106** cumplen el molde nuevo: cero pendientes
-  de reescritura. Pendientes de **escribir** quedan 68 según el plan.
-- **Cuatro módulos cerrados**: Estadística 25/25, Álgebra 18/18, Python 16/16 y
-  **Series de tiempo 11/11**, cerrado el 21-09-2026.
+- **108 lecciones** publicadas, **108** cumplen el molde nuevo: cero pendientes
+  de reescritura. Pendientes de **escribir** quedan 80 según el plan, que son
+  más que antes porque el plan de Python creció en catorce.
+- **Tres módulos cerrados**: Estadística 25/25, Álgebra 18/18 y **Series de
+  tiempo 11/11**. Python dejó de estarlo el 22-09-2026: pasó de 16 a 30 (punto 3.54).
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
   el método acordado de decidirlo justo antes de escribir: **03** regresión
   logística (§4.1–4.3, publicada), **04** modelos generativos (§4.4) y **05**
@@ -154,15 +155,15 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. Los visuales de esta tanda no añaden ninguno.
-- **2181 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **537 celdas** que el gate ejecuta en cada build, y comprobadas **con las
+- **2378 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **587 celdas** que el gate ejecuta en cada build, y comprobadas **con las
   dos parejas de versiones** (ver el punto 5). El 22-09-2026 se rehízo el
   entorno de contraste —la limpieza de `/tmp` de macOS se había llevado su
   `pyvenv.cfg` y casi todo numpy— y todas vuelven a cuadrar en Python 3.8 con
   numpy 1.24 y en Python 3.14 con numpy 2.5.3. **Al rehacerlo faltaba
   `scikit-learn`**, y el gate lo dijo en vez de callarse: las celdas que lo
   importan salieron como REVENTÓ, no como aprobadas.
-- Glosario: **446 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **449 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -3173,6 +3174,82 @@ Por eso la celda imprime **órdenes de magnitud y no dígitos**: los dígitos
 serían los de la aproximación y no los del resultado. Es la regla 7 aplicada al
 revés de lo habitual — no porque el cálculo propio sea inestable, sino porque lo
 es el de la referencia.
+
+---
+
+### 3.54 Python crece de 16 a 30, porque estaba pobre (22-09-2026)
+
+Luis dijo que las clases de Python se sentían **pobres frente a los cursos de
+DataCamp**. Al medirlo resultó cierto por dos vías distintas, y conviene
+guardar las dos porque son problemas diferentes.
+
+#### Cobertura
+
+Buscando tema por tema en las dieciséis lecciones, estos aparecían en **cero**:
+SQL y bases de datos, expresiones regulares, peticiones HTTP y APIs,
+anotaciones de tipo, perfilado, zonas horarias, concurrencia y `dataclass`.
+Clases y objetos, solo de pasada en tres; `pytest`, en una mención suelta. No
+estaban tratados por encima: **no estaban**.
+
+#### Profundidad desigual
+
+Contando definiciones y proposiciones por lección, las **1–8** —lenguaje y
+NumPy— promedian $3{,}3$ y $5{,}6$; las **9–16** —pandas, visualización,
+proyecto— promedian $1{,}1$ y $3{,}6$. La mitad de pandas derivó hacia recorrido
+de API, que es justo lo que el molde quería evitar. Las más flojas son la 11, la
+12, la 14 y la 16, con una definición y tres proposiciones cada una.
+
+Lo que **no** era el problema: el tamaño. Las lecciones existentes van de $540$ a
+$840$ líneas con $9$ a $16$ celdas.
+
+#### El plan
+
+Python pasa a **30** con una sección nueva, «Ingeniería de datos — Fase 2»:
+17 clases y protocolos, 18 decoradores, 19 tipado gradual, 20 texto y regex,
+21 SQL desde Python, 22 HTTP y APIs, 23 Parquet y Arrow, 24 pruebas,
+25 depuración, 26 perfilado, 27 el GIL, 28 datos que no caben, 29 categóricos e
+índices, 30 zonas horarias. Y queda pendiente **una pasada de profundidad sobre
+la 11, 12, 14 y 16**.
+
+### 3.55 Python 17: el contrato del hash, medido (22-09-2026)
+
+Primera de la tanda nueva. Nivel **L4**, con modo de falla en cada resultado.
+
+> **17.3**: si $a=b$ entonces `hash(a)` debe valer `hash(b)`. Definir `__eq__`
+> sin `__hash__` deja la clase sin hash; definir un `__hash__` incoherente hace
+> que el diccionario guarde **dos entradas para claves iguales**.
+
+Los cuatro estados en una sola tabla, y el remate: con la clase de hash roto,
+`a == b` vale `True` y `b in d` vale `False`. Ninguna excepción, ningún aviso.
+
+> **17.4** y **17.6**: `for`, `len` e `in` piden métodos, no una lista; y
+> `__slots__` quita el diccionario de instancia.
+
+Medido: una clase que funciona con ocho operaciones distintas sin guardar sus
+elementos, y que ocupa **$56$ bytes con diez elementos y con cien mil**, frente
+a los $800\,056$ de la lista. Más el detalle que se usa de verdad: definir
+`__contains__` no añade una operación, **cambia el coste** de una que ya existía.
+
+> **17.7** y **17.8**: el orden de resolución es `D -> B -> C -> A -> object`, y
+> el cuerpo de la clase se ejecuta una vez.
+
+#### Lo que hubo que corregir en el camino
+
+La primera versión salió con **una definición y cuatro proposiciones**, que es
+exactamente el nivel de la mitad floja que se acababa de criticar. Se añadieron
+dos definiciones y una proposición con contenido real —qué es un método
+especial, por qué un protocolo no exige heredar, qué hace `__slots__`— hasta
+llegar a **3 y 5**.
+
+Dos detalles más: el bloque de Reto decía «sección **Lección 17**» y `retos.py`
+lo rechazó, porque el módulo se nombra **Python**; y el mensaje del `TypeError`
+de una jerarquía imposible **cambia entre versiones de Python**, así que la
+celda imprime solo el tipo de la excepción.
+
+La lección **no cita ningún libro**: McKinney no trata el modelo de objetos y
+ningún texto con índice verificado lo hace. Queda como decisión abierta traer la
+documentación oficial de Python como fuente verificada, que dejaría a las
+catorce nuevas citando capítulo y sección.
 
 ---
 
