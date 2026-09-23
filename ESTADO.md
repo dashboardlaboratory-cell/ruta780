@@ -4049,6 +4049,47 @@ columnas usadas no cuestan nada; trocear obliga a reescribir la cuenta; un motor
 perezoso es otra biblioteca; repartir entre máquinas es otra infraestructura. La
 lección dice que saltar a la última sin probar la primera es el error caro.
 
+### 3.74 Python 29: la primera lección que usa pandas de verdad (23-09-2026)
+
+3 def / 9 prop / 9 dem, cuatro «Modo de falla». Es la primera de esta tanda que
+**sí** usa la biblioteca, porque pandas está instalado en los dos entornos. Y
+por eso hubo que sondear antes qué es estable entre **1.2.4 y 3.0.6**, que son
+versiones muy separadas:
+
+| | 1.2.4 | 3.0.6 |
+|---|---|---|
+| `dtype` de una columna de texto | `object` | `str` |
+| `memory_usage(deep=True)` | 61 878 | 53 882 |
+| `list(serie.values)` | `[125250, …]` | `[np.int64(125250), …]` |
+
+Lo demás —el orden de las categorías, el `dtype` de los códigos, la alineación,
+`observed`, el conteo de filas de un índice duplicado— salió **idéntico**. La
+lección imprime comparaciones donde la cifra cambia, usa `.tolist()` y `int()`
+donde el repr cambia, y no menciona el `dtype` de ninguna columna de texto.
+
+**El caso central, elegido por afirmar algo falso con números correctos:** un
+`groupby` sobre un categórico con `observed=False` —el valor por defecto—
+devuelve **4 filas** donde hay datos de 2, con valores `[300, 80, 0, 0]`. Esos
+ceros dicen «se vendió cero» donde lo cierto es que **no hay dato**. Y filtrar no
+quita categorías, de modo que el problema aparece después de cualquier filtro.
+
+**La alineación, formulada como error invisible.** `a + b` con las mismas
+etiquetas en distinto orden da `x = 31` y no 11. Las dos Series tienen la misma
+longitud y el mismo aspecto; lo que cambió fue un `sort_values` hecho semanas
+antes a uno de los dos lados.
+
+**Una corrección al medir el índice duplicado.** El primer borrador afirmaba que
+un índice duplicado multiplica filas, y con **2 y 2** repeticiones pandas
+empareja por posición y devuelve 2. Hubo que tabular las cuatro combinaciones: 2×2
+da 2, 2×1 da 2, y **2×3 y 3×2 dan 6**. La proposición dice ahora «cuando las
+repeticiones **no coinciden**», que es lo cierto.
+
+**Dos arreglos de visuales del mismo tipo.** El control de «por etiqueta / por
+posición» solo cambiaba texto: se arregló dibujando las **líneas de
+emparejamiento**, que se cruzan en un caso y son paralelas en el otro. Y el
+deslizador de zonas con datos cambiaba solo el relleno: se añadieron los
+**registros de cada categoría** como puntos, cuyo número y posición sí se mueven.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

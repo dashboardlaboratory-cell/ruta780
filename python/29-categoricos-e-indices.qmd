@@ -1,0 +1,788 @@
+---
+title: "Categóricos, índices y memoria"
+subtitle: "Python · Lección 29"
+nivel: L4
+modulo: python
+fase: F2
+prereqs: [python/28-datos-que-no-caben, python/23-parquet-y-arrow, python/11-wrangling-joins-y-reshape]
+siguientes: []
+libro: "—"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="python/29-categoricos-e-indices"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F2]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Datos que no caben](28-datos-que-no-caben.qmd) · [Parquet y Arrow](23-parquet-y-arrow.qmd) · [pandas: joins](11-wrangling-joins-y-reshape.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Explicar que un [categórico]{.g data-t="tipo categórico"} es la codificación por diccionario en memoria, y **medir que ocupa más de 40 veces menos**.
+2. **Demostrar que el orden de las categorías es el alfabético**, no el de aparición, y decir qué decide ese orden.
+3. Distinguir un categórico ordenado de uno sin orden, y **exhibir el `TypeError` al comparar** el segundo.
+4. **Demostrar que un `groupby` sobre categóricos devuelve filas con ceros** que nadie calculó, y arreglarlo.
+5. **Demostrar que filtrar no quita categorías**, y usar `remove_unused_categories`.
+6. **Demostrar que las operaciones alinean por etiqueta y no por posición**: `x` vale 31 y no 11.
+7. **Contar las filas que salen de un índice duplicado**: 2 y 3 dan **6**.
+8. Decidir cuándo poner algo de índice y cuándo rehacerlo.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 23**: la codificación por diccionario, que aquí es el tipo categórico.
+- **Python 28**: afinar tipos, la primera y más barata de las cinco opciones.
+- **Python 24**: la Proposición 24.8, el cruce con clave repetida, que aquí reaparece como índice duplicado.
+- **Fundamentos 12**: la búsqueda binaria, que es lo que un índice ordenado permite.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 30**: las zonas horarias, donde el tipo del índice decide lo que se puede hacer.
+- **Python 12**: `groupby`, que esta lección corrige en su caso más silencioso.
+- **ML 21**: el clustering, donde las etiquetas de grupo son categóricos sin orden.
+:::
+::::
+
+**Los valores absolutos de memoria y algunos `dtype` cambian entre versiones de pandas.** La celda comprueba que el `dtype` de una columna de texto es `object` en una y `str` en otra, de modo que aquí se imprimen **comparaciones** y nunca cifras absolutas de memoria. Lo demás —el orden de las categorías, los códigos, la alineación, el conteo de filas— es idéntico en las dos.
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| categoría | categoría | Cada valor distinto del catálogo |
+| código | código | El número, uno por fila, que apunta al catálogo |
+| `observed=True` | observed | Que el `groupby` devuelva solo las categorías **presentes** |
+| alineación | alineación | Emparejar dos Series **por etiqueta** antes de operar |
+| `is_unique` | is unique | Si el índice no tiene etiquetas repetidas |
+:::
+
+## 1. Un catálogo y un número por fila
+
+:::: {.definicion}
+**Definición 29.1 (tipo categórico).** Un **categórico** guarda un **catálogo** con los valores distintos y un **código** por fila que indica su posición en él. Es la codificación por diccionario de la Definición 23.4 aplicada en memoria en lugar de en el archivo.
+::::
+
+:::: {.proposicion}
+**Proposición 29.2.** Sobre 20 000 filas con 4 valores distintos, el categórico ocupa **más de 40 veces menos** que el texto, y el código cabe en un byte.
+::::
+
+:::: {.demostracion}
+*Demostración.* El texto guarda una cadena por fila; el categórico guarda cuatro cadenas en el catálogo y un entero pequeño por fila. Con 4 categorías bastan 8 bits para el código, y `cat.codes.dtype` lo confirma. La celda mide la comparación —no las cifras absolutas, que cambian entre versiones de pandas— y exhibe el catálogo y los primeros códigos. El cociente **crece** cuanto más filas haya por valor distinto. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 29.3.** El orden de las categorías es el **alfabético**, no el de aparición. La columna que empieza por `'Lima'` tiene como primera categoría `'Bogota'`.
+::::
+
+:::: {.demostracion}
+*Demostración.* Al construir el catálogo, pandas ordena los valores distintos, de modo que la posición en el catálogo no guarda relación con el orden en que aparecieron en los datos. La celda lo comprueba sobre las ciudades y sobre `['z', 'a', 'm']`, que produce `['a', 'm', 'z']`. **Ese orden decide el de un `groupby` y el de las barras de un gráfico**, y no es el que casi nadie espera. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 29.4.** Un categórico **ordenado** define mayor y menor según el orden declarado; uno sin orden levanta `TypeError` al compararlo.
+::::
+
+:::: {.demostracion}
+*Demostración.* Declarar el orden establece una relación entre las categorías que las comparaciones usan; sin ella no hay ninguna relación que aplicar y la operación no está definida. La celda construye los dos sobre `bajo`, `medio`, `alto`: el ordenado tiene `'alto'` como máximo y responde a `> 'bajo'`, y el que no lo está levanta `TypeError`. Nótese que el catálogo sin orden sale alfabético —`alto`, `bajo`, `medio`—, que **no** es el orden de los niveles. ∎
+::::
+
+**Modo de falla.** Un gráfico de barras de niveles de satisfacción sale ordenado `alto`, `bajo`, `medio` en lugar de `bajo`, `medio`, `alto`, y la lectura es exactamente la contraria a la intención. El gráfico no falla y los números son correctos; lo que engaña es el eje. La defensa es declarar el orden al construir el categórico y no confiar en que el alfabético coincida con el del dominio.
+
+```{pyodide}
+import pandas as pd
+
+# Un categorico es la codificacion por diccionario de la Leccion 23,
+# aplicada en memoria: un catalogo de valores y un numero por fila.
+FILAS = 20000
+ciudades = ["Lima", "Quito", "Bogota", "Caracas"]
+texto = pd.Series([ciudades[i % 4] for i in range(FILAS)])
+cat = texto.astype("category")
+
+m_texto = texto.memory_usage(deep=True)
+m_cat = cat.memory_usage(deep=True)
+
+print("la misma columna, como texto y como categorico")
+print("  filas                  : %d" % FILAS)
+print("  valores distintos      : %d" % texto.nunique())
+print("  el categorico ocupa menos: %s" % (m_cat < m_texto))
+print("  ocupa mas de 40 veces menos: %s" % (m_texto > 40 * m_cat))
+print()
+print("los numeros exactos de memoria cambian entre versiones de pandas,")
+print("asi que aqui se imprime la comparacion. El cociente crece cuando")
+print("hay mas filas por cada valor distinto")
+print()
+
+# Lo que guarda por dentro: un catalogo y un codigo por fila.
+print("lo que hay por dentro")
+print("  categorias : %s" % list(cat.cat.categories))
+print("  codigos    : %s ..." % cat.cat.codes.head(6).tolist())
+print("  tipo del codigo: %s   <- un byte basta para 4 categorias"
+      % cat.cat.codes.dtype)
+print("  el catalogo guarda %d textos; los codigos, %d numeros"
+      % (len(cat.cat.categories), FILAS))
+print()
+
+# EL ORDEN DE LAS CATEGORIAS NO ES EL DE APARICION: es el alfabetico.
+print("el orden de las categorias es el alfabetico, no el de aparicion")
+print("  el primer valor de la columna es %r" % texto.iloc[0])
+print("  y la primera categoria es       %r" % cat.cat.categories[0])
+print("  coinciden: %s" % (texto.iloc[0] == cat.cat.categories[0]))
+print()
+otra = pd.Series(["z", "a", "m"]).astype("category")
+print("  de la columna ['z', 'a', 'm'] salen las categorias %s"
+      % list(otra.cat.categories))
+print()
+print("eso decide el orden de un groupby y el de un grafico de barras,")
+print("y no es el que casi nadie espera")
+print()
+
+# Un categorico ORDENADO si define mayor y menor, y entonces se puede
+# comparar y ordenar por el orden de verdad.
+niveles = ["bajo", "medio", "alto"]
+sin_orden = pd.Series(["alto", "bajo", "medio"]).astype("category")
+con_orden = pd.Series(pd.Categorical(["alto", "bajo", "medio"],
+                                     categories=niveles, ordered=True))
+print("un categorico ordenado define mayor y menor")
+print("  sin orden, categorias: %s" % list(sin_orden.cat.categories))
+print("  con orden, categorias: %s" % list(con_orden.cat.categories))
+print("  con orden, el maximo es %r" % con_orden.max())
+print("  cuales pasan de 'bajo': %s" % (con_orden > "bajo").tolist())
+print()
+try:
+    sin_orden > "bajo"
+    print("  sin orden, comparar tambien funciona")
+except TypeError:
+    print("  sin orden, comparar levanta TypeError: no hay mayor ni menor")
+```
+
+## 2. Las categorías que sobreviven a los datos
+
+:::: {.proposicion}
+**Proposición 29.5.** Un `groupby` sobre un categórico devuelve por defecto **todas** las categorías declaradas, incluidas las que ningún dato usa, con un cero calculado sobre nada. Con 4 categorías y datos de 2, devuelve **4 filas** en lugar de 2.
+::::
+
+:::: {.demostracion}
+*Demostración.* El categórico conserva su catálogo con independencia de los datos presentes, y la agrupación recorre el catálogo en lugar de los valores observados. Sobre las categorías vacías la agregación se aplica al conjunto vacío, y una suma sobre nada vale cero. La celda mide las dos versiones: con `observed=False` salen 4 filas con valores `[300, 80, 0, 0]`, y con `observed=True` salen 2. **Un informe que muestre esos ceros está diciendo que se vendió cero donde lo cierto es que no hay dato.** ∎
+::::
+
+:::: {.proposicion}
+**Proposición 29.6.** Filtrar **no quita categorías**. Tras un filtro que deja una sola zona, el catálogo sigue teniendo las cuatro y un `groupby` devolvería 4 filas, tres de ellas inventadas.
+::::
+
+:::: {.demostracion}
+*Demostración.* Un filtro selecciona filas y no toca la definición del tipo de la columna, de modo que el catálogo permanece intacto. La celda filtra por importe, comprueba que quedan 2 filas de una sola zona y que `cat.categories` sigue listando las cuatro, y arregla el catálogo con `remove_unused_categories`, que lo deja en una. ∎
+::::
+
+**Modo de falla.** El caso más caro no es el informe con ceros sino el **cruce**: una tabla filtrada que conserva categorías sin usar produce, al combinarse con otra, filas de categorías que ya no existen en ninguno de los dos lados. Y `value_counts` cuenta también las ausentes, de modo que un porcentaje calculado sobre esa cuenta reparte entre categorías vacías. La defensa son dos hábitos: `observed=True` en todo `groupby` sobre categóricos, y limpiar el catálogo después de filtrar cuando el resultado se guarda.
+
+```{pyodide}
+import pandas as pd
+
+# Un categorico recuerda TODAS sus categorias, aunque los datos que
+# quedan no las usen. Eso hace aparecer filas vacias donde nadie las pidio.
+CATS = ["norte", "sur", "este", "oeste"]
+df = pd.DataFrame({
+    "zona": pd.Categorical(["norte", "sur", "norte", "sur"], categories=CATS),
+    "importe": [100, 50, 200, 30],
+})
+
+print("un catalogo de 4 zonas, con datos de solo 2")
+print("  categorias declaradas : %s" % CATS)
+print("  zonas presentes       : %s" % sorted(df["zona"].dropna().unique().tolist()))
+print()
+
+g_todas = df.groupby("zona", observed=False)["importe"].sum()
+g_presentes = df.groupby("zona", observed=True)["importe"].sum()
+print("el mismo groupby, dos resultados")
+print("  observed=False -> %d filas: %s" % (len(g_todas), list(g_todas.index)))
+print("     valores: %s" % [int(v) for v in g_todas.values])
+print("  observed=True  -> %d filas: %s" % (len(g_presentes), list(g_presentes.index)))
+print("     valores: %s" % [int(v) for v in g_presentes.values])
+print()
+print("las dos filas de mas traen ceros que nadie calculo: no hay ninguna")
+print("venta en este ni en oeste. Un informe que las muestre esta diciendo")
+print("que vendieron cero, cuando lo cierto es que no hay dato")
+print()
+
+# Y lo mismo con value_counts, que cuenta las categorias ausentes.
+vc = df["zona"].value_counts()
+print("value_counts cuenta tambien las ausentes")
+print("  %s" % vc.to_dict())
+print("  categorias con cuenta cero: %s"
+      % [k for k, v in vc.to_dict().items() if v == 0])
+print()
+
+# El caso que de verdad duele: filtrar no quita categorias.
+filtrado = df[df["importe"] > 80]
+print("filtrar deja las categorias intactas")
+print("  filas tras el filtro     : %d" % len(filtrado))
+print("  zonas presentes          : %s" % sorted(filtrado["zona"].dropna().unique().tolist()))
+print("  categorias que recuerda  : %s" % list(filtrado["zona"].cat.categories))
+print("  groupby sobre lo filtrado: %d filas"
+      % len(filtrado.groupby("zona", observed=False)["importe"].sum()))
+print()
+print("tras filtrar queda %d fila de una sola zona, y un groupby sin"
+      % len(filtrado))
+print("observed=True devolveria %d filas, tres de ellas inventadas"
+      % len(CATS))
+print()
+
+# El arreglo, y lo que cuesta.
+limpio = filtrado.copy()
+limpio["zona"] = limpio["zona"].cat.remove_unused_categories()
+print("remove_unused_categories deja el catalogo al dia")
+print("  categorias antes  : %s" % list(filtrado["zona"].cat.categories))
+print("  categorias despues: %s" % list(limpio["zona"].cat.categories))
+print("  groupby ahora     : %d filas"
+      % len(limpio.groupby("zona", observed=False)["importe"].sum()))
+print()
+print("la regla: poner observed=True en todo groupby sobre categoricos, y")
+print("limpiar el catalogo despues de filtrar si el resultado se guarda")
+```
+
+```{=html}
+<div class="viz-categorias">
+  <div class="controles">
+    <label>Zonas con datos: <input id="cg-z" type="range" min="1" max="4" step="1" value="2"><span id="cg-z-v" class="mono">2</span></label>
+    <label>El groupby usa:
+      <select id="cg-o"><option value="false" selected>observed=False (por defecto)</option><option value="true">observed=True</option></select>
+    </label>
+  </div>
+  <svg id="cg-svg" viewBox="0 0 660 215" role="img" aria-label="Filas que devuelve un groupby sobre categóricos"></svg>
+  <div id="cg-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-categorias { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-categorias .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-categorias label { display: flex; align-items: center; gap: .4rem; }
+.viz-categorias input[type=range] { width: 130px; padding: 0; }
+.viz-categorias select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-categorias .mono { font-family: var(--bs-font-monospace, monospace); font-size: .8rem; }
+.viz-categorias svg { width: 100%; height: auto; display: block; }
+.viz-categorias .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("cg-svg"), lec = document.getElementById("cg-lectura");
+  var cz = document.getElementById("cg-z"), co = document.getElementById("cg-o"), ez = document.getElementById("cg-z-v");
+  // el catalogo y la tabla de salida ocupan sitios fijos (regla 19b)
+  var ZONAS = ["norte", "sur", "este", "oeste"], VAL = [300, 80, 150, 90];
+  var XC = 70, XS = 380, Y0 = 54, DY = 36;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var conDatos = +cz.value, todas = co.value === "false";
+    ez.textContent = conDatos;
+    var k, salida = [];
+    svg.appendChild(el("text", { x: XC, y: Y0 - 22, "font-size": 10.5, fill: C_T, opacity: .7 }, "el catálogo declarado"));
+    for (k = 0; k < 4; k++) {
+      var tiene = k < conDatos;
+      svg.appendChild(el("rect", { x: XC, y: Y0 + k * DY - 14, width: 150, height: 28, rx: 5,
+        fill: tiene ? C_A : "none", opacity: tiene ? .2 : 1,
+        stroke: tiene ? C_A : C_L, "stroke-width": tiene ? 1.8 : 1.1,
+        "stroke-dasharray": tiene ? "none" : "4 3" }));
+      svg.appendChild(el("text", { x: XC + 12, y: Y0 + k * DY + 5, "font-size": 11.5,
+        fill: C_T, opacity: tiene ? 1 : .4 }, ZONAS[k] + (tiene ? "" : "  (sin datos)")));
+      // los registros que hay de esa zona, dibujados: cuantos puntos hay y
+      // en que filas cambia con el deslizador
+      var j;
+      for (j = 0; j < (tiene ? 3 : 0); j++) {
+        svg.appendChild(el("circle", { cx: XC + 170 + j * 14, cy: Y0 + k * DY, r: 4,
+          fill: C_A, opacity: .6 }));
+      }
+      if (tiene || todas) salida.push([ZONAS[k], tiene ? VAL[k] : 0, tiene]);
+    }
+    svg.appendChild(el("text", { x: XS, y: Y0 - 22, "font-size": 10.5, fill: C_T, opacity: .7 },
+      "lo que devuelve el groupby"));
+    for (k = 0; k < salida.length; k++) {
+      var real = salida[k][2];
+      svg.appendChild(el("rect", { x: XS, y: Y0 + k * DY - 14, width: 200, height: 28, rx: 5,
+        fill: real ? C_A : C_B, opacity: real ? .2 : .25,
+        stroke: real ? C_A : C_B, "stroke-width": 1.8 }));
+      svg.appendChild(el("text", { x: XS + 12, y: Y0 + k * DY + 5, "font-size": 11.5, fill: C_T },
+        salida[k][0] + "    " + salida[k][1] + (real ? "" : "   ← nadie lo calculó")));
+    }
+    var falsas = salida.filter(function (r) { return !r[2]; }).length;
+    svg.appendChild(el("text", { x: XC, y: 200, "font-size": 12.5, fill: falsas ? C_B : C_T },
+      "zonas con datos: " + conDatos + "   ·   filas devueltas: " + salida.length +
+      (falsas ? "   ·   " + falsas + " con un cero inventado" : "")));
+
+    lec.innerHTML = todas
+      ? (falsas
+        ? "Con <code>observed=False</code> el <code>groupby</code> recorre el <strong>catálogo</strong>, no los datos: devuelve <strong>" + salida.length + "</strong> filas y <strong>" + falsas + "</strong> traen un cero calculado sobre el conjunto vacío. Un informe con esas filas afirma que se vendió cero donde lo cierto es que <em>no hay dato</em>."
+        : "Con todas las zonas presentes, <code>observed=False</code> y <code>observed=True</code> devuelven lo mismo. Bajando el deslizador se ve aparecer la diferencia — y el defecto es esta opción.")
+      : "Con <code>observed=True</code> el <code>groupby</code> recorre los <strong>valores presentes</strong>: devuelve <strong>" + salida.length + "</strong> filas, ni una más. Las categorías declaradas siguen ahí en el catálogo; lo que cambia es que no se inventan filas por ellas.";
+  }
+  cz.addEventListener("input", dibujar);
+  co.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. El índice alinea por etiqueta
+
+:::: {.definicion}
+**Definición 29.7 (alineación).** Las operaciones entre Series **alinean por etiqueta** antes de operar: cada valor se empareja con el que tiene la misma etiqueta, sea cual sea su posición. Las etiquetas que aparecen en uno solo producen ausentes.
+::::
+
+:::: {.proposicion}
+**Proposición 29.8.** Dos Series con las mismas etiquetas en distinto orden se suman **por etiqueta**: `x` vale **31** y no 11, aunque las dos tengan la misma longitud.
+::::
+
+:::: {.demostracion}
+*Demostración.* La alineación empareja `x` con `x` y no el primer elemento con el primero, de modo que el `1` de la primera se suma con el `30` de la segunda, que está en la última posición. La celda lo exhibe. Con etiquetas que no coinciden del todo, el resultado tiene **más filas que cualquiera de los dos** y dos de ellas son ausentes, sin que ninguna operación falle. Para sumar por posición hay que quitar el índice de en medio, y la celda comprueba que el resultado es distinto. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 29.9.** Un índice duplicado multiplica filas cuando las repeticiones **no coinciden** a los dos lados. Con 2 y 3 repeticiones de la misma etiqueta salen **6** filas: entraron 5 y salieron 6.
+::::
+
+:::: {.demostracion}
+*Demostración.* Con el mismo número de repeticiones a cada lado, pandas empareja por posición dentro del grupo y salen tantas filas como repeticiones; cuando difieren, cada elemento de un lado se empareja con cada uno del otro y salen `n·m`. La celda tabula los cuatro casos: 2×2 da 2, 2×1 da 2, y 2×3 y 3×2 dan **6**. Es la Proposición 24.8 aplicada al índice, y la comprobación que la caza es `index.is_unique`, que cuesta una pasada. ∎
+::::
+
+**Modo de falla.** La alineación es lo que hace útil al índice y también lo que hace invisible el error: dos Series de la misma longitud, con las mismas etiquetas y el mismo aspecto, producen un resultado que parece correcto y está emparejado de otra manera. El síntoma es un total que no cuadra con la fuente, y la causa está en un `sort_values` hecho a uno de los dos lados semanas antes. La defensa es comprobar `index.equals` antes de operar cuando el emparejamiento importa, o trabajar con columnas y cruces explícitos, donde la clave se escribe.
+
+```{pyodide}
+import pandas as pd
+
+# Las operaciones entre Series alinean POR ETIQUETA, no por posicion.
+# Eso es lo que hace util el indice, y la fuente del error mas silencioso.
+a = pd.Series([1, 2, 3], index=["x", "y", "z"])
+b = pd.Series([10, 20, 30], index=["z", "y", "x"])   # mismas etiquetas, otro orden
+
+print("dos Series con las mismas etiquetas en distinto orden")
+print("  a: %s" % a.to_dict())
+print("  b: %s" % b.to_dict())
+print("  a + b: %s" % (a + b).to_dict())
+print()
+print("x vale 1 + 30 = 31, no 1 + 10. Se sumo por etiqueta, no por puesto,")
+print("aunque las dos Series tengan la misma longitud y el mismo aspecto")
+print()
+
+# Si las etiquetas no coinciden, aparecen ausentes donde no habia nada.
+c = pd.Series([10, 20, 30], index=["x", "y", "w"])
+suma = a + c
+print("con etiquetas que no coinciden del todo")
+print("  a: %s" % a.to_dict())
+print("  c: %s" % c.to_dict())
+print("  a + c: %s" % {k: (None if pd.isna(v) else v) for k, v in (a + c).to_dict().items()})
+print()
+print("  filas de a: %d,  filas de c: %d,  filas del resultado: %d"
+      % (len(a), len(c), len(suma)))
+print("  ausentes en el resultado: %d" % int(suma.isna().sum()))
+print()
+print("el resultado tiene mas filas que cualquiera de los dos, y dos de")
+print("ellas son ausentes. Ninguna operacion fallo")
+print()
+
+# Para sumar por POSICION hay que decirlo: quitando el indice de en medio.
+por_posicion = pd.Series(a.values + b.values, index=a.index)
+print("para sumar por posicion hay que quitar el indice de en medio")
+print("  a.values + b.values: %s" % por_posicion.to_dict())
+print("  frente a a + b     : %s" % (a + b).to_dict())
+print("  coinciden: %s" % (por_posicion.to_dict() == (a + b).to_dict()))
+print()
+
+# El indice duplicado: cuando las dos partes tienen el MISMO numero de
+# repeticiones, pandas empareja por posicion dentro del grupo. Cuando no,
+# multiplica.
+print("un indice duplicado: depende de cuantas veces se repita a cada lado")
+print("  %-12s %-12s %s" % ("izquierda", "derecha", "filas del resultado"))
+for na, nb in ((2, 2), (2, 1), (2, 3), (3, 2)):
+    izq = pd.Series(range(na), index=["x"] * na)
+    der = pd.Series(range(10, 10 + nb), index=["x"] * nb)
+    r = izq + der
+    print("  %-12s %-12s %d" % ("%d filas" % na, "%d filas" % nb, len(r)))
+print()
+print("2 y 3 filas dan 6: cada una de la izquierda se empareja con cada una")
+print("de la derecha. Entraron 5 filas y salieron 6, y nada fallo")
+print()
+print("  la comprobacion que lo caza, y cuesta una pasada:")
+mal = pd.Series([1, 2], index=["x", "x"])
+print("    mal.index.is_unique  = %s" % mal.index.is_unique)
+bien = pd.Series([1, 2], index=["x", "y"])
+print("    bien.index.is_unique = %s" % bien.index.is_unique)
+print()
+
+print("es la Proposicion 24.8 otra vez: una clave repetida multiplica filas")
+print("sin levantar ningun error. Comprobar index.is_unique antes de")
+print("combinar cuesta una pasada y evita explicar despues por que salen")
+print("mas filas de las que entraron")
+```
+
+```{=html}
+<div class="viz-alinea">
+  <div class="controles">
+    <label>Etiquetas de la derecha:
+      <select id="al-e">
+        <option value="mismas" selected>las mismas, en otro orden</option>
+        <option value="parciales">una distinta</option>
+        <option value="dup">con una repetida</option>
+      </select>
+    </label>
+    <label>Se opera:
+      <select id="al-m"><option value="etiqueta" selected>por etiqueta (pandas)</option><option value="posicion">por posición</option></select>
+    </label>
+  </div>
+  <svg id="al-svg" viewBox="0 0 660 230" role="img" aria-label="Cómo se emparejan dos Series"></svg>
+  <div id="al-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-alinea { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-alinea .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-alinea label { display: flex; align-items: center; gap: .4rem; }
+.viz-alinea select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-alinea svg { width: 100%; height: auto; display: block; }
+.viz-alinea .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("al-svg"), lec = document.getElementById("al-lectura");
+  var ce = document.getElementById("al-e"), cm = document.getElementById("al-m");
+  // las dos columnas de origen estan ancladas; la de resultado crece
+  // hacia abajo desde una linea fija (regla 19b)
+  var XI = 70, XD = 250, XR = 460, Y0 = 50, DY = 34;
+  var IZQ = [["x", 1], ["y", 2], ["z", 3]];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var tipo = ce.value, porEtiqueta = cm.value === "etiqueta";
+    var DER = tipo === "mismas" ? [["z", 10], ["y", 20], ["x", 30]]
+      : tipo === "parciales" ? [["x", 10], ["y", 20], ["w", 30]]
+      : [["x", 10], ["x", 20], ["y", 30]];
+    function caja(x, y, etq, val, color, opac) {
+      svg.appendChild(el("rect", { x: x, y: y - 13, width: 130, height: 26, rx: 4,
+        fill: color, opacity: opac, stroke: color, "stroke-width": 1.5 }));
+      svg.appendChild(el("text", { x: x + 10, y: y + 5, "font-size": 11, fill: C_T },
+        etq + "   " + (val === null ? "—" : val)));
+    }
+    var k;
+    svg.appendChild(el("text", { x: XI, y: Y0 - 22, "font-size": 10, fill: C_T, opacity: .65 }, "izquierda"));
+    svg.appendChild(el("text", { x: XD, y: Y0 - 22, "font-size": 10, fill: C_T, opacity: .65 }, "derecha"));
+    svg.appendChild(el("text", { x: XR, y: Y0 - 22, "font-size": 10, fill: C_T, opacity: .65 }, "resultado"));
+    for (k = 0; k < IZQ.length; k++) caja(XI, Y0 + k * DY, IZQ[k][0], IZQ[k][1], C_A, .2);
+    for (k = 0; k < DER.length; k++) caja(XD, Y0 + k * DY, DER[k][0], DER[k][1], C_B, .2);
+
+    var res = [], pares = [];
+    if (porEtiqueta) {
+      var etqs = {};
+      for (k = 0; k < IZQ.length; k++) etqs[IZQ[k][0]] = 1;
+      for (k = 0; k < DER.length; k++) etqs[DER[k][0]] = 1;
+      var lista = Object.keys(etqs).sort();
+      for (var e2 = 0; e2 < lista.length; e2++) {
+        var et = lista[e2];
+        var iz = IZQ.filter(function (p) { return p[0] === et; });
+        var de = DER.filter(function (p) { return p[0] === et; });
+        if (iz.length === 0 || de.length === 0) { res.push([et, null]); continue; }
+        var n = (iz.length === de.length) ? iz.length : iz.length * de.length;
+        for (var q = 0; q < n; q++) {
+          var vi = iz[(iz.length === de.length) ? q : Math.floor(q / de.length)][1];
+          var vd = de[(iz.length === de.length) ? q : (q % de.length)][1];
+          res.push([et, vi + vd]);
+        }
+      }
+    } else {
+      var m = Math.min(IZQ.length, DER.length);
+      for (k = 0; k < m; k++) { res.push([IZQ[k][0], IZQ[k][1] + DER[k][1]]); pares.push([k, k]); }
+    }
+    for (k = 0; k < res.length; k++)
+      caja(XR, Y0 + k * DY, res[k][0], res[k][1], res[k][1] === null ? C_B : C_A, res[k][1] === null ? .15 : .28);
+
+    // LAS LINEAS DE EMPAREJAMIENTO: por etiqueta se cruzan, por posicion
+    // son paralelas. Es geometria distinta con cualquier opcion (regla 19b)
+    for (k = 0; k < IZQ.length; k++) {
+      var destino = -1, kk;
+      if (porEtiqueta) {
+        for (kk = 0; kk < DER.length; kk++) if (DER[kk][0] === IZQ[k][0]) { destino = kk; break; }
+      } else {
+        destino = k < DER.length ? k : -1;
+      }
+      if (destino < 0) continue;
+      svg.appendChild(el("path", { d: "M" + (XI + 130) + " " + (Y0 + k * DY) +
+        " L" + XD + " " + (Y0 + destino * DY),
+        stroke: C_T, "stroke-width": 1.4, opacity: .45 }));
+    }
+
+    var ausentes = res.filter(function (r) { return r[1] === null; }).length;
+    svg.appendChild(el("text", { x: XI, y: 208, "font-size": 12.5, fill: C_T },
+      "entran " + IZQ.length + " y " + DER.length + "   ·   salen " + res.length +
+      (ausentes ? "   ·   " + ausentes + " ausentes" : "")));
+
+    lec.innerHTML = porEtiqueta
+      ? (tipo === "mismas"
+        ? "Las mismas etiquetas en otro orden: <code>x</code> se empareja con <code>x</code>, que está <strong>al final</strong> de la derecha. Sale <strong>31</strong>, no 11, y las dos Series tienen la misma longitud y el mismo aspecto."
+        : tipo === "parciales"
+          ? "Con una etiqueta distinta a cada lado salen <strong>" + res.length + "</strong> filas de 3 y 3, y <strong>" + ausentes + "</strong> son ausentes: el resultado tiene <em>más</em> filas que cualquiera de los dos y ninguna operación falló."
+          : "Con una etiqueta repetida a un solo lado, esa etiqueta se empareja con <strong>cada</strong> una de las del otro: entran " + IZQ.length + " y " + DER.length + " y salen <strong>" + res.length + "</strong>. Es la clave repetida de la Lección 24, aplicada al índice.")
+      : "Operando <strong>por posición</strong> se suma el primero con el primero, sin mirar las etiquetas: salen " + res.length + " filas y el resultado es otro. pandas <em>no</em> hace esto salvo que se le quite el índice de en medio.";
+  }
+  ce.addEventListener("change", dibujar);
+  cm.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Cuándo poner algo de índice
+
+:::: {.definicion}
+**Definición 29.10 (índice).** El **índice** es el conjunto de etiquetas de las filas. Sirve para dos cosas: **buscar por etiqueta** y **alinear** con otra tabla. Cuando no se usa para ninguna de las dos, solo arrastra información que puede confundir.
+::::
+
+:::: {.proposicion}
+**Proposición 29.11.** Un índice sirve para **buscar por etiqueta** y para **alinear**. Cuando además está ordenado, la búsqueda puede partir por la mitad, que es la Proposición 12.3.
+::::
+
+:::: {.demostracion}
+*Demostración.* Filtrar por una columna compara con cada una de las `N` filas; con la clave en el índice, la búsqueda va a la estructura del índice en lugar de recorrer, y si el índice está ordenado admite búsqueda binaria. La celda busca las filas de un cliente de las dos formas sobre 5000 filas, comprueba que devuelven lo mismo, y exhibe que el índice recién construido **no está ordenado**: ordenarlo es un paso aparte. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 29.12.** Concatenar conserva el índice de origen, de modo que el resultado lleva etiquetas que ya no identifican nada. `reset_index(drop=True)` lo rehace.
+::::
+
+:::: {.demostracion}
+*Demostración.* Cada fila arrastra la etiqueta que tenía en su tabla de origen, y al pegar dos trozos las etiquetas resultantes son las de sus posiciones anteriores: la celda concatena la cabeza y la cola de una tabla de 5000 filas y obtiene el índice `[0, 1, 2, 4997, 4998, 4999]`. Si el resultado se va a volver a cruzar, ese índice ha de rehacerse; si no, da igual. ∎
+::::
+
+**Modo de falla.** Un índice de varios niveles que **no es único** parece identificar una fila y no lo hace: la celda comprueba que `(cliente, mes)` se repite, porque un cliente tiene varias ventas en el mismo mes. Usarlo como clave de cruce multiplica filas por la Proposición 29.9, y la avería llega con las columnas correctas y números plausibles. La defensa es comprobar `index.is_unique` antes de cruzar, que es la primera de las tres comprobaciones de la Proposición 24.9.
+
+```{pyodide}
+import pandas as pd
+
+# Un indice sirve para buscar por etiqueta y para alinear. Cuando no se
+# usa para ninguna de las dos cosas, solo ocupa y estorba.
+FILAS = 5000
+df = pd.DataFrame({
+    "cliente": ["c%d" % (i % 500) for i in range(FILAS)],
+    "mes": [1 + i % 12 for i in range(FILAS)],
+    "importe": [10 + i % 90 for i in range(FILAS)],
+})
+
+# (a) sin indice: buscar un cliente recorre la columna
+por_columna = df[df["cliente"] == "c250"]
+# (b) con indice: la busqueda va directa
+con_indice = df.set_index("cliente")
+por_indice = con_indice.loc["c250"]
+
+print("buscar las filas de un cliente, de dos formas")
+print("  filas totales            : %d" % FILAS)
+print("  filtrando la columna     : %d filas" % len(por_columna))
+print("  con el cliente de indice : %d filas" % len(por_indice))
+print("  dan lo mismo             : %s"
+      % (sorted(por_columna["importe"].tolist()) ==
+         sorted(por_indice["importe"].tolist())))
+print()
+print("  el indice esta ordenado  : %s" % con_indice.index.is_monotonic_increasing)
+print()
+print("filtrando la columna hay que mirar las %d filas. Con el cliente de" % FILAS)
+print("indice, pandas puede ir directo, y si ademas esta ordenado puede")
+print("partir por la mitad, que es la Leccion 12 de Fundamentos")
+print()
+
+# Un indice de varios niveles agrupa la clave entera en una sola cosa.
+jer = df.set_index(["cliente", "mes"]).sort_index()
+print("un indice de dos niveles")
+print("  niveles                  : %s" % list(jer.index.names))
+print("  es unico                 : %s" % jer.index.is_unique)
+print("  filas de c250            : %d" % len(jer.loc["c250"]))
+print("  fila de c250 en el mes 3 : %d" % len(jer.loc[("c250", 3)]))
+print()
+print("  el indice es unico: %s   <- cada cliente aparece varias veces"
+      % jer.index.is_unique)
+print("  en el mismo mes, asi que la clave (cliente, mes) NO identifica")
+print("  una fila. Eso importa antes de cruzar: Proposicion 24.9")
+print()
+
+# Cuando el indice estorba: al guardar y al concatenar.
+print("cuando el indice estorba")
+trozo_a = df.head(3)
+trozo_b = df.tail(3)
+pegado = pd.concat([trozo_a, trozo_b])
+print("  concatenar dos trozos de %d y %d filas -> %d filas"
+      % (len(trozo_a), len(trozo_b), len(pegado)))
+print("  el indice resultante     : %s" % pegado.index.tolist())
+print("  es unico                 : %s" % pegado.index.is_unique)
+print()
+rehecho = pegado.reset_index(drop=True)
+print("  con reset_index(drop=True): %s, unico: %s"
+      % (rehecho.index.tolist(), rehecho.index.is_unique))
+print()
+print("el indice viene de donde estaba cada fila antes, y al concatenar")
+print("deja de identificar nada. Si el resultado se va a volver a cruzar,")
+print("hay que rehacerlo; si no, da igual")
+print()
+
+# Y el resumen de cuando conviene cada cosa.
+print("cuando poner algo de indice")
+for caso, que in [
+    ("se busca por esa clave a menudo", "si, y ordenarlo"),
+    ("se van a alinear dos tablas por ella", "si"),
+    ("solo se filtra por ella una vez", "no hace falta"),
+    ("se va a concatenar y volver a cruzar", "rehacerlo despues"),
+    ("la clave se repite", "no identifica: comprobar antes de cruzar"),
+]:
+    print("  %-40s -> %s" % (caso, que))
+```
+
+## 5. Lo que esta lección no resuelve
+
+No se han tratado los tipos de pandas que admiten ausentes **sin convertir a decimal**: una columna de enteros con un solo hueco pasa a decimal por el camino tradicional, y los tipos anulables lo evitan a cambio de otro comportamiento en las comparaciones. Tampoco los tipos respaldados por Arrow, que cambian lo que ocupa una columna de texto y lo que cuesta operarla, y que hacen innecesaria parte de lo que aquí se consigue con categóricos.
+
+Tampoco se ha medido **cuánto** acelera un índice, porque eso son segundos y dependen de la máquina; lo que sí se puede decir, y la Lección 12 lo demuestra, es que la búsqueda ordenada crece como el logaritmo mientras el filtro por columna crece con el tamaño.
+
+## Ejercicios
+
+### Ejercicio 1, El orden que no es
+
+Con la Proposición 29.3, construir un categórico de niveles y comprobar que el orden alfabético no es el del dominio, y después arreglarlo.
+
+```{pyodide}
+#| exercise: ex_orden
+import pandas as pd
+
+niveles = ["bajo", "medio", "alto"]
+sin_declarar = pd.Series(["alto", "bajo", "medio"]).astype("category")
+declarado = pd.Series(pd.Categorical(["alto", "bajo", "medio"],
+                                     categories=______, ordered=True))
+
+cat_sin = list(sin_declarar.cat.categories)
+cat_con = list(declarado.cat.categories)
+maximo = ______
+
+print(cat_sin, cat_con, maximo)
+```
+
+::: {.hint exercise="ex_orden"}
+Las categorías declaradas conservan el orden en que se escriben, y con `ordered=True` el máximo es la última.
+:::
+
+::: {.solution exercise="ex_orden"}
+```{pyodide}
+import pandas as pd
+
+niveles = ["bajo", "medio", "alto"]
+sin_declarar = pd.Series(["alto", "bajo", "medio"]).astype("category")
+declarado = pd.Series(pd.Categorical(["alto", "bajo", "medio"],
+                                     categories=niveles, ordered=True))
+
+cat_sin = list(sin_declarar.cat.categories)
+cat_con = list(declarado.cat.categories)
+maximo = declarado.max()
+
+print(cat_sin, cat_con, maximo)
+```
+
+Sin declarar salen `['alto', 'bajo', 'medio']`, que ordena el peor nivel primero y el intermedio al final. Declarado sale `['bajo', 'medio', 'alto']` y el máximo es `'alto'`. La diferencia se ve en cualquier gráfico de barras.
+:::
+
+```{pyodide}
+#| exercise: ex_orden
+#| check: true
+if cat_sin == ["alto", "bajo", "medio"] and cat_con == ["bajo", "medio", "alto"] and maximo == "alto":
+    feedback = {"correct": True, "message": "Correcto: el alfabetico no es el del dominio."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba ['alto','bajo','medio'], ['bajo','medio','alto'] y 'alto'."}
+feedback
+```
+
+### Ejercicio 2, Cuántas filas salen
+
+Con la Proposición 29.9, calcular cuántas filas devuelve alinear dos Series cuya etiqueta común se repite 3 veces a la izquierda y 4 a la derecha.
+
+```{pyodide}
+#| exercise: ex_dup
+izq, der = 3, 4
+
+entran = ______
+salen = ______
+de_mas = ______
+
+print(entran, salen, de_mas)
+```
+
+::: {.hint exercise="ex_dup"}
+Cuando las repeticiones no coinciden, cada una de un lado se empareja con cada una del otro.
+:::
+
+::: {.solution exercise="ex_dup"}
+```{pyodide}
+izq, der = 3, 4
+
+entran = izq + der
+salen = izq * der
+de_mas = salen - entran
+
+print(entran, salen, de_mas)
+```
+
+Entran 7 filas y salen **12**. Con 30 y 40 repeticiones saldrían 1200 de 70, y el total de cualquier suma quedaría multiplicado por diecisiete. `index.is_unique` lo detecta en una pasada.
+:::
+
+```{pyodide}
+#| exercise: ex_dup
+#| check: true
+if entran == 7 and salen == 12 and de_mas == 5:
+    feedback = {"correct": True, "message": "Correcto: entran 7 y salen 12."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 7, 12 y 5."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Python 29**:
+
+1. Convertir a categórico las columnas de texto de una tabla propia y anotar la comparación de memoria antes y después, junto con el número de valores distintos de cada una.
+2. Hacer un `groupby` sobre un categórico con y sin `observed=True` después de filtrar, y anotar cuántas filas de más aparecen y qué valor traen. Guardar en `50-Errores/` el informe con los ceros inventados.
+3. Construir dos Series con las mismas etiquetas en distinto orden y sumarlas. Anotar el resultado antes de ejecutar y comprobar la predicción; después repetirlo con una etiqueta repetida a un solo lado.
+
+## Del libro
+
+Esta lección no se apoya en ninguno de los libros del plan. El material de referencia es la documentación de pandas sobre datos categóricos e indexación.
+
+## Para el Cerebro
+
+- Un categórico es un **catálogo** y un **código por fila**: sobre 20 000 filas con 4 valores ocupa **más de 40 veces menos**.
+- El orden de las categorías es el **alfabético**, no el de aparición. Eso decide el orden de un `groupby` y de un gráfico.
+- Un categórico **ordenado** define mayor y menor; uno sin orden levanta `TypeError` al comparar.
+- `groupby` sobre categóricos devuelve **todas** las categorías con ceros inventados. **`observed=True`** siempre.
+- **Filtrar no quita categorías.** `remove_unused_categories` después de filtrar.
+- Las operaciones alinean **por etiqueta**: `x` vale **31**, no 11.
+- Un índice duplicado con **2 y 3** repeticiones da **6** filas. `index.is_unique` cuesta una pasada.
+- Concatenar arrastra el índice de origen: `reset_index(drop=True)` si se va a volver a cruzar.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico: que el categórico ocupa más de 40 veces menos que el texto sobre 20 000 filas con 4 valores distintos, y que el código es `int8`; que las categorías salen alfabéticas —`['a', 'm', 'z']` de `['z', 'a', 'm']`— y que la primera categoría no es el primer valor; que el categórico ordenado tiene máximo `'alto'` y el no ordenado levanta `TypeError`; que el `groupby` devuelve 4 filas con valores `[300, 80, 0, 0]` con `observed=False` y 2 con `observed=True`; que `value_counts` cuenta las ausentes; que filtrar deja el catálogo intacto y `remove_unused_categories` lo reduce a una categoría; que `a + b` con las mismas etiquetas en otro orden da `x = 31`; que con etiquetas parcialmente distintas salen 4 filas con 2 ausentes; que un índice duplicado 2×3 y 3×2 da 6 filas mientras 2×2 y 2×1 dan 2; y que concatenar deja el índice `[0, 1, 2, 4997, 4998, 4999]`.
+
+**Lo que viene de los libros.** Nada. McKinney trata pandas, pero esta lección no cita su texto y sus resultados se comprueban aquí.
+
+**Lo que es mío, no del libro.** La decisión de imprimir **solo comparaciones** de memoria, después de comprobar que los valores absolutos y hasta el `dtype` de una columna de texto difieren entre pandas 1.2 y 3.0; la elección del `groupby` con ceros inventados como caso central, por afirmar algo falso —«se vendió cero»— con números correctos; la formulación de la alineación como la causa de un error invisible entre dos Series del mismo aspecto; la tabla de las cuatro combinaciones de repeticiones, que distingue el caso en que pandas empareja por posición del que multiplica; y el visual donde la columna de resultado crece y aparecen las filas de más.
+:::
