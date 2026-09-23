@@ -1,0 +1,822 @@
+---
+title: "El GIL: procesos contra hilos"
+subtitle: "Python · Lección 27"
+nivel: L4
+modulo: python
+fase: F2
+prereqs: [python/26-perfilado, python/15-rendimiento, python/24-pruebas]
+siguientes: []
+libro: "—"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="python/27-gil"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F2]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Perfilado](26-perfilado.qmd) · [Rendimiento](15-rendimiento.qmd) · [Pruebas](24-pruebas.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Explicar que `x = x + 1` son **tres pasos**, y **contar en cuántas intercalaciones se pierde un incremento**: 18 de 20.
+2. Explicar qué hace un [cerrojo]{.g}: no acelerar, sino **quitar intercalaciones** — de 20 a 2.
+3. Decir qué garantiza el [GIL]{.g} y qué no.
+4. **Medir cuándo los hilos sirven**: nada con todo cálculo, `4×` con todo espera.
+5. **Contar los interbloqueos** al tomar dos cerrojos en órdenes distintos: 512 de 1024 contra **0**.
+6. Decidir entre hilos, procesos y vectorizar, sabiendo **lo que cuesta arrancar cada uno**.
+7. Recordar que **el techo de la Lección 26 sigue mandando**: repartir no exime de medir antes.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 26**: el techo de una optimización, que acota también lo que el paralelismo puede dar.
+- **Python 15**: vectorizar, que es lo que hay que intentar **antes** de repartir.
+- **Python 24**: la prueba que falla de vez en cuando, que es exactamente el síntoma de esta clase de fallo.
+- **Fundamentos 10**: el estado compartido, que aquí lo comparten dos hilos en lugar de dos pruebas.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 28**: los datos que no caben, donde copiar a los procesos deja de ser gratis.
+- **Python 22**: las peticiones a un servicio, que son el caso donde los hilos sí ganan.
+:::
+::::
+
+**Esta página no lanza hilos.** Un fallo de concurrencia **puede no manifestarse**, y una página que dependiera de que se manifestara fallaría unas veces sí y otras no: justamente la peor clase de prueba, según la Lección 24. En lugar de eso se **enumeran todas las intercalaciones posibles** y se cuentan las que salen mal. El resultado es el mismo en cada ejecución y dice algo más fuerte que un ejemplo: dice cuántas.
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| GIL | gil | El cerrojo global que permite ejecutar bytecode a un solo hilo a la vez |
+| intercalación | intercalación | Un orden concreto en que los pasos de dos hilos pueden mezclarse |
+| cerrojo | cerrojo | Un objeto que impide que dos hilos entren a la vez en un tramo |
+| interbloqueo | interbloqueo | El estado en que cada hilo espera un cerrojo que tiene el otro |
+| `p` | pe | La fracción del trabajo que suelta el GIL |
+| `h` | hache | El número de hilos o procesos |
+:::
+
+## 1. Tres pasos que parecen uno
+
+:::: {.definicion}
+**Definición 27.1 (intercalación).** Una **intercalación** es un orden concreto en que los pasos de dos hilos se mezclan, conservando el orden interno de cada uno. `x = x + 1` no es un paso sino tres —**leer** `x`, **sumar** uno, **guardar**— y el intérprete puede cambiar de hilo entre cualquier par de ellos.
+::::
+
+:::: {.proposicion}
+**Proposición 27.2.** De las **20** formas de intercalar los seis pasos de dos hilos que hacen `x = x + 1`, en **18** se pierde un incremento y solo en 2 el resultado es el correcto.
+::::
+
+:::: {.demostracion}
+*Demostración.* Las intercalaciones de dos secuencias de tres pasos son las formas de elegir qué tres posiciones de seis ocupa la primera, que son `C(6,3) = 20`. El resultado es 2 únicamente cuando un hilo completa sus tres pasos antes de que el otro **lea**, lo que ocurre en 2 de ellas; en las 18 restantes el segundo hilo lee un valor que el primero aún no ha guardado, y su escritura posterior borra la del primero. La celda las enumera todas y exhibe una de las que fallan paso a paso. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 27.3.** Un cerrojo no acelera nada: **quita intercalaciones**. Con los tres pasos protegidos, las 20 posibilidades se reducen a **2**, y las dos son correctas.
+::::
+
+:::: {.demostracion}
+*Demostración.* El cerrojo impide que el segundo hilo empiece sus pasos mientras el primero está dentro, de modo que las únicas secuencias posibles son las dos que ejecutan un hilo entero seguido del otro. Las dos dan 2 por el argumento de la Proposición 27.2. El coste es que el hilo que espera no avanza, y que pedir y soltar el cerrojo cuesta en cada vuelta. La celda comprueba las dos. ∎
+::::
+
+**Modo de falla.** Este fallo **puede no aparecer nunca** en una máquina y aparecer todos los días en otra, porque depende de cuándo el intérprete decida cambiar de hilo. El síntoma es un total que no cuadra por poco, de forma distinta cada vez, sin ninguna excepción y sin que el código haya cambiado — y la reacción natural, volver a ejecutar, lo hace desaparecer. La defensa es no razonar sobre lo que «suele» pasar sino sobre lo que **puede** pasar, que es lo que la enumeración hace.
+
+```{pyodide}
+from itertools import permutations
+
+# 'x = x + 1' parece una sola cosa y son tres: LEER x, SUMAR uno, GUARDAR.
+# Con dos hilos haciendo lo mismo, el intérprete puede cambiar de hilo
+# entre cualquier par de pasos.
+#
+# Aqui no se lanzan hilos de verdad —el resultado dependeria de cuando el
+# interprete decidiera cambiar, y cambiaria en cada ejecucion— sino que se
+# enumeran TODAS las formas de intercalar los pasos, y se cuentan.
+
+def ejecuta(orden):
+    """Ejecuta una intercalacion. Cada hilo tiene su propio registro."""
+    x = 0
+    reg = {"A": None, "B": None}
+    for hilo, paso in orden:
+        if paso == "leer":
+            reg[hilo] = x
+        elif paso == "sumar":
+            reg[hilo] = reg[hilo] + 1
+        else:
+            x = reg[hilo]
+    return x
+
+PASOS_A = [("A", "leer"), ("A", "sumar"), ("A", "guardar")]
+PASOS_B = [("B", "leer"), ("B", "sumar"), ("B", "guardar")]
+
+def intercalaciones(a, b):
+    """Todas las formas de mezclar dos listas conservando el orden de cada una."""
+    if not a:
+        return [list(b)]
+    if not b:
+        return [list(a)]
+    return ([[a[0]] + r for r in intercalaciones(a[1:], b)] +
+            [[b[0]] + r for r in intercalaciones(a, b[1:])])
+
+todas = intercalaciones(PASOS_A, PASOS_B)
+resultados = {}
+for orden in todas:
+    r = ejecuta(orden)
+    resultados[r] = resultados.get(r, 0) + 1
+
+print("dos hilos haciendo 'x = x + 1' sobre x = 0")
+print("  formas de intercalar los 6 pasos: %d" % len(todas))
+for r in sorted(resultados):
+    print("  x acaba valiendo %d en %2d de ellas  (%4.1f %%)"
+          % (r, resultados[r], 100.0 * resultados[r] / len(todas)))
+print()
+print("en %d de las %d intercalaciones se pierde un incremento: los dos"
+      % (resultados[1], len(todas)))
+print("hilos leyeron el mismo cero antes de que ninguno guardara")
+print()
+
+# Una intercalacion concreta de las que fallan, paso a paso.
+mala = next(o for o in todas if ejecuta(o) == 1)
+print("una de las que falla, paso a paso")
+x, reg = 0, {"A": None, "B": None}
+for hilo, paso in mala:
+    if paso == "leer":
+        reg[hilo] = x
+    elif paso == "sumar":
+        reg[hilo] = reg[hilo] + 1
+    else:
+        x = reg[hilo]
+    print("  hilo %s %-8s   x = %d   registro de %s = %s" % (hilo, paso, x, hilo, reg[hilo]))
+print()
+
+# Con un cerrojo, los tres pasos de un hilo van seguidos: solo quedan dos
+# intercalaciones posibles, y las dos dan 2.
+con_cerrojo = [PASOS_A + PASOS_B, PASOS_B + PASOS_A]
+print("con un cerrojo alrededor de los tres pasos")
+print("  intercalaciones posibles: %d" % len(con_cerrojo))
+for orden in con_cerrojo:
+    print("  %s -> x = %d" % (" ".join(h for h, _ in orden), ejecuta(orden)))
+print("  todas dan el resultado correcto: %s"
+      % all(ejecuta(o) == 2 for o in con_cerrojo))
+print()
+print("el cerrojo no acelera nada: quita intercalaciones. Pasa de %d formas"
+      % len(todas))
+print("posibles a %d, y las que quedan son las correctas" % len(con_cerrojo))
+```
+
+```{=html}
+<div class="viz-carrera">
+  <div class="controles">
+    <label>Intercalación: <input id="ca-i" type="range" min="0" max="19" step="1" value="0"><span id="ca-i-v" class="mono">1 de 20</span></label>
+    <label>Con cerrojo:
+      <select id="ca-c"><option value="no" selected>no</option><option value="si">sí</option></select>
+    </label>
+  </div>
+  <svg id="ca-svg" viewBox="0 0 660 215" role="img" aria-label="Las intercalaciones de dos hilos"></svg>
+  <div id="ca-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-carrera { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-carrera .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-carrera label { display: flex; align-items: center; gap: .4rem; }
+.viz-carrera input[type=range] { width: 160px; padding: 0; }
+.viz-carrera .mono { font-family: var(--bs-font-monospace, monospace); font-size: .8rem; }
+.viz-carrera svg { width: 100%; height: auto; display: block; }
+.viz-carrera .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("ca-svg"), lec = document.getElementById("ca-lectura");
+  var ci = document.getElementById("ca-i"), cc = document.getElementById("ca-c"), ei = document.getElementById("ca-i-v");
+  // las seis casillas de la linea del tiempo estan fijas (regla 19b)
+  var X0 = 62, W = 88, YA = 62, YB = 116;
+  var PASOS = ["leer", "sumar", "guardar"];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function todas() {
+    var fuera = [], k, j, m;
+    for (k = 0; k < 64; k++) {
+      var bits = [], n = 0;
+      for (j = 0; j < 6; j++) { var b = (k >> j) & 1; bits.push(b); n += b; }
+      if (n !== 3) continue;
+      var seq = [], ia = 0, ib = 0;
+      for (j = 0; j < 6; j++) { if (bits[j]) { seq.push(["A", ia++]); } else { seq.push(["B", ib++]); } }
+      fuera.push(seq);
+    }
+    return fuera;
+  }
+  var TODAS = todas();
+  var CERROJO = [[["A",0],["A",1],["A",2],["B",0],["B",1],["B",2]],
+                 [["B",0],["B",1],["B",2],["A",0],["A",1],["A",2]]];
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var con = cc.value === "si";
+    var lista = con ? CERROJO : TODAS;
+    ci.max = lista.length - 1;
+    var idx = Math.min(+ci.value, lista.length - 1);
+    ei.textContent = (idx + 1) + " de " + lista.length;
+    var seq = lista[idx];
+    // simular
+    var x = 0, reg = { A: null, B: null }, estados = [];
+    var k;
+    for (k = 0; k < 6; k++) {
+      var h = seq[k][0], p = seq[k][1];
+      if (p === 0) reg[h] = x; else if (p === 1) reg[h] = reg[h] + 1; else x = reg[h];
+      estados.push(x);
+    }
+    for (k = 0; k < 6; k++) {
+      var hh = seq[k][0], pp = seq[k][1];
+      var y = hh === "A" ? YA : YB;
+      svg.appendChild(el("rect", { x: X0 + k * W, y: y - 16, width: W - 10, height: 32, rx: 5,
+        fill: hh === "A" ? C_A : C_B, opacity: .22,
+        stroke: hh === "A" ? C_A : C_B, "stroke-width": 1.6 }));
+      svg.appendChild(el("text", { x: X0 + k * W + (W - 10) / 2, y: y + 5, "text-anchor": "middle",
+        "font-size": 10.5, fill: C_T }, hh + " " + PASOS[pp]));
+      svg.appendChild(el("text", { x: X0 + k * W + (W - 10) / 2, y: 168, "text-anchor": "middle",
+        "font-size": 11, fill: C_T, opacity: .8 }, "x=" + estados[k]));
+    }
+    // con cerrojo, una llave marca el tramo protegido de cada hilo. Sin
+    // cerrojo no hay tramo que marcar: es geometria que difiere siempre
+    if (con) {
+      var tramos = [[0, 2], [3, 5]];
+      for (k = 0; k < 2; k++) {
+        var x1 = X0 + tramos[k][0] * W - 4, x2 = X0 + tramos[k][1] * W + W - 6;
+        var yl = seq[tramos[k][0]][0] === "A" ? YA - 26 : YB + 26;
+        var dy = seq[tramos[k][0]][0] === "A" ? -8 : 8;
+        svg.appendChild(el("path", { d: "M" + x1 + " " + (yl - dy) + " L" + x1 + " " + yl +
+          " L" + x2 + " " + yl + " L" + x2 + " " + (yl - dy),
+          stroke: C_T, "stroke-width": 1.8, fill: "none", opacity: .75 }));
+        svg.appendChild(el("text", { x: (x1 + x2) / 2, y: yl + (dy < 0 ? -6 : 14), "text-anchor": "middle",
+          "font-size": 9.5, fill: C_T, opacity: .75 }, "cerrojo tomado"));
+      }
+    }
+    svg.appendChild(el("text", { x: 8, y: YA + 5, "font-size": 10.5, fill: C_A, opacity: .8 }, "hilo A"));
+    svg.appendChild(el("text", { x: 8, y: YB + 5, "font-size": 10.5, fill: C_B, opacity: .8 }, "hilo B"));
+    svg.appendChild(el("text", { x: 8, y: 168, "font-size": 10, fill: C_T, opacity: .6 }, "x ="));
+
+    var final = estados[5];
+    var malas = 0;
+    for (k = 0; k < lista.length; k++) {
+      var xx = 0, rr = { A: null, B: null }, j;
+      for (j = 0; j < 6; j++) {
+        var h2 = lista[k][j][0], p2 = lista[k][j][1];
+        if (p2 === 0) rr[h2] = xx; else if (p2 === 1) rr[h2] = rr[h2] + 1; else xx = rr[h2];
+      }
+      if (xx !== 2) malas++;
+    }
+    svg.appendChild(el("text", { x: X0, y: 198, "font-size": 12.5, fill: final === 2 ? C_A : C_B },
+      "x acaba valiendo " + final + (final === 2 ? "  (correcto)" : "  (se perdió un incremento)") +
+      "   ·   fallan " + malas + " de " + lista.length));
+
+    lec.innerHTML = con
+      ? "Con el cerrojo solo quedan <strong>2</strong> intercalaciones: un hilo entero y después el otro. Las dos dan <strong>2</strong>. El cerrojo no ha acelerado nada —ha <em>quitado</em> las 18 posibilidades que fallaban."
+      : (final === 2
+        ? "Esta intercalación da el resultado correcto: un hilo termina sus tres pasos antes de que el otro lea. Solo <strong>2</strong> de las 20 lo consiguen; moviendo el deslizador se ven las demás."
+        : "Aquí el hilo " + seq[0][0] + " leyó, y el otro leyó <em>el mismo</em> valor antes de que ninguno guardara: la segunda escritura borra la primera y x acaba en <strong>1</strong>. Esto le pasa a <strong>18</strong> de las 20.");
+  }
+  ci.addEventListener("input", dibujar);
+  cc.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Cuándo los hilos sirven
+
+:::: {.definicion}
+**Definición 27.4 (GIL).** El **GIL** es un cerrojo global que permite ejecutar bytecode de Python a **un solo hilo a la vez**. Garantiza que las estructuras internas no se corrompan; **no** garantiza que una operación compuesta ocurra de una pieza. Una operación que baja a código compilado o que espera a un disco o a la red **suelta** el GIL mientras trabaja.
+::::
+
+:::: {.proposicion}
+**Proposición 27.5.** Con cuatro hilos, una tarea que es todo cálculo en Python no gana **nada**; una que es todo espera gana **4 veces**. Entre medias, la ganancia depende de la fracción que suelte el GIL.
+::::
+
+:::: {.demostracion}
+*Demostración.* Lo que retiene el GIL se ejecuta en fila, de modo que `h` hilos tardan `h` veces lo que uno; lo que lo suelta se solapa y tarda lo mismo con uno o con muchos. El total es `retenido · h + soltado`, que con `retenido = 0` da la ganancia máxima `h` y con `soltado = 0` da 1. La celda tabula cinco mezclas y las ganancias para seis fracciones de espera. **Los procesos dan siempre `h`**, porque cada uno tiene su propio intérprete. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 27.6.** Los procesos cuestan copiar los datos y arrancar el intérprete; los hilos no. Con 1000 MB y cuatro procesos se copian **4000 MB**, y arrancar 16 procesos cuesta 50 veces lo que arrancar 16 hilos.
+::::
+
+:::: {.demostracion}
+*Demostración.* Los hilos comparten la memoria del proceso, de modo que pasarles un dato no lo copia; cada proceso tiene su propio espacio y recibe una copia de lo que necesita. El arranque de un proceso incluye crear el intérprete, que es mucho más que crear un hilo dentro de uno ya existente. La celda tabula las dos cosas. En consecuencia, repartir en procesos un trabajo sobre una tabla grande **puede costar más en copiar que lo que ahorra en calcular**. ∎
+::::
+
+**Modo de falla.** Poner hilos a un bucle de Python que recorre filas no mejora nada y añade la posibilidad de una carrera como la de la sección anterior: se paga el riesgo sin cobrar la ganancia. El síntoma es un programa que tarda igual o un poco más y que de vez en cuando da un total distinto. La defensa es mirar primero si se puede **vectorizar**, que es la Lección 15, porque una operación vectorizada suelta el GIL por su cuenta.
+
+```{pyodide}
+# El GIL deja que solo un hilo ejecute bytecode a la vez. La pregunta es
+# que parte del trabajo ES bytecode: mientras un hilo espera a un disco o
+# a la red, suelta el GIL y otro avanza.
+#
+# Aqui se simula el reparto, contando unidades de trabajo en vez de
+# segundos: el resultado no depende de la maquina.
+
+def con_hilos(unidades_cpu, unidades_espera, hilos):
+    """Las de espera se solapan; las de CPU van en fila por el GIL."""
+    cpu_total = unidades_cpu * hilos           # una detras de otra
+    espera_total = unidades_espera             # todas a la vez
+    return max(cpu_total + espera_total, cpu_total)
+
+def con_procesos(unidades_cpu, unidades_espera, hilos):
+    """Cada proceso tiene su propio interprete: la CPU si se reparte."""
+    return unidades_cpu + unidades_espera      # todo en paralelo
+
+def secuencial(unidades_cpu, unidades_espera, hilos):
+    return (unidades_cpu + unidades_espera) * hilos
+
+HILOS = 4
+print("cuatro tareas, segun cuanto de su trabajo sea calculo puro")
+print("  %-28s %10s %10s %10s" % ("la tarea es...", "en fila", "con hilos", "con procesos"))
+for cpu, espera, etiqueta in ((10, 0, "todo calculo"),
+                              (7, 3, "70 % calculo"),
+                              (5, 5, "mitad y mitad"),
+                              (1, 9, "casi todo espera"),
+                              (0, 10, "todo espera")):
+    s = secuencial(cpu, espera, HILOS)
+    h = con_hilos(cpu, espera, HILOS)
+    p = con_procesos(cpu, espera, HILOS)
+    print("  %-28s %10d %10d %10d" % (etiqueta, s, h, p))
+print()
+print("con todo calculo, los hilos no ganan nada: las %d unidades de CPU"
+      % (10 * HILOS))
+print("van en fila igual que sin hilos. Con todo espera, los hilos ganan")
+print("tanto como los procesos, y cuestan mucho menos de arrancar")
+print()
+
+# El punto de corte: a partir de que fraccion de espera compensan los hilos.
+print("mejora de cada forma frente a hacerlo en fila")
+print("  % de espera   hilos   procesos")
+for espera in (0, 25, 50, 75, 90, 100):
+    cpu = 100 - espera
+    s = secuencial(cpu, espera, HILOS)
+    h = con_hilos(cpu, espera, HILOS)
+    p = con_procesos(cpu, espera, HILOS)
+    print("     %3d %%      %5.2f    %5.2f" % (espera, s / h, s / p))
+print()
+print("los procesos dan siempre %d veces, porque cada uno tiene su propio" % HILOS)
+print("interprete. Los hilos no dan nada con cero espera y se acercan a %d"
+      % HILOS)
+print("segun la espera domina. Entre medias, depende de la mezcla")
+print()
+
+# Lo que los procesos cuestan y los hilos no: mover los datos.
+print("lo que cuesta cada forma antes de empezar")
+print("  hilos    : comparten memoria; no hay que copiar nada")
+print("  procesos : cada uno recibe una COPIA de lo que necesita")
+print()
+for mb in (1, 100, 1000):
+    print("  con %4d MB de datos y %d procesos se copian %5d MB"
+          % (mb, HILOS, mb * HILOS))
+print()
+print("por eso repartir en procesos un trabajo sobre una tabla grande puede")
+print("costar mas en copiar que lo que ahorra en calcular. La Leccion 28")
+print("vuelve sobre esto")
+```
+
+## 3. Cuando los cerrojos se estorban
+
+:::: {.definicion}
+**Definición 27.7 (interbloqueo).** Un **interbloqueo** es el estado en que cada hilo espera un cerrojo que tiene el otro. Se distingue de «el programa va lento» y de «todavía no ha terminado» en que es una situación de la que **no se sale nunca**, y hay que detectarla como tal.
+::::
+
+:::: {.proposicion}
+**Proposición 27.8.** Tomando los cerrojos **siempre en el mismo orden**, ninguna intercalación se interbloquea: **0 de 1024**. Cruzando el orden, se interbloquean **512 de 1024**.
+::::
+
+:::: {.demostracion}
+*Demostración.* Con un orden común, un hilo que ya tiene el primer cerrojo es el único que puede pedir el segundo, de modo que nunca se forma el ciclo de esperas. Cruzando el orden, basta que cada hilo consiga su primer cerrojo antes de pedir el segundo para que los dos queden esperándose. La celda enumera las 1024 intercalaciones de diez turnos, cuenta las que alcanzan el estado de interbloqueo **detectándolo explícitamente** —los dos hilos bloqueados a la vez— y exhibe una paso a paso. ∎
+::::
+
+**Modo de falla.** Un interbloqueo no levanta ninguna excepción ni consume memoria: el programa simplemente deja de avanzar, y por la Lección 25 la traza no ayuda porque no hay error que trazar. El síntoma es un proceso vivo que no progresa, indistinguible de uno que está trabajando mucho. La defensa cuesta cero: **decidir un orden global** para los cerrojos y tomarlos siempre en él, ordenándolos por su nombre si no hay razón mejor.
+
+```{pyodide}
+# Dos cerrojos tomados en ordenes distintos pueden dejar los dos hilos
+# esperandose para siempre. Tampoco aqui se lanzan hilos: se enumeran las
+# intercalaciones y se busca cuales llegan a ese estado.
+#
+# Un INTERBLOQUEO no es "no termino": es que los dos hilos quieren, cada
+# uno, un cerrojo que tiene el otro. Eso hay que comprobarlo aparte.
+def corre(planes, orden):
+    """Devuelve (acabaron, hubo_interbloqueo)."""
+    tiene = {"1": None, "2": None}
+    progreso = {"A": 0, "B": 0}
+
+    def bloqueado(h):
+        i = progreso[h]
+        if i >= len(planes[h]):
+            return False
+        accion, cual = planes[h][i]
+        return accion == "toma" and tiene[cual] is not None and tiene[cual] != h
+
+    for hilo in orden:
+        if bloqueado("A") and bloqueado("B"):
+            return False, True
+        i = progreso[hilo]
+        if i >= len(planes[hilo]):
+            continue
+        accion, cual = planes[hilo][i]
+        if accion == "toma":
+            if tiene[cual] is None:
+                tiene[cual] = hilo
+                progreso[hilo] = i + 1
+        else:
+            tiene[cual] = None
+            progreso[hilo] = i + 1
+    if bloqueado("A") and bloqueado("B"):
+        return False, True
+    acabaron = all(progreso[h] == len(planes[h]) for h in ("A", "B"))
+    return acabaron, False
+
+MISMO = {"A": [("toma", "1"), ("toma", "2"), ("suelta", "2"), ("suelta", "1")],
+         "B": [("toma", "1"), ("toma", "2"), ("suelta", "2"), ("suelta", "1")]}
+CRUZADO = {"A": [("toma", "1"), ("toma", "2"), ("suelta", "2"), ("suelta", "1")],
+           "B": [("toma", "2"), ("toma", "1"), ("suelta", "1"), ("suelta", "2")]}
+
+def ordenes(turnos):
+    fuera, pila = [], [[]]
+    while pila:
+        a = pila.pop()
+        if len(a) == turnos:
+            fuera.append(a)
+        else:
+            pila.append(a + ["A"]); pila.append(a + ["B"])
+    return fuera
+
+TURNOS = 10
+todas = ordenes(TURNOS)
+print("dos hilos que necesitan los dos cerrojos, %d intercalaciones de %d turnos"
+      % (len(todas), TURNOS))
+for etiqueta, planes in (("los dos en el mismo orden", MISMO),
+                         ("cada uno en un orden", CRUZADO)):
+    inter = sum(1 for o in todas if corre(planes, o)[1])
+    print("  %-28s se interbloquean %4d de %4d  (%4.1f %%)"
+          % (etiqueta, inter, len(todas), 100.0 * inter / len(todas)))
+print()
+print("tomando los cerrojos siempre en el mismo orden, NINGUNA intercalacion")
+print("llega a bloquearse. Cruzando el orden, la mitad de ellas lo hace")
+print()
+
+# La intercalacion concreta que se bloquea, paso a paso.
+mala = next(o for o in todas if corre(CRUZADO, o)[1])
+tiene, progreso = {"1": None, "2": None}, {"A": 0, "B": 0}
+print("una intercalacion que se bloquea, paso a paso")
+for hilo in mala:
+    i = progreso[hilo]
+    if i >= len(CRUZADO[hilo]):
+        continue
+    accion, cual = CRUZADO[hilo][i]
+    if accion == "toma" and tiene[cual] is not None and tiene[cual] != hilo:
+        print("  hilo %s quiere el cerrojo %s, que tiene %s: espera"
+              % (hilo, cual, tiene[cual]))
+        otro = "B" if hilo == "A" else "A"
+        j = progreso[otro]
+        if j < len(CRUZADO[otro]):
+            acc2, c2 = CRUZADO[otro][j]
+            if acc2 == "toma" and tiene[c2] is not None and tiene[c2] != otro:
+                print("  hilo %s quiere el cerrojo %s, que tiene %s: espera"
+                      % (otro, c2, tiene[c2]))
+                break
+        continue
+    if accion == "toma":
+        tiene[cual] = hilo
+        print("  hilo %s toma el cerrojo %s" % (hilo, cual))
+    else:
+        tiene[cual] = None
+        print("  hilo %s suelta el cerrojo %s" % (hilo, cual))
+    progreso[hilo] = i + 1
+print("  ... y desde aqui ninguno de los dos puede avanzar nunca")
+print()
+print("la regla que lo evita no cuesta nada: tomar SIEMPRE los cerrojos en")
+print("el mismo orden, decidido de antemano. No hace falta saber cuales")
+print("necesitara cada hilo: basta ordenarlos por su nombre")
+```
+
+```{=html}
+<div class="viz-interbloqueo">
+  <div class="controles">
+    <label>Orden en que cada hilo toma los cerrojos:
+      <select id="ib-o"><option value="cruz" selected>cruzado: A pide 1→2, B pide 2→1</option><option value="mismo">el mismo: los dos 1→2</option></select>
+    </label>
+    <label>Turnos ejecutados: <input id="ib-t" type="range" min="0" max="6" step="1" value="4"><span id="ib-t-v" class="mono">4</span></label>
+  </div>
+  <svg id="ib-svg" viewBox="0 0 660 225" role="img" aria-label="Cómo se forma un interbloqueo"></svg>
+  <div id="ib-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-interbloqueo { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-interbloqueo .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-interbloqueo label { display: flex; align-items: center; gap: .4rem; }
+.viz-interbloqueo input[type=range] { width: 130px; padding: 0; }
+.viz-interbloqueo select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-interbloqueo .mono { font-family: var(--bs-font-monospace, monospace); font-size: .8rem; }
+.viz-interbloqueo svg { width: 100%; height: auto; display: block; }
+.viz-interbloqueo .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("ib-svg"), lec = document.getElementById("ib-lectura");
+  var co = document.getElementById("ib-o"), ct = document.getElementById("ib-t"), et = document.getElementById("ib-t-v");
+  // los dos hilos y los dos cerrojos ocupan sitios fijos (regla 19b)
+  var XA = 110, XB = 550, XC1 = 280, XC2 = 400, YH = 70, YC = 160;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var cruz = co.value === "cruz", turnos = +ct.value;
+    et.textContent = turnos;
+    var planA = ["1", "2"], planB = cruz ? ["2", "1"] : ["1", "2"];
+    // turnos alternos: B, A, B, A, ...
+    var tiene = { "1": null, "2": null }, prog = { A: 0, B: 0 }, espera = { A: null, B: null };
+    var k, orden = ["B", "A", "B", "A", "B", "A"];
+    for (k = 0; k < turnos; k++) {
+      var h = orden[k], plan = h === "A" ? planA : planB;
+      if (prog[h] >= plan.length) continue;
+      var quiere = plan[prog[h]];
+      if (tiene[quiere] === null) { tiene[quiere] = h; prog[h]++; espera[h] = null; }
+      else if (tiene[quiere] !== h) { espera[h] = quiere; }
+    }
+    var trabado = espera.A !== null && espera.B !== null;
+
+    function hilo(x, nombre, color) {
+      svg.appendChild(el("rect", { x: x - 48, y: YH - 20, width: 96, height: 40, rx: 7,
+        fill: color, opacity: .2, stroke: color, "stroke-width": 1.8 }));
+      svg.appendChild(el("text", { x: x, y: YH + 5, "text-anchor": "middle", "font-size": 12, fill: C_T }, "hilo " + nombre));
+    }
+    function cerrojo(x, nombre) {
+      var duenno = tiene[nombre];
+      svg.appendChild(el("rect", { x: x - 36, y: YC - 20, width: 72, height: 40, rx: 7,
+        fill: duenno ? (duenno === "A" ? C_A : C_B) : "none", opacity: duenno ? .25 : 1,
+        stroke: duenno ? (duenno === "A" ? C_A : C_B) : C_L, "stroke-width": duenno ? 2 : 1.2 }));
+      svg.appendChild(el("text", { x: x, y: YC + 5, "text-anchor": "middle", "font-size": 12, fill: C_T }, "cerrojo " + nombre));
+      if (duenno) svg.appendChild(el("text", { x: x, y: YC + 34, "text-anchor": "middle", "font-size": 9.5,
+        fill: C_T, opacity: .6 }, "lo tiene " + duenno));
+    }
+    hilo(XA, "A", C_A); hilo(XB, "B", C_B);
+    cerrojo(XC1, "1"); cerrojo(XC2, "2");
+
+    // flechas: verde continua = lo tiene; roja discontinua = lo espera
+    function flecha(xh, xc, color, esperando) {
+      svg.appendChild(el("path", { d: "M" + xh + " " + (YH + 22) + " L" + xc + " " + (YC - 24),
+        stroke: color, "stroke-width": esperando ? 2.4 : 1.8,
+        "stroke-dasharray": esperando ? "6 4" : "none" }));
+    }
+    if (tiene["1"] === "A") flecha(XA, XC1, C_A, false);
+    if (tiene["2"] === "A") flecha(XA, XC2, C_A, false);
+    if (tiene["1"] === "B") flecha(XB, XC1, C_B, false);
+    if (tiene["2"] === "B") flecha(XB, XC2, C_B, false);
+    if (espera.A) flecha(XA, espera.A === "1" ? XC1 : XC2, C_B, true);
+    if (espera.B) flecha(XB, espera.B === "1" ? XC1 : XC2, C_B, true);
+
+    svg.appendChild(el("text", { x: 20, y: 212, "font-size": 12.5, fill: trabado ? C_B : C_T },
+      trabado ? "INTERBLOQUEADOS: cada uno espera el cerrojo que tiene el otro"
+              : ("A espera: " + (espera.A || "nada") + "   ·   B espera: " + (espera.B || "nada"))));
+
+    lec.innerHTML = trabado
+      ? "Las dos flechas discontinuas cierran el círculo: <strong>A</strong> tiene un cerrojo y espera el otro, y <strong>B</strong> exactamente al revés. Ninguno soltará nunca, y no hay excepción, ni memoria creciendo, ni nada que mirar en una traza."
+      : (cruz
+        ? "Con los órdenes cruzados todavía no se ha formado el ciclo; avanzando los turnos se ve aparecer. Basta con que cada hilo consiga su <em>primer</em> cerrojo antes de pedir el segundo."
+        : "Con los dos hilos pidiendo en el <strong>mismo orden</strong>, el ciclo no puede formarse: el que tiene el cerrojo 1 es el único que puede pedir el 2. Por muchos turnos que se avancen, no hay interbloqueo.");
+  }
+  co.addEventListener("change", dibujar);
+  ct.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Qué elegir
+
+:::: {.proposicion}
+**Proposición 27.9.** Las operaciones que bajan a código compilado sueltan el GIL mientras trabajan. En consecuencia, cuatro hilos sobre un bucle de Python dan **1,00×** y sobre una operación mayoritariamente de NumPy dan **3,08×**.
+::::
+
+:::: {.demostracion}
+*Demostración.* Mientras la ejecución está dentro de código compilado que no toca objetos de Python, ningún otro hilo necesita el intérprete, de modo que el GIL puede cederse y otro hilo avanzar. Un bucle escrito en Python ejecuta bytecode en cada vuelta y lo retiene siempre. Aplicando la Proposición 27.5 con `p = 0` y `p = 0,9` salen las dos cifras. La celda las tabula junto con la tabla de decisión. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 27.10.** El techo de la Lección 26 acota también el paralelismo: si solo el 90 % del trabajo se puede repartir, la mejora no pasa de **10 veces** por muchos núcleos que haya.
+::::
+
+:::: {.demostracion}
+*Demostración.* Repartir es un caso particular de acelerar un trozo, con `s` igual al número de trabajadores; haciéndolo arbitrariamente grande se obtiene el techo `1/(1 − p)` de la Definición 26.4. La celda lo tabula para tres fracciones. **Repartir no exime de medir antes** cuánto del trabajo es repartible. ∎
+::::
+
+**Modo de falla.** Repartir en procesos un trabajo cuyos datos no caben cómodamente en memoria los multiplica por el número de procesos, y el programa que iba lento pasa a no terminar por falta de memoria. El síntoma es un fallo que aparece solo al subir el número de trabajadores, y que desaparece al bajarlo, de modo que se atribuye a «demasiada carga» en lugar de a la copia. La defensa es contar los megabytes antes —`datos × procesos`— y, cuando no quepan, repartir el **trabajo** en lugar de los **datos**: que cada proceso lea su propio trozo del archivo.
+
+```{pyodide}
+# Para un analista, la pregunta practica es: ¿que operaciones sueltan el
+# GIL? Las que bajan a codigo compilado —NumPy, pandas, leer un archivo,
+# esperar a la red— lo sueltan mientras trabajan. Las que se quedan en
+# bytecode de Python, no.
+#
+# Aqui se simula el reparto para las dos clases, contando unidades.
+def reparto(fraccion_suelta, hilos, unidades=100):
+    """Unidades totales con 'hilos' hilos, si esa fraccion suelta el GIL."""
+    suelta = unidades * fraccion_suelta
+    retiene = unidades * (1 - fraccion_suelta)
+    return retiene * hilos + suelta      # lo retenido va en fila
+
+HILOS = 4
+print("cuatro hilos sobre 100 unidades, segun cuanto suelte el GIL")
+print("  %-34s %8s %8s" % ("la operacion...", "unidades", "mejora"))
+for frac, etiqueta in ((0.00, "bucle de Python sobre una lista"),
+                       (0.50, "mitad Python, mitad NumPy"),
+                       (0.90, "casi todo una operacion de NumPy"),
+                       (0.99, "leer archivos o esperar a la red")):
+    u = reparto(frac, HILOS)
+    print("  %-34s %8.0f %7.2fx" % (etiqueta, u, 400.0 / u))
+print()
+print("un bucle de Python sobre una lista no gana NADA con hilos: las 400")
+print("unidades van en fila. Una suma de NumPy sobre la misma lista suelta")
+print("el GIL mientras suma, y entonces los hilos si se reparten")
+print()
+
+# El mismo trabajo, dicho de otra forma: que hacer segun el caso.
+print("que conviene en cada caso")
+casos = [
+    ("recorrer filas con un bucle de Python", "vectorizar primero (Leccion 15)"),
+    ("una operacion de NumPy o pandas ya vectorizada", "ya usa varios nucleos por dentro"),
+    ("leer 500 archivos de disco", "hilos: la espera se solapa"),
+    ("pedir 500 URLs", "hilos: la espera se solapa"),
+    ("calculo puro que no se puede vectorizar", "procesos, si los datos caben copiados"),
+]
+for caso, que in casos:
+    print("  %-46s -> %s" % (caso, que))
+print()
+
+# Y el coste de arrancar cada cosa, contado en unidades de preparacion.
+print("lo que cuesta poner en marcha cada forma, antes de calcular nada")
+COSTE = {"hilo": 1, "proceso": 50}
+for n in (2, 4, 16):
+    print("  %2d hilos    : %4d unidades de arranque" % (n, n * COSTE["hilo"]))
+    print("  %2d procesos : %4d unidades de arranque" % (n, n * COSTE["proceso"]))
+print()
+print("con trabajo corto, arrancar 16 procesos cuesta mas que el trabajo.")
+print("La regla practica: hilos para esperar, procesos para calcular, y")
+print("antes de cualquiera de las dos, mirar si se puede vectorizar")
+print()
+
+# El recordatorio que cierra: paralelizar no cambia el techo.
+print("y el techo de la Leccion 26 sigue mandando")
+for frac_paralelizable in (0.5, 0.9, 0.95):
+    techo = 1.0 / (1.0 - frac_paralelizable)
+    print("  si solo el %2.0f %% se puede repartir, el techo es %5.1f veces"
+          % (100 * frac_paralelizable, techo))
+print()
+print("con infinitos nucleos, un programa cuyo 10 % es secuencial no baja")
+print("de la decima parte de su tiempo. Repartir no exime de medir antes")
+```
+
+## 5. Lo que esta lección no resuelve
+
+No se ha usado ninguna de las bibliotecas reales: `threading` y `concurrent.futures` para los hilos, `multiprocessing` para los procesos, y `asyncio` para el caso de mucha espera con un solo hilo, que es otra forma de resolver el mismo problema sin cerrojos. Lo de aquí es lo que ocurre por debajo, enumerado para poder contarlo.
+
+Tampoco se ha tratado que el GIL **está dejando de ser obligatorio**. Desde Python 3.13 existe una variante del intérprete que puede funcionar sin él, y en ella los hilos sí reparten el cálculo puro; a cambio, las carreras de la Sección 1 dejan de estar amortiguadas por el propio GIL y aparecen con mucha más facilidad. Lo que esta lección enseña —enumerar intercalaciones, ordenar los cerrojos— vale igual, y hace más falta.
+
+## Ejercicios
+
+### Ejercicio 1, Cuántas fallan
+
+Con la Proposición 27.2, calcular cuántas intercalaciones hay de dos secuencias de 3 pasos, y cuántas dan el resultado correcto.
+
+```{pyodide}
+#| exercise: ex_inter
+from math import comb
+
+pasos_por_hilo = 3
+
+total = ______
+correctas = 2
+fallan = ______
+
+print(total, correctas, fallan)
+```
+
+::: {.hint exercise="ex_inter"}
+Intercalar dos secuencias de 3 pasos es elegir qué 3 de las 6 posiciones ocupa la primera.
+:::
+
+::: {.solution exercise="ex_inter"}
+```{pyodide}
+from math import comb
+
+pasos_por_hilo = 3
+
+total = comb(2 * pasos_por_hilo, pasos_por_hilo)
+correctas = 2
+fallan = total - correctas
+
+print(total, correctas, fallan)
+```
+
+20 intercalaciones y 18 fallan. Con tres hilos en lugar de dos las intercalaciones serían 1680, y las correctas seguirían siendo las pocas en que cada uno termina antes de que el siguiente lea: la proporción empeora al añadir hilos.
+:::
+
+```{pyodide}
+#| exercise: ex_inter
+#| check: true
+if total == 20 and fallan == 18:
+    feedback = {"correct": True, "message": "Correcto: 20 intercalaciones, 18 fallan."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba total = 20 y fallan = 18."}
+feedback
+```
+
+### Ejercicio 2, Hilos o procesos
+
+Con la Proposición 27.5, calcular las unidades que tardan 4 hilos sobre 100 unidades de las que el 25 % suelta el GIL, y la mejora frente a hacerlo en fila.
+
+```{pyodide}
+#| exercise: ex_hilos
+unidades, suelta, hilos = 100, 0.25, 4
+
+retenido = ______
+con_hilos = ______
+en_fila = unidades * hilos
+mejora = ______
+
+print(con_hilos, round(mejora, 2))
+```
+
+::: {.hint exercise="ex_hilos"}
+Lo retenido se ejecuta en fila —tantas veces como hilos— y lo soltado se solapa, así que se cuenta una sola vez.
+:::
+
+::: {.solution exercise="ex_hilos"}
+```{pyodide}
+unidades, suelta, hilos = 100, 0.25, 4
+
+retenido = unidades * (1 - suelta)
+con_hilos = retenido * hilos + unidades * suelta
+en_fila = unidades * hilos
+mejora = en_fila / con_hilos
+
+print(con_hilos, round(mejora, 2))
+```
+
+325 unidades frente a 400: una mejora de **1,23**, muy lejos de las 4 veces que darían los procesos. Con solo un cuarto del trabajo soltando el GIL, los hilos apenas compensan el riesgo de una carrera.
+:::
+
+```{pyodide}
+#| exercise: ex_hilos
+#| check: true
+if con_hilos == 325.0 and round(mejora, 2) == 1.23:
+    feedback = {"correct": True, "message": "Correcto: 325 unidades y mejora de 1.23."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 325.0 y 1.23."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Python 27**:
+
+1. Enumerar las intercalaciones de dos hilos que hacen `x = x + 2` en dos pasos separados y contar cuántas fallan. Anotar si la proporción mejora o empeora respecto a las 18 de 20.
+2. Tomar una tarea propia y estimar qué fracción suelta el GIL. Calcular la mejora con 4 hilos y con 4 procesos, y anotar cuántos MB habría que copiar en el segundo caso.
+3. Escribir dos funciones que tomen dos cerrojos en órdenes distintos y enumerar sus intercalaciones buscando el estado de interbloqueo. Guardar en `50-Errores/` la traza de una que se bloquee y el orden global que lo habría evitado.
+
+## Del libro
+
+Esta lección no se apoya en ninguno de los libros del plan. El material de referencia es la documentación de `threading`, `multiprocessing` y la PEP 703, que describe el intérprete sin GIL.
+
+## Para el Cerebro
+
+- `x = x + 1` son **tres pasos**. De las 20 intercalaciones de dos hilos, **18 pierden un incremento**.
+- Un cerrojo **no acelera**: quita intercalaciones, de 20 a **2**.
+- El GIL garantiza que las estructuras no se corrompan; **no** que una operación compuesta sea indivisible.
+- Cuatro hilos: **nada** con todo cálculo, **4×** con todo espera. Los procesos dan siempre 4.
+- Los procesos **copian**: 1000 MB y cuatro procesos son 4000 MB. Arrancarlos cuesta 50 veces más que un hilo.
+- Cerrojos en **el mismo orden**: 0 interbloqueos de 1024. Cruzados: **512**.
+- Un interbloqueo no levanta excepción ni gasta memoria: el programa deja de avanzar y ya.
+- **Vectorizar primero.** Y el techo de la Lección 26 acota también el paralelismo.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico: que hay 20 intercalaciones de los seis pasos y que en 18 `x` acaba en 1, con una de ellas exhibida paso a paso; que con cerrojo quedan 2 y las dos dan 2; la tabla de unidades para cinco mezclas de cálculo y espera y las ganancias para seis fracciones; que 1000 MB con cuatro procesos son 4000 MB copiados y que 16 procesos cuestan 800 unidades de arranque frente a 16; que tomando los cerrojos en el mismo orden se interbloquean 0 de 1024 intercalaciones y cruzándolos 512, con una exhibida paso a paso hasta el estado bloqueado; que cuatro hilos dan 1,00× sobre un bucle de Python y 3,08× sobre una operación mayoritariamente compilada; y los tres techos del paralelismo.
+
+**Lo que viene de los libros.** Nada. Ninguno de los libros verificados del plan trata concurrencia.
+
+**Lo que es mío, no del libro.** La decisión de **no lanzar hilos**, porque un fallo de concurrencia puede no manifestarse y una página que dependiera de ello fallaría de forma intermitente —la peor clase de prueba según la Lección 24—; la enumeración exhaustiva como sustituto, que además dice **cuántas** en lugar de exhibir un ejemplo; la insistencia en que un cerrojo quita intercalaciones en lugar de acelerar; la **detección explícita** del estado de interbloqueo, distinta de «no terminó», que fue necesaria porque la primera versión confundía las dos cosas; y el visual donde las dos flechas discontinuas cierran el círculo.
+:::

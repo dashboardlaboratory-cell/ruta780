@@ -3972,6 +3972,45 @@ multiplica la memoria por el número de pasos: **7 estructuras vivas contra 1**
 sobre 6 pasos. La lección no elige por el lector: dice que van detrás del mismo
 interruptor que los mensajes de detalle.
 
+### 3.72 Python 27: no lanzar hilos en una lección sobre hilos (23-09-2026)
+
+3 def / 7 prop / 7 dem, cuatro «Modo de falla».
+
+**El primer borrador lanzaba hilos de verdad y la carrera no se manifestó.** Con
+50 000 vueltas y cuatro hilos, el contador salió correcto: el intérprete no
+cambió de hilo en un mal momento. Y eso es **peor que si hubiera fallado**,
+porque la página habría pasado unas veces sí y otras no —exactamente la clase de
+prueba que la Lección 24 llama la peor.
+
+La lección se reescribió para **enumerar todas las intercalaciones** en lugar de
+provocar una. Es determinista, y dice algo más fuerte que un ejemplo: **dice
+cuántas**. De las 20 formas de intercalar los seis pasos de dos hilos haciendo
+`x = x + 1`, en **18** se pierde un incremento. Con cerrojo quedan **2**, y las
+dos son correctas: un cerrojo no acelera, **quita intercalaciones**.
+
+**Un fallo de método que costó rehacer una celda.** La primera versión del
+interbloqueo contaba «intercalaciones que no terminaron», y salía 69,6 % incluso
+con los cerrojos en el mismo orden —porque muchas secuencias de turnos
+simplemente no dan turnos a uno de los hilos, que no es un interbloqueo—. La
+traza elegida como «bloqueada» mostraba a un hilo terminando tranquilamente. Hubo
+que **detectar el estado explícitamente**: los dos hilos bloqueados a la vez,
+cada uno queriendo el cerrojo que tiene el otro. Con eso salen **0 de 1024**
+contra **512 de 1024**, y la traza es un interbloqueo de verdad.
+
+La lección aprendida es general: **«no terminó» y «se bloqueó» son cosas
+distintas**, y una métrica que las confunde da números que parecen informativos
+y no lo son.
+
+**Lo demás medido:** cuatro hilos dan **1,00×** sobre un bucle de Python y
+**3,08×** sobre una operación mayoritariamente compilada; 1000 MB con cuatro
+procesos son **4000 MB** copiados; arrancar 16 procesos cuesta 50 veces lo que
+16 hilos.
+
+**El patrón del §3.61, otra vez, con una causa nueva.** El control del cerrojo no
+movía nada porque **la primera de las 20 intercalaciones coincide con la primera
+de las 2 con cerrojo**. Se arregló dibujando el tramo protegido como una llave,
+que solo existe en el modo con cerrojo.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
