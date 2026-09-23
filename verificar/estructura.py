@@ -19,7 +19,13 @@ def revisa_progreso():
     de `index.qmd`. Existe porque falló: el 22-09-2026 diez filas de ML y de
     Python llevaban varias lecciones dentro de un solo data-leccion —el resto
     de un reemplazo sin anclar— y marcarlas no movía el contador, porque la
-    cadena entera no coincidía con ningún id."""
+    cadena entera no coincidía con ningún id.
+
+    Comprueba dos cosas distintas: las filas contra el `data-ids` de la portada,
+    y las filas contra el `data-ids` del **propio** índice del módulo, que es el
+    que mueve la barra de esa página. El segundo se añadió el 23-09-2026, porque
+    también falló: `python/20` quedó publicada como fila y ausente de su propio
+    `data-ids`, y la portada estaba bien, así que el gate daba verde."""
     fallos = []
     portada = (RAIZ / "index.qmd").read_text(encoding="utf-8")
     publicadas = {}
@@ -42,6 +48,28 @@ def revisa_progreso():
             h = re.search(r'href="([^"]+)\.html"', l)
             if h and ident != f"{modulo}/{h.group(1)}":
                 fallos.append(f"{modulo}/index.qmd: {ident} no casa con su enlace {h.group(1)}.html")
+        # el data-ids del PROPIO indice del modulo, que es el que mueve la
+        # barra de esa pagina. Se comprueba aparte porque puede quedarse
+        # atras aunque el de la portada este bien: paso el 23-09-2026 con
+        # python/20, y la barra del modulo habria contado 19 de 20.
+        mp = re.search(r'data-progreso="\w+"[^>]*?data-ids="([^"]*)"', t, re.S)
+        if mp is not None:
+            propios = [i.strip() for i in mp.group(1).split(",") if i.strip()]
+            if len(propios) != len(set(propios)):
+                repes = sorted({i for i in propios if propios.count(i) > 1})
+                fallos.append(f"{modulo}/index.qmd: data-ids con duplicados: {repes}")
+            if sorted(set(propios)) != sorted(set(vistos)):
+                sobran = sorted(set(vistos) - set(propios))
+                faltan = sorted(set(propios) - set(vistos))
+                if sobran:
+                    fallos.append(f"{modulo}/index.qmd: fila publicada sin id propio: {sobran}")
+                if faltan:
+                    fallos.append(f"{modulo}/index.qmd: id propio sin fila publicada: {faltan}")
+            mt = re.search(r'data-total="(\d+)"', t)
+            if mt and int(mt.group(1)) < len(vistos):
+                fallos.append(
+                    f"{modulo}/index.qmd: data-total={mt.group(1)} y hay {len(vistos)} filas publicadas")
+
         esperadas = publicadas.get(modulo)
         if esperadas is None:
             continue

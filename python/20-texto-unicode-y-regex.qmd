@@ -1,0 +1,685 @@
+---
+title: "Texto, Unicode y expresiones regulares"
+subtitle: "Python · Lección 20"
+nivel: L4
+modulo: python
+fase: F2
+prereqs: [python/19-tipado-gradual, python/04-archivos-y-errores, python/01-tipos-y-estructuras]
+siguientes: []
+libro: "—"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="python/20-texto-unicode-y-regex"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F2]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Tipado gradual](19-tipado-gradual.qmd) · [Excepciones y contextos](04-archivos-y-errores.qmd) · [Objetos y nombres](01-tipos-y-estructuras.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Distinguir **caracteres de bytes**, y exhibir cadenas donde `len` de las dos cosas no coincide.
+2. **Demostrar que descodificar con `latin-1` nunca falla**, y por qué eso es peor que un error.
+3. **Exhibir dos cadenas que se ven idénticas y no son iguales**, y arreglarlo con [normalización]{.g data-t="normalización Unicode"}.
+4. **Demostrar que una clave sin normalizar no se encuentra**, y que `casefold` resuelve lo que `lower` no.
+5. Escribir una [expresión regular]{.g} con grupos con nombre, y distinguir **codicioso de perezoso**: una coincidencia contra cuatro.
+6. **Medir por qué un patrón ambiguo es caro**: `n+2` pasos contra `(n+2)(n+3)/2`, comprobado en cinco tamaños.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 4**: la lectura de archivos, que es donde los bytes se convierten en texto y la codificación importa.
+- **Python 1**: la hashabilidad, que aquí falla de una forma nueva: dos claves que se ven iguales.
+- **Fundamentos 9**: los métodos de cadena y el orden por código, que esta lección lleva hasta el final.
+- **Fundamentos 12**: contar operaciones, que es cómo se mide el coste de un patrón.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 10**: la carga de archivos de texto, donde la codificación se declara o se adivina mal.
+- **Python 21**: SQL, donde los textos van y vienen entre codificaciones distintas.
+- **Python 22**: HTTP, donde la codificación llega en una cabecera que a veces miente.
+- **Python 29**: los categóricos, cuyas categorías son texto que conviene tener normalizado.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| `str` | str | Una secuencia de **caracteres** |
+| `bytes` | bytes | Una secuencia de **bytes**, lo que hay en un archivo |
+| `s.encode(c)` | encode | Los bytes que representan `s` en la codificación `c` |
+| `b.decode(c)` | decode | El texto que esos bytes representan en `c` |
+| `U+00F1` | u más cero cero efe uno | El **punto de código** de un carácter |
+| `NFC`, `NFD` | ene efe ce, ene efe de | Las formas normalizadas compuesta y descompuesta |
+| `\d+` | barra de más | Uno o más dígitos |
+| `.+?` | punto más interrogación | Lo menos posible, en lugar de lo más |
+| `n` | ene | La longitud del texto sobre el que se busca |
+:::
+
+## 1. Caracteres y bytes
+
+:::: {.definicion}
+**Definición 20.1 (carácter y byte).** Una cadena `str` guarda **caracteres**; un archivo, una conexión y un campo de base de datos guardan **bytes**. **Codificar** convierte texto en bytes y **descodificar** hace lo contrario. En UTF-8 un carácter ocupa de uno a cuatro bytes, de modo que `len` de un texto y el tamaño que ocupa **no coinciden** salvo que todo sea ASCII.
+::::
+
+:::: {.proposicion}
+**Proposición 20.2.** `len` de una cadena cuenta caracteres y nunca bytes. La letra `ñ` es un carácter y dos bytes; el símbolo del euro es uno y tres.
+::::
+
+:::: {.demostracion}
+*Demostración.* UTF-8 representa los 128 caracteres ASCII con un byte y usa secuencias de dos a cuatro bytes para el resto, con los bits altos marcando cuántos siguen. La celda imprime, para cinco cadenas, su número de caracteres, su número de bytes y los bytes en hexadecimal: `'años'` da 4 y 5, `'€'` da 1 y 3, y `'中文'` da 2 y 6. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 20.3.** Descodificar con `latin-1` **nunca levanta un error**, porque esa codificación asigna un carácter a cada uno de los 256 bytes posibles. Un texto mal descodificado así se propaga sin que nada avise.
+::::
+
+:::: {.demostracion}
+*Demostración.* Una codificación puede fallar solo si existen secuencias de bytes que no representan nada en ella; `ascii` falla con cualquier byte mayor que 127 y `utf-8` falla con secuencias mal formadas. `latin-1` define los 256 valores, de modo que no hay entrada inválida y la operación siempre produce algo. La celda descodifica los mismos bytes de tres maneras: `utf-8` devuelve `'años'`, `ascii` levanta `UnicodeDecodeError`, y `latin-1` devuelve `'aÃ±os'` **sin error**. ∎
+::::
+
+**Modo de falla.** Leer un archivo sin declarar la codificación usa la del sistema, que cambia de una máquina a otra. El mismo programa produce texto correcto en el portátil y texto corrupto en el servidor, y la corrupción no levanta ninguna excepción: aparece semanas después como nombres con símbolos raros en un informe. La defensa es declarar siempre `encoding="utf-8"` al abrir, y no confiar en el valor por defecto.
+
+```{pyodide}
+# Una cadena guarda CARACTERES; un archivo guarda BYTES. La conversion
+# entre las dos cosas es explicita y tiene nombre: codificar y descodificar.
+texto = "anos"
+print("una cadena de texto y su version en bytes")
+print("  texto           = %r" % texto)
+print("  len(texto)      = %d caracteres" % len(texto))
+crudo = texto.encode("utf-8")
+print("  texto.encode()  = %r" % crudo)
+print("  len(crudo)      = %d bytes" % len(crudo))
+print()
+
+# Con caracteres fuera del alfabeto ingles, los dos numeros DEJAN de
+# coincidir: en UTF-8 un caracter puede ocupar de 1 a 4 bytes.
+print("caracteres y bytes dejan de coincidir en cuanto hay acentos")
+for s in ("anos", "años", "años", "€", "中文"):
+    b = s.encode("utf-8")
+    print("  %-10r  %d caracteres  %d bytes  %s"
+          % (s, len(s), len(b), " ".join("%02x" % c for c in b)))
+print()
+print("la 'n' ocupa 1 byte, la 'n' con tilde 2, el simbolo del euro 3 y")
+print("cada ideograma 3. len() de una cadena cuenta caracteres, nunca bytes")
+print()
+
+# Descodificar con la codificacion equivocada falla o miente. Nunca
+# adivina: lo que no se dice, se supone, y suponer mal es el origen de
+# los textos con simbolos raros.
+crudo = "años".encode("utf-8")
+print("descodificar con la codificacion equivocada")
+print("  bytes originales     : %r" % crudo)
+print("  .decode('utf-8')     : %r   <- correcto" % crudo.decode("utf-8"))
+print("  .decode('latin-1')   : %r   <- no falla, MIENTE" % crudo.decode("latin-1"))
+try:
+    crudo.decode("ascii")
+    print("  .decode('ascii')     : funciono")
+except UnicodeDecodeError:
+    print("  .decode('ascii')     : UnicodeDecodeError")
+print()
+print("latin-1 no falla nunca, porque le da sentido a los 256 bytes. Por eso")
+print("un texto mal descodificado con latin-1 se publica sin que nada avise")
+```
+
+## 2. El mismo texto, escrito de dos maneras
+
+:::: {.definicion}
+**Definición 20.4 (normalización).** Unicode admite escribir un carácter acentuado como un **punto de código precompuesto** o como la letra base seguida de una **marca combinante**. La **normalización** lleva cualquier texto a una forma canónica: **NFC** compone y **NFD** descompone. Dos textos que representan lo mismo son iguales después de normalizarlos a la misma forma.
+::::
+
+:::: {.proposicion}
+**Proposición 20.5.** Dos cadenas que se ven idénticas en pantalla pueden tener longitudes distintas y ser distintas para `==`.
+::::
+
+:::: {.demostracion}
+*Demostración.* `'a\u00f1os'` tiene cuatro puntos de código, con `U+00F1` para la `ñ`; `'an\u0303os'` tiene cinco, con `U+006E` seguido de la marca `U+0303`. Al dibujarse, la marca se superpone a la letra anterior y el resultado visible es el mismo. La igualdad de cadenas compara puntos de código uno a uno, de modo que devuelve falso. La celda imprime las dos, sus longitudes —4 y 5—, sus bytes y sus puntos de código, y comprueba que tras normalizar a NFC las dos miden 4 y son iguales, y tras normalizar a NFD las dos miden 5 y también. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 20.6.** Una clave de diccionario sin normalizar **no se encuentra** al buscarla con la otra forma, aunque sea la misma palabra.
+::::
+
+:::: {.demostracion}
+*Demostración.* Por la Proposición 20.5 las dos formas son cadenas distintas, y por el contrato del hash de la Lección 17 dos objetos distintos que no son iguales no tienen por qué compartir resumen. La búsqueda calcula el resumen de la forma buscada, mira donde ese resumen indica y no encuentra nada. La celda guarda una entrada con la forma compuesta y la busca con la separada: devuelve `None`. Normalizando ambas al mismo formato, la busca y la encuentra. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 20.7.** `casefold` resuelve comparaciones sin distinguir mayúsculas que `lower` deja mal. `'STRASSE'` y `'Straße'` coinciden con `casefold` y no con `lower`.
+::::
+
+:::: {.demostracion}
+*Demostración.* `lower` aplica la correspondencia de minúscula carácter a carácter, y la `ß` alemana ya es minúscula, de modo que se queda igual. `casefold` aplica una correspondencia más agresiva pensada para comparar, que expande `ß` en `ss`. La celda comprueba que `'STRASSE'.lower() == 'Straße'.lower()` es falso mientras la versión con `casefold` es verdadera, y exhibe que `'Straße'.casefold()` vale `'strasse'`. ∎
+::::
+
+**Modo de falla.** Un sistema que recibe nombres de dos orígenes —un formulario web y una exportación de otro sistema— puede recibir las dos formas del mismo nombre y tratarlas como dos personas distintas. El recuento sale mal, el cruce pierde filas, y nada falla: los dos nombres se imprimen idénticos en cualquier informe. La defensa es normalizar a NFC en la **frontera**, al entrar el dato, y no al compararlo.
+
+```{pyodide}
+import unicodedata
+
+# El mismo texto visible puede escribirse de dos formas: con un caracter
+# precompuesto, o con la letra base seguida de una tilde combinante.
+compuesta = "años"          # n con tilde, un solo caracter
+separada = "años"          # n, y luego la tilde encima
+
+print("dos cadenas que se ven iguales y no son iguales")
+print("  compuesta = %r  con %d caracteres" % (compuesta, len(compuesta)))
+print("  separada  = %r  con %d caracteres" % (separada, len(separada)))
+print("  compuesta == separada : %s" % (compuesta == separada))
+print("  sus bytes en utf-8    : %s  contra  %s"
+      % (compuesta.encode("utf-8").hex(), separada.encode("utf-8").hex()))
+print()
+print("los puntos de codigo, uno a uno:")
+for nombre, s in (("compuesta", compuesta), ("separada", separada)):
+    print("  %-10s %s" % (nombre, " ".join("U+%04X" % ord(c) for c in s)))
+print()
+
+# La normalizacion lleva las dos a una forma canonica. NFC compone; NFD
+# descompone. Despues de normalizar, las dos cadenas SI son iguales.
+print("normalizar lleva las dos a la misma forma")
+nc1, nc2 = unicodedata.normalize("NFC", compuesta), unicodedata.normalize("NFC", separada)
+nd1, nd2 = unicodedata.normalize("NFD", compuesta), unicodedata.normalize("NFD", separada)
+print("  con NFC: %d y %d caracteres, iguales: %s" % (len(nc1), len(nc2), nc1 == nc2))
+print("  con NFD: %d y %d caracteres, iguales: %s" % (len(nd1), len(nd2), nd1 == nd2))
+print()
+print("NFC es la forma corta y la que conviene guardar. NFD separa cada")
+print("acento en su propio caracter, y es lo que devuelven algunos sistemas")
+print()
+
+# Y una cadena que no se normaliza rompe cosas que parecen seguras.
+clave = {compuesta: "encontrado"}
+print("una clave sin normalizar no se encuentra con la otra forma")
+print("  el diccionario tiene la forma compuesta como clave")
+print("  buscar con la compuesta: %r" % clave.get(compuesta))
+print("  buscar con la separada : %r   <- la misma palabra, y no aparece" % clave.get(separada))
+print("  tras normalizar ambas  : %r"
+      % {unicodedata.normalize("NFC", k): v for k, v in clave.items()}
+        .get(unicodedata.normalize("NFC", separada)))
+print()
+
+# Comparar sin distinguir mayusculas: lower no basta para todos los idiomas.
+print("para comparar sin distinguir mayusculas, casefold y no lower")
+a, b = "STRASSE", "Straße"      # la s alemana vale por dos eses
+print("  %r y %r" % (a, b))
+print("  a.lower() == b.lower()       : %s" % (a.lower() == b.lower()))
+print("  a.casefold() == b.casefold() : %s" % (a.casefold() == b.casefold()))
+print("  b.lower()    = %r" % b.lower())
+print("  b.casefold() = %r   <- casefold la convierte en dos eses" % b.casefold())
+```
+
+```{=html}
+<div class="viz-norma">
+  <div class="controles">
+    <label>Cómo llega el texto:
+      <select id="nm-f"><option value="nfc" selected>compuesto (NFC)</option><option value="nfd">descompuesto (NFD)</option></select>
+    </label>
+    <label>Se normaliza al entrar:
+      <select id="nm-n"><option value="no" selected>no</option><option value="si">sí, a NFC</option></select>
+    </label>
+  </div>
+  <svg id="nm-svg" viewBox="0 0 660 230" role="img" aria-label="La clave que no se encuentra"></svg>
+  <div id="nm-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-norma { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-norma .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-norma label { display: flex; align-items: center; gap: .4rem; }
+.viz-norma select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-norma svg { width: 100%; height: auto; display: block; }
+.viz-norma .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("nm-svg"), lec = document.getElementById("nm-lectura");
+  var cf = document.getElementById("nm-f"), cn = document.getElementById("nm-n");
+  // los seis cajones y la fila de puntos de codigo estan anclados; lo que
+  // se mueve es cuantos puntos hay y en que cajon cae la busqueda (19b)
+  var X0 = 60, W = 92, YP = 66, YC = 160;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var nfd = cf.value === "nfd", norma = cn.value === "si";
+    var efectivo = norma ? false : nfd;   // normalizar siempre deja NFC
+    var puntos = efectivo ? ["U+0061", "U+006E", "U+0303", "U+006F", "U+0073"]
+                          : ["U+0061", "U+00F1", "U+006F", "U+0073"];
+    var k;
+    svg.appendChild(el("text", { x: 10, y: YP + 5, "font-size": 10.5, fill: C_T, opacity: .7 }, "la clave"));
+    for (k = 0; k < puntos.length; k++) {
+      svg.appendChild(el("rect", { x: X0 + k * W, y: YP - 17, width: W - 10, height: 34, rx: 5,
+        fill: C_A, opacity: .16, stroke: C_A, "stroke-width": 1.6 }));
+      svg.appendChild(el("text", { x: X0 + k * W + (W - 10) / 2, y: YP + 5, "text-anchor": "middle",
+        "font-size": 11, fill: C_T }, puntos[k]));
+    }
+    svg.appendChild(el("text", { x: X0, y: YP + 36, "font-size": 11, fill: C_T, opacity: .7 },
+      "se ve como «años», con " + puntos.length + " puntos de código"));
+
+    // los cajones del diccionario; la entrada guardada esta en el 2
+    for (k = 0; k < 6; k++) {
+      svg.appendChild(el("rect", { x: X0 + k * 92, y: YC, width: 82, height: 40, rx: 5,
+        fill: k === 2 ? C_A : "none", opacity: k === 2 ? .2 : 1,
+        stroke: k === 2 ? C_A : C_L, "stroke-width": k === 2 ? 2 : 1.1 }));
+      if (k === 2) svg.appendChild(el("text", { x: X0 + k * 92 + 41, y: YC + 25, "text-anchor": "middle",
+        "font-size": 11, fill: C_T }, "guardado"));
+    }
+    // la ETAPA de normalizar: existe como caja intermedia solo cuando el
+    // control esta puesto, y desvia el camino. Es geometria que difiere
+    // con el otro control en cualquier posicion (regla 19b)
+    var destino = efectivo ? 5 : 2;
+    var xd = X0 + destino * 92 + 41;
+    var yMedio = (YP + 46 + YC - 6) / 2;
+    if (norma) {
+      var xn = X0 + 2 * 92 + 41;
+      svg.appendChild(el("rect", { x: xn - 70, y: yMedio - 14, width: 140, height: 28, rx: 6,
+        fill: C_A, opacity: .2, stroke: C_A, "stroke-width": 1.8 }));
+      svg.appendChild(el("text", { x: xn, y: yMedio + 5, "text-anchor": "middle", "font-size": 10.5,
+        fill: C_T }, "normalizar a NFC"));
+      svg.appendChild(el("path", { d: "M" + (X0 + (nfd ? 5 : 2) * 92 + 41) + " " + (YP + 46) +
+        " L" + xn + " " + (yMedio - 14), stroke: C_A, "stroke-width": 2 }));
+      svg.appendChild(el("path", { d: "M" + xn + " " + (yMedio + 14) + " L" + xd + " " + (YC - 6),
+        stroke: C_A, "stroke-width": 2 }));
+    } else {
+      svg.appendChild(el("path", { d: "M" + xd + " " + (YP + 46) + " L" + xd + " " + (YC - 6),
+        stroke: efectivo ? C_B : C_A, "stroke-width": 2 }));
+    }
+    svg.appendChild(el("text", { x: xd, y: YC + 62, "text-anchor": "middle", "font-size": 10.5,
+      fill: efectivo ? C_B : C_A }, efectivo ? "busca aquí: vacío" : "busca aquí: lo encuentra"));
+
+    lec.innerHTML = efectivo
+      ? "El texto llega <strong>descompuesto</strong> y no se normaliza: son <strong>5</strong> puntos de código, una cadena distinta de la guardada aunque se vea igual. Su resumen apunta a otro cajón, y la entrada <strong>no aparece</strong>. Nada falla: la búsqueda devuelve <code>None</code> como si la clave no existiera."
+      : (norma
+        ? "Normalizando al entrar, llegue como llegue el texto queda en <strong>NFC</strong> con <strong>4</strong> puntos de código, el mismo que la clave guardada. La flecha aterriza en el cajón correcto y la entrada aparece. Normalizar <em>en la frontera</em> es lo que hace innecesario acordarse al comparar."
+        : "El texto llega ya <strong>compuesto</strong>: 4 puntos de código, la misma cadena que se guardó, y la búsqueda acierta. Cambiar el primer control enseña qué pasa cuando el mismo nombre llega de otro sistema.");
+  }
+  cf.addEventListener("change", dibujar);
+  cn.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Describir una forma de texto
+
+:::: {.definicion}
+**Definición 20.8 (expresión regular).** Una **expresión regular** describe una **forma** de texto en lugar de un texto concreto. `re.search` la busca en cualquier posición, `re.match` solo al principio, `re.findall` devuelve todas las apariciones y `re.sub` sustituye. Los paréntesis crean **grupos**, numerados desde 1, y `(?P<nombre>…)` los nombra.
+::::
+
+:::: {.proposicion}
+**Proposición 20.9.** Los cuantificadores son **codiciosos** por defecto: toman todo lo que pueden. Añadiendo `?` pasan a ser **perezosos** y toman lo menos posible. Sobre el mismo texto, `<.+>` encuentra **una** coincidencia y `<.+?>` encuentra **cuatro**.
+::::
+
+:::: {.demostracion}
+*Demostración.* `.` casa con cualquier carácter, incluido `>`, de modo que el codicioso avanza hasta el final del texto y retrocede solo lo justo para que quede un `>`: eso lo lleva al último. El perezoso avanza el mínimo y se detiene en el primer `>` que permita completar el patrón. La celda aplica los dos a `'<b>negrita</b> y <i>cursiva</i>'`: el codicioso devuelve la cadena entera y el perezoso devuelve `['<b>', '</b>', '<i>', '</i>']`. ∎
+::::
+
+**Modo de falla.** Un patrón codicioso escrito para extraer un campo funciona mientras cada línea tenga **una** aparición, y empieza a devolver basura el día que aparecen dos, tragándose todo lo que hay en medio. El error no es de sintaxis y el patrón sigue casando: devuelve un valor plausible y más largo de lo debido. La defensa es no usar `.` cuando se sabe qué carácter termina el campo, como muestra la sección siguiente.
+
+```{pyodide}
+import re
+
+# Una expresion regular describe una FORMA de texto, no un texto concreto.
+# search la busca en cualquier sitio; match solo al principio.
+linea = "pedido 4521 del cliente A-77, total 1350 euros"
+
+print("search busca en cualquier sitio; match solo al principio")
+print("  texto: %r" % linea)
+print("  re.search(r'\\d+', linea).group() = %r" % re.search(r"\d+", linea).group())
+print("  re.match(r'\\d+', linea)          = %r   <- no empieza por digito" % re.match(r"\d+", linea))
+print()
+
+print("findall devuelve todas las apariciones")
+print("  r'\\d+'      -> %s" % re.findall(r"\d+", linea))
+print("  r'[A-Z]-\\d+' -> %s" % re.findall(r"[A-Z]-\d+", linea))
+print()
+
+# Los grupos entre parentesis separan las partes que interesan.
+m = re.search(r"pedido (\d+) del cliente ([A-Z]-\d+)", linea)
+print("los parentesis crean grupos, numerados desde 1")
+print("  group(0) = %r   <- todo lo que casó" % m.group(0))
+print("  group(1) = %r" % m.group(1))
+print("  group(2) = %r" % m.group(2))
+print("  groups() = %r" % (m.groups(),))
+print()
+
+# Con nombre se leen solos, y no hay que contar parentesis.
+m = re.search(r"pedido (?P<numero>\d+) .* total (?P<total>\d+)", linea)
+print("y con nombre no hay que contar parentesis")
+print("  numero = %r   total = %r" % (m.group("numero"), m.group("total")))
+print("  groupdict() = %s" % m.groupdict())
+print()
+
+# CODICIOSO contra PEREZOSO. Por defecto los cuantificadores toman todo lo
+# que pueden; anadiendo ? toman lo menos posible.
+html = "<b>negrita</b> y <i>cursiva</i>"
+print("codicioso toma todo lo que puede; perezoso, lo menos posible")
+print("  texto: %r" % html)
+print("  r'<.+>'  -> %r" % re.search(r"<.+>", html).group())
+print("  r'<.+?>' -> %r" % re.search(r"<.+?>", html).group())
+print()
+print("  todas con codicioso: %s" % re.findall(r"<.+>", html))
+print("  todas con perezoso : %s" % re.findall(r"<.+?>", html))
+print()
+print("el codicioso se traga desde la primera < hasta la ULTIMA >, porque")
+print("el punto casa tambien con > . El perezoso para en la primera")
+print()
+
+# sub sustituye, y puede usar los grupos en el reemplazo.
+print("sub sustituye, y el reemplazo puede referirse a los grupos")
+fechas = "reunion el 2026-09-23 y entrega el 2026-10-01"
+print("  %r" % fechas)
+print("  -> %r" % re.sub(r"(\d{4})-(\d{2})-(\d{2})", r"\3/\2/\1", fechas))
+print()
+print("  cuantas fechas habia: %d" % len(re.findall(r"\d{4}-\d{2}-\d{2}", fechas)))
+```
+
+## 4. Lo que hace cara una expresión regular
+
+:::: {.proposicion}
+**Proposición 20.10.** Un patrón con dos cuantificadores que pueden repartirse el mismo texto obliga a probar todas las formas de repartirlo. Con el emparejador de la celda, `a*b` sobre `n` letras cuesta exactamente `n + 2` pasos y `a*a*b` cuesta `(n + 2)(n + 3) / 2`.
+::::
+
+:::: {.demostracion}
+*Demostración.* `a*b` tiene una sola forma de consumir las `a`: la estrella las toma todas o falla al llegar al final sin `b`, de modo que el recorrido es una pasada. En `a*a*b` cada reparto de las `n` letras entre las dos estrellas es una alternativa distinta que hay que probar antes de poder afirmar que ninguna funciona, y esos repartos son `n + 1`; sumando el trabajo de cada uno sale una cantidad proporcional a `n²`. La celda mide los dos patrones sobre textos de 4, 8, 12, 16 y 20 letras y comprueba que los conteos coinciden con las dos fórmulas en los cinco casos. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 20.11.** La defensa contra un patrón caro es **quitarle la ambigüedad**, no adivinar cuáles se atascan. `<[^>]+>` y `<.+?>` devuelven lo mismo, y el primero no deja nada que repartir.
+::::
+
+:::: {.demostracion}
+*Demostración.* `[^>]+` no puede pasar de un `>`, de modo que hay una única forma de que el patrón case en cada posición y no queda ninguna alternativa que probar; `.+?` puede pasar de cualquier carácter y solo el `?` le impide hacerlo de entrada, lo que deja alternativas que explorar si la primera no completa. La celda comprueba que los dos devuelven la misma lista de cuatro etiquetas. ∎
+::::
+
+**Modo de falla.** Un patrón ambiguo se comporta bien con los datos de prueba, que son cortos, y tarda minutos con una línea larga que llegue de fuera. El síntoma es un programa que se queda parado sin consumir memoria ni levantar error, y la causa está en una línea de texto que nadie examina porque el patrón «funciona». La defensa es escribir clases de caracteres que digan dónde termina el campo, y acotar la longitud del texto que se examina.
+
+```{pyodide}
+import re
+
+# Para saber POR QUE una expresion regular puede ser lenta hay que ver
+# como funciona por dentro. Aqui va un emparejador minimo, que entiende
+# solo literales, el punto y la estrella, y que CUENTA sus pasos.
+pasos = [0]
+
+def casa(patron, texto, i=0, j=0):
+    """True si patron[i:] casa con todo texto[j:]. Cuenta cada llamada."""
+    pasos[0] = pasos[0] + 1
+    if i == len(patron):
+        return j == len(texto)
+    # una estrella detras del caracter actual: probar 0, 1, 2... repeticiones
+    if i + 1 < len(patron) and patron[i + 1] == "*":
+        # primero sin consumir nada
+        if casa(patron, texto, i + 2, j):
+            return True
+        k = j
+        while k < len(texto) and (patron[i] == "." or patron[i] == texto[k]):
+            k = k + 1
+            if casa(patron, texto, i + 2, k):
+                return True
+        return False
+    if j < len(texto) and (patron[i] == "." or patron[i] == texto[j]):
+        return casa(patron, texto, i + 1, j + 1)
+    return False
+
+print("un emparejador minimo, que cuenta sus propios pasos")
+for patron, texto in (("a*b", "aaab"), ("a*b", "aaac")):
+    pasos[0] = 0
+    r = casa(patron, texto)
+    print("  %-6r contra %-7r -> %-5s en %d pasos" % (patron, texto, r, pasos[0]))
+print()
+
+# La misma respuesta, dos patrones. Uno reparte el trabajo de una forma
+# que obliga a probar todas las maneras de dividir el texto.
+print("dos patrones que responden lo mismo y cuestan cosas distintas")
+print("  letras      a*b   a*a*b   formula (n+2)(n+3)/2")
+cuadra = True
+for n in (4, 8, 12, 16, 20):
+    texto = "a" * n            # sin b al final: los dos responden False
+    pasos[0] = 0
+    casa("a*b", texto)
+    bueno = pasos[0]
+    pasos[0] = 0
+    casa("a*a*b", texto)
+    malo = pasos[0]
+    prediccion = (n + 2) * (n + 3) // 2
+    if bueno != n + 2 or malo != prediccion:
+        cuadra = False
+    print("  %2d        %5d   %5d   %5d" % (n, bueno, malo, prediccion))
+print()
+print("  los conteos cuadran con las formulas n+2 y (n+2)(n+3)/2: %s" % cuadra)
+print()
+print("a*b mira cada posicion una vez y sus pasos crecen con el texto. a*a*b")
+print("prueba TODAS las formas de repartir las aes entre las dos estrellas")
+print("antes de rendirse, y esas formas crecen con el CUADRADO: de 20 letras")
+print("a 40 los pasos pasarian de %d a %d, algo mas del cuadruple"
+      % ((22 * 23) // 2, (42 * 43) // 2))
+print()
+
+# La libreria de verdad resuelve estos dos casos igual de rapido, pero el
+# fenomeno existe y aparece con patrones mas enredados. La defensa no es
+# adivinar cuales: es escribir el patron para que no haya nada que repartir.
+print("los dos patrones dan la misma respuesta con la libreria de verdad")
+for patron in (r"a*b", r"a*a*b"):
+    print("  re.fullmatch(%-8r, 'aaaa') -> %s" % (patron, bool(re.fullmatch(patron, "aaaa"))))
+print()
+print("la defensa no es adivinar que patrones se atascan, sino quitar la")
+print("ambiguedad: en vez de '<.+?>' escribir '<[^>]+>', que dice")
+print("exactamente donde termina y no deja nada que repartir")
+html = "<b>negrita</b> y <i>cursiva</i>"
+print("  '<.+?>'   -> %s" % re.findall(r"<.+?>", html))
+print("  '<[^>]+>' -> %s" % re.findall(r"<[^>]+>", html))
+print("  dan lo mismo: %s" % (re.findall(r"<.+?>", html) == re.findall(r"<[^>]+>", html)))
+```
+
+```{=html}
+<div class="viz-repartos">
+  <div class="controles">
+    <label>Letras en el texto: <input id="rp-n" type="range" min="2" max="14" step="1" value="6"><span id="rp-n-v" class="mono">6</span></label>
+    <label>Patrón:
+      <select id="rp-p"><option value="dos" selected>a*a*b — dos estrellas</option><option value="una">a*b — una estrella</option></select>
+    </label>
+  </div>
+  <svg id="rp-svg" viewBox="0 0 660 225" role="img" aria-label="Cuántos repartos hay que probar"></svg>
+  <div id="rp-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-repartos { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-repartos .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-repartos label { display: flex; align-items: center; gap: .4rem; }
+.viz-repartos input[type=range] { width: 150px; padding: 0; }
+.viz-repartos .mono { font-family: var(--bs-font-monospace, monospace); font-size: .8rem; }
+.viz-repartos svg { width: 100%; height: auto; display: block; }
+.viz-repartos .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("rp-svg"), lec = document.getElementById("rp-lectura");
+  var cn = document.getElementById("rp-n"), cp = document.getElementById("rp-p"), en = document.getElementById("rp-n-v");
+  // el marco es fijo: el area de dibujo no sigue a los datos (regla 19b)
+  var X0 = 48, ANCHO = 560, Y0 = 46, ALTO = 120;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var n = +cn.value, dos = cp.value === "dos";
+    en.textContent = n;
+    // cada fila es un reparto que hay que probar. Con una estrella hay uno
+    var repartos = dos ? n + 1 : 1;
+    var dy = Math.min(14, ALTO / repartos);
+    var w = ANCHO / Math.max(n, 1);
+    var k, j;
+    for (k = 0; k < repartos; k++) {
+      var corte = dos ? k : n;      // cuantas letras toma la primera estrella
+      var y = Y0 + k * dy;
+      for (j = 0; j < n; j++) {
+        var primera = j < corte;
+        svg.appendChild(el("rect", { x: X0 + j * w, y: y, width: w - 1.5, height: Math.max(3, dy - 2),
+          fill: primera ? C_A : C_B, opacity: .55 }));
+      }
+    }
+    svg.appendChild(el("rect", { x: X0 - 2, y: Y0 - 4, width: ANCHO + 4, height: ALTO + 8, rx: 4,
+      fill: "none", stroke: C_L, "stroke-width": 1.1 }));
+    svg.appendChild(el("text", { x: X0, y: Y0 - 12, "font-size": 10.5, fill: C_T, opacity: .7 },
+      "cada franja es un reparto que hay que probar"));
+
+    var pasos = dos ? (n + 2) * (n + 3) / 2 : n + 2;
+    svg.appendChild(el("text", { x: X0, y: 196, "font-size": 12.5, fill: C_T },
+      "repartos: " + repartos + "   ·   pasos del emparejador: " + pasos));
+
+    lec.innerHTML = dos
+      ? "Con <strong>dos</strong> estrellas hay <strong>" + repartos + "</strong> formas de repartir las " + n + " letras entre ellas, y el emparejador las prueba <em>todas</em> antes de poder decir que ninguna funciona: <strong>" + pasos + "</strong> pasos. Alargar el texto añade una franja <em>y</em> alarga todas las que ya había, y por eso el coste crece con el cuadrado."
+      : "Con <strong>una</strong> estrella no hay nada que repartir: una sola franja, una sola forma de consumir las letras, <strong>" + pasos + "</strong> pasos. Alargar el texto alarga la franja pero no añade ninguna. Esa es toda la diferencia entre un patrón ambiguo y uno que no lo es.";
+  }
+  cn.addEventListener("input", dibujar);
+  cp.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Lo que esta lección no resuelve
+
+No se ha tratado lo que un usuario percibe como «un carácter», que puede ser una secuencia de varios puntos de código: una letra con dos acentos, o una bandera. `len` cuenta puntos de código y no esas agrupaciones, de modo que cortar un texto por un número de caracteres puede partir una de ellas por la mitad. La biblioteca estándar no ofrece la segmentación correcta y hace falta una externa.
+
+Tampoco se ha hablado de que `re` no implementa expresiones regulares en el sentido de la teoría: las referencias hacia atrás y las miradas adelante van más allá, y son precisamente las que introducen la ambigüedad que la Proposición 20.10 mide. Un motor basado en autómatas no tiene ese problema y a cambio no ofrece esas construcciones.
+
+## Ejercicios
+
+### Ejercicio 1, Caracteres contra bytes
+
+Con la Proposición 20.2, calcular cuántos caracteres y cuántos bytes ocupa el texto, y comprobar que descodificar sus bytes como `latin-1` devuelve algo distinto sin levantar ningún error.
+
+```{pyodide}
+#| exercise: ex_bytes
+texto = "café"
+
+caracteres = ______
+bytes_utf8 = ______
+mentira = ______
+
+print(caracteres, bytes_utf8, repr(mentira), mentira == texto)
+```
+
+::: {.hint exercise="ex_bytes"}
+`len` sobre la cadena cuenta caracteres; `len` sobre lo que devuelve `encode` cuenta bytes. Y `latin-1` no falla nunca.
+:::
+
+::: {.solution exercise="ex_bytes"}
+```{pyodide}
+texto = "café"
+
+caracteres = len(texto)
+bytes_utf8 = len(texto.encode("utf-8"))
+mentira = texto.encode("utf-8").decode("latin-1")
+
+print(caracteres, bytes_utf8, repr(mentira), mentira == texto)
+```
+
+Cuatro caracteres y cinco bytes, porque la `é` ocupa dos. Y `latin-1` devuelve `'cafÃ©'`, de cinco caracteres, sin levantar nada: cada uno de los dos bytes de la `é` se interpreta como un carácter propio.
+:::
+
+```{pyodide}
+#| exercise: ex_bytes
+#| check: true
+if caracteres == 4 and bytes_utf8 == 5 and mentira != texto and len(mentira) == 5:
+    feedback = {"correct": True, "message": "Correcto: 4 caracteres, 5 bytes, y latin-1 miente sin fallar."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 4 caracteres, 5 bytes y una cadena distinta de 5 caracteres."}
+feedback
+```
+
+### Ejercicio 2, El patrón que no se traga de más
+
+Con la Proposición 20.11, extraer los dos valores entre comillas sin que el patrón se coma lo que hay en medio. Dejar la lista en `valores`.
+
+```{pyodide}
+#| exercise: ex_regex
+import re
+
+linea = 'nombre="Ana" y ciudad="Lima"'
+
+valores = re.findall(______, linea)
+
+print(valores)
+```
+
+::: {.hint exercise="ex_regex"}
+Se sabe qué carácter termina el campo: la comilla. Una clase de caracteres que la excluya no deja ninguna alternativa que probar.
+:::
+
+::: {.solution exercise="ex_regex"}
+```{pyodide}
+import re
+
+linea = 'nombre="Ana" y ciudad="Lima"'
+
+valores = re.findall(r'"([^"]+)"', linea)
+
+print(valores)
+```
+
+Devuelve `['Ana', 'Lima']`. Con `"(.+)"` el resultado sería `['Ana" y ciudad="Lima']`, una sola coincidencia que se traga el texto intermedio: es la Proposición 20.9 con datos reales. El paréntesis hace que `findall` devuelva solo el contenido del grupo y no las comillas.
+:::
+
+```{pyodide}
+#| exercise: ex_regex
+#| check: true
+if valores == ["Ana", "Lima"]:
+    feedback = {"correct": True, "message": "Correcto: dos valores, sin tragarse lo de en medio."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba ['Ana', 'Lima']."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Python 20**:
+
+1. Tomar un texto con acentos, guardarlo en las dos formas normalizadas y comprobar que un `set` los cuenta como dos elementos distintos. Anotar en qué punto del programa convendría normalizar para que no ocurra.
+2. Escribir un patrón codicioso y uno perezoso para extraer el mismo campo de un texto con **dos** apariciones, y anotar cuál de los dos devuelve un valor plausible pero equivocado.
+3. Medir con el emparejador de la lección los pasos de `a*a*a*b` sobre textos de 4 a 16 letras, y decidir si crecen con el cuadrado o con el cubo. Guardar en `50-Errores/` la predicción previa y el conteo que la confirma o la desmiente.
+
+## Del libro
+
+Esta lección no se apoya en ninguno de los libros del plan. El material de referencia es el estándar Unicode y la documentación del módulo `re` del lenguaje.
+
+## Para el Cerebro
+
+- `str` guarda **caracteres**, los archivos guardan **bytes**. `len` cuenta caracteres: `'años'` son 4 y ocupa 5.
+- `latin-1` **nunca falla** al descodificar: miente en silencio. Declarar siempre `encoding="utf-8"`.
+- Dos cadenas que se ven iguales pueden medir **4 y 5** y no ser iguales. Normalizar a **NFC** en la frontera.
+- Una clave sin normalizar **no se encuentra**: `get` devuelve `None` con la misma palabra.
+- Para comparar sin mayúsculas, **`casefold`** y no `lower`: `'Straße'.casefold()` vale `'strasse'`.
+- Codicioso toma lo máximo, perezoso lo mínimo: **1** coincidencia contra **4** sobre el mismo texto.
+- Un patrón ambiguo cuesta `(n+2)(n+3)/2` pasos frente a `n+2`. La defensa es `[^>]+`, no adivinar.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico: los caracteres y bytes de las cinco cadenas, con sus bytes en hexadecimal; que `utf-8` devuelve `'años'`, `ascii` levanta `UnicodeDecodeError` y `latin-1` devuelve `'aÃ±os'` sin error; que las dos formas de `'años'` miden 4 y 5 y no son iguales, con sus puntos de código; que tras normalizar coinciden en las dos formas; que una clave guardada como compuesta devuelve `None` al buscarla como separada y aparece tras normalizar ambas; que `casefold` iguala `'STRASSE'` y `'Straße'` mientras `lower` no, y que `'Straße'.casefold()` vale `'strasse'`; que `<.+>` da una coincidencia y `<.+?>` da cuatro; que la sustitución de fechas produce el formato invertido; y que el emparejador propio hace `n+2` pasos con `a*b` y `(n+2)(n+3)/2` con `a*a*b`, comprobado en cinco tamaños.
+
+**Lo que viene de los libros.** Nada. Ninguno de los libros verificados del plan trata Unicode ni expresiones regulares.
+
+**Lo que es mío, no del libro.** La organización en cuatro secciones, la decisión de exhibir el fallo de `latin-1` como **ausencia** de error en lugar de como error; la elección de demostrar la normalización con una clave de diccionario que no se encuentra, que convierte un detalle tipográfico en una pérdida de datos medible; el emparejador mínimo escrito para poder **contar pasos**, con sus dos fórmulas cerradas comprobadas en cinco tamaños; y el visual donde cada franja es un reparto, que hace visible por qué alargar el texto añade una franja y alarga todas las anteriores.
+:::

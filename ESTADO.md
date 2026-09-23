@@ -3646,6 +3646,61 @@ enseñado—, y esa restricción cambió el contenido dos veces para mejor: la
 lección 9 sustituyó `sorted(key=str.lower)` por una demostración con `ord`, y la
 11 sustituyó `global` por el contador en una lista.
 
+### 3.65 Python 20, y el contador que seguía roto en dos módulos (23-09-2026)
+
+**Python 20, «Texto, Unicode y expresiones regulares».** 3 def / 8 prop / 8 dem,
+cuatro «Modo de falla». Lo que sostiene la lección son tres exhibiciones, no tres
+advertencias:
+
+· **`latin-1` no falla nunca.** Los mismos bytes descodificados de tres formas:
+`utf-8` devuelve `'años'`, `ascii` levanta `UnicodeDecodeError`, y `latin-1`
+devuelve `'aÃ±os'` **sin error**. Se enseña como *ausencia* de error, que es lo
+que lo hace peligroso: un texto mal descodificado se publica sin que nada avise.
+
+· **Una clave que no se encuentra.** `'años'` escrita compuesta (4 puntos de
+código) y descompuesta (5) se ve idéntica y no es igual. Guardada una y buscada
+la otra, `get` devuelve `None`. Convierte un detalle tipográfico en una pérdida
+de datos medible, y es la Lección 17 —el contrato del hash— apareciendo por una
+vía nueva.
+
+· **El coste de un patrón ambiguo, con fórmula cerrada.** Se escribió un
+emparejador mínimo que **cuenta sus pasos**, porque `re` no los expone. `a*b`
+sobre `n` letras cuesta exactamente `n + 2` pasos y `a*a*b` cuesta
+`(n + 2)(n + 3) / 2`; las dos fórmulas se comprueban en cinco tamaños dentro de
+la celda. Es el patrón de siempre —cuando no hay oráculo, escribir el propio—
+llevado a medir algo que la librería esconde.
+
+**Ojo con los datos Unicode de las dos versiones**: la máquina trae 12.1.0 y el
+runner 16.0.0. Nada que dependa de `unicodedata.name`, de `category` ni de
+caracteres añadidos después de 12.1 puede imprimirse. `normalize`, `ord`,
+`encode` y `casefold` sí son estables.
+
+**Un `replace` sin anclar, otra vez.** Al registrar la lección, `s.replace('%s"'
+% ANT, ...)` casó también con `data-leccion="python/19-tipado-gradual"` y dejó
+dos lecciones dentro de un solo `data-leccion`. **Lo cazó el gate que se escribió
+en el §3.49 exactamente para eso**, al primer intento. Es la segunda vez que el
+mismo tipo de reemplazo rompe el mismo campo: los `replace` sobre un `.qmd`
+tienen que llevar contexto suficiente para no casar con un atributo distinto.
+
+**Y al ampliar el gate aparecieron dos averías vivas.** `revisa_progreso`
+comparaba las filas de cada módulo contra el `data-ids` de la **portada**, pero
+no contra el `data-ids` del **propio** índice del módulo, que es el que mueve la
+barra de esa página. Al añadir esa comprobación:
+
+| módulo | ids propios | filas publicadas |
+|---|---|---|
+| ml | **11** | 37 |
+| series | **0** | 11 |
+| python | 20 | 20 |
+| fundamentos | 12 | 12 |
+
+Es decir, **la página de ML contaba 11 de 37 y la de Series no contaba nada**.
+Es la avería que Luis reportó el 22-09-2026 —«pincho el ml y no suma»—, que
+entonces se arregló en la portada y en los `data-leccion`, pero no en estos dos
+listados. Los dos se regeneraron desde las filas publicadas. El gate comprueba
+ahora también que no haya ids duplicados y que `data-total` no sea menor que el
+número de filas.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
