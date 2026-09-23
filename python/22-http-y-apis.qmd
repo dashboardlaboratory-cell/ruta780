@@ -1,0 +1,724 @@
+---
+title: "HTTP y APIs: paginación, límites y reintentos"
+subtitle: "Python · Lección 22"
+nivel: L4
+modulo: python
+fase: F2
+prereqs: [python/21-sql-desde-python, python/20-texto-unicode-y-regex, python/04-archivos-y-errores]
+siguientes: []
+libro: "—"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="python/22-http-y-apis"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F2]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [SQL desde Python](21-sql-desde-python.qmd) · [Texto, Unicode y regex](20-texto-unicode-y-regex.qmd) · [Excepciones y contextos](04-archivos-y-errores.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Descomponer una URL y **demostrar que pegar un valor en la consulta pierde datos**: un `&` trunca el parámetro y crea uno fantasma.
+2. Distinguir `quote` de `quote_plus`, y saber cuál usa `urlencode`.
+3. Clasificar un [código de estado]{.g} y decidir **cuál se reintenta y cuál no**.
+4. **Medir una política de reintentos** con espera que se dobla: 5 peticiones y 15 unidades de espera acumulada.
+5. Nombrar **tres pérdidas silenciosas de JSON**: claves repetidas, claves no textuales y enteros que no caben en un decimal.
+6. **Demostrar que deducir el final de la paginación del tamaño de la respuesta falla** cuando el total es múltiplo del tamaño de página.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 20**: la codificación del texto, que aquí decide qué viaja por la red.
+- **Python 21**: la frontera entre el programa y el dato, que allí era una base y aquí es un servicio.
+- **Python 4**: las excepciones, que son cómo un fallo de red llega al programa.
+- **Fundamentos 3**: que un bucle sin límite no termina, que aquí es un reintento sin máximo.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 23**: Parquet y Arrow, el destino de lo que estas peticiones descargan.
+- **Python 24**: las pruebas, que son la única forma de comprobar esta lógica sin red.
+- **Python 25**: la depuración, para cuando la respuesta no es la esperada.
+- **Python 28**: los datos que no caben, donde la paginación deja de ser un detalle.
+:::
+::::
+
+**Esta página no llama a la red.** Un servicio simulado devuelve respuestas preparadas, de modo que lo que se demuestra aquí vale igual hoy que dentro de un año y no depende de que ningún servicio esté levantado. Es además la forma en que se prueba este código en serio, que es el asunto de la Lección 24.
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| `urlencode(d)` | urlencode | La consulta construida a partir del diccionario `d`, ya escapada |
+| `quote` | quote | Escapa para el **camino**: el espacio pasa a `%20` |
+| `quote_plus` | quote plus | Escapa para la **consulta**: el espacio pasa a `+` |
+| `2xx`, `4xx`, `5xx` | dos equis equis | Las familias de códigos de estado |
+| `tam` | tam | El número de elementos por página |
+| `k` | ka | El número de intentos realizados |
+:::
+
+## 1. Construir la petición
+
+:::: {.definicion}
+**Definición 22.1 (partes de una URL).** Una URL se descompone en **esquema**, **autoridad** —nombre y puerto—, **camino**, **consulta** y **fragmento**. La consulta es una lista de pares separados por `&`, y el fragmento, lo que sigue a `#`, **no se envía al servidor**.
+::::
+
+:::: {.proposicion}
+**Proposición 22.2.** Pegar un valor dentro de la consulta pierde datos en cuanto ese valor contiene un `&`: el parámetro llega **truncado** y aparece otro que nadie pidió.
+::::
+
+:::: {.demostracion}
+*Demostración.* El `&` separa pares en la consulta, de modo que un `&` dentro de un valor se lee como el final de ese par. El texto que le sigue pasa a interpretarse como un nombre de parámetro nuevo, sin valor. La celda construye la misma petición de las dos formas y las analiza: de la pegada, `nota` llega valiendo `'ventas '` y aparece un parámetro `' devoluciones'` vacío; de la construida con `urlencode`, `nota` llega entera. **Nada falla**: la petición sale, el servidor responde, y el dato llegó a medias. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 22.3.** El camino y la consulta no se escapan igual: en el camino el espacio se escribe `%20` y en la consulta `+`. `urlencode` usa la forma de la consulta, que es la correcta para su sitio.
+::::
+
+:::: {.demostracion}
+*Demostración.* Las dos partes tienen gramáticas distintas y caracteres reservados distintos: en un camino la barra separa niveles y ha de conservarse, mientras que en un valor de consulta la barra no significa nada. `quote` respeta la barra por defecto y `quote_plus` convierte el espacio en `+`, que es lo que el formato de la consulta admite. La celda escapa el mismo texto de las tres maneras y exhibe las tres salidas. ∎
+::::
+
+**Modo de falla.** Un valor con espacios funciona pegado durante meses, porque el servidor los tolera, y el día que llega uno con `&` o con `#` el dato se trunca en silencio. El síntoma aparece lejos: un informe con nombres a medias, o un filtro que devuelve más filas de las esperadas porque su valor se cortó. La defensa es no construir nunca la consulta con concatenación; `urlencode` sobre un diccionario no admite ese error.
+
+```{pyodide}
+from urllib.parse import urlencode, urlparse, parse_qs, quote, quote_plus
+
+# Una URL tiene partes con significado distinto, y cada una se escapa de
+# una forma. Construirla pegando texto es el origen de casi todos los
+# fallos de esta leccion.
+u = "https://api.ejemplo.com:8443/v2/ventas?ciudad=Lima&pagina=3#resumen"
+p = urlparse(u)
+print("las partes de una URL")
+for campo in ("scheme", "netloc", "hostname", "port", "path", "query", "fragment"):
+    print("  %-9s %r" % (campo, getattr(p, campo)))
+print()
+print("  la consulta, ya separada: %s" % parse_qs(p.query))
+print("  el fragmento (#resumen) NO se envia al servidor: es para el cliente")
+print()
+
+# Pegar un valor dentro de la consulta se rompe con un espacio o con un &.
+ciudad = "San Jose"
+nota = "ventas & devoluciones"
+pegada = "https://api.ejemplo.com/v2?ciudad=%s&nota=%s" % (ciudad, nota)
+correcta = "https://api.ejemplo.com/v2?" + urlencode({"ciudad": ciudad, "nota": nota})
+
+print("pegar el valor contra construirlo con urlencode")
+print("  pegada   : %s" % pegada)
+print("  correcta : %s" % correcta)
+print()
+print("y esto es lo que el servidor entiende en cada caso:")
+print("  de la pegada   : %s" % parse_qs(urlparse(pegada).query))
+print("  de la correcta : %s" % parse_qs(urlparse(correcta).query))
+print()
+print("el & del valor parte el parametro en dos: 'nota' llega TRUNCADA a")
+print("'ventas ' y el resto se pierde sin dejar rastro, porque lo que sigue")
+print("al & se lee como otro parametro y este no tiene valor. Nada falla:")
+print("la peticion sale, el servidor responde, y el dato llego a medias")
+print()
+print("con keep_blank_values se ve el parametro fantasma que se creo:")
+from urllib.parse import parse_qs as _pq
+print("  %s" % _pq(urlparse(pegada).query, keep_blank_values=True))
+print()
+print("con urlencode el & viaja escapado y el valor llega entero")
+print()
+
+# Espacios y acentos: el camino y la consulta NO se escapan igual.
+print("el camino y la consulta se escapan distinto")
+trozo = "informe anual/ñ"
+print("  el texto            : %r" % trozo)
+print("  quote (camino)      : %r   <- el espacio pasa a %%20" % quote(trozo))
+print("  quote_plus (consulta): %r   <- el espacio pasa a +" % quote_plus(trozo))
+print()
+print("  quote deja la barra por defecto, porque en un camino separa niveles:")
+print("  quote(%r, safe='') = %r" % (trozo, quote(trozo, safe="")))
+print()
+print("urlencode usa quote_plus para los valores, que es lo correcto en una")
+print("consulta. Escoger la funcion a mano es otra forma de equivocarse")
+```
+
+## 2. Qué responde el servidor, y cuándo insistir
+
+:::: {.definicion}
+**Definición 22.4 (código de estado).** El **código de estado** dice en una cifra qué pasó. `2xx` salió bien; `3xx` está en otro sitio; `4xx` la petición está mal y **repetirla igual fallará igual**; `5xx` el servidor tuvo un problema, que puede pasarse. `429` es el caso especial de «demasiadas peticiones, espera».
+::::
+
+:::: {.proposicion}
+**Proposición 22.5.** Solo se reintentan `5xx` y `429`. Un `404` o un `400` se reintentan en vano, porque la petición no va a mejorar por repetirla.
+::::
+
+:::: {.demostracion}
+*Demostración.* Un `4xx` describe un defecto de la petición —una ruta que no existe, un cuerpo mal formado, una credencial ausente—, y la petición siguiente sería idéntica, de modo que el resultado también. Un `5xx` describe un estado del servidor, que es independiente de la petición y puede cambiar. La celda ejecuta la misma política sobre cuatro guiones: el `404` se rinde tras **1** petición y el servidor caído hace **5**. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 22.6.** Con una espera que se dobla en cada reintento, cinco intentos acumulan **15 unidades** de espera: `1 + 2 + 4 + 8`. Esperar antes de rendirse no aporta nada, de modo que tras el último intento no se espera.
+::::
+
+:::: {.demostracion}
+*Demostración.* Las esperas son `1, 2, 4, 8, …`, y con `k` intentos hay `k - 1` esperas entre ellos; su suma es `2^(k-1) - 1`, que para `k = 5` vale 15. La espera posterior al último intento no precede a ninguna petición, así que no cumple ninguna función y solo retrasa la respuesta al programa. La celda mide 15 unidades en el caso del servidor caído y 3 en el que acierta al tercer intento. ∎
+::::
+
+**Modo de falla.** Un reintento **sin máximo** convierte una caída del servicio en un programa colgado, y por la Proposición 3.3 nada lo señala: no hay error, no crece la memoria, el proceso simplemente no avanza. Un reintento **sin espera** es peor, porque multiplica la carga sobre un servidor que ya estaba en apuros. La defensa son las dos cosas a la vez: un máximo de intentos y una espera que crece.
+
+```{pyodide}
+# Esta pagina NO llama a la red: un servidor simulado devuelve respuestas
+# preparadas. Asi la leccion se comprueba igual hoy que dentro de un ano,
+# y no depende de que ningun servicio este levantado.
+class Servidor:
+    """Devuelve los codigos de una lista, uno por peticion, y cuenta."""
+    def __init__(self, guion):
+        self.guion, self.peticiones = list(guion), 0
+    def pide(self):
+        self.peticiones = self.peticiones + 1
+        return self.guion[min(self.peticiones - 1, len(self.guion) - 1)]
+
+print("que significa cada familia de codigos")
+for codigo, sentido in ((200, "salio bien"), (201, "salio bien y se creo algo"),
+                        (301, "esta en otro sitio"), (400, "la peticion esta mal escrita"),
+                        (401, "falta identificarse"), (403, "identificado, pero sin permiso"),
+                        (404, "no existe"), (429, "demasiadas peticiones, espera"),
+                        (500, "el servidor se rompio"), (503, "el servidor no esta disponible")):
+    familia = codigo // 100
+    quien = {2: "todo bien", 3: "redireccion", 4: "culpa del cliente",
+             5: "culpa del servidor"}[familia]
+    print("  %d  %-22s %-38s %s" % (codigo, quien, sentido,
+          "reintentar" if codigo in (429, 500, 503) else "no reintentar"))
+print()
+print("la regla: un 4xx dice que la peticion esta mal y repetirla igual va")
+print("a fallar igual. Un 5xx y un 429 dicen que el problema puede pasarse")
+print()
+
+# Reintentar con espera creciente. No se mide en segundos: se cuenta el
+# numero de peticiones y la espera acumulada que TOCARIA, en unidades.
+def pide_con_reintentos(servidor, maximo=5):
+    espera, acumulada, intentos = 1, 0, 0
+    while intentos < maximo:
+        intentos = intentos + 1
+        codigo = servidor.pide()
+        if codigo not in (429, 500, 503):
+            return codigo, intentos, acumulada
+        if intentos == maximo:
+            break                    # no tiene sentido esperar para rendirse
+        acumulada = acumulada + espera
+        espera = espera * 2          # el doble antes de cada reintento
+    return codigo, intentos, acumulada
+
+print("reintentar con espera que se dobla, contando peticiones y unidades")
+for nombre, guion in (("bien a la primera", [200]),
+                      ("dos fallos y luego bien", [503, 503, 200]),
+                      ("no existe", [404]),
+                      ("caido del todo", [503])):
+    s = Servidor(guion)
+    codigo, intentos, espera = pide_con_reintentos(s)
+    print("  %-24s -> codigo %d en %d peticion(es), esperando %2d unidades"
+          % (nombre, codigo, intentos, espera))
+print()
+print("el 404 se rinde a la primera, que es lo correcto: repetirlo daria 404")
+print("otra vez. El caido del todo hace 5 intentos y espera 1+2+4+8 = 15")
+print("unidades antes del ultimo, en vez de machacar el servidor seguido")
+print()
+
+# Sin limite de intentos, un servidor caido convierte el programa en un
+# bucle infinito. El maximo no es un adorno.
+s = Servidor([503])
+codigo, intentos, _ = pide_con_reintentos(s, maximo=2)
+print("con un maximo de 2 intentos el programa se rinde y sigue")
+print("  intentos: %d, ultimo codigo: %d" % (intentos, codigo))
+print("  sin maximo, ese bucle no terminaria nunca (Proposicion 3.3)")
+```
+
+```{=html}
+<div class="viz-reintento">
+  <div class="controles">
+    <label>Intentos permitidos: <input id="ri-k" type="range" min="1" max="7" step="1" value="5"><span id="ri-k-v" class="mono">5</span></label>
+    <label>La espera:
+      <select id="ri-m"><option value="doble" selected>se dobla</option><option value="fija">es siempre 1</option></select>
+    </label>
+  </div>
+  <svg id="ri-svg" viewBox="0 0 660 205" role="img" aria-label="Peticiones y espera acumulada"></svg>
+  <div id="ri-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-reintento { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-reintento .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-reintento label { display: flex; align-items: center; gap: .4rem; }
+.viz-reintento input[type=range] { width: 150px; padding: 0; }
+.viz-reintento .mono { font-family: var(--bs-font-monospace, monospace); font-size: .8rem; }
+.viz-reintento svg { width: 100%; height: auto; display: block; }
+.viz-reintento .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("ri-svg"), lec = document.getElementById("ri-lectura");
+  var ck = document.getElementById("ri-k"), cm = document.getElementById("ri-m"), ek = document.getElementById("ri-k-v");
+  // el eje del tiempo va siempre de 0 a 64 unidades: anclado a una
+  // constante, no a lo que dure el caso dibujado (regla 19b)
+  var X0 = 44, X1 = 626, Y = 92, TMAX = 64;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(t) { return X0 + (X1 - X0) * Math.min(1, t / TMAX); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var k = +ck.value, doble = cm.value === "doble";
+    ek.textContent = k;
+    svg.appendChild(el("path", { d: "M" + X0 + " " + Y + " L" + X1 + " " + Y,
+      stroke: C_L, "stroke-width": 1.4 }));
+    svg.appendChild(el("text", { x: X1, y: Y + 34, "text-anchor": "end", "font-size": 10.5,
+      fill: C_T, opacity: .6 }, "unidades de espera acumulada"));
+    var t = 0, espera = 1, j;
+    for (j = 0; j < k; j++) {
+      var x = px(t);
+      // cada peticion es una marca vertical en el instante en que ocurre
+      svg.appendChild(el("path", { d: "M" + x + " " + (Y - 30) + " L" + x + " " + (Y + 8),
+        stroke: j === k - 1 ? C_B : C_A, "stroke-width": 2.4 }));
+      svg.appendChild(el("text", { x: x, y: Y - 38, "text-anchor": "middle", "font-size": 10,
+        fill: j === k - 1 ? C_B : C_A }, String(j + 1)));
+      if (j < k - 1) {
+        t = t + espera;
+        if (doble) espera = espera * 2;
+      }
+    }
+    svg.appendChild(el("text", { x: X0, y: Y + 62, "font-size": 12.5, fill: C_T },
+      k + (k === 1 ? " petición" : " peticiones") + "   ·   espera acumulada: " + t + " unidades"));
+    svg.appendChild(el("text", { x: X0, y: 186, "font-size": 10.5, fill: C_T, opacity: .7 },
+      doble ? "esperas: 1, 2, 4, 8, … — cada una el doble de la anterior"
+            : "esperas: 1, 1, 1, … — siempre la misma"));
+
+    lec.innerHTML = doble
+      ? "Con la espera doblándose, <strong>" + k + "</strong> intentos se reparten a lo largo de <strong>" + t + "</strong> unidades: las marcas empiezan juntas y se van separando. Al servidor caído se le da cada vez más margen sin dejar de intentarlo, y la última marca queda en rojo porque tras ella <em>no</em> se espera: rendirse no necesita pausa."
+      : "Con espera fija de 1, los <strong>" + k + "</strong> intentos quedan repartidos en <strong>" + t + "</strong> unidades, todas las marcas a la misma distancia. Se insiste al mismo ritmo sobre un servidor que ya estaba en apuros, y se agotan los intentos antes de darle tiempo a recuperarse.";
+  }
+  ck.addEventListener("input", dibujar);
+  cm.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Lo que JSON pierde por el camino
+
+:::: {.proposicion}
+**Proposición 22.7.** JSON pierde datos en tres sitios distintos y en ninguno levanta una excepción al leer: las claves repetidas se quedan en la última, las claves no textuales se convierten en texto y pueden colisionar, y un entero mayor que `2^53` no sobrevive a un lector que use decimales.
+::::
+
+:::: {.demostracion}
+*Demostración.* El texto `{"id": 1, "id": 2, "nombre": "Ana"}` tiene tres claves y produce un diccionario de **dos**, porque la segunda `id` sobreescribe a la primera. El diccionario `{1: 'uno', '1': 'otro'}` tiene dos claves distintas —un entero y un texto, por la Proposición 7.7 son distintas porque `1 != '1'`— y al escribirse las dos se convierten en la cadena `"1"`, de modo que la vuelta produce **una** sola entrada y la ida y vuelta no conserva el diccionario. Y `9007199254740993`, que es `2^53 + 1`, sobrevive en Python porque sus enteros son exactos por la Proposición 1.3, pero `float` de ese número devuelve `9007199254740992.0`: el último dígito se pierde. La celda exhibe las tres. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 22.8.** `json.dumps` escribe `NaN`, que el estándar JSON **no admite**. Con `allow_nan=False` el error aparece en el programa que escribe, en lugar de en el que lee.
+::::
+
+:::: {.demostracion}
+*Demostración.* El formato define únicamente números finitos, de modo que un lector estricto rechaza `NaN`. El escritor de Python lo produce por comodidad, con lo que el archivo sale válido para Python e inválido para el resto; `allow_nan=False` restablece el comportamiento del estándar y levanta `ValueError`. Un conjunto y unos bytes, en cambio, levantan `TypeError` sin necesidad de pedirlo, porque no tienen ninguna representación. La celda comprueba los tres casos. ∎
+::::
+
+**Modo de falla.** Un identificador de 19 dígitos que viaja como número se corrompe en el último dígito al pasar por cualquier consumidor que use decimales —una hoja de cálculo, un navegador, casi cualquier otro lenguaje—, y el registro que se actualiza pasa a ser el vecino. El dato sigue pareciendo correcto y el error solo se ve al cruzarlo con otra fuente. La defensa es que los identificadores largos viajen como **texto**, y comprobar en la frontera que lo hacen.
+
+```{pyodide}
+import json
+
+# JSON parece un diccionario de Python y no lo es. Tres diferencias que
+# pierden datos sin levantar ninguna excepcion.
+print("1. las claves repetidas: la ultima gana, en silencio")
+crudo = '{"id": 1, "id": 2, "nombre": "Ana"}'
+d = json.loads(crudo)
+print("  texto recibido : %s" % crudo)
+print("  ya leido       : %s" % d)
+print("  claves que llegaron: 3; claves que quedan: %d" % len(d))
+print()
+
+print("2. las claves son SIEMPRE texto al escribir")
+original = {1: "uno", "1": "otro"}
+ida = json.dumps(original)
+vuelta = json.loads(ida)
+print("  original : %s   (%d claves: un entero y un texto)" % (original, len(original)))
+print("  como JSON: %s" % ida)
+print("  de vuelta: %s   (%d clave)" % (vuelta, len(vuelta)))
+print("  ida y vuelta conserva el diccionario: %s" % (original == vuelta))
+print()
+
+print("3. los enteros grandes sobreviven; los decimales no siempre")
+grande = 9007199254740993          # 2**53 + 1
+print("  entero grande      : %d" % grande)
+print("  ida y vuelta       : %d" % json.loads(json.dumps(grande)))
+print("  se conserva        : %s   <- Python usa enteros exactos"
+      % (json.loads(json.dumps(grande)) == grande))
+print()
+print("  pero muchos lectores de JSON guardan los numeros como decimales,")
+print("  y ahi ese entero no cabe. Asi se ve el problema:")
+print("  float(%d) = %r" % (grande, float(grande)))
+print("  int(float(x)) == x : %s   <- el ultimo digito se perdio"
+      % (int(float(grande)) == grande))
+print()
+print("  por eso un identificador largo viaja como TEXTO y no como numero:")
+print("  json.loads('{\"id\": \"%d\"}')[\"id\"] = %r"
+      % (grande, json.loads('{"id": "%d"}' % grande)["id"]))
+print()
+
+# Y lo que JSON no sabe representar levanta un error al escribir, que es
+# lo bueno: falla pronto en vez de guardar algo raro.
+print("lo que JSON no sabe escribir falla al escribir, no despues")
+for valor, etiqueta in ((float("nan"), "nan"), ({1, 2}, "un conjunto"),
+                        (b"bytes", "unos bytes")):
+    try:
+        r = json.dumps(valor)
+        print("  %-12s -> %r   <- salio, pero no es JSON valido" % (etiqueta, r))
+    except TypeError:
+        print("  %-12s -> TypeError al escribir" % etiqueta)
+print()
+print("nan sale escrito como NaN, que el estandar JSON no admite: otros")
+print("lectores lo rechazaran. Con allow_nan=False falla aqui, que es mejor")
+try:
+    json.dumps(float("nan"), allow_nan=False)
+    print("  con allow_nan=False: salio")
+except ValueError:
+    print("  con allow_nan=False: ValueError, y el problema se ve en casa")
+```
+
+## 4. Recorrer un servicio por páginas
+
+:::: {.definicion}
+**Definición 22.9 (paginación).** Un servicio entrega los resultados en **páginas** de tamaño fijo, junto con una señal que dice si quedan más. Recorrerlo consiste en pedir páginas sucesivas hasta que esa señal diga que no.
+::::
+
+:::: {.proposicion}
+**Proposición 22.10.** Deducir el final de que una página llegue **incompleta** funciona salvo cuando el total es múltiplo exacto del tamaño de página. Con 47 elementos de 10 en 10 las dos reglas coinciden; con 40, la regla del tamaño pide una página de más.
+::::
+
+:::: {.demostracion}
+*Demostración.* La regla supone que la última página siempre viene corta, lo cual es cierto salvo si el total es divisible por el tamaño: entonces la última viene llena y la regla no reconoce el final, de modo que pide la siguiente. La celda ejecuta las dos reglas sobre 47 y sobre 40 elementos: con 47 ambas hacen 5 peticiones, y con 40 la regla del tamaño hace **5** —cuatro con datos y una vacía— donde bastaban 4. Usar la señal del servicio evita el caso y no depende de qué haga el servicio al pedir una página que no existe. ∎
+::::
+
+**Modo de falla.** La forma benigna de este error gasta una petición de más. La dañina es la contraria: un servicio que devuelve la **primera** página cuando se le pide una que no existe convierte ese bucle en uno que no termina y que además duplica datos. Y hay una tercera, peor: paginar sobre datos que cambian mientras se recorren, donde una fila insertada desplaza el resto y una página se salta elementos que nunca se vuelven a pedir. La defensa es usar la señal del servicio y, cuando el orden lo permita, paginar por un valor de corte —«los posteriores a este identificador»— en lugar de por número de página.
+
+```{pyodide}
+# Un servicio no devuelve un millon de filas de una vez: las entrega por
+# paginas. Aqui va un servicio simulado y dos formas de recorrerlo.
+class Servicio:
+    """Entrega los datos por paginas y cuenta las peticiones recibidas."""
+    def __init__(self, datos, tam):
+        self.datos, self.tam, self.peticiones = list(datos), tam, 0
+    def pagina(self, n):
+        self.peticiones = self.peticiones + 1
+        trozo = self.datos[n * self.tam:(n + 1) * self.tam]
+        return {"items": trozo, "pagina": n,
+                "hay_mas": (n + 1) * self.tam < len(self.datos)}
+
+TOTAL = 47
+s = Servicio(range(TOTAL), tam=10)
+
+# (a) recorrer hasta que el servicio diga que no hay mas
+recogidos = []
+n = 0
+while True:
+    r = s.pagina(n)
+    recogidos.extend(r["items"])
+    if not r["hay_mas"]:
+        break
+    n = n + 1
+
+print("recorrer paginas hasta que el servicio diga que se acabo")
+print("  elementos del servicio : %d" % TOTAL)
+print("  recogidos              : %d" % len(recogidos))
+print("  peticiones hechas      : %d" % s.peticiones)
+print("  completos              : %s" % (recogidos == list(range(TOTAL))))
+print()
+print("  con %d por pagina y %d elementos hacen falta %d peticiones: la"
+      % (10, TOTAL, s.peticiones))
+print("  ultima trae solo %d elementos y es la que dice que no hay mas"
+      % (TOTAL % 10))
+print()
+
+# (b) EL ERROR CLASICO: parar cuando una pagina llega incompleta.
+s2 = Servicio(range(TOTAL), tam=10)
+recogidos2 = []
+n = 0
+while True:
+    r = s2.pagina(n)
+    recogidos2.extend(r["items"])
+    if len(r["items"]) < 10:        # "si viene corta, es la ultima"
+        break
+    n = n + 1
+print("parar cuando una pagina viene corta: funciona... casi siempre")
+print("  recogidos: %d de %d, completos: %s"
+      % (len(recogidos2), TOTAL, recogidos2 == list(range(TOTAL))))
+print()
+
+# Pero si el total es multiplo exacto del tamano, la ultima pagina viene
+# LLENA y la regla no para: pide una mas, que llega vacia.
+for total in (40, 47):
+    s3 = Servicio(range(total), tam=10)
+    rec, n = [], 0
+    while True:
+        r = s3.pagina(n)
+        rec.extend(r["items"])
+        if len(r["items"]) < 10:
+            break
+        n = n + 1
+    print("  con %d elementos: %d recogidos en %d peticiones (una de ellas vacia: %s)"
+          % (total, len(rec), s3.peticiones, total % 10 == 0))
+print()
+print("con 40 elementos la regla pide una pagina de mas, que llega vacia.")
+print("No pierde datos, pero gasta una peticion y depende de que el")
+print("servicio responda a una pagina que no existe en vez de dar un error")
+print()
+print("la senal que el servicio manda —hay_mas— es la que hay que usar.")
+print("Deducirla del tamano de la respuesta funciona hasta que el total es")
+print("multiplo exacto del tamano de pagina, y ese dia no hay aviso")
+```
+
+```{=html}
+<div class="viz-paginas">
+  <div class="controles">
+    <label>Elementos en total: <input id="pg-t" type="range" min="20" max="60" step="1" value="47"><span id="pg-t-v" class="mono">47</span></label>
+    <label>Cómo se decide el final:
+      <select id="pg-r"><option value="senal" selected>la señal del servicio</option><option value="corta">la página viene corta</option></select>
+    </label>
+  </div>
+  <svg id="pg-svg" viewBox="0 0 660 225" role="img" aria-label="Cuántas páginas se piden"></svg>
+  <div id="pg-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-paginas { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-paginas .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-paginas label { display: flex; align-items: center; gap: .4rem; }
+.viz-paginas input[type=range] { width: 150px; padding: 0; }
+.viz-paginas .mono { font-family: var(--bs-font-monospace, monospace); font-size: .8rem; }
+.viz-paginas svg { width: 100%; height: auto; display: block; }
+.viz-paginas .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("pg-svg"), lec = document.getElementById("pg-lectura");
+  var ct = document.getElementById("pg-t"), cr = document.getElementById("pg-r"), et = document.getElementById("pg-t-v");
+  // hasta siete cajas de pagina, siempre en los mismos sitios (regla 19b)
+  var X0 = 36, W = 88, Y = 72, TAM = 10;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var total = +ct.value, senal = cr.value === "senal";
+    et.textContent = total;
+    var llenas = Math.floor(total / TAM), resto = total % TAM;
+    var conDatos = llenas + (resto > 0 ? 1 : 0);
+    var pedidas = senal ? conDatos : (resto > 0 ? conDatos : conDatos + 1);
+    var k;
+    for (k = 0; k < 7; k++) {
+      var pedida = k < pedidas;
+      var cuantos = k < llenas ? TAM : (k === llenas ? resto : 0);
+      svg.appendChild(el("rect", { x: X0 + k * W, y: Y - 22, width: W - 10, height: 44, rx: 5,
+        fill: !pedida ? "none" : (cuantos === 0 ? C_B : C_A), opacity: !pedida ? 1 : (cuantos === 0 ? .18 : .2),
+        stroke: !pedida ? C_L : (cuantos === 0 ? C_B : C_A), "stroke-width": pedida ? 2 : 1.1,
+        "stroke-dasharray": pedida ? "none" : "4 4" }));
+      svg.appendChild(el("text", { x: X0 + k * W + (W - 10) / 2, y: Y + 4, "text-anchor": "middle",
+        "font-size": 13, fill: C_T, opacity: pedida ? 1 : .3 },
+        pedida ? String(cuantos) : "—"));
+      svg.appendChild(el("text", { x: X0 + k * W + (W - 10) / 2, y: Y + 42, "text-anchor": "middle",
+        "font-size": 9.5, fill: C_T, opacity: .5 }, "pág. " + k));
+    }
+    // LO QUE CADA REGLA MIRA, dibujado. Con la señal, una marca en el
+    // borde de cada página con el aviso del servicio; con el tamaño, una
+    // barra por página contra una línea de referencia. Son dos geometrías
+    // distintas con cualquier total (regla 19b)
+    var YR = Y + 58;
+    if (senal) {
+      for (k = 0; k < pedidas; k++) {
+        var hayMas = (k + 1) * TAM < total;
+        var cx = X0 + k * W + (W - 10) / 2;
+        svg.appendChild(el("circle", { cx: cx, cy: YR, r: 6,
+          fill: hayMas ? C_A : C_B, opacity: .75 }));
+        svg.appendChild(el("text", { x: cx, y: YR + 20, "text-anchor": "middle", "font-size": 9,
+          fill: C_T, opacity: .6 }, hayMas ? "sigue" : "fin"));
+      }
+      svg.appendChild(el("text", { x: 6, y: YR + 4, "font-size": 9.5, fill: C_T, opacity: .6 }, "señal"));
+    } else {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + (YR - 12) + " L" + (X0 + 7 * W - 10) + " " + (YR - 12),
+        stroke: C_L, "stroke-width": 1.2, "stroke-dasharray": "4 3" }));
+      svg.appendChild(el("text", { x: 6, y: YR - 9, "font-size": 9.5, fill: C_T, opacity: .6 }, "10"));
+      for (k = 0; k < pedidas; k++) {
+        var cuantos2 = k < llenas ? TAM : (k === llenas ? resto : 0);
+        var alto = 12 * (cuantos2 / TAM);
+        svg.appendChild(el("rect", { x: X0 + k * W + 14, y: YR - alto, width: W - 38, height: Math.max(1, alto),
+          fill: cuantos2 === TAM ? C_A : C_B, opacity: .6 }));
+        svg.appendChild(el("text", { x: X0 + k * W + (W - 10) / 2, y: YR + 20, "text-anchor": "middle",
+          "font-size": 9, fill: C_T, opacity: .6 }, cuantos2 === TAM ? "llena" : "corta"));
+      }
+    }
+
+    // la bandera de "aqui se para": su posicion es la que cambia
+    var xp = X0 + pedidas * W - 10 + 4;
+    svg.appendChild(el("path", { d: "M" + xp + " " + (Y - 44) + " L" + (xp + 16) + " " + (Y - 36) +
+      " L" + xp + " " + (Y - 28) + " Z", fill: C_T, opacity: .75 }));
+    svg.appendChild(el("text", { x: xp + 22, y: Y - 32, "font-size": 10.5, fill: C_T, opacity: .75 }, "para aquí"));
+
+    svg.appendChild(el("text", { x: X0, y: 206, "font-size": 12.5, fill: C_T },
+      "peticiones: " + pedidas + "   ·   páginas con datos: " + conDatos +
+      (pedidas > conDatos ? "   ·   una llega vacía" : "")));
+
+    lec.innerHTML = senal
+      ? "Usando la señal que el servicio manda, se piden exactamente las <strong>" + conDatos + "</strong> páginas que tienen datos, venga la última llena o corta. La bandera cae siempre justo después de la última con contenido."
+      : (resto === 0
+        ? "Con <strong>" + total + "</strong> elementos, la última página con datos viene <strong>llena</strong>, así que la regla del tamaño no reconoce el final y pide <strong>una más</strong>: la caja roja llega vacía. No se pierden datos, pero se gasta una petición y todo depende de que el servicio responda a una página que no existe."
+        : "Con <strong>" + total + "</strong> elementos la última página viene corta —" + resto + " elementos—, así que la regla del tamaño acierta y coincide con la señal: <strong>" + pedidas + "</strong> peticiones. Moviendo el total hasta un múltiplo de 10 se ve dónde deja de funcionar.");
+  }
+  ct.addEventListener("input", dibujar);
+  cr.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Lo que esta lección no resuelve
+
+No se ha hablado de autenticación. Un servicio real exige una credencial, que caduca y que **no** debe escribirse en el código ni acabar en el repositorio; la forma de guardarla y de renovarla es un asunto propio y la Lección 16 sitúa dónde va la configuración.
+
+Tampoco se ha tratado la reutilización de conexiones. Abrir una conexión nueva por petición desperdicia la negociación inicial, y una sesión que mantiene la conexión abierta cambia el coste de recorrer mil páginas. Y no se ha tratado la concurrencia: pedir varias páginas a la vez acelera la descarga y entra en conflicto con el límite de peticiones que la Sección 2 respeta.
+
+## Ejercicios
+
+### Ejercicio 1, El valor con ampersand
+
+Con la Proposición 22.2, construir la consulta de modo que el valor llegue entero, y comprobarlo analizándola.
+
+```{pyodide}
+#| exercise: ex_url
+from urllib.parse import urlencode, parse_qs
+
+datos = {"nota": "ventas & devoluciones"}
+
+consulta = ______
+recibido = parse_qs(consulta)["nota"][0]
+
+print(consulta, "|", recibido, "|", recibido == datos["nota"])
+```
+
+::: {.hint exercise="ex_url"}
+`urlencode` recibe el diccionario entero y escapa cada valor por su cuenta.
+:::
+
+::: {.solution exercise="ex_url"}
+```{pyodide}
+from urllib.parse import urlencode, parse_qs
+
+datos = {"nota": "ventas & devoluciones"}
+
+consulta = urlencode(datos)
+recibido = parse_qs(consulta)["nota"][0]
+
+print(consulta, "|", recibido, "|", recibido == datos["nota"])
+```
+
+La consulta sale `nota=ventas+%26+devoluciones` y el valor vuelve entero. Escrita a mano, `parse_qs` habría devuelto `'ventas '` y el resto se habría perdido sin que nada avisara.
+:::
+
+```{pyodide}
+#| exercise: ex_url
+#| check: true
+if recibido == "ventas & devoluciones" and "%26" in consulta:
+    feedback = {"correct": True, "message": "Correcto: el & viaja escapado y el valor llega entero."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba que el & saliera como %26 y el valor volviera entero."}
+feedback
+```
+
+### Ejercicio 2, Cuánto se espera
+
+Con la Proposición 22.6, calcular cuántas peticiones y cuántas unidades de espera acumula una política de 6 intentos con espera que se dobla desde 1.
+
+```{pyodide}
+#| exercise: ex_espera
+intentos = 6
+
+espera_total = 0
+espera = 1
+for k in range(______):
+    ______
+    ______
+
+print(intentos, espera_total)
+```
+
+::: {.hint exercise="ex_espera"}
+Con `k` intentos hay `k - 1` esperas, porque tras el último no se espera para rendirse.
+:::
+
+::: {.solution exercise="ex_espera"}
+```{pyodide}
+intentos = 6
+
+espera_total = 0
+espera = 1
+for k in range(intentos - 1):
+    espera_total = espera_total + espera
+    espera = espera * 2
+
+print(intentos, espera_total)
+```
+
+31 unidades: `1 + 2 + 4 + 8 + 16`. Cada intento añadido **dobla** la espera total, así que subir el máximo de 6 a 10 no la multiplica por menos de dieciséis. Por eso el máximo suele acompañarse de un tope a la espera individual.
+:::
+
+```{pyodide}
+#| exercise: ex_espera
+#| check: true
+if espera_total == 31:
+    feedback = {"correct": True, "message": "Correcto: 1+2+4+8+16 = 31."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba espera_total = 31."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Python 22**:
+
+1. Escribir un servicio simulado como el de la lección y recorrerlo con las dos reglas de final sobre totales de 39, 40 y 41 elementos. Anotar en cuál de los tres difieren y cuántas peticiones gasta cada una.
+2. Construir la misma consulta pegando el valor y con `urlencode`, sobre un valor que contenga `&`, `#` y un espacio. Guardar en `50-Errores/` lo que `parse_qs` devuelve en cada caso.
+3. Medir cuántas unidades de espera acumula una política de reintentos con espera doblada y con espera fija, para máximos de 3 a 8 intentos. Anotar a partir de qué máximo conviene poner un tope a la espera individual.
+
+## Del libro
+
+Esta lección no se apoya en ninguno de los libros del plan. El material de referencia es la especificación de HTTP y la documentación de `urllib` y `json`.
+
+## Para el Cerebro
+
+- El fragmento `#` **no se envía** al servidor.
+- Pegar un valor en la consulta con un `&` dentro lo **trunca** y crea un parámetro fantasma. Siempre `urlencode`.
+- En el camino el espacio es `%20`; en la consulta, `+`.
+- Se reintentan **`5xx` y `429`**. Un `4xx` repetido falla igual.
+- Espera que se dobla: 5 intentos son **15 unidades**, `1+2+4+8`. Tras el último no se espera.
+- Un reintento **sin máximo** es un bucle infinito; **sin espera**, es castigar al servidor caído.
+- JSON pierde en tres sitios: claves repetidas, claves no textuales, y enteros mayores que `2^53`. Los identificadores largos viajan como **texto**.
+- Deducir el final de que la página venga corta falla cuando el total es **múltiplo** del tamaño. Usar la señal del servicio.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico: las siete partes de la URL descompuesta; que la consulta pegada entrega `nota` valiendo `'ventas '` y un parámetro `' devoluciones'` vacío, mientras la de `urlencode` la entrega entera; las tres formas de escapar el mismo texto; la clasificación de los diez códigos y cuáles se reintentan; que la política se rinde tras 1 petición con un `404` y hace 5 con un servidor caído, acumulando 15 unidades de espera, y 3 peticiones con 3 unidades cuando acierta al tercero; que `{"id": 1, "id": 2, "nombre": "Ana"}` produce dos claves; que `{1: 'uno', '1': 'otro'}` no sobrevive a la ida y vuelta; que `float(9007199254740993)` vale `9007199254740992.0`; que `json.dumps` escribe `NaN` y con `allow_nan=False` levanta `ValueError`, mientras un conjunto y unos bytes levantan `TypeError`; y que recorrer 47 elementos de 10 en 10 cuesta 5 peticiones con las dos reglas mientras 40 cuesta 5 con la regla del tamaño y 4 con la señal.
+
+**Lo que viene de los libros.** Nada. Ninguno de los libros verificados del plan trata HTTP.
+
+**Lo que es mío, no del libro.** La decisión de **no llamar a la red** y construir un servicio simulado, que hace la lección reproducible y de paso enseña cómo se prueba este código; la elección de medir la política de reintentos en **unidades de espera** y no en segundos; la corrección de no esperar tras el último intento, que reduce el caso de cinco intentos de 31 unidades a 15; el orden que pone las tres pérdidas de JSON juntas por ser todas silenciosas; y el visual donde las marcas de las peticiones se separan al doblarse la espera y la bandera del final se desplaza según qué regla decida.
+:::

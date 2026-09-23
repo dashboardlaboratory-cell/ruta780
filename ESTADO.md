@@ -3751,6 +3751,53 @@ Se añadió un aforo junto a la base cuyo **borde superior** sube con el número
 filas. Vale la pena aplicar la regla del §3.61 de entrada: lo que cambia es
 dónde está algo, no su tamaño.
 
+### 3.67 Python 22: una lección sobre la red que no llama a la red (23-09-2026)
+
+3 def / 7 prop / 7 dem, cuatro «Modo de falla».
+
+**La decisión que define la lección: no hay peticiones reales.** Las celdas
+corren en el navegador y `salidas.py` las reejecuta en cada build; una llamada a
+un servicio haría el gate no determinista y dejaría la lección a merced de que
+alguien mantenga un servidor. Se construyó un **servicio simulado** que devuelve
+códigos de un guión y cuenta peticiones. De paso enseña cómo se prueba este
+código en serio, que es la Lección 24. La página lo dice en su cabecera en vez
+de disimularlo.
+
+**Lo medido:**
+
+· La consulta pegada con un `&` dentro del valor entrega `nota` valiendo
+`'ventas '` y crea un parámetro fantasma `' devoluciones'`. Con `urlencode`
+llega entera. **Nada falla**: la petición sale y el dato llegó a medias.
+
+· Reintentos con espera doblada: `404` se rinde en **1** petición, el servidor
+caído hace **5** acumulando **15** unidades (`1+2+4+8`).
+
+· Tres pérdidas silenciosas de JSON: `{"id": 1, "id": 2, …}` produce **dos**
+claves; `{1: 'uno', '1': 'otro'}` no sobrevive a la ida y vuelta; y
+`float(9007199254740993)` devuelve `…992.0`.
+
+· Paginación: con 47 elementos las dos reglas de final coinciden en 5
+peticiones; con **40** la regla del tamaño pide una de más, porque la última
+viene llena.
+
+**Un arreglo del propio código, no de la prosa.** El primer borrador acumulaba
+la espera también tras el último intento, dando 31 unidades en vez de 15. En
+lugar de ajustar la prosa se arregló la función: esperar para rendirse no
+cumple ninguna función. La demostración enuncia ahora `2^(k-1) − 1` y la celda
+lo confirma.
+
+**El patrón del §3.61, quinta vez, y la lección aprendida.** El control de la
+regla de paginación no movía nada con el total por defecto, porque ahí las dos
+reglas coinciden. Se arregló dibujando **lo que cada regla mira**: con la señal,
+una marca por página con el aviso del servicio; con el tamaño, una barra por
+página contra una línea de referencia. Dos geometrías distintas con cualquier
+total. Conviene escribirlo así de entrada: si el control elige entre dos
+criterios, hay que **dibujar los criterios**, no solo su resultado.
+
+**Comprobar el título contra el índice, automatizado.** Tras el §3.66 el script
+de registro extrae el título de la fila pendiente y **afirma** que coincide con
+el `title:` de la lección antes de publicar nada. El índice es el contrato.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
