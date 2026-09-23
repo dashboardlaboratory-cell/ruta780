@@ -3890,6 +3890,48 @@ anterior. Como cada run construye el sitio entero desde el estado actual, el
 último cubre todo lo anterior. Pero conviene **esperar a que un run confirme en
 verde antes de volver a empujar**, o no se llega a tener nunca una confirmación.
 
+### 3.70 Python 25: la traza recorrida en vez de impresa (23-09-2026)
+
+3 def / 7 prop / 7 dem, cuatro «Modo de falla».
+
+**La decisión de fondo: no imprimir la traza, recorrerla.** El texto de un
+traceback **cambia entre versiones** —3.11 añadió los marcadores `^^^^` bajo la
+expresión culpable— de modo que imprimirlo rompería el gate de las dos
+versiones. Recorrer `e.__traceback__` desde el programa da una salida idéntica
+en las dos **y** enseña algo mejor: que la traza se guarda como estructura y el
+texto es solo una de sus representaciones.
+
+**Dos diferencias entre versiones que aparecieron por el camino:**
+
+· **Python 3.14 no genera el marco `<listcomp>`.** Las comprehensions se
+integran en la función que las contiene desde 3.12, así que la misma traza tiene
+un marco más en 3.8 que en 3.14. Nada que dependa del número de marcos ni de la
+presencia de ese marco puede imprimirse; la celda usa un bucle explícito.
+
+· **El nombre del `except … as e` se borra al salir del bloque.** Hay que
+copiarlo a otro nombre dentro del `except` para poder inspeccionarlo después.
+
+**Un fallo mío al diseñar el ejemplo.** El primer borrador pasaba un entero y
+«fallaba» al multiplicarlo por un texto… que es exactamente lo que **sí**
+funciona, por la Proposición 1.2: entero por texto repite el texto. El ejemplo
+final usa decimales, y la lección aprovecha el tropiezo: dice que con enteros no
+habría fallado, lo que explica **por qué ese tipo de fallo tarda meses en
+aparecer**.
+
+**Lo medido:** la bisección localiza el paso culpable de una transformación de
+96 pasos en **6** comprobaciones frente a **96** en el peor caso; registrar solo
+lo que se sale produce **21 líneas contra 5000**, un cociente de 238 a 1.
+
+**La comparación honesta de la bisección.** La primera versión de la tabla
+dejaba el fallo fijo en el paso 7 y la columna «uno por uno» se quedaba en 8
+para cualquier longitud, contradiciendo la prosa. Se cambió a comparar los
+**peores casos** —fallo en el último paso—, que es donde la diferencia significa
+algo: 96 contra 6.
+
+**`node --check` funcionando desde el §3.69.** Los dos visuales se comprobaron
+antes de lanzar Playwright y salieron limpios; el gate confirmó sin fallos ni
+avisos a la primera.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

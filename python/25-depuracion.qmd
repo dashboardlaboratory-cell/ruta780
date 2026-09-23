@@ -1,0 +1,757 @@
+---
+title: "Depuración: leer una traza y usar el depurador"
+subtitle: "Python · Lección 25"
+nivel: L4
+modulo: python
+fase: F2
+prereqs: [python/24-pruebas, python/04-archivos-y-errores, python/19-tipado-gradual]
+siguientes: []
+libro: "—"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="python/25-depuracion"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F2]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Pruebas](24-pruebas.qmd) · [Excepciones y contextos](04-archivos-y-errores.qmd) · [Tipado gradual](19-tipado-gradual.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Leer una [traza]{.g data-t="traza de llamadas"} como lo que es —una lista de marcos— y recorrerla desde el programa.
+2. **Demostrar que donde revienta no es donde está el fallo**, y localizar el marco donde nace el valor malo.
+3. **Inspeccionar las variables locales de cada marco** sin escribir ningún `print`, que es lo que hace un depurador.
+4. Explicar por qué `except Exception: pass` destruye la información, y **capturar solo lo que se espera**.
+5. Distinguir `__cause__` de `__context__`, y saber qué añade escribir `from e`.
+6. **Medir la bisección**: 96 pasos localizados en **6** comprobaciones frente a 96.
+7. **Medir lo que ahorra registrar solo lo que se sale**: 5000 líneas contra **21**.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 24**: los invariantes, que son lo que hace posible bisecar.
+- **Python 4**: las excepciones y los contextos, que aquí se leen por dentro.
+- **Fundamentos 12**: la búsqueda binaria, que aquí busca un paso en lugar de un valor.
+- **Fundamentos 1**: que entero por texto repita el texto, que es por qué este fallo tarda en aparecer.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 26**: el perfilado, que responde «dónde se va el tiempo» con el mismo tipo de instrumentación.
+- **Python 27**: el GIL, donde los fallos dependen del orden y la traza no basta.
+- **Python 16**: la anatomía de un proyecto, donde viven los registros.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| marco | marco | Una llamada en curso, con sus variables locales |
+| `e.__traceback__` | dunder traceback | La cadena de marcos guardada en la excepción |
+| `tb.tb_next` | tb next | El marco siguiente, hacia donde reventó |
+| `__cause__` | dunder cause | El error original, **declarado** con `from e` |
+| `__context__` | dunder context | El error original, guardado por Python solo |
+| `n` | ene | El número de pasos de una transformación |
+:::
+
+## 1. Una traza es una lista de marcos
+
+:::: {.definicion}
+**Definición 25.1 (traza de llamadas).** Una **traza** es la cadena de llamadas en curso en el momento del error. Se lee **de abajo arriba**: la última línea dice qué pasó, y las de encima cómo se llegó hasta ahí. Se guarda como una estructura en `e.__traceback__`, que el programa puede recorrer, y el texto que se imprime en pantalla es solo una de sus representaciones.
+::::
+
+:::: {.proposicion}
+**Proposición 25.2.** El marco donde revienta no es el marco donde está el fallo. Un valor incorrecto creado en una función puede atravesar varias llamadas antes de encontrar la operación que no lo admite.
+::::
+
+:::: {.demostracion}
+*Demostración.* Una operación falla cuando recibe un valor que no admite, y ese valor puede haberse creado en cualquier punto anterior y haber pasado por operaciones que sí lo admitían. La celda construye el caso: `lee_config` devuelve un texto donde debía devolver un número, `prepara` lo pasa adelante sin mirarlo, y la excepción se levanta en `escala`. Con enteros ni siquiera habría fallado ahí, porque por la Proposición 1.2 entero por texto repite el texto; falla porque los valores son decimales. **El fallo está en el primer marco y la excepción en el último.** ∎
+::::
+
+:::: {.proposicion}
+**Proposición 25.3.** Las variables locales de cada marco siguen accesibles después del error, recorriendo `tb_next` y leyendo `tb_frame.f_locals`. Es lo que un depurador muestra al detenerse, y no requiere haber escrito ningún `print`.
+::::
+
+:::: {.demostracion}
+*Demostración.* La excepción conserva una referencia a la cadena de marcos, y cada marco conserva su diccionario de locales tal como estaban al propagarse el error. Recorriendo la cadena se obtiene, para cada nivel, el estado exacto de ese momento. La celda lo imprime: en el marco de `prepara` se ve `cfg` valiendo `{'factor': '2'}`, con el texto dentro, **antes** de llegar al sitio donde revienta. ∎
+::::
+
+**Modo de falla.** Un `print` añadido para ver qué pasa se ejecuta **antes** del error y muestra el estado de una vuelta anterior, no de la que falló; y cuando el fallo ocurre una vez cada mil, hay que filtrar mil salidas para encontrarla. La traza, en cambio, guarda el estado del momento exacto. La defensa es mirar primero lo que ya está guardado y añadir instrumentación solo cuando la traza no basta.
+
+```{pyodide}
+import traceback
+
+# Una traza se lee DE ABAJO ARRIBA: la ultima linea dice que paso, y las
+# de encima dicen como se llego hasta ahi. Aqui se recorre a mano, para
+# mirarla como lo que es: una lista de marcos con sus variables.
+def lee_config(texto):
+    return {"factor": texto}          # aqui nace el valor malo: es texto
+
+def prepara(texto):
+    cfg = lee_config(texto)
+    return escala([1.5, 2.5, 3.5], cfg)
+
+def escala(xs, cfg):
+    fuera = []
+    for x in xs:
+        fuera.append(x * cfg["factor"])    # aqui revienta
+    return fuera
+
+# El factor llega como TEXTO. Con enteros no fallaria —por la Proposicion
+# 1.2, entero por texto repite el texto— pero con decimales si.
+fallo = None
+try:
+    prepara("2")
+except Exception as e:
+    fallo = e                          # el nombre del except se borra al salir
+
+marcos = traceback.extract_tb(fallo.__traceback__)
+print("la traza, como lista de marcos, del primero al ultimo")
+for i, m in enumerate(marcos):
+    print("  %d  en %-12s ejecutando: %s" % (i, m.name, m.line))
+print()
+print("  el error fue   : %s" % type(fallo).__name__)
+print("  revento en     : %s" % marcos[-1].name)
+print("  todo empezo en : %s" % marcos[0].name)
+print()
+
+# Donde revienta no es donde esta el fallo: el valor malo nace en
+# lee_config y revienta dos llamadas mas abajo.
+print("donde revienta no es donde esta el fallo")
+print("  el valor malo nace en lee_config, que devolvio un texto donde")
+print("  tenia que devolver un numero, y no revienta hasta %s" % marcos[-1].name)
+print()
+
+# Lo que un depurador hace al morir el programa: mirar las variables
+# LOCALES de cada marco. Se puede hacer sin depurador.
+print("las variables locales de cada marco, que es lo que mira un depurador")
+SIMPLES = (str, int, float, bool, list, dict, tuple, type(None))
+t = fallo.__traceback__
+nivel = 0
+while t is not None:
+    f = t.tb_frame
+    if f.f_code.co_name != "<module>":     # el marco de fuera no aporta nada
+        vistas = {k: v for k, v in sorted(f.f_locals.items())
+                  if isinstance(v, SIMPLES)}
+        print("  %d  %-12s %s" % (nivel, f.f_code.co_name, vistas))
+    t = t.tb_next
+    nivel = nivel + 1
+print()
+print("en el marco de prepara se ve cfg con el texto dentro, antes de llegar")
+print("al sitio donde revienta. No hizo falta ningun print: la informacion")
+print("estaba en la traza, guardada dentro del objeto de la excepcion")
+```
+
+```{=html}
+<div class="viz-marcos">
+  <div class="controles">
+    <label>Marco que se inspecciona: <input id="mk-n" type="range" min="0" max="3" step="1" value="3"><span id="mk-n-v" class="mono">3</span></label>
+    <label>El factor llega como:
+      <select id="mk-t"><option value="texto" selected>texto</option><option value="numero">número</option></select>
+    </label>
+  </div>
+  <svg id="mk-svg" viewBox="0 0 660 235" role="img" aria-label="La cadena de marcos y sus variables"></svg>
+  <div id="mk-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-marcos { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-marcos .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-marcos label { display: flex; align-items: center; gap: .4rem; }
+.viz-marcos input[type=range] { width: 140px; padding: 0; }
+.viz-marcos .mono { font-family: var(--bs-font-monospace, monospace); font-size: .8rem; }
+.viz-marcos svg { width: 100%; height: auto; display: block; }
+.viz-marcos .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("mk-svg"), lec = document.getElementById("mk-lectura");
+  var cn = document.getElementById("mk-n"), ct = document.getElementById("mk-t"), en = document.getElementById("mk-n-v");
+  // los cuatro marcos ocupan siempre las mismas cuatro filas (regla 19b)
+  var X0 = 40, Y0 = 46, DY = 42, W = 250;
+  var MARCOS = [
+    { n: "<module>",   v: "prepara(\"2\")" },
+    { n: "prepara",    v: "cfg = {factor: …}" },
+    { n: "lee_config", v: "devuelve {factor: …}" },
+    { n: "escala",     v: "x * cfg[factor]" }
+  ];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var n = +cn.value, texto = ct.value === "texto";
+    en.textContent = n;
+    var k;
+    for (k = 0; k < 4; k++) {
+      var revienta = texto && k === 3;
+      var nace = texto && k === 2;
+      var mirado = k === n;
+      svg.appendChild(el("rect", { x: X0, y: Y0 + k * DY - 15, width: W, height: 30, rx: 5,
+        fill: revienta ? C_B : (nace ? C_B : C_A), opacity: revienta ? .28 : (nace ? .16 : .14),
+        stroke: revienta ? C_B : (nace ? C_B : C_A), "stroke-width": mirado ? 2.6 : 1.3 }));
+      svg.appendChild(el("text", { x: X0 + 12, y: Y0 + k * DY + 5, "font-size": 12, fill: C_T }, MARCOS[k].n));
+      if (revienta) svg.appendChild(el("text", { x: X0 + W + 10, y: Y0 + k * DY + 5, "font-size": 10, fill: C_B }, "revienta aquí"));
+      if (nace) svg.appendChild(el("text", { x: X0 + W + 10, y: Y0 + k * DY + 5, "font-size": 10, fill: C_B }, "el valor malo nace aquí"));
+    }
+    // el panel de variables del marco elegido: su posicion sigue al marco
+    var yp = Y0 + n * DY;
+    svg.appendChild(el("path", { d: "M" + (X0 + W) + " " + yp + " L400 " + yp, stroke: C_T, "stroke-width": 1.2, opacity: .4 }));
+    svg.appendChild(el("rect", { x: 400, y: yp - 24, width: 232, height: 48, rx: 6,
+      fill: "none", stroke: C_T, "stroke-width": 1.5, opacity: .6 }));
+    svg.appendChild(el("text", { x: 412, y: yp - 6, "font-size": 9.5, fill: C_T, opacity: .65 }, "lo que se ve en ese marco"));
+    svg.appendChild(el("text", { x: 412, y: yp + 13, "font-size": 11, fill: C_T },
+      MARCOS[n].v.replace("…", texto ? "'2'" : "2")));
+
+    svg.appendChild(el("text", { x: X0, y: 220, "font-size": 12, fill: C_T },
+      texto ? "TypeError en escala, tres marcos más abajo de donde nació el valor"
+            : "no hay error: con un número, la multiplicación funciona"));
+
+    lec.innerHTML = texto
+      ? "El valor malo nace en <strong>lee_config</strong> y la excepción se levanta en <strong>escala</strong>, tres marcos más abajo. Mirando el marco <strong>" + n + "</strong> se ve lo que había en él en ese instante: la traza guarda el estado de <em>todos</em>, no solo del último."
+      : "Con el factor llegando como número no hay error en ninguna parte, y las mismas cuatro llamadas se suceden sin incidente. Lo que cambia entre los dos casos es un solo valor, creado dos marcos antes de donde el problema se manifiesta.";
+  }
+  cn.addEventListener("input", dibujar);
+  ct.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Capturar sin destruir la información
+
+:::: {.proposicion}
+**Proposición 25.4.** `except Exception` seguido de continuar destruye la información del fallo: el programa sigue con el mismo resultado y no queda rastro de qué dato falló ni por qué. Capturar solo el error esperado y anotar el dato produce el **mismo total** y conserva todo.
+::::
+
+:::: {.demostracion}
+*Demostración.* La excepción lleva dentro el tipo, el mensaje y la traza; descartarla sin leerla descarta las tres cosas, y el contador de fallos que suele ponerse en su lugar solo conserva cuántos hubo. Capturar `ValueError` —el único que la conversión puede levantar por un dato malo— deja pasar cualquier otro error, que es lo que se quiere: un nombre mal escrito o una interrupción no deben confundirse con un dato sucio. La celda procesa las mismas tres filas de las dos formas: los dos totales valen `30.5`, y la segunda además indica que falló el importe `'n/d'` con `ValueError`. ∎
+::::
+
+:::: {.definicion}
+**Definición 25.5 (causa y contexto).** Cuando se levanta una excepción mientras se maneja otra, Python guarda la original en **`__context__`** por su cuenta. Escribir `raise … from e` la guarda además en **`__cause__`**, que es el campo que declara explícitamente la relación entre las dos.
+::::
+
+:::: {.proposicion}
+**Proposición 25.6.** `raise … from e` guarda el error original en `__cause__`; sin `from`, Python lo guarda igualmente en `__context__`. La diferencia es que `__cause__` **declara** la relación y `__context__` solo la registra.
+::::
+
+:::: {.demostracion}
+*Demostración.* Python conserva automáticamente la excepción que se estaba manejando en `__context__`, de modo que la información no se pierde en ningún caso; `from e` la copia además en `__cause__`, que es el campo que las herramientas leen como «esto fue causado por aquello». La celda comprueba las dos versiones: con `from`, `__cause__` y `__context__` valen ambos `ValueError`; sin `from`, `__cause__` vale `None` y `__context__` sigue siendo `ValueError`. ∎
+::::
+
+**Modo de falla.** El `except` demasiado ancho no solo oculta el dato sucio: oculta también los errores del propio programa. Un nombre mal escrito dentro del `try` levanta `NameError`, queda atrapado por `except Exception`, y el programa informa de un «dato inválido» que no existe. El síntoma es un recuento de filas descartadas que crece sin que ninguna de ellas tenga nada malo. La defensa es nombrar el error que se espera.
+
+```{pyodide}
+import traceback
+
+def carga(fila):
+    return float(fila["importe"])
+
+FILAS = [{"importe": "10.5"}, {"importe": "n/d"}, {"importe": "20"}]
+
+# (a) tragarse la excepcion: el programa sigue y la informacion se pierde
+total_a, perdidas = 0.0, 0
+for f in FILAS:
+    try:
+        total_a = total_a + carga(f)
+    except Exception:
+        perdidas = perdidas + 1          # ni que fila, ni por que
+
+print("tragarse la excepcion: el programa sigue y no queda rastro")
+print("  total   : %.1f" % total_a)
+print("  perdidas: %d" % perdidas)
+print("  que fila fallo y por que: no se sabe")
+print()
+
+# (b) capturar lo justo y guardar el contexto: el programa sigue igual,
+# pero queda escrito que paso y con que dato
+total_b, avisos = 0.0, []
+for f in FILAS:
+    try:
+        total_b = total_b + carga(f)
+    except ValueError as e:              # solo el error que se espera
+        avisos.append((f["importe"], type(e).__name__))
+
+print("capturar lo justo y anotar el dato: el mismo total y toda la informacion")
+print("  total   : %.1f   (igual que antes: %s)" % (total_b, total_a == total_b))
+for dato, clase in avisos:
+    print("  fallo con importe %r -> %s" % (dato, clase))
+print()
+print("except Exception atrapa tambien los errores que NO se esperaban: un")
+print("nombre mal escrito, una interrupcion, un fallo de memoria. Capturar")
+print("solo ValueError deja pasar todo lo demas, que es lo que se quiere")
+print()
+
+# Encadenar: cuando se levanta un error propio, conviene decir de donde
+# salio. Con 'from' la traza guarda los dos; sin el, solo el ultimo.
+class DatoInvalido(Exception):
+    pass
+
+def con_from():
+    try:
+        float("n/d")
+    except ValueError as e:
+        raise DatoInvalido("la columna importe trae texto") from e
+
+def sin_from():
+    try:
+        float("n/d")
+    except ValueError:
+        raise DatoInvalido("la columna importe trae texto")
+
+print("encadenar conserva el error original")
+for nombre, f in (("con from", con_from), ("sin from", sin_from)):
+    try:
+        f()
+    except DatoInvalido as e:
+        causa = e.__cause__
+        contexto = e.__context__
+        print("  %-9s  __cause__ = %-18s __context__ = %s"
+              % (nombre, type(causa).__name__ if causa else "None",
+                 type(contexto).__name__ if contexto else "None"))
+print()
+print("sin 'from' el error original sigue ahi, en __context__, porque Python")
+print("lo guarda solo; pero __cause__ vacio le dice al que lea la traza que")
+print("nadie declaro la relacion. Escribir 'from e' es declararla")
+```
+
+## 3. Bisecar en lugar de buscar
+
+:::: {.definicion}
+**Definición 25.7 (bisección).** **Bisecar** es localizar el punto en que algo dejó de cumplirse partiendo por la mitad el tramo donde puede estar. Exige un invariante en el sentido de la Definición 24.7: una comprobación barata que responda **sí o no** sobre un punto concreto.
+::::
+
+:::: {.proposicion}
+**Proposición 25.8.** Localizar el paso que rompe un invariante en una transformación de `n` pasos cuesta `n` comprobaciones mirando uno por uno en el peor caso, y `⌈log₂ n⌉` bisecando. Sobre 96 pasos, la medición da **96 contra 6**.
+::::
+
+:::: {.demostracion}
+*Demostración.* Si el invariante se cumple antes del paso culpable y no después, la sucesión de respuestas es monótona y la Proposición 12.3 se aplica directamente. Mirar uno por uno recorre los pasos hasta dar con él, lo que en el peor caso —el culpable al final— son `n` comprobaciones; bisecar descarta la mitad del tramo en cada una. La celda mide las dos formas sobre 12 pasos con el fallo en el séptimo —8 comprobaciones contra 4, mismo culpable— y tabula el peor caso para 12, 24, 48 y 96 pasos. **Doblar la longitud añade una sola comprobación.** ∎
+::::
+
+**Modo de falla.** Sin invariante no hay nada que bisecar: «el resultado se ve raro» no responde sí o no sobre un paso concreto, y la búsqueda degenera en mirar todo otra vez. Y un invariante que se rompe en **dos** puntos distintos rompe la monotonía, de modo que la bisección converge a uno cualquiera de ellos y da por resuelto el problema cuando queda la mitad. La defensa es elegir una comprobación barata y precisa, y volver a bisecar después de arreglar lo encontrado.
+
+```{pyodide}
+# Un dato pasa por doce pasos y sale mal. Encontrar en cual se estropeo
+# se puede hacer de dos formas, y una cuesta mucho menos que la otra.
+PASOS = 12
+MALO = 7                       # el paso que rompe el invariante
+
+def aplica(valor, hasta):
+    """Aplica los pasos 0..hasta-1. El paso MALO pierde una fila."""
+    filas = list(valor)
+    for k in range(hasta):
+        if k == MALO:
+            filas = filas[:-1]          # aqui se pierde una fila
+        else:
+            filas = [f + 1 for f in filas]
+    return filas
+
+ENTRADA = list(range(100))
+def sano(hasta):
+    """El invariante: el numero de filas no cambia."""
+    return len(aplica(ENTRADA, hasta)) == len(ENTRADA)
+
+# (a) mirar paso por paso desde el principio
+comprobaciones_a = 0
+culpable_a = None
+for k in range(1, PASOS + 1):
+    comprobaciones_a = comprobaciones_a + 1
+    if not sano(k):
+        culpable_a = k - 1
+        break
+
+# (b) partir por la mitad: el invariante se cumple antes del paso malo y
+# no despues, asi que la busqueda binaria de la Leccion 12 sirve
+comprobaciones_b = 0
+bajo, alto = 0, PASOS
+while bajo < alto:
+    medio = (bajo + alto) // 2
+    comprobaciones_b = comprobaciones_b + 1
+    if sano(medio):
+        bajo = medio + 1
+    else:
+        alto = medio
+culpable_b = bajo - 1
+
+print("encontrar en cual de %d pasos se rompe el invariante" % PASOS)
+print("  uno por uno   : paso %d, en %2d comprobaciones" % (culpable_a, comprobaciones_a))
+print("  por la mitad  : paso %d, en %2d comprobaciones" % (culpable_b, comprobaciones_b))
+print("  el mismo culpable: %s" % (culpable_a == culpable_b))
+print()
+
+# Y como crece cada una al alargar la tuberia.
+print("el peor caso de cada forma: el fallo en el ULTIMO paso")
+print("  pasos   uno por uno   por la mitad")
+for n in (12, 24, 48, 96):
+    peor = n - 1                         # el fallo en el ultimo paso
+    lineal = n                           # hay que llegar hasta el final
+    b = 0
+    lo, hi = 0, n
+    while lo < hi:
+        m = (lo + hi) // 2
+        b = b + 1
+        if m <= peor:
+            lo = m + 1
+        else:
+            hi = m
+    print("  %3d        %3d            %2d" % (n, lineal, b))
+print()
+print("uno por uno depende de DONDE este el fallo: con el fallo al final")
+print("hay que recorrer la tuberia entera. Por la mitad depende solo del")
+print("numero de pasos y crece como el logaritmo: doblar la tuberia anade")
+print("UNA comprobacion, este el fallo donde este")
+print()
+
+# El invariante es lo que hace posible partir por la mitad: sin algo que
+# distinga 'todavia bien' de 'ya mal', no hay nada que bisecar.
+print("sin un invariante no se puede bisecar")
+print("  el invariante aqui es: el numero de filas no cambia")
+print("  antes del paso %d se cumple : %s" % (MALO, sano(MALO)))
+print("  despues del paso %d ya no   : %s" % (MALO, sano(MALO + 1)))
+print()
+print("cualquier comprobacion barata sirve: un total, un recuento, un")
+print("rango. Lo que no sirve es 'el resultado se ve raro', porque no")
+print("responde si o no sobre un paso concreto")
+```
+
+```{=html}
+<div class="viz-bisecar">
+  <div class="controles">
+    <label>Dónde está el paso culpable: <input id="bs-p" type="range" min="0" max="15" step="1" value="7"><span id="bs-p-v" class="mono">7</span></label>
+    <label>Cómo se busca:
+      <select id="bs-m"><option value="bin" selected>partiendo por la mitad</option><option value="lin">uno por uno</option></select>
+    </label>
+  </div>
+  <svg id="bs-svg" viewBox="0 0 660 200" role="img" aria-label="Cuántas comprobaciones hacen falta"></svg>
+  <div id="bs-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-bisecar { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-bisecar .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-bisecar label { display: flex; align-items: center; gap: .4rem; }
+.viz-bisecar input[type=range] { width: 150px; padding: 0; }
+.viz-bisecar .mono { font-family: var(--bs-font-monospace, monospace); font-size: .8rem; }
+.viz-bisecar svg { width: 100%; height: auto; display: block; }
+.viz-bisecar .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("bs-svg"), lec = document.getElementById("bs-lectura");
+  var cp = document.getElementById("bs-p"), cm = document.getElementById("bs-m"), ep = document.getElementById("bs-p-v");
+  // los dieciseis pasos ocupan posiciones fijas (regla 19b)
+  var X0 = 38, W = 38, Y = 80, N = 16;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var p = +cp.value, bin = cm.value === "bin";
+    ep.textContent = p;
+    var sondas = [], k;
+    if (bin) {
+      var lo = 0, hi = N;
+      while (lo < hi) {
+        var m = Math.floor((lo + hi) / 2);
+        sondas.push(m);
+        if (m <= p) lo = m + 1; else hi = m;
+      }
+    } else {
+      for (k = 0; k <= p; k++) sondas.push(k);
+    }
+    for (k = 0; k < N; k++) {
+      var i = sondas.indexOf(k), meta = k === p;
+      svg.appendChild(el("rect", { x: X0 + k * W, y: Y - 18, width: W - 4, height: 36, rx: 4,
+        fill: meta ? C_B : (i >= 0 ? C_A : "none"), opacity: meta ? .3 : (i >= 0 ? .2 : 1),
+        stroke: meta ? C_B : (i >= 0 ? C_A : C_L), "stroke-width": meta ? 2.2 : (i >= 0 ? 1.7 : 1) }));
+      svg.appendChild(el("text", { x: X0 + k * W + (W - 4) / 2, y: Y + 5, "text-anchor": "middle",
+        "font-size": 10.5, fill: C_T, opacity: (i >= 0 || meta) ? 1 : .3 }, String(k)));
+      if (i >= 0) svg.appendChild(el("text", { x: X0 + k * W + (W - 4) / 2, y: Y - 24, "text-anchor": "middle",
+        "font-size": 9, fill: C_A }, String(i + 1)));
+    }
+    // la barra del invariante: verde antes del culpable, roja despues
+    svg.appendChild(el("rect", { x: X0, y: Y + 30, width: (p + 1) * W - 4, height: 8, rx: 2, fill: C_A, opacity: .5 }));
+    svg.appendChild(el("rect", { x: X0 + (p + 1) * W, y: Y + 30, width: Math.max(0, (N - p - 1) * W - 4), height: 8, rx: 2, fill: C_B, opacity: .5 }));
+    svg.appendChild(el("text", { x: X0, y: Y + 56, "font-size": 9.5, fill: C_T, opacity: .6 }, "el invariante se cumple"));
+    svg.appendChild(el("text", { x: X0 + N * W - 4, y: Y + 56, "text-anchor": "end", "font-size": 9.5, fill: C_T, opacity: .6 }, "ya no se cumple"));
+
+    svg.appendChild(el("text", { x: X0, y: 182, "font-size": 12.5, fill: C_T },
+      "comprobaciones: " + sondas.length + " de " + N + " pasos posibles"));
+
+    lec.innerHTML = bin
+      ? "Partiendo por la mitad bastan <strong>" + sondas.length + "</strong> comprobaciones, y el número no cambia apenas al mover el culpable: doblar los pasos añadiría <em>una</em>. Los números pequeños sobre las casillas dicen en qué orden se probaron."
+      : "Uno por uno hacen falta <strong>" + sondas.length + "</strong> comprobaciones, tantas como pasos haya hasta el culpable. Moviéndolo al final se ve el peor caso: hay que recorrer la transformación entera.";
+  }
+  cp.addEventListener("input", dibujar);
+  cm.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Registrar lo que se sale
+
+:::: {.proposicion}
+**Proposición 25.9.** Un mensaje por fila produce tantas líneas como filas y no se puede leer. Registrar solo lo que incumple una condición, más un resumen, produce **21 líneas frente a 5000**: un cociente de 238 a 1, y son las líneas que dicen algo.
+::::
+
+:::: {.demostracion}
+*Demostración.* El número de líneas de la primera forma es el número de filas por construcción; el de la segunda es el número de filas anómalas más el resumen, que sobre datos sanos es una fracción pequeña. La celda procesa 5000 filas de las que 20 son negativas, produce 21 líneas, y muestra tres ejemplos concretos con su identificador. Un recuento por categoría en una sola pasada —la Proposición 7.5— añade la forma del problema: 20 negativas, 500 por encima de 45 y 4480 normales. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 25.10.** Un nivel asociado a cada mensaje permite que el mismo código escriba mucho o poco **sin cambiar ninguna línea**: en producción calla y al depurar habla.
+::::
+
+:::: {.demostracion}
+*Demostración.* Cada mensaje se emite con un nivel y solo se escribe si ese nivel alcanza el umbral configurado, de modo que subir el umbral silencia los mensajes de detalle y deja los errores. La celda ejecuta el mismo bucle con tres umbrales y obtiene 5, 1 y 1 líneas. **Lo que no se hace es borrar los mensajes**, que es perder el trabajo de haberlos escrito y quedarse sin nada la próxima vez. ∎
+::::
+
+**Modo de falla.** Un mensaje de detalle que construye su texto con una operación cara se paga aunque el nivel lo descarte después, porque el argumento se evalúa antes de la llamada. Sobre un millón de vueltas, el coste de formatear un texto que nadie va a ver puede superar al del propio cálculo. La defensa es que el mensaje se construya solo si va a escribirse, dejando el formateo en manos de quien decide el nivel.
+
+```{pyodide}
+# Un print dentro de un bucle de un millon de vueltas no ayuda: produce
+# un millon de lineas. Lo util es registrar CUANDO algo se sale de lo
+# esperado, y llevar la cuenta del resto.
+FILAS = [{"id": i, "importe": (-5.0 if i % 250 == 0 else 10.0 + i % 40)} for i in range(5000)]
+
+# (a) un mensaje por fila
+lineas_a = 0
+for f in FILAS:
+    lineas_a = lineas_a + 1              # el print que habria aqui
+
+# (b) un mensaje solo cuando se incumple algo, y un resumen al final
+lineas_b, raros = 0, []
+for f in FILAS:
+    if f["importe"] < 0:
+        lineas_b = lineas_b + 1
+        if len(raros) < 3:               # guardar unos pocos ejemplos
+            raros.append(f)
+lineas_b = lineas_b + 1                  # mas la linea de resumen
+
+print("cuanto escribe cada forma de registrar, sobre %d filas" % len(FILAS))
+print("  un mensaje por fila      : %5d lineas" % lineas_a)
+print("  solo lo que se sale      : %5d lineas" % lineas_b)
+print("  cociente                 : %d a 1" % (lineas_a // lineas_b))
+print()
+print("  y las lineas que si dicen algo:")
+for f in raros:
+    print("    importe negativo en la fila id=%d: %.1f" % (f["id"], f["importe"]))
+print("    ... y %d mas; en total %d de %d filas (%.1f %%)"
+      % (len(FILAS) // 250 - len(raros), len(FILAS) // 250, len(FILAS),
+         100.0 * (len(FILAS) // 250) / len(FILAS)))
+print()
+
+# Un contador por categoria dice de un vistazo la forma del problema, y
+# cuesta una pasada.
+cuenta = {}
+for f in FILAS:
+    if f["importe"] < 0:
+        clave = "negativo"
+    elif f["importe"] > 45:
+        clave = "por encima de 45"
+    else:
+        clave = "normal"
+    cuenta[clave] = cuenta.get(clave, 0) + 1
+
+print("un recuento por categoria, en una pasada (Proposicion 7.5)")
+for k in sorted(cuenta):
+    print("  %-18s %5d  (%.1f %%)" % (k, cuenta[k], 100.0 * cuenta[k] / len(FILAS)))
+print()
+
+# Y el nivel: el mismo codigo escribe mucho o poco segun lo que se pida,
+# sin tocar ninguna linea.
+def registra(nivel_actual, nivel_mensaje, texto, salida):
+    NIVELES = {"detalle": 10, "aviso": 20, "error": 30}
+    if NIVELES[nivel_mensaje] >= NIVELES[nivel_actual]:
+        salida.append("%s: %s" % (nivel_mensaje.upper(), texto))
+
+print("el mismo codigo, tres niveles, sin cambiar ninguna linea")
+for nivel in ("detalle", "aviso", "error"):
+    salida = []
+    for f in FILAS[:4]:
+        registra(nivel, "detalle", "procesando id=%d" % f["id"], salida)
+        if f["importe"] < 0:
+            registra(nivel, "error", "importe negativo en id=%d" % f["id"], salida)
+    print("  nivel %-8s -> %d lineas" % (nivel, len(salida)))
+print()
+print("en produccion se pone en 'aviso' o en 'error' y el programa calla;")
+print("al depurar se baja a 'detalle' y habla. Lo que no se hace es")
+print("borrar los mensajes, que es perder el trabajo de haberlos escrito")
+```
+
+## 5. Lo que esta lección no resuelve
+
+No se ha usado un depurador interactivo, porque una página no puede detenerse a esperar órdenes. Lo que `pdb` añade sobre lo de aquí es poder **moverse** por los marcos y ejecutar código en cada uno mientras el programa está detenido; `pdb.post_mortem` hace exactamente lo de la Proposición 25.3 de forma interactiva, y un punto de ruptura permite detenerse **antes** de que el error ocurra.
+
+Tampoco se ha tratado el caso más difícil: un fallo que no se reproduce. Depende del orden de dos hilos, de la hora, de un diccionario ajeno, de un archivo que ya no existe. La bisección no sirve cuando la misma entrada da resultados distintos, y lo primero es conseguir que el fallo ocurra siempre —fijando semillas, congelando la hora, aislando el estado— que es lo que la Lección 24 llamaba hacer la prueba reproducible.
+
+## Ejercicios
+
+### Ejercicio 1, El marco donde nace
+
+Con la Proposición 25.2, recorrer la traza y dejar en `donde_revienta` el nombre del último marco y en `cuantos` el número de marcos.
+
+```{pyodide}
+#| exercise: ex_traza
+import traceback
+
+def a(v): return b(v)
+def b(v): return c(v)
+def c(v): return 1.0 * v
+
+fallo = None
+try:
+    a("x")
+except Exception as e:
+    fallo = e
+
+marcos = ______
+
+donde_revienta = ______
+cuantos = ______
+
+print(donde_revienta, cuantos)
+```
+
+::: {.hint exercise="ex_traza"}
+`traceback.extract_tb` sobre `fallo.__traceback__` devuelve la lista de marcos, y cada uno tiene un atributo `name`.
+:::
+
+::: {.solution exercise="ex_traza"}
+```{pyodide}
+import traceback
+
+def a(v): return b(v)
+def b(v): return c(v)
+def c(v): return 1.0 * v
+
+fallo = None
+try:
+    a("x")
+except Exception as e:
+    fallo = e
+
+marcos = traceback.extract_tb(fallo.__traceback__)
+
+donde_revienta = marcos[-1].name
+cuantos = len(marcos)
+
+print(donde_revienta, cuantos)
+```
+
+Revienta en `c` y hay 4 marcos: el módulo, `a`, `b` y `c`. El valor malo entró en `a`, tres marcos antes de que nadie protestara, que es la Proposición 25.2 en su forma más corta.
+:::
+
+```{pyodide}
+#| exercise: ex_traza
+#| check: true
+if donde_revienta == "c" and cuantos == 4:
+    feedback = {"correct": True, "message": "Correcto: revienta en c, con 4 marcos."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 'c' y 4 marcos."}
+feedback
+```
+
+### Ejercicio 2, Cuántas comprobaciones
+
+Con la Proposición 25.8, calcular cuántas comprobaciones hacen falta en el peor caso para localizar el paso culpable de una transformación de 64 pasos, de las dos formas.
+
+```{pyodide}
+#| exercise: ex_bisecar
+pasos = 64
+
+uno_por_uno = ______
+
+bisecando = 0
+tramo = pasos
+while tramo > 1:
+    ______
+    ______
+
+print(uno_por_uno, bisecando)
+```
+
+::: {.hint exercise="ex_bisecar"}
+El peor caso de mirar uno por uno es que el culpable esté al final. Y cada bisección parte el tramo por la mitad, con `//`.
+:::
+
+::: {.solution exercise="ex_bisecar"}
+```{pyodide}
+pasos = 64
+
+uno_por_uno = pasos
+
+bisecando = 0
+tramo = pasos
+while tramo > 1:
+    tramo = tramo // 2
+    bisecando = bisecando + 1
+
+print(uno_por_uno, bisecando)
+```
+
+64 contra 6. Y sobre 128 pasos serían 128 contra **7**: doblar la transformación dobla el coste de una forma y añade una sola comprobación a la otra.
+:::
+
+```{pyodide}
+#| exercise: ex_bisecar
+#| check: true
+if uno_por_uno == 64 and bisecando == 6:
+    feedback = {"correct": True, "message": "Correcto: 64 contra 6."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 64 y 6."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Python 25**:
+
+1. Provocar un error en una transformación propia de varios pasos, recorrer la traza e imprimir las locales de cada marco. Anotar en qué marco nace el valor malo y cuántos marcos lo separan del que revienta.
+2. Tomar un `except Exception` de un trabajo propio y estrecharlo al error que de verdad se espera. Guardar en `50-Errores/` cualquier excepción distinta que aparezca al hacerlo, porque estaba oculta.
+3. Elegir un invariante barato para una transformación de al menos ocho pasos y bisecar un fallo introducido a propósito. Anotar las comprobaciones que costó y compararlas con `log₂ n`.
+
+## Del libro
+
+Esta lección no se apoya en ninguno de los libros del plan. El material de referencia es la documentación de `traceback`, `pdb` y `logging`.
+
+## Para el Cerebro
+
+- Una traza se lee **de abajo arriba** y se guarda como estructura recorrible en `e.__traceback__`.
+- **Donde revienta no es donde está el fallo.** El valor malo nace antes y viaja.
+- Las **locales de cada marco** siguen accesibles tras el error, sin ningún `print`.
+- `except Exception: pass` destruye la información **y** oculta los errores del propio programa.
+- `from e` llena `__cause__`; sin él, Python llena `__context__`. La diferencia es declarar la relación.
+- Bisecar: **96 pasos en 6 comprobaciones** frente a 96. Doblar la longitud añade **una**.
+- Sin invariante no hay bisección: «se ve raro» no responde sí o no.
+- Registrar solo lo que se sale: **21 líneas contra 5000**. El nivel se sube; los mensajes no se borran.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico: los tres marcos de la traza con su línea de código, que el error es `TypeError`, que revienta en `escala` y empieza en `<module>`; que las locales de `prepara` contienen `cfg` valiendo `{'factor': '2'}`; que las dos formas de capturar dan el mismo total `30.5` y solo la segunda indica el importe `'n/d'`; que con `from` valen `__cause__` y `__context__` y sin él solo `__context__`; que localizar el paso 7 de 12 cuesta 8 comprobaciones uno por uno y 4 bisecando, con el mismo culpable, y que el peor caso sobre 96 pasos es 96 contra 6; que el invariante se cumple antes del paso 7 y no después; y que registrar 5000 filas produce 5000 líneas o 21 según la forma, con el recuento por categoría dando 20, 500 y 4480, y que los tres niveles dan 5, 1 y 1 líneas.
+
+**Lo que viene de los libros.** Nada. Ninguno de los libros verificados del plan trata depuración.
+
+**Lo que es mío, no del libro.** La decisión de **recorrer la traza desde el programa** en lugar de mostrar su texto, que además la hace idéntica en las dos versiones de Python y enseña que la traza es una estructura; la elección de un fallo que **con enteros no ocurriría**, para que la Proposición 1.2 explique por qué tardó en aparecer; la medición de la bisección en su **peor caso**, que es la comparación honesta; el visual donde el panel de variables sigue al marco elegido; y el cierre que ata el registro por niveles con la idea de no borrar el trabajo hecho.
+:::
