@@ -4011,6 +4011,44 @@ movía nada porque **la primera de las 20 intercalaciones coincide con la primer
 de las 2 con cerrojo**. Se arregló dibujando el tramo protegido como una llave,
 que solo existe en el modo con cerrojo.
 
+### 3.73 Python 28: el contraejemplo que no era contraejemplo (23-09-2026)
+
+3 def / 7 prop / 7 dem, cuatro «Modo de falla». Ni Polars ni Dask instalados, y
+otra vez se construye la idea a mano.
+
+**El tropiezo de esta lección es instructivo.** La celda quería demostrar que la
+mediana no se puede trocear, y el «caso peor» elegido —mil valores ordenados en
+diez trozos iguales— devolvió **coinciden: True**. Probé varias disposiciones
+—datos sesgados, la mayoría en un extremo, los extremos al final— y **todas
+acertaban**: con trozos **iguales** y una distribución simétrica, la mediana de
+las medianas cae sobre la real por construcción.
+
+El caso que falla de verdad es el **realista**: trozos de **tamaños distintos**,
+que es lo que pasa con un archivo por mes o una región con más filas que otra.
+Sobre 900 filas de valor 1 y 100 de valor 100, la mediana real es **1,0** y la de
+las medianas **50,5** — cincuenta veces el valor correcto.
+
+Y el caso que acierta se quedó en la lección, con su propia proposición: **que a
+veces acierte es lo que hace peligroso el método**, porque invita a creer que
+vale. Un contraejemplo fallido acabó siendo contenido.
+
+**La formulación que ordena la lección**: una cuenta es troceable cuando existe
+un **estado pequeño** y una forma de **juntar** dos estados que dé lo mismo se
+junten en el orden que sea. La suma, el conteo, el mínimo y el máximo la tienen;
+la media sale de los dos primeros sin guardarse aparte. Contar distintos no: da
+**500 en lugar de 50**, y juntando conjuntos acierta pero el estado deja de estar
+acotado — ahí está el límite del método.
+
+**Lo demás medido:** trocear baja los elementos vivos de 100 000 a **5000** con
+la suma exactamente igual; reordenar una consulta toca **302 000** valores en vez
+de **1 300 000** con el mismo resultado; y afinar tipos y categóricos lleva una
+tabla de 10 millones de filas de **560 MB a 160 MB** sin perder un dato.
+
+**El orden de las cinco opciones, a propósito.** Afinar tipos y leer solo las
+columnas usadas no cuestan nada; trocear obliga a reescribir la cuenta; un motor
+perezoso es otra biblioteca; repartir entre máquinas es otra infraestructura. La
+lección dice que saltar a la última sin probar la primera es el error caro.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

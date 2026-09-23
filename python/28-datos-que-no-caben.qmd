@@ -1,0 +1,755 @@
+---
+title: "Datos que no caben: troceado, Polars y Dask"
+subtitle: "Python · Lección 28"
+nivel: L4
+modulo: python
+fase: F2
+prereqs: [python/27-gil, python/23-parquet-y-arrow, python/26-perfilado]
+siguientes: []
+libro: "—"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="python/28-datos-que-no-caben"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F2]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [El GIL](27-gil.qmd) · [Parquet y Arrow](23-parquet-y-arrow.qmd) · [Perfilado](26-perfilado.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Procesar por [trozos]{.g data-t="troceado"} y **medir los elementos vivos a la vez**: 100 000 contra 5000.
+2. Enunciar qué hace [troceable]{.g data-t="cuenta troceable"} a una cuenta, y exhibir un estado de **cuatro números** que sirve para cuatro.
+3. **Demostrar que la mediana de las medianas no es la mediana**: 50,5 donde debía dar 1,0.
+4. Explicar por qué con trozos iguales **a veces acierta**, y por qué eso es lo peligroso.
+5. **Medir lo que gana un motor [perezoso]{.g data-t="evaluación perezosa"}** reordenando: 1 300 000 valores tocados contra 302 000.
+6. Explicar por qué un motor puede reordenar y una tubería escrita a mano no.
+7. **Medir cuánto margen queda sin cambiar de herramienta**: una tabla de 560 MB reducida a **160 MB** sin perder un dato.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 23**: los grupos de filas y la codificación por diccionario, que aquí se aplican en memoria.
+- **Python 26**: contar elementos vivos, que es la medida que decide si un programa cabe.
+- **Python 27**: el coste de copiar los datos a varios procesos, que aquí acota la última opción.
+- **Fundamentos 11**: el generador, que es la forma de recorrer sin construir.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 29**: los categóricos, que son la primera de las cinco opciones y la más barata.
+- **Python 30**: las zonas horarias, donde el tipo elegido también decide cuánto ocupa.
+- **ML 33**: las reglas de asociación, cuyo conteo sobre datos grandes es exactamente este problema.
+:::
+::::
+
+**Esta página no usa Polars ni Dask.** Ninguna de las dos está instalada, y tampoco haría falta: lo que se quiere es **medir las ideas** —qué cuesta trocear, qué se puede trocear y qué no, y qué gana reordenar— y medir una biblioteca mediría su implementación. La última sección dice qué hacen ellas que aquí no está.
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| `N` | ene | El número total de filas |
+| `T` | te | El tamaño de un trozo |
+| estado | estado | Lo mínimo que hay que recordar de un trozo para poder juntarlo |
+| juntar | juntar | La operación que combina dos estados |
+| perezoso | perezoso | Que apunta lo que se pide y no lo ejecuta hasta que hace falta |
+:::
+
+## 1. Lo que se puede trocear
+
+:::: {.definicion}
+**Definición 28.1 (troceado).** **Trocear** es recorrer los datos en bloques de tamaño fijo, manteniendo en memoria un solo bloque y un **estado** pequeño que se acumula. Los elementos vivos a la vez pasan de `N` a `T`.
+::::
+
+:::: {.definicion}
+**Definición 28.2 (cuenta troceable).** Una cuenta es **troceable** cuando existe un estado pequeño que la resume y una forma de **juntar** dos estados que dé lo mismo se junten en el orden que sea. La suma, el conteo, el mínimo y el máximo la tienen; la media sale de los dos primeros sin guardarse aparte.
+::::
+
+:::: {.proposicion}
+**Proposición 28.3.** Sumar por trozos da **exactamente** el mismo resultado que sumar entero, y mantiene vivos `T` elementos en lugar de `N`. Con `N = 100 000` y `T = 5000` el cociente es **20 a 1**.
+::::
+
+:::: {.demostracion}
+*Demostración.* La suma es asociativa, de modo que agrupar los sumandos no cambia el total; con enteros la igualdad es exacta. Cada trozo se suelta al acabar de sumarlo, de modo que el pico de memoria es el de un trozo. La celda comprueba la igualdad y mide los dos picos. Un estado de cuatro números —conteo, suma, mínimo y máximo— reproduce las cuatro cuentas y la media, todas idénticas a las calculadas sobre el conjunto entero. ∎
+::::
+
+**Modo de falla.** Con **decimales** la igualdad deja de ser exacta: agrupar los sumandos cambia los últimos bits, por la Proposición 1.3. La diferencia es minúscula y desaparece al redondear, pero una comprobación que exija igualdad exacta entre el total troceado y el entero fallará de forma intermitente según el tamaño del trozo. La defensa es comparar con tolerancia, como la Proposición 1.4, y no fijar dígitos de un total acumulado sobre millones de sumandos.
+
+```{pyodide}
+# Procesar por trozos consiste en no tener nunca todo en memoria. Aqui se
+# cuenta cuantos elementos hay VIVOS a la vez, que es lo que decide si el
+# programa cabe o no.
+def genera(n):
+    """Produce los datos uno a uno, sin construir la lista (Leccion 11)."""
+    for i in range(n):
+        yield (i * 7919) % 1000
+
+N, TROZO = 100000, 5000
+
+# (a) todo en memoria
+todo = list(genera(N))
+pico_todo = len(todo)
+suma_todo = sum(todo)
+
+# (b) por trozos: se acumula un estado pequeño y se suelta cada trozo
+pico_trozo, suma_trozo, vistos = 0, 0, 0
+trozo = []
+for v in genera(N):
+    trozo.append(v)
+    if len(trozo) == TROZO:
+        pico_trozo = max(pico_trozo, len(trozo))
+        suma_trozo = suma_trozo + sum(trozo)
+        vistos = vistos + len(trozo)
+        trozo = []
+if trozo:
+    pico_trozo = max(pico_trozo, len(trozo))
+    suma_trozo = suma_trozo + sum(trozo)
+    vistos = vistos + len(trozo)
+
+print("sumar %d valores, entero contra por trozos de %d" % (N, TROZO))
+print("  elementos vivos a la vez, entero    : %6d" % pico_todo)
+print("  elementos vivos a la vez, por trozos: %6d" % pico_trozo)
+print("  cociente                            : %6d a 1" % (pico_todo // pico_trozo))
+print("  las dos sumas coinciden exactamente : %s" % (suma_todo == suma_trozo))
+print("  elementos recorridos                : %d de %d" % (vistos, N))
+print()
+print("el trozo es lo unico que ocupa memoria: %d elementos en vez de %d."
+      % (TROZO, N))
+print("Y la suma sale IGUAL, porque sumar es asociativo: da lo mismo")
+print("sumarlo todo junto que sumar los trozos y sumar los resultados")
+print()
+
+# No toda cuenta se puede trocear. La que se puede necesita un ESTADO
+# pequeño y una forma de juntar dos estados.
+def estado_de(trozo):
+    """Lo minimo que hay que recordar de un trozo para poder juntarlo."""
+    return {"n": len(trozo), "suma": sum(trozo),
+            "min": min(trozo), "max": max(trozo)}
+
+def junta(a, b):
+    """Juntar dos estados. Tiene que dar lo mismo se junten en el orden que sea."""
+    return {"n": a["n"] + b["n"], "suma": a["suma"] + b["suma"],
+            "min": min(a["min"], b["min"]), "max": max(a["max"], b["max"])}
+
+acumulado, trozo = None, []
+for v in genera(N):
+    trozo.append(v)
+    if len(trozo) == TROZO:
+        e = estado_de(trozo)
+        acumulado = e if acumulado is None else junta(acumulado, e)
+        trozo = []
+if trozo:
+    e = estado_de(trozo)
+    acumulado = e if acumulado is None else junta(acumulado, e)
+
+print("un estado de cuatro numeros basta para cuatro cuentas")
+print("  %-10s %14s %14s %s" % ("cuenta", "por trozos", "sobre todo", "coinciden"))
+comparaciones = [
+    ("n",     acumulado["n"],                          len(todo)),
+    ("suma",  acumulado["suma"],                       sum(todo)),
+    ("min",   acumulado["min"],                        min(todo)),
+    ("max",   acumulado["max"],                        max(todo)),
+]
+for nombre, a, b in comparaciones:
+    print("  %-10s %14d %14d %s" % (nombre, a, b, a == b))
+media_trozos = acumulado["suma"] / acumulado["n"]
+media_todo = sum(todo) / len(todo)
+print("  %-10s %14.6f %14.6f %s" % ("media", media_trozos, media_todo,
+                                     media_trozos == media_todo))
+print()
+print("la media no hace falta guardarla: sale de la suma y el conteo, que")
+print("si se pueden juntar. Ese es el truco de todas las cuentas troceables")
+```
+
+## 2. Lo que no se puede trocear
+
+:::: {.proposicion}
+**Proposición 28.4.** La mediana **no es troceable**: la mediana de las medianas de los trozos da a cada trozo el mismo peso, y con trozos de tamaños distintos el resultado es otro. Sobre 900 filas de valor 1 y 100 de valor 100, la mediana real es **1,0** y la mediana de las medianas es **50,5**.
+::::
+
+:::: {.demostracion}
+*Demostración.* La mediana depende de la posición de un valor dentro del conjunto ordenado completo, y esa posición no se puede reconstruir a partir de las medianas de las partes: dos trozos con la misma mediana pero tamaños distintos contribuyen de forma distinta al conjunto. Juntar las dos medianas las promedia, es decir pondera igual 900 filas y 100. La celda lo mide, y el error resulta **cincuenta veces el valor correcto**. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 28.5.** Con trozos **iguales** y datos repartidos de forma pareja, la mediana de las medianas **a veces acierta**, y eso es lo que hace peligroso el método.
+::::
+
+:::: {.demostracion}
+*Demostración.* Si los trozos tienen el mismo tamaño y los valores están distribuidos simétricamente entre ellos, las medianas de los trozos quedan simétricamente repartidas alrededor de la mediana real, y su mediana coincide. La celda exhibe ese caso: sobre los enteros de 0 a 999 en diez trozos de cien, las dos valen **499,5**. La coincidencia es de la disposición de los datos, no del método, y desaparece en cuanto los trozos dejan de ser iguales. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 28.6.** Contar valores distintos tampoco se puede sumar: cada trozo vuelve a contar los que ya aparecieron. Con 50 valores repartidos en diez trozos, sumar da **500** en lugar de 50. Juntar los conjuntos sí acierta, y entonces el estado **deja de ser pequeño**.
+::::
+
+:::: {.demostracion}
+*Demostración.* Los conjuntos de valores distintos de dos trozos pueden solaparse, y la suma de sus tamaños cuenta dos veces lo compartido. La unión sí es asociativa y da el resultado correcto, pero su tamaño crece con el número de valores distintos del conjunto entero, de modo que el estado ya no está acotado: con un millón de valores distintos el estado guarda un millón. **Ahí está el límite del método.** La celda mide los tres números. ∎
+::::
+
+```{pyodide}
+# La mediana NO se puede juntar: la mediana de las medianas de los trozos
+# no es la mediana del conjunto, y no se parece por casualidad.
+def mediana(xs):
+    ys = sorted(xs)
+    n = len(ys)
+    return ys[n // 2] if n % 2 else (ys[n // 2 - 1] + ys[n // 2]) / 2
+
+# El caso realista: los trozos NO tienen el mismo tamaño. Un archivo por
+# mes, una region con muchas mas filas que otra, o el ultimo trozo a medias.
+grande = [1] * 900          # 900 filas de un valor
+pequeno = [100] * 100       # 100 filas de otro
+datos = grande + pequeno
+
+med_real = mediana(datos)
+med_de_medianas = mediana([mediana(grande), mediana(pequeno)])
+print("dos trozos de tamaños distintos: 900 filas y 100 filas")
+print("  mediana real            : %.1f" % med_real)
+print("  mediana de las medianas : %.1f" % med_de_medianas)
+print("  coinciden               : %s" % (med_real == med_de_medianas))
+print("  el error es de %.1f, o sea %.0f veces el valor correcto"
+      % (med_de_medianas - med_real, med_de_medianas / med_real))
+print()
+print("la mediana de las medianas da a cada trozo el mismo peso, y aqui uno")
+print("tiene nueve veces mas filas que el otro. Ningun aviso lo senala")
+print()
+
+# Con trozos iguales y datos repartidos de forma pareja, a veces ACIERTA.
+# Eso es lo peligroso: invita a creer que el metodo vale.
+uniformes = list(range(1000))
+TROZO = 100
+trozos_u = [uniformes[i:i + TROZO] for i in range(0, len(uniformes), TROZO)]
+print("con trozos iguales y datos repartidos parejo, a veces acierta")
+print("  mediana real            : %.1f" % mediana(uniformes))
+print("  mediana de las medianas : %.1f" % mediana([mediana(t) for t in trozos_u]))
+print("  coinciden               : %s   <- por la simetria, no porque el metodo valga"
+      % (mediana(uniformes) == mediana([mediana(t) for t in trozos_u])))
+print()
+
+# La misma trampa con el recuento de valores distintos.
+print("contar valores distintos tampoco se puede sumar")
+repetido = [i % 50 for i in range(1000)]
+tr = [repetido[i:i + TROZO] for i in range(0, len(repetido), TROZO)]
+print("  con valores que se repiten entre trozos:")
+print("    distintos de verdad      : %d" % len(set(repetido)))
+print("    sumando los de cada trozo: %d   <- cada trozo los cuenta otra vez"
+      % sum(len(set(t)) for t in tr))
+print()
+
+# Lo que si se puede: quedarse con el conjunto entero de valores
+# distintos, si caben. El estado ya no es pequeño, y ahi esta el limite.
+union = set()
+for t in tr:
+    union |= set(t)
+print("juntando los conjuntos si sale bien, pero el estado crece")
+print("  distintos juntando conjuntos: %d   correcto: %s"
+      % (len(union), len(union) == len(set(repetido))))
+print("  el estado guarda %d valores; con un millon de distintos guardaria"
+      % len(union))
+print("  un millon, y entonces ya no cabe: ahi esta el limite del metodo")
+print()
+print("la regla: una cuenta se puede trocear si existe una forma de juntar")
+print("dos estados que de lo mismo se junten en el orden que sea. La suma,")
+print("el conteo, el minimo y el maximo la tienen. La mediana y los")
+print("cuantiles, no: hacen falta metodos aproximados o dos pasadas")
+```
+
+**Modo de falla.** El método de la mediana por trozos suele llegar de un cuaderno donde **funcionó**, con trozos iguales y datos parejos, y se aplica después a un archivo por mes o por región, donde los trozos ya no son iguales. El resultado sigue siendo un número plausible del rango correcto, y nada indica que la ponderación haya cambiado. La defensa es no preguntarse si el método «suele» dar bien sino si **existe** una forma de juntar los estados: si no existe, no la hay tampoco los días en que acierta.
+
+```{=html}
+<div class="viz-trozos">
+  <div class="controles">
+    <label>Tamaño del primer trozo: <input id="tr-p" type="range" min="10" max="90" step="10" value="90"><span id="tr-p-v" class="mono">90 %</span></label>
+    <label>Qué se calcula:
+      <select id="tr-q"><option value="mediana" selected>la mediana</option><option value="media">la media</option></select>
+    </label>
+  </div>
+  <svg id="tr-svg" viewBox="0 0 660 215" role="img" aria-label="Qué cuentas se pueden juntar"></svg>
+  <div id="tr-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-trozos { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-trozos .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-trozos label { display: flex; align-items: center; gap: .4rem; }
+.viz-trozos input[type=range] { width: 150px; padding: 0; }
+.viz-trozos .mono { font-family: var(--bs-font-monospace, monospace); font-size: .8rem; }
+.viz-trozos svg { width: 100%; height: auto; display: block; }
+.viz-trozos .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("tr-svg"), lec = document.getElementById("tr-lectura");
+  var cp = document.getElementById("tr-p"), cq = document.getElementById("tr-q"), ep = document.getElementById("tr-p-v");
+  // la barra de datos ocupa siempre el mismo ancho: el marco no sigue a
+  // los datos, solo el corte entre trozos se mueve (regla 19b)
+  var X0 = 50, ANCHO = 560, YD = 58, H = 34, YR = 150;
+  var V1 = 1, V2 = 100;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var pct = +cp.value, mediana = cq.value === "mediana";
+    ep.textContent = pct + " %";
+    var n1 = pct, n2 = 100 - pct;
+    // los dos trozos, con el corte moviendose
+    svg.appendChild(el("rect", { x: X0, y: YD, width: ANCHO * n1 / 100, height: H,
+      fill: C_A, opacity: .3, stroke: C_A, "stroke-width": 1.6 }));
+    svg.appendChild(el("rect", { x: X0 + ANCHO * n1 / 100, y: YD, width: ANCHO * n2 / 100, height: H,
+      fill: C_B, opacity: .3, stroke: C_B, "stroke-width": 1.6 }));
+    svg.appendChild(el("text", { x: X0 + ANCHO * n1 / 200, y: YD + 22, "text-anchor": "middle",
+      "font-size": 11, fill: C_T }, n1 + " filas de " + V1));
+    svg.appendChild(el("text", { x: X0 + ANCHO * n1 / 100 + ANCHO * n2 / 200, y: YD + 22,
+      "text-anchor": "middle", "font-size": 11, fill: C_T }, n2 + " de " + V2));
+
+    // el valor real y el obtenido juntando, en un eje fijo de 0 a 100
+    function px(v) { return X0 + ANCHO * (v - 1) / 99; }
+    var real, juntando;
+    if (mediana) {
+      real = n1 >= 50 ? V1 : V2;
+      juntando = (V1 + V2) / 2;
+    } else {
+      real = (n1 * V1 + n2 * V2) / 100;
+      juntando = (n1 * V1 + n2 * V2) / 100;   // la media SI se junta con pesos
+    }
+    svg.appendChild(el("path", { d: "M" + X0 + " " + YR + " L" + (X0 + ANCHO) + " " + YR,
+      stroke: C_L, "stroke-width": 1.4 }));
+    svg.appendChild(el("text", { x: X0, y: YR + 22, "font-size": 9.5, fill: C_T, opacity: .55 }, "1"));
+    svg.appendChild(el("text", { x: X0 + ANCHO, y: YR + 22, "text-anchor": "end",
+      "font-size": 9.5, fill: C_T, opacity: .55 }, "100"));
+    svg.appendChild(el("circle", { cx: px(real), cy: YR, r: 8, fill: C_A, opacity: .85 }));
+    svg.appendChild(el("text", { x: px(real), y: YR - 16, "text-anchor": "middle",
+      "font-size": 10, fill: C_A }, "real " + real.toFixed(1)));
+    svg.appendChild(el("path", { d: "M" + px(juntando) + " " + (YR + 6) + " L" + (px(juntando) - 7) + " " + (YR + 22) +
+      " L" + (px(juntando) + 7) + " " + (YR + 22) + " Z", fill: C_B }));
+    svg.appendChild(el("text", { x: px(juntando), y: YR + 36, "text-anchor": "middle",
+      "font-size": 10, fill: C_B }, "juntando " + juntando.toFixed(1)));
+
+    var coincide = Math.abs(real - juntando) < 1e-9;
+    svg.appendChild(el("text", { x: X0, y: 202, "font-size": 12.5, fill: coincide ? C_A : C_B },
+      coincide ? "coinciden" : ("error de " + Math.abs(juntando - real).toFixed(1) +
+                                ", o sea " + (juntando / real).toFixed(0) + " veces el valor correcto")));
+
+    lec.innerHTML = mediana
+      ? (coincide
+        ? "Con los dos trozos del mismo tamaño la mediana de las medianas acierta —los dos pesan igual y de hecho <em>lo son</em>—. Moviendo el corte se ve desaparecer la coincidencia."
+        : "La mediana de las medianas promedia <strong>" + V1 + "</strong> y <strong>" + V2 + "</strong> sin mirar cuántas filas hay detrás de cada uno, así que da " + juntando.toFixed(1) + " esté el corte donde esté. La real sigue al trozo mayoritario. <strong>Ningún aviso</strong> señala la diferencia.")
+      : "La media <strong>sí</strong> se junta, porque su estado guarda la suma <em>y el conteo</em>: cada trozo aporta según sus filas. Por eso el marcador rojo cae siempre sobre el verde, muévase el corte donde se mueva. Esa es exactamente la diferencia entre una cuenta troceable y una que no lo es.";
+  }
+  cp.addEventListener("input", dibujar);
+  cq.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Dejar que el motor decida el orden
+
+:::: {.definicion}
+**Definición 28.7 (evaluación perezosa).** Un motor **perezoso** no ejecuta cada paso al escribirlo: apunta lo que se pide y, cuando hay que entregar un resultado, decide en qué orden hacerlo. Como tiene la consulta **entera** antes de empezar, puede reordenarla sin cambiar el resultado.
+::::
+
+:::: {.proposicion}
+**Proposición 28.8.** Reordenando una consulta —leer solo las columnas usadas y filtrar antes de calcular— se tocan **302 000** valores en lugar de **1 300 000**, con el mismo resultado de 2000 filas.
+::::
+
+:::: {.demostracion}
+*Demostración.* Las dos reordenaciones son las de la Lección 23 aplicadas en memoria: leer 3 columnas en lugar de 12 divide la lectura por cuatro, y filtrar antes de calcular hace que el cálculo se aplique al 2 % de las filas en lugar de al total. Ninguna de las dos cambia qué filas salen, porque el filtro no depende de la columna calculada y las columnas no leídas no se usan. La celda cuenta los valores tocados en los dos planes y comprueba que el número de filas resultantes coincide. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 28.9.** La ganancia de filtrar antes depende de lo **selectivo** que sea el filtro: con un filtro que deja pasar todo, reordenar no aporta nada.
+::::
+
+:::: {.demostracion}
+*Demostración.* El ahorro es el cálculo que se evita, proporcional a las filas descartadas; si no se descarta ninguna, no se evita ninguno. La celda tabula el total tocado para cuatro selectividades: con el 100 % el cociente es 1,00 y con el 2 % es 1,32. Es el mismo argumento de los grupos de filas de la Proposición 23.8. ∎
+::::
+
+**Modo de falla.** Un motor perezoso solo puede reordenar lo que **entiende**. Una función propia metida en medio de la consulta es una caja negra: el motor no sabe si depende de las columnas que iba a descartar ni si conmuta con el filtro, de modo que renuncia a reordenar alrededor de ella. El síntoma es una consulta que deja de ser rápida al añadirle un paso escrito a mano, sin que nada lo explique. La defensa es expresar el filtro y la selección con las operaciones del motor, y dejar las funciones propias para el final.
+
+```{pyodide}
+# Un motor perezoso no ejecuta cada paso al escribirlo: apunta lo que se
+# pide y, cuando hay que dar un resultado, decide en que orden hacerlo.
+# Aqui se cuenta cuantos VALORES se tocan con cada plan.
+FILAS, COLUMNAS = 100000, 12
+tocados = {"leidos": 0, "calculados": 0}
+
+def lee(filas, columnas):
+    """Leer cuesta un valor por celda leida."""
+    tocados["leidos"] = tocados["leidos"] + filas * columnas
+    return filas
+
+def calcula(filas):
+    """Calcular una columna nueva cuesta un valor por fila."""
+    tocados["calculados"] = tocados["calculados"] + filas
+    return filas
+
+def filtra(filas, pasan):
+    return int(filas * pasan)
+
+PASAN = 0.02          # el filtro deja pasar el 2 % de las filas
+
+# (a) tal como se escribiria: leer todo, calcular, y filtrar al final
+tocados["leidos"] = tocados["calculados"] = 0
+f = lee(FILAS, COLUMNAS)
+f = calcula(f)
+f = filtra(f, PASAN)
+plan_ingenuo = dict(tocados); filas_ingenuo = f
+
+# (b) lo que un motor perezoso hace: empujar el filtro hacia abajo y leer
+# solo las columnas que hacen falta
+USADAS = 3
+tocados["leidos"] = tocados["calculados"] = 0
+f = lee(FILAS, USADAS)            # solo las columnas que se usan
+f = filtra(f, PASAN)              # filtrar ANTES de calcular
+f = calcula(f)
+plan_perezoso = dict(tocados); filas_perezoso = f
+
+print("la misma consulta, dos planes")
+print("  %-26s %12s %12s" % ("", "tal cual", "reordenado"))
+print("  %-26s %12d %12d" % ("valores leidos", plan_ingenuo["leidos"], plan_perezoso["leidos"]))
+print("  %-26s %12d %12d" % ("valores calculados", plan_ingenuo["calculados"], plan_perezoso["calculados"]))
+print("  %-26s %12d %12d" % ("total tocado",
+                             plan_ingenuo["leidos"] + plan_ingenuo["calculados"],
+                             plan_perezoso["leidos"] + plan_perezoso["calculados"]))
+print("  %-26s %12d %12d" % ("filas del resultado", filas_ingenuo, filas_perezoso))
+print()
+print("  el resultado tiene las mismas %d filas: %s"
+      % (filas_ingenuo, filas_ingenuo == filas_perezoso))
+print("  y se toca %.1f veces menos"
+      % ((plan_ingenuo["leidos"] + plan_ingenuo["calculados"]) /
+         float(plan_perezoso["leidos"] + plan_perezoso["calculados"])))
+print()
+print("dos reordenaciones, las dos de la Leccion 23: leer solo las columnas")
+print("que se usan, y filtrar antes de calcular. Ninguna cambia el")
+print("resultado; las dos cambian cuanto trabajo cuesta")
+print()
+
+# Cuanto gana cada reordenacion por separado, segun lo selectivo que sea
+# el filtro.
+print("lo que aporta filtrar antes, segun lo que deje pasar el filtro")
+print("  % que pasa   tocado tal cual   tocado filtrando antes   cociente")
+for pasan in (1.0, 0.5, 0.1, 0.02):
+    ingenuo = FILAS * USADAS + FILAS
+    perez = FILAS * USADAS + int(FILAS * pasan)
+    print("  %8.0f %%  %15d %24d %10.2f"
+          % (100 * pasan, ingenuo, perez, ingenuo / float(perez)))
+print()
+print("si el filtro deja pasar todo, reordenar no aporta nada. Cuanto mas")
+print("selectivo, mas gana: es el mismo argumento de los grupos de filas")
+print()
+
+# Y por que el motor puede reordenar y una tuberia escrita a mano no: el
+# motor tiene la consulta ENTERA antes de empezar.
+print("por que un motor puede reordenar y un programa escrito a mano no")
+print("  escrito a mano : cada linea se ejecuta al leerla; cuando se llega")
+print("                   al filtro, el calculo ya se hizo sobre todas las filas")
+print("  perezoso       : las lineas solo APUNTAN lo que se quiere; nada")
+print("                   se ejecuta hasta pedir el resultado, y para")
+print("                   entonces el motor ve la consulta entera")
+```
+
+## 4. Cuánto margen queda sin cambiar de herramienta
+
+:::: {.proposicion}
+**Proposición 28.10.** Afinar los tipos y usar categóricos reduce una tabla de 10 millones de filas de **560 MB a 160 MB** sin perder un solo dato: un cociente de **3,5 a 1**.
+::::
+
+:::: {.demostracion}
+*Demostración.* Un entero que nunca pasa de 65 535 cabe en 16 bits en lugar de 64, y una columna de texto con 40 valores distintos cabe en un índice de un byte más un catálogo, por la Definición 23.4. La celda tabula las seis columnas antes y después y suma los dos totales. **El dato es el mismo**: lo que cambia es cómo se guarda. Una tabla que no cabía en un gigabyte pasa a caber de sobra, y el código no cambia. ∎
+::::
+
+Cuando aun así no cabe, las opciones están ordenadas por lo que cuestan: afinar tipos y leer solo las columnas necesarias no cuestan nada; trocear obliga a reescribir la cuenta en forma de estado que se junte; un motor perezoso es otra biblioteca sobre el mismo archivo; y repartir entre varias máquinas es otra infraestructura entera. **Saltar a la última sin haber probado la primera es el error caro de esta lección.**
+
+```{pyodide}
+# Antes de irse a otra herramienta conviene saber cuanto margen queda en
+# la que ya se usa. Aqui se cuentan bytes con tres decisiones que no
+# cambian ni una fila del resultado.
+FILAS = 10000000
+
+TIPOS = {"entero 64 bits": 8, "entero 32 bits": 4, "entero 16 bits": 2,
+         "decimal 64 bits": 8, "decimal 32 bits": 4}
+
+print("una columna de %d filas, segun el tipo elegido" % FILAS)
+for nombre, ancho in TIPOS.items():
+    print("  %-18s %8.1f MB" % (nombre, FILAS * ancho / 1e6))
+print()
+print("elegir 32 bits donde caben 32 bits parte la memoria por dos, y el")
+print("dato es el mismo. Con identificadores que nunca pasan de 65535,")
+print("16 bits bastan y son cuatro veces menos que 64")
+print()
+
+# Una columna de texto con pocos valores distintos: la codificacion por
+# diccionario de la Leccion 23, ahora en memoria.
+DISTINTOS, LARGO = 40, 12
+crudo = FILAS * LARGO
+catalogo = DISTINTOS * LARGO + FILAS * 1
+print("una columna de texto con %d valores distintos de %d caracteres"
+      % (DISTINTOS, LARGO))
+print("  tal cual            : %8.1f MB" % (crudo / 1e6))
+print("  como categorico     : %8.1f MB" % (catalogo / 1e6))
+print("  cociente            : %8.1f a 1" % (crudo / float(catalogo)))
+print()
+
+# Y las tres decisiones juntas sobre una tabla de ejemplo.
+print("una tabla de %d filas con 6 columnas, antes y despues" % FILAS)
+columnas = [
+    ("id",        "entero 64 bits", 8, "entero 32 bits", 4),
+    ("fecha",     "entero 64 bits", 8, "entero 32 bits", 4),
+    ("ciudad",    "texto de 12",   12, "categorico",     1),
+    ("producto",  "texto de 12",   12, "categorico",     1),
+    ("cantidad",  "entero 64 bits", 8, "entero 16 bits", 2),
+    ("importe",   "decimal 64",     8, "decimal 32",     4),
+]
+antes = sum(a for _, _, a, _, _ in columnas) * FILAS
+despues = sum(d for _, _, _, _, d in columnas) * FILAS
+print("  %-10s %-16s %8s   %-16s %8s" % ("columna", "antes", "MB", "despues", "MB"))
+for nombre, ta, a, td, d in columnas:
+    print("  %-10s %-16s %8.1f   %-16s %8.1f"
+          % (nombre, ta, a * FILAS / 1e6, td, d * FILAS / 1e6))
+print("  %-10s %-16s %8.1f   %-16s %8.1f" % ("TOTAL", "", antes / 1e6, "", despues / 1e6))
+print("  cociente: %.1f a 1" % (antes / float(despues)))
+print()
+print("la tabla pasa de %.0f MB a %.0f MB sin perder un solo dato. Una que"
+      % (antes / 1e6, despues / 1e6))
+print("no cabia en 1 GB ahora cabe de sobra, y sin cambiar de herramienta")
+print()
+print("cuando aun asi no cabe, las opciones por orden de coste:")
+opciones = [
+    ("afinar tipos y categoricos", "gratis, no cambia el codigo"),
+    ("leer solo las columnas que se usan", "gratis, es la Leccion 23"),
+    ("trocear con un estado que se junte", "hay que reescribir la cuenta"),
+    ("un motor perezoso sobre el mismo archivo", "otra biblioteca, mismo lenguaje"),
+    ("repartir entre varias maquinas", "otra infraestructura entera"),
+]
+for k, (q, coste) in enumerate(opciones, 1):
+    print("  %d. %-42s %s" % (k, q, coste))
+print()
+print("la lista esta ordenada a proposito: las dos primeras no cuestan")
+print("nada y resuelven la mayoria de los casos. Saltar a la ultima sin")
+print("haber probado la primera es el error caro de esta leccion")
+```
+
+**Modo de falla.** Afinar los tipos puede **perder datos en silencio** si el rango elegido se queda corto: un identificador que hoy llega a 60 000 cabe en 16 bits y el año que viene, al pasar de 65 535, da la vuelta y empieza por cero, sin ninguna excepción. Lo mismo con los decimales de 32 bits, que pierden precisión antes de lo que parece. La defensa es elegir el tipo por el rango **posible** y no por el observado, y comprobar el máximo al cargar, que es un invariante en el sentido de la Definición 24.7.
+
+```{=html}
+<div class="viz-margen">
+  <div class="controles">
+    <label>Filas de la tabla: <input id="mg-f" type="range" min="1" max="50" step="1" value="10"><span id="mg-f-v" class="mono">10 M</span></label>
+    <label>Memoria disponible: <input id="mg-m" type="range" min="1" max="8" step="1" value="1"><span id="mg-m-v" class="mono">1 GB</span></label>
+  </div>
+  <svg id="mg-svg" viewBox="0 0 660 210" role="img" aria-label="Qué opción hace falta"></svg>
+  <div id="mg-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-margen { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-margen .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-margen label { display: flex; align-items: center; gap: .4rem; }
+.viz-margen input[type=range] { width: 150px; padding: 0; }
+.viz-margen .mono { font-family: var(--bs-font-monospace, monospace); font-size: .8rem; }
+.viz-margen svg { width: 100%; height: auto; display: block; }
+.viz-margen .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("mg-svg"), lec = document.getElementById("mg-lectura");
+  var cf = document.getElementById("mg-f"), cm = document.getElementById("mg-m");
+  var ef = document.getElementById("mg-f-v"), em = document.getElementById("mg-m-v");
+  // el eje va siempre de 0 a 3 GB: anclado a una constante (regla 19b)
+  var X0 = 54, ANCHO = 560, Y1 = 56, Y2 = 106, H = 30, GMAX = 3000;
+  var BYTES_ANTES = 56, BYTES_DESPUES = 16;   // por fila, de la celda
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(mb) { return ANCHO * Math.min(1, mb / GMAX); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var filas = +cf.value, gb = +cm.value;
+    ef.textContent = filas + " M"; em.textContent = gb + " GB";
+    var antes = filas * 1e6 * BYTES_ANTES / 1e6;
+    var despues = filas * 1e6 * BYTES_DESPUES / 1e6;
+    var limite = gb * 1000;
+
+    function barra(y, mb, etiqueta, color) {
+      svg.appendChild(el("text", { x: 8, y: y + 20, "font-size": 10, fill: C_T, opacity: .7 }, etiqueta));
+      svg.appendChild(el("rect", { x: X0, y: y, width: px(mb), height: H,
+        fill: mb <= limite ? C_A : C_B, opacity: .35,
+        stroke: mb <= limite ? C_A : C_B, "stroke-width": 1.6 }));
+      svg.appendChild(el("text", { x: X0 + px(mb) + 8, y: y + 20, "font-size": 10.5, fill: C_T },
+        (mb / 1000).toFixed(2) + " GB"));
+    }
+    barra(Y1, antes, "tal cual", C_B);
+    barra(Y2, despues, "afinado", C_A);
+    // la linea de la memoria disponible: se mueve con el control
+    var xl = X0 + px(limite);
+    svg.appendChild(el("path", { d: "M" + xl + " " + (Y1 - 18) + " L" + xl + " " + (Y2 + H + 18),
+      stroke: C_T, "stroke-width": 2.2, "stroke-dasharray": "6 4" }));
+    svg.appendChild(el("text", { x: xl + 6, y: Y1 - 24, "font-size": 10, fill: C_T }, "lo que hay"));
+
+    var cabe_antes = antes <= limite, cabe_despues = despues <= limite;
+    var opcion = cabe_antes ? "nada: ya cabe"
+      : (cabe_despues ? "1 y 2: afinar tipos y columnas — gratis"
+         : "3 en adelante: trocear o un motor perezoso");
+    svg.appendChild(el("text", { x: X0, y: 178, "font-size": 12.5, fill: C_T },
+      "hace falta " + opcion));
+
+    lec.innerHTML = cabe_antes
+      ? "Con <strong>" + filas + " millones</strong> de filas y <strong>" + gb + " GB</strong>, la tabla cabe tal cual: no hace falta hacer nada. Subiendo las filas se ve cuándo deja de caber."
+      : (cabe_despues
+        ? "Tal cual <strong>no cabe</strong> y afinada <strong>sí</strong>: las dos primeras opciones bastan, y no cuestan nada ni cambian el código. Este es el caso más frecuente y el que se salta más a menudo."
+        : "Ni afinada cabe: <strong>" + (despues / 1000).toFixed(2) + " GB</strong> contra " + gb + " disponibles. Aquí sí hay que trocear o cambiar de motor — y con la tabla ya afinada, porque eso reduce también lo que cada trozo ocupa.");
+  }
+  cf.addEventListener("input", dibujar);
+  cm.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Lo que esta lección no resuelve
+
+Las bibliotecas reales hacen bastante más de lo que aquí se ha construido. **Polars** trabaja sobre la disposición de Arrow de la Lección 23, ejecuta en varios núcleos por dentro —soltando el GIL, que es la Proposición 27.9— y tiene un planificador que reordena la consulta entera; **Dask** reparte además entre procesos o máquinas, con el coste de copia de la Proposición 27.6. Las dos ofrecen la evaluación perezosa de la Sección 3 escrita con las operaciones habituales de un `DataFrame`.
+
+Tampoco se han tratado los métodos **aproximados** para lo que no es troceable. Existen estructuras que estiman cuantiles y cuentan valores distintos con un estado de tamaño fijo y un error acotado, que es lo que se usa cuando la Proposición 28.6 impide guardar el conjunto entero. Y no se ha tratado el caso en que lo que no cabe no son los datos sino el **resultado**: un cruce que multiplica filas, como el de la Proposición 24.8.
+
+## Ejercicios
+
+### Ejercicio 1, El estado que se junta
+
+Con la Definición 28.2, escribir la función que junta dos estados de modo que la media salga correcta.
+
+```{pyodide}
+#| exercise: ex_junta
+a = {"n": 300, "suma": 900}
+b = {"n": 100, "suma": 800}
+
+junto = ______
+media = ______
+media_ingenua = (a["suma"] / a["n"] + b["suma"] / b["n"]) / 2
+
+print(junto, media, media_ingenua)
+```
+
+::: {.hint exercise="ex_junta"}
+El estado junta sumando cada campo. La media sale del estado juntado, no de promediar las dos medias.
+:::
+
+::: {.solution exercise="ex_junta"}
+```{pyodide}
+a = {"n": 300, "suma": 900}
+b = {"n": 100, "suma": 800}
+
+junto = {"n": a["n"] + b["n"], "suma": a["suma"] + b["suma"]}
+media = junto["suma"] / junto["n"]
+media_ingenua = (a["suma"] / a["n"] + b["suma"] / b["n"]) / 2
+
+print(junto, media, media_ingenua)
+```
+
+4,25 contra 5,5. Promediar las dos medias da a los 100 elementos el mismo peso que a los 300, que es el error de la Proposición 28.4 aplicado a la media. Guardar el conteo junto a la suma es lo que lo evita.
+:::
+
+```{pyodide}
+#| exercise: ex_junta
+#| check: true
+if junto == {"n": 400, "suma": 1700} and media == 4.25 and media_ingenua == 5.5:
+    feedback = {"correct": True, "message": "Correcto: 4.25 con pesos y 5.5 promediando medias."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba n=400, suma=1700, media 4.25 y la ingenua 5.5."}
+feedback
+```
+
+### Ejercicio 2, Cuánto se afina
+
+Con la Proposición 28.10, calcular cuánto ocupa una columna de 20 millones de filas como entero de 64 bits y como entero de 16, y cuánto se ahorra.
+
+```{pyodide}
+#| exercise: ex_tipos
+filas = 20000000
+
+mb_64 = ______
+mb_16 = ______
+ahorro = ______
+
+print(mb_64, mb_16, ahorro)
+```
+
+::: {.hint exercise="ex_tipos"}
+Un entero de 64 bits ocupa 8 bytes y uno de 16 ocupa 2. Un megabyte son un millón de bytes.
+:::
+
+::: {.solution exercise="ex_tipos"}
+```{pyodide}
+filas = 20000000
+
+mb_64 = filas * 8 / 1e6
+mb_16 = filas * 2 / 1e6
+ahorro = mb_64 - mb_16
+
+print(mb_64, mb_16, ahorro)
+```
+
+160 MB contra 40: se ahorran 120 MB en **una sola columna**, sin perder ningún valor mientras ninguno pase de 65 535. Sobre una tabla de veinte columnas ese cambio decide si cabe o no.
+:::
+
+```{pyodide}
+#| exercise: ex_tipos
+#| check: true
+if mb_64 == 160.0 and mb_16 == 40.0 and ahorro == 120.0:
+    feedback = {"correct": True, "message": "Correcto: 160 MB contra 40, se ahorran 120."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 160.0, 40.0 y 120.0."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Python 28**:
+
+1. Escribir el estado y la función de juntar para la **varianza** y comprobar que el resultado por trozos coincide con el calculado sobre el conjunto. Anotar por qué guardar la suma de cuadrados es numéricamente peligroso, con la regla 7 del proyecto.
+2. Tomar una tabla propia, afinar sus tipos y convertir a categórico lo que proceda. Anotar los megabytes antes y después y el cociente.
+3. Calcular la mediana de una columna propia por trozos y entera, con trozos de tamaños distintos a propósito. Guardar en `50-Errores/` el error obtenido y el método de dos pasadas que lo evita.
+
+## Del libro
+
+Esta lección no se apoya en ninguno de los libros del plan. El material de referencia es la documentación de Polars y de Dask.
+
+## Para el Cerebro
+
+- Trocear baja los elementos vivos de `N` a `T`: **100 000 contra 5000**, con la suma **exactamente** igual.
+- Una cuenta es troceable si tiene un **estado pequeño** y una forma de **juntar** que no dependa del orden.
+- La media no se guarda: sale de la **suma y el conteo**.
+- La mediana **no es troceable**: 50,5 donde debía dar 1,0. Y con trozos iguales **a veces acierta**, que es lo peligroso.
+- Contar distintos sumando da **500 en vez de 50**. Juntando conjuntos acierta, y el estado deja de ser pequeño.
+- Reordenar una consulta: **302 000 valores tocados contra 1 300 000**, mismo resultado.
+- Un motor perezoso puede reordenar porque tiene la consulta **entera** antes de empezar.
+- Afinar tipos: **560 MB a 160 MB** sin perder un dato. Probar eso **antes** de cambiar de herramienta.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico: que trocear 100 000 valores en bloques de 5000 mantiene vivos 5000 en lugar de 100 000, con la suma exactamente igual, y que un estado de cuatro números reproduce conteo, suma, mínimo, máximo y media idénticos; que sobre 900 filas de valor 1 y 100 de valor 100 la mediana real es 1,0 y la de las medianas 50,5; que con diez trozos iguales sobre los enteros de 0 a 999 las dos valen 499,5; que sumar los distintos de cada trozo da 500 frente a 50 reales y que juntar los conjuntos acierta; que reordenar la consulta toca 302 000 valores en lugar de 1 300 000 devolviendo las mismas 2000 filas, y la tabla de selectividades; y que afinar los tipos de una tabla de 10 millones de filas la lleva de 560 MB a 160 MB.
+
+**Lo que viene de los libros.** Nada. Ninguno de los libros verificados del plan trata procesamiento fuera de memoria.
+
+**Lo que es mío, no del libro.** La decisión de **no usar Polars ni Dask** y medir las ideas en lugar de las bibliotecas; la elección de **trozos de tamaños distintos** como caso que rompe la mediana, después de comprobar que con trozos iguales y datos uniformes el método acierta por simetría —y de decirlo, porque esa coincidencia es lo que lo hace peligroso—; la formulación de «troceable» como la existencia de un estado y una forma de juntar, que separa limpiamente lo que se puede de lo que no; el conteo de **valores tocados** como medida del plan de una consulta; y el orden de las cinco opciones por lo que cuestan, con la advertencia de que saltar a la última sin probar la primera es el error caro.
+:::

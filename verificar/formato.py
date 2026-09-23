@@ -164,6 +164,7 @@ MIGRADAS = {
     "python/25-depuracion.qmd",
     "python/26-perfilado.qmd",
     "python/27-gil.qmd",
+    "python/28-datos-que-no-caben.qmd",
     "fundamentos/01-valores-nombres-y-tipos.qmd",
     "fundamentos/02-condicionales-y-verdad.qmd",
     "fundamentos/03-el-bucle-while.qmd",
