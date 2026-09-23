@@ -3519,6 +3519,43 @@ cierra explicando dos cosas que quedaron colgando: el `i, j = j, i` de la Lecci�
 Y termina con lo que la inmutabilidad **compra** en vez de con lo que prohíbe:
 una tupla sirve de clave de diccionario y una lista levanta `TypeError`.
 
+### 3.62 Fundamentos 7 y 8: medir el coste en vez de afirmarlo (23-09-2026)
+
+Las dos lecciones que explican **por qué existen** el diccionario y el conjunto,
+y las dos lo explican con números contados, no con adjetivos.
+
+**Fundamentos 7, «Diccionarios».** 3 def / 5 prop / 5 dem. El primer borrador
+decía que buscar en una lista «tiene que mirar los 100 000 elementos» sin
+medirlo. Se reescribió para **contarlos a mano** con un bucle: 100 000 elementos
+mirados contra 1 consulta, y el diccionario responde igual esté la clave o no
+esté. El conteo es en comparaciones y no en segundos, que dependen de la máquina
+—la misma regla que ML 36 y Python 18.
+
+La exhibición que sostiene la lección es `{1: 'uno', True: 'verdadero',
+1.0: 'flotante'}`, que tiene **una** entrada y vale `{1: 'flotante'}`: la clave
+guardada es la primera y el valor el último. Sale de la Proposición 2.2 —`True`
+vale 1— y explica una pérdida de entradas que ocurre sin ningún aviso.
+
+**Fundamentos 8, «Conjuntos».** 3 def / 6 prop / 6 dem. Se presenta el conjunto
+como **«un diccionario al que se le han quitado los valores»**, y así hereda sin
+repetirse todo lo demostrado en la lección anterior sobre el coste de buscar.
+
+Lo medido: quitar duplicados comprobando contra una lista cuesta **22
+comparaciones** sobre 10 elementos, frente a **10 consultas** con conjunto. Con
+datos tan pequeños la diferencia es anecdótica, y eso es lo que la hace buena
+para enseñar: lo que importa es **cómo crece**, no el número. El segundo visual
+dibuja las dos curvas hasta 160 elementos y el deslizador enseña que al doblar
+el tamaño una se multiplica por cuatro y la otra por dos.
+
+La identidad `|A| + |B| = |A ∪ B| + |A ∩ B|` se demuestra por doble conteo y
+reaparece en el ejercicio 2 como «170 clientes y no 200», que es la misma cuenta
+que en Estadística 1 tiene nombre propio.
+
+**La comprobación por ruta suelta, funcionando.** Desde el §3.61 cada lección se
+revisa con `visuales.py --estricto ruta.qmd` nada más escribirla: la 7 y la 8
+salieron en verde a la primera, y el gate completo solo se lanzó una vez, antes
+de comitear.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

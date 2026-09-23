@@ -162,6 +162,8 @@ MIGRADAS = {
     "fundamentos/04-listas-y-sus-metodos.qmd",
     "fundamentos/05-for-y-range.qmd",
     "fundamentos/06-tuplas-y-desempaquetado.qmd",
+    "fundamentos/07-diccionarios.qmd",
+    "fundamentos/08-conjuntos.qmd",
     "matematica/01-vectores-y-espacios.qmd",
     "matematica/02-matriz-como-transformacion.qmd",
     "matematica/03-espacio-columna.qmd",
