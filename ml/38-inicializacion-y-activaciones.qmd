@@ -1,0 +1,780 @@
+---
+title: "Inicialización y funciones de activación"
+subtitle: "Machine Learning · Lección 38"
+nivel: L2
+modulo: ml
+fase: F3
+prereqs: [ml/37-red-densa-desde-cero, ml/36-backpropagation, ml/16-redes-neuronales]
+siguientes: []
+libro: "ESL §11.5 Some Issues in Training Neural Networks"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="ml/38-inicializacion-y-activaciones"}
+[[L2]{.nivel .nivel-L2} **Derivación**]{.item}
+[**Fase** F3]{.item}
+[**Libro** ESL §11.5]{.item}
+[**Prereqs** [Red densa desde cero](37-red-densa-desde-cero.qmd) · [Backpropagation](36-backpropagation.qmd) · [Redes neuronales](16-redes-neuronales.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Demostrar que arrancar todos los pesos iguales deja la capa con una sola unidad efectiva**: 1 valor distinto de 6 tras entrenar.
+2. Explicar por qué arrancar en cero es peor todavía, y **exhibir el gradiente nulo** que llega a la primera capa.
+3. **Derivar de dónde sale `1/√n`** y medir lo que ocurre con la mitad y con la mitad más: **0,0002 contra 0,96 contra 124** tras doce capas.
+4. Explicar por qué una activación que anula la mitad exige compensar con `√2`, y medirlo.
+5. **Comparar las derivadas de las activaciones** y deducir cuál apaga el gradiente.
+6. **Medir el gradiente real** que llega a la primera capa de una red de doce: **1,3 × 10⁻⁷** veces el de la última con sigmoide.
+7. **Exhibir 148 unidades de 200 que nacen muertas** con una activación que anula el lado negativo.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **ML 37**: la red densa completa, cuyos pesos había que inicializar de algún modo.
+- **ML 36**: la regla de la cadena, que es lo que multiplica las derivadas capa tras capa.
+- **ML 16**: las redes neuronales, donde la activación apareció sin justificarse.
+- **Python 26**: contar en lugar de cronometrar, que aquí son normas de gradiente.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **ML 39**: los optimizadores, que corrigen en parte lo que una mala escala provoca.
+- **ML 40**: la regularización, que actúa sobre los mismos pesos.
+- **ML 41**: la convolución, donde el número de entradas por unidad cambia y la escala con él.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | El número de entradas de una unidad |
+| $H$ | hache | El número de unidades de una capa |
+| $\sigma$ | sigma | La función de activación |
+| $\sigma'$ | sigma prima | Su derivada, que es lo que multiplica al gradiente |
+| $\operatorname{Var}(w)$ | varianza de doble u | La varianza con que se sortean los pesos |
+| $L$ | ele | El número de capas |
+:::
+
+## 1. Todos iguales es una sola unidad
+
+::: {.proposicion}
+**Proposición 38.1 (la simetría no se rompe sola).** Si todos los pesos de entrada de una capa arrancan con el mismo valor, todas sus unidades calculan el mismo número, reciben el mismo gradiente y siguen iguales en todos los pasos. La capa tiene $H$ unidades y el poder de **una**.
+:::
+
+::: {.demostracion}
+*Demostración.* Con las filas de $W_1$ idénticas, cada unidad recibe la misma preactivación para cada dato, de modo que su salida es la misma. Al volver, el gradiente que llega a cada unidad depende solo de su salida y de su peso de salida, que también son iguales, así que la actualización es idéntica para todas y la igualdad se conserva. Ninguna [inicialización]{.g} con todos los pesos iguales la rompe. La celda entrena 200 pasos y mide **1 valor distinto de 6** en la capa oculta, con todas las columnas de $W_1$ iguales; arrancando con pesos distintos mide **6 de 6**. La pérdida alcanzada es 0,129026 contra 0,117594. ∎
+:::
+
+::: {.proposicion}
+**Proposición 38.2 (el cero es peor).** Con los pesos de salida en cero, el gradiente que vuelve a la capa oculta es **exactamente cero**: la primera capa no recibe ninguna señal y no aprende nunca.
+:::
+
+::: {.demostracion}
+*Demostración.* El gradiente que llega a la capa oculta es el de la salida multiplicado por $W_2^{\mathsf{T}}$, y si $W_2$ vale cero ese producto vale cero sea cual sea el error. La celda lo exhibe: la capa oculta vale toda `0.` y el gradiente que le llega vale `0.`. No es que la capa aprenda despacio: no recibe información alguna. ∎
+:::
+
+**Modo de falla.** El síntoma de la simetría no rota es una red que **entrena** —la pérdida baja— y se estanca en un valor peor que el de una red mucho más pequeña, sin ningún error ni advertencia. Como la pérdida baja, se atribuye a que el problema es difícil o a que faltan datos, y la reacción natural —añadir unidades— no cambia nada, porque todas las nuevas serán también iguales entre sí. La defensa es comprobar, después de entrenar, cuántos valores distintos produce cada capa oculta.
+
+```{pyodide}
+import numpy as np
+
+# Si todos los pesos de una capa arrancan iguales, todas sus unidades
+# calculan lo mismo y reciben el mismo gradiente: la capa entera se
+# comporta como UNA sola unidad, para siempre.
+rng = np.random.default_rng(0)
+N, D, H = 200, 4, 6
+X = rng.standard_normal((N, D))
+y = (X[:, 0] + X[:, 1] > 0).astype(float)
+
+def pasa(X, W1, b1, W2, b2):
+    Z1 = X @ W1 + b1
+    A1 = np.tanh(Z1)
+    Z2 = A1 @ W2 + b2
+    return Z1, A1, Z2
+
+def entrena(W1, b1, W2, b2, pasos=200, lr=0.1):
+    for _ in range(pasos):
+        Z1, A1, Z2 = pasa(X, W1, b1, W2, b2)
+        p = 1.0 / (1.0 + np.exp(-Z2[:, 0]))
+        dZ2 = ((p - y) / N)[:, None]
+        dW2 = A1.T @ dZ2
+        db2 = dZ2.sum(0)
+        dA1 = dZ2 @ W2.T
+        dZ1 = dA1 * (1 - A1 ** 2)
+        dW1 = X.T @ dZ1
+        db1 = dZ1.sum(0)
+        W1 -= lr * dW1; b1 -= lr * db1; W2 -= lr * dW2; b2 -= lr * db2
+    return W1, b1, W2, b2
+
+# (a) todos los pesos iguales
+W1 = np.full((D, H), 0.1); b1 = np.zeros(H)
+W2 = np.full((H, 1), 0.1); b2 = np.zeros(1)
+W1, b1, W2, b2 = entrena(W1, b1, W2, b2)
+_, A1_igual, _ = pasa(X, W1, b1, W2, b2)
+col_distintas_igual = len(np.unique(np.round(A1_igual[0], 12)))
+
+# (b) pesos distintos
+rng2 = np.random.default_rng(1)
+V1 = rng2.standard_normal((D, H)) * 0.5; c1 = np.zeros(H)
+V2 = rng2.standard_normal((H, 1)) * 0.5; c2 = np.zeros(1)
+V1, c1, V2, c2 = entrena(V1, c1, V2, c2)
+_, A1_dist, _ = pasa(X, V1, c1, V2, c2)
+col_distintas = len(np.unique(np.round(A1_dist[0], 12)))
+
+print("una capa oculta de %d unidades, tras %d pasos de entrenamiento" % (H, 200))
+print("  arrancando todos los pesos iguales:")
+print("    valores distintos en la capa: %d de %d" % (col_distintas_igual, H))
+print("    filas de W1 todas iguales   : %s"
+      % bool(np.allclose(W1, W1[:, :1])))
+print("  arrancando con pesos distintos:")
+print("    valores distintos en la capa: %d de %d" % (col_distintas, H))
+print()
+print("con pesos iguales, las %d unidades calculan el MISMO numero y reciben" % H)
+print("el mismo gradiente, asi que siguen iguales paso tras paso. La red")
+print("tiene %d unidades y el poder de una. Romper la simetria es la" % H)
+print("condicion para que la capa exista como capa")
+print()
+
+# Cuanta perdida alcanza cada una.
+def perdida(W1, b1, W2, b2):
+    _, _, Z2 = pasa(X, W1, b1, W2, b2)
+    p = 1.0 / (1.0 + np.exp(-Z2[:, 0]))
+    return float(-np.mean(y * np.log(p + 1e-12) + (1 - y) * np.log(1 - p + 1e-12)))
+
+print("perdida alcanzada")
+print("  con pesos iguales   : %.6f" % perdida(W1, b1, W2, b2))
+print("  con pesos distintos : %.6f" % perdida(V1, c1, V2, c2))
+print()
+
+# Y el cero tampoco sirve, por la misma razon y una mas.
+W1c = np.zeros((D, H)); b1c = np.zeros(H)
+W2c = np.zeros((H, 1)); b2c = np.zeros(1)
+Z1, A1, Z2 = pasa(X, W1c, b1c, W2c, b2c)
+print("y arrancar TODO en cero es peor todavia")
+print("  la capa oculta vale toda %s" % np.unique(np.round(A1, 12)))
+print("  y el gradiente que llega a W1 vale %s"
+      % np.unique(np.round(((1.0 / (1 + np.exp(-Z2[:, 0])) - y) / N)[:, None] @ W2c.T, 12)))
+print()
+print("con los pesos de salida en cero, el gradiente que vuelve a la capa")
+print("oculta es exactamente cero: la primera capa no aprende nunca nada")
+```
+
+## 2. De dónde sale `1/√n`
+
+::: {.definicion}
+**Definición 38.3 (escala que preserva la varianza).** Si los pesos de una capa de $n$ entradas se sortean independientes con varianza $\operatorname{Var}(w)$ y la entrada tiene varianza $v$, la preactivación tiene varianza $n\cdot\operatorname{Var}(w)\cdot v$. La escala **preserva la varianza** cuando $n\cdot\operatorname{Var}(w)=1$, es decir cuando la desviación típica de los pesos es $1/\sqrt{n}$.
+:::
+
+::: {.proposicion}
+**Proposición 38.4 (el efecto es exponencial en la profundidad).** Con desviación típica $s$ en los pesos, la señal se multiplica por $\sqrt{n}\,s$ en cada capa, de modo que tras $L$ capas queda multiplicada por $(\sqrt{n}\,s)^{L}$. Con $n=100$: $s=0{,}05$ deja la señal en **0,0002** tras doce capas, $s=0{,}10$ la deja en **0,96**, y $s=0{,}15$ la lleva a **124**.
+:::
+
+::: {.demostracion}
+*Demostración.* Cada capa multiplica la varianza por $n\cdot s^{2}$ y por tanto la desviación típica por $\sqrt{n}\,s$; aplicando el mismo factor $L$ veces sale la potencia. La celda mide las tres escalas a lo largo de doce capas y comprueba además la predicción: para $s$ igual a 0,05, 0,10 y 0,15 el factor por capa es 0,5, 1,0 y 1,5, y lo medido tras seis capas coincide con lo predicho hasta un cociente de **0,974** en los tres casos, que es el error de muestreo con mil filas. ∎
+:::
+
+::: {.proposicion}
+**Proposición 38.5 (una activación que anula la mitad exige `√2`).** Si la activación pone a cero los valores negativos, deja pasar la mitad de la varianza, y la escala que preserva la señal pasa a ser $\sqrt{2/n}$.
+:::
+
+::: {.demostracion}
+*Demostración.* Con la preactivación simétrica alrededor de cero, anular el lado negativo conserva aproximadamente la mitad del segundo momento, de modo que la varianza se divide por dos en cada capa; compensarlo exige duplicar $\operatorname{Var}(w)$, es decir multiplicar la desviación típica por $\sqrt{2}$. La celda mide, tras doce capas con esa activación, **0,008986** con $1/\sqrt{n}$ y **0,575105** con $\sqrt{2/n}$. **La escala correcta depende de la activación**, y no es una constante universal. ∎
+:::
+
+**Modo de falla.** Una escala demasiado grande no da error: da valores enormes que saturan la activación o desbordan, y la pérdida sale `nan` en las primeras iteraciones, que al menos se ve. La demasiado pequeña es peor, porque la red **entrena** con una señal minúscula y converge muy despacio a algo mediocre, lo que se confunde con un problema de tasa de aprendizaje. La defensa es medir la desviación típica de las activaciones por capa en la primera pasada, antes de entrenar nada.
+
+```{pyodide}
+import numpy as np
+
+# La varianza de la salida de una capa es la de la entrada por el numero
+# de entradas y por la varianza de los pesos. Si ese producto no vale 1,
+# la señal crece o se apaga capa tras capa, de forma exponencial.
+rng = np.random.default_rng(7)
+N, D, CAPAS = 1000, 100, 12
+
+def propaga(escala, capas=CAPAS, activacion=None):
+    """Devuelve la desviacion tipica de la señal en cada capa."""
+    r = np.random.default_rng(3)
+    A = r.standard_normal((N, D))
+    fuera = [float(A.std())]
+    for _ in range(capas):
+        W = r.standard_normal((D, D)) * escala
+        A = A @ W
+        if activacion is not None:
+            A = activacion(A)
+        fuera.append(float(A.std()))
+    return fuera
+
+print("la desviacion tipica de la señal al atravesar %d capas de %d unidades"
+      % (CAPAS, D))
+print("  %-22s %s" % ("escala de los pesos", "capa 0, 4, 8, 12"))
+for nombre, esc in (("0.05, la mitad", 0.05),
+                    ("1/raiz(n) = 0.10", 1.0 / np.sqrt(D)),
+                    ("0.15, la mitad mas", 0.15)):
+    s = propaga(esc)
+    print("  %-22s %.4f  %.4f  %.4f  %.4f"
+          % (nombre, s[0], s[4], s[8], s[12]))
+print()
+print("con 1/raiz(n) la señal se mantiene; con menos se apaga y con mas")
+print("crece. Y el efecto es exponencial en el numero de capas: cada una")
+print("multiplica por el mismo factor")
+print()
+
+# La cuenta que lo predice, y su comprobacion.
+print("la cuenta: Var(salida) = n * Var(peso) * Var(entrada)")
+for esc in (0.05, 1.0 / np.sqrt(D), 0.15):
+    factor = np.sqrt(D * esc ** 2)
+    s = propaga(esc, capas=6)
+    predicho = s[0] * factor ** 6
+    print("  escala %.4f -> factor por capa %.4f, predicho tras 6 capas %.4f"
+          % (esc, factor, predicho))
+    print("               medido %.4f, cociente %.3f" % (s[6], s[6] / predicho))
+print()
+print("el factor por capa es raiz(n) por la escala. Valiendo 1, la señal")
+print("no cambia; y ahi esta el origen de 1/raiz(n)")
+print()
+
+# Con una activacion que corta la mitad hace falta compensar.
+def relu(x):
+    return np.maximum(x, 0.0)
+
+print("con una activacion que pone a cero la mitad de los valores")
+print("  %-26s %s" % ("escala", "desviacion tras 12 capas"))
+for nombre, esc in (("1/raiz(n)", 1.0 / np.sqrt(D)),
+                    ("raiz(2/n)", np.sqrt(2.0 / D))):
+    s = propaga(esc, activacion=relu)
+    print("  %-26s %.6f" % (nombre, s[12]))
+print()
+print("cortar los negativos deja pasar la mitad de la varianza, asi que")
+print("hay que compensar con un factor raiz(2). Sin el, la señal se apaga")
+print("igual que antes: la escala correcta depende de la activacion")
+```
+
+```{=html}
+<div class="viz-escala">
+  <div class="controles">
+    <label>Desviación típica de los pesos <input id="es-s" type="range" min="0.02" max="0.20" step="0.005" value="0.10"> <span id="es-s-v">0.100</span></label>
+    <label>Entradas por unidad <input id="es-n" type="range" min="16" max="400" step="4" value="100"> <span id="es-n-v">100</span></label>
+  </div>
+  <svg id="es-svg" viewBox="0 0 660 280" role="img" aria-label="La desviación típica de las activaciones capa tras capa, en escala logarítmica, al variar la escala de los pesos y el número de entradas."></svg>
+  <p class="lectura" id="es-lectura"></p>
+</div>
+<style>
+.viz-escala { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-escala .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-escala label { display: flex; align-items: center; gap: .4rem; }
+.viz-escala input[type=range] { width: 160px; padding: 0; }
+.viz-escala svg { width: 100%; height: auto; display: block; }
+.viz-escala .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("es-svg"), lec = document.getElementById("es-lectura");
+  var cs = document.getElementById("es-s"), cn = document.getElementById("es-n");
+  var es = document.getElementById("es-s-v"), en = document.getElementById("es-n-v");
+  var CAPAS = 12, LO = -10, HI = 5;            // el eje vertical, en potencias de diez
+  var X0 = 62, X1 = 630, Y0 = 18, Y1 = 232;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(i) { return X0 + i * (X1 - X0) / CAPAS; }
+  function py(v) {
+    var l = Math.log(Math.max(v, 1e-300)) / Math.LN10;
+    l = Math.max(LO, Math.min(HI, l));
+    return Y1 - (l - LO) * (Y1 - Y0) / (HI - LO);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var s = +cs.value, n = Math.round(+cn.value);
+    es.textContent = s.toFixed(3); en.textContent = String(n);
+    var factor = Math.sqrt(n) * s, correcta = 1 / Math.sqrt(n);
+
+    // la reticula: una linea por cada tres potencias de diez
+    for (var l = LO; l <= HI; l += 3) {
+      var y = py(Math.pow(10, l));
+      svg.appendChild(el("path", { d: "M" + X0 + " " + y.toFixed(1) + " L" + X1 + " " + y.toFixed(1),
+        stroke: C_L, "stroke-width": l === 0 ? 1.6 : 0.8, opacity: l === 0 ? 1 : .55 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: y + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 },
+        l === 0 ? "1" : "1e" + l));
+    }
+    for (var i = 0; i <= CAPAS; i += 3)
+      svg.appendChild(el("text", { x: px(i), y: Y1 + 20, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 },
+        String(i)));
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 40, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 },
+      "capa"));
+
+    // la senal, capa a capa
+    var d = "", v = 1, ult = 1;
+    for (i = 0; i <= CAPAS; i++) {
+      d += (i === 0 ? "M" : " L") + px(i).toFixed(1) + " " + py(v).toFixed(1);
+      ult = v; v *= factor;
+    }
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: factor > 1.08 || factor < 0.92 ? C_B : C_A,
+      "stroke-width": 2.2 }));
+    svg.appendChild(el("circle", { cx: px(CAPAS).toFixed(1), cy: py(ult).toFixed(1), r: 5,
+      fill: factor > 1.08 || factor < 0.92 ? C_B : C_A }));
+
+    // donde estaria con la escala que conserva la varianza
+    var dd = "";
+    for (i = 0; i <= CAPAS; i++) dd += (i === 0 ? "M" : " L") + px(i).toFixed(1) + " " + py(1).toFixed(1);
+    svg.appendChild(el("path", { d: dd, fill: "none", stroke: C_T, "stroke-width": 1.2,
+      "stroke-dasharray": "4 4", opacity: .45 }));
+
+    var veredicto = Math.abs(Math.log(ult) / Math.LN10) < 1
+      ? "la señal llega entera al final"
+      : (ult < 1 ? "la señal se ha apagado antes de llegar al final"
+                 : "la señal ha crecido sin control");
+    lec.innerHTML = "Con <strong>" + n + "</strong> entradas y desviación típica <strong>" + s.toFixed(3) +
+      "</strong>, cada capa multiplica la señal por <strong>" + factor.toFixed(4) + "</strong>, y tras doce capas queda en <strong>" +
+      ult.toExponential(2) + "</strong>: " + veredicto + ". La escala que la conserva es 1/√" + n + " = <strong>" +
+      correcta.toFixed(4) + "</strong>, y la línea de trazos marca dónde estaría la curva con ella. " +
+      "El eje vertical abarca quince potencias de diez porque el efecto es exponencial en la profundidad: " +
+      "una diferencia pequeña en la escala se convierte en órdenes de magnitud al llegar abajo.";
+  }
+  cs.addEventListener("input", dibujar); cn.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. La activación importa por su derivada
+
+::: {.definicion}
+**Definición 38.6 (el papel de la derivada).** En la vuelta, el gradiente que atraviesa una capa se multiplica por la derivada de la [función de activación]{.g}, $\sigma'$, evaluada en la preactivación de esa capa. En consecuencia, lo que decide si el gradiente sobrevive a la profundidad **no es la forma de $\sigma$ sino el tamaño de $\sigma'$** en la zona donde los datos caen.
+:::
+
+::: {.proposicion}
+**Proposición 38.7 (la sigmoide se apaga y la relu no).** La derivada de la sigmoide vale como mucho $1/4$ y a $|z|=6$ vale ya 0,002467; la de la relu vale 1 en toda la mitad positiva. En el mejor caso posible, veinte capas de sigmoide dejan pasar $0{,}25^{20}\approx 9{,}1\times10^{-13}$ del gradiente.
+:::
+
+::: {.demostracion}
+*Demostración.* La derivada de la sigmoide es $s(1-s)$, máxima en $s=1/2$ donde vale $1/4$, y decreciente hacia cero al alejarse. La de la relu es la indicadora del semieje positivo. La celda tabula las tres activaciones en $z=0{,}5$, $3$ y $6$ y el producto de las derivadas máximas para 1, 5, 10 y 20 capas. **La cota es el mejor caso**: supone la derivada máxima en todas las capas y todos los datos. ∎
+:::
+
+::: {.proposicion}
+**Proposición 38.8 (unidades que nacen muertas).** Una unidad con activación que anula el lado negativo y preactivación negativa para todos los datos tiene derivada **cero en todos ellos**, de modo que su gradiente es nulo y no puede recuperarse: es una [unidad muerta]{.g}. Con sesgos iniciales suficientemente negativos, **148 de 200** unidades nacen así.
+:::
+
+::: {.demostracion}
+*Demostración.* Si ningún dato produce preactivación positiva, la derivada vale cero en todos ellos y el gradiente acumulado también; sin gradiente, los pesos no cambian, y sin cambiar los pesos la preactivación sigue siendo negativa. El estado es absorbente. La celda sortea sesgos con media $-4$ y mide **148** unidades sin un solo valor positivo sobre 5000 datos. Una variante con pendiente pequeña en el lado negativo tiene derivada 0,0100 en $z=-3$ en lugar de 0, de modo que la unidad puede volver. ∎
+:::
+
+**Modo de falla.** Una capa con la mitad de sus unidades muertas se comporta como una capa más pequeña y **no lo dice**: la red entrena, la pérdida baja, y el resultado es el de una red con menos capacidad de la que se creyó construir. Coincide con el síntoma de la Proposición 38.1 y se diagnostica igual: contando, después de la primera pasada, cuántas unidades de cada capa producen algún valor distinto de cero.
+
+```{pyodide}
+import numpy as np
+
+# Una activacion importa por su DERIVADA: es lo que multiplica al
+# gradiente en cada capa. Si esa derivada es pequeña, el gradiente se
+# apaga; si vale 1 en una zona ancha, no.
+x = np.linspace(-8, 8, 100001)
+
+def sigmoide(z): return 1.0 / (1.0 + np.exp(-z))
+def d_sigmoide(z): s = sigmoide(z); return s * (1 - s)
+def d_tanh(z): return 1 - np.tanh(z) ** 2
+def d_relu(z): return (z > 0).astype(float)
+
+print("la derivada de cada activacion, donde es grande y donde no")
+print("  %-10s %10s %10s %10s" % ("activacion", "en z=0.5", "en z=3", "en z=6"))
+for nombre, d in (("sigmoide", d_sigmoide), ("tanh", d_tanh), ("relu", d_relu)):
+    print("  %-10s %10.6f %10.6f %10.6f"
+          % (nombre, d(np.array([0.5]))[0], d(np.array([3.0]))[0], d(np.array([6.0]))[0]))
+print("  (en z = 0 exacto la relu no tiene derivada; las librerias eligen 0)")
+print()
+print("la sigmoide vale como mucho 0.25 y a |z|=6 ya es %.6f. La tanh llega"
+      % d_sigmoide(np.array([6.0]))[0])
+print("a 1 en el cero pero tambien se apaga. La relu vale 1 en toda la")
+print("mitad positiva, sin apagarse nunca")
+print()
+
+# Lo que eso hace al gradiente tras varias capas: el producto de las
+# derivadas. Aqui se cuenta con la derivada MAXIMA de cada una, que es
+# el caso mas favorable.
+print("el gradiente que llega a la primera capa, en el mejor de los casos")
+print("  %-10s %s" % ("activacion", "tras 1, 5, 10, 20 capas"))
+for nombre, dmax in (("sigmoide", 0.25), ("tanh", 1.0), ("relu", 1.0)):
+    fila = "  ".join("%.2e" % (dmax ** k) for k in (1, 5, 10, 20))
+    print("  %-10s %s" % (nombre, fila))
+print()
+print("con la sigmoide, veinte capas dejan pasar como mucho %.2e del"
+      % (0.25 ** 20))
+print("gradiente: el mejor caso posible, y ya es practicamente cero. Con")
+print("derivada 1 el producto no se apaga por si solo")
+print()
+
+# Lo que la relu cuesta: unidades que se apagan para siempre.
+rng = np.random.default_rng(11)
+N, H = 5000, 200
+# cada unidad tiene su propio sesgo, y algunos son muy negativos
+sesgos = rng.standard_normal(H) * 3.0 - 4.0
+Z = rng.standard_normal((N, H)) * 0.6 + sesgos
+activas = (Z > 0).any(axis=0)
+print("y lo que la relu cuesta: unidades que no se activan nunca")
+print("  unidades              : %d" % H)
+print("  con algun valor positivo: %d" % int(activas.sum()))
+print("  apagadas del todo     : %d" % int((~activas).sum()))
+print()
+frac = (Z > 0).mean()
+print("  fraccion de valores positivos: %.4f" % frac)
+print("  una unidad apagada tiene derivada 0 SIEMPRE, asi que su gradiente")
+print("  es cero y nunca vuelve. Con un sesgo inicial negativo grande,")
+print("  parte de la capa puede nacer muerta")
+print()
+
+# La variante que no se apaga del todo.
+def d_leaky(z, a=0.01): return np.where(z > 0, 1.0, a)
+print("una variante con pendiente pequeña en el lado negativo")
+print("  derivada en z = -3 : relu %.4f   con pendiente 0.01 %.4f"
+      % (d_relu(np.array([-3.0]))[0], d_leaky(np.array([-3.0]))[0]))
+print("  el gradiente no se anula, asi que la unidad puede recuperarse")
+print()
+print("ninguna activacion es la correcta siempre: la sigmoide se apaga, la")
+print("relu puede morir, y la variante anade un parametro que elegir. Lo")
+print("que decide es el tamaño de la derivada en la zona donde los datos caen")
+```
+
+```{=html}
+<div class="viz-derivada">
+  <div class="controles">
+    <label>Activación <input id="ac-f" type="range" min="0" max="3" step="1" value="0"> <span id="ac-f-v">sigmoide</span></label>
+    <label>Dónde se evalúa <input id="ac-z" type="range" min="-6" max="6" step="0.1" value="0.5"> <span id="ac-z-v">0.5</span></label>
+  </div>
+  <svg id="ac-svg" viewBox="0 0 660 280" role="img" aria-label="La derivada de cuatro activaciones a lo largo del eje, con un marcador en el punto donde se evalúa."></svg>
+  <p class="lectura" id="ac-lectura"></p>
+</div>
+<style>
+.viz-derivada { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-derivada .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-derivada label { display: flex; align-items: center; gap: .4rem; }
+.viz-derivada input[type=range] { width: 160px; padding: 0; }
+.viz-derivada svg { width: 100%; height: auto; display: block; }
+.viz-derivada .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("ac-svg"), lec = document.getElementById("ac-lectura");
+  var cf = document.getElementById("ac-f"), cz = document.getElementById("ac-z");
+  var ef = document.getElementById("ac-f-v"), ez = document.getElementById("ac-z-v");
+  var X0 = 62, X1 = 630, Y0 = 18, Y1 = 232, ZLO = -6, ZHI = 6, FUGA = 0.01;
+
+  var FUNS = [
+    { n: "sigmoide", d: function (z) { var s = 1 / (1 + Math.exp(-z)); return s * (1 - s); }, top: 0.25 },
+    { n: "tanh",     d: function (z) { var t = Math.tanh(z); return 1 - t * t; },             top: 1 },
+    { n: "relu",     d: function (z) { return z > 0 ? 1 : 0; },                                top: 1 },
+    { n: "relu con fuga", d: function (z) { return z > 0 ? 1 : FUGA; },                        top: 1 }
+  ];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(z) { return X0 + (z - ZLO) * (X1 - X0) / (ZHI - ZLO); }
+  function py(v) { return Y1 - Math.max(0, Math.min(1.05, v)) * (Y1 - Y0) / 1.05; }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var f = FUNS[Math.round(+cf.value)], z = +cz.value;
+    ef.textContent = f.n; ez.textContent = z.toFixed(1);
+
+    for (var v = 0; v <= 1.0001; v += 0.25) {
+      var y = py(v);
+      svg.appendChild(el("path", { d: "M" + X0 + " " + y.toFixed(1) + " L" + X1 + " " + y.toFixed(1),
+        stroke: C_L, "stroke-width": v === 0 ? 1.6 : 0.8, opacity: v === 0 ? 1 : .55 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: y + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 },
+        v.toFixed(2)));
+    }
+    for (var t = ZLO; t <= ZHI; t += 3)
+      svg.appendChild(el("text", { x: px(t), y: Y1 + 20, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 },
+        String(t)));
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 40, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 },
+      "z, la preactivación"));
+
+    // la derivada, punto a punto; el trazo se corta en el salto de la relu
+    var d = "", prev = null, N = 240;
+    for (var k = 0; k <= N; k++) {
+      var zz = ZLO + k * (ZHI - ZLO) / N;
+      var salta = prev !== null && Math.abs(f.d(zz) - f.d(prev)) > 0.5;
+      d += (d === "" ? "M" : (salta ? " M" : " L")) + px(zz).toFixed(1) + " " + py(f.d(zz)).toFixed(1);
+      prev = zz;
+    }
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_A, "stroke-width": 2.2 }));
+
+    // el marcador, en el punto donde se evalua
+    var dz = f.d(z);
+    svg.appendChild(el("path", { d: "M" + px(z).toFixed(1) + " " + Y0 + " L" + px(z).toFixed(1) + " " + Y1,
+      stroke: C_B, "stroke-width": 1.2, "stroke-dasharray": "4 4", opacity: .6 }));
+    svg.appendChild(el("circle", { cx: px(z).toFixed(1), cy: py(dz).toFixed(1), r: 5.5, fill: C_B }));
+    svg.appendChild(el("text", { x: px(z).toFixed(1), y: (py(dz) - 12).toFixed(1), "text-anchor": "middle",
+      "font-size": 11, fill: C_B }, dz.toFixed(4)));
+
+    var doce = Math.pow(dz, 12);
+    lec.innerHTML = "La derivada de <strong>" + f.n + "</strong> en z = <strong>" + z.toFixed(1) +
+      "</strong> vale <strong>" + dz.toFixed(4) + "</strong>, y su valor más alto es <strong>" + f.top.toFixed(2) +
+      "</strong>. Doce capas con esa derivada dejan pasar <strong>" + (doce === 0 ? "0" : doce.toExponential(2)) +
+      "</strong> del gradiente. " +
+      "El marcador recorre el eje para mostrar que lo que decide no es la forma de la activación sino el tamaño de su derivada " +
+      "en la zona donde caen los datos: la sigmoide se apaga al alejarse de cero, y la relu vale uno en toda la mitad positiva " +
+      "y cero en la otra, que es lo que deja unidades sin gradiente.";
+  }
+  cf.addEventListener("input", dibujar); cz.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Medir el gradiente que de verdad llega
+
+::: {.proposicion}
+**Proposición 38.9 (el decaimiento medido).** Propagando hacia atrás en una red de doce capas, el gradiente que alcanza la primera capa vale, con sigmoide, **1,3 × 10⁻⁷** veces el que llega a la última; con la activación que anula el lado negativo y la escala compensada, el cociente es **1,68**.
+:::
+
+::: {.demostracion}
+*Demostración.* La celda construye la red, propaga hacia delante guardando las preactivaciones y hacia atrás multiplicando por la derivada y por la matriz traspuesta en cada capa, y mide la norma del gradiente en cada paso. Con sigmoide las normas van de $2{,}4\times10^{-10}$ en la primera capa a $1{,}8\times10^{-3}$ en la última; con la otra activación se mantienen en el mismo orden de magnitud. ∎
+:::
+
+::: {.proposicion}
+**Proposición 38.10 (el decaimiento es geométrico).** El factor por capa deducido de la medición es aproximadamente el mismo con 4, 8 y 12 capas —**0,2512**, **0,2305** y **0,2365**—, de modo que el cociente total cae como una potencia de la profundidad. Eso es el [desvanecimiento del gradiente]{.g}.
+:::
+
+::: {.demostracion}
+*Demostración.* Si cada capa multiplica el gradiente por un factor parecido, el cociente entre la primera y la última es ese factor elevado al número de capas menos una; despejando la raíz correspondiente de los cocientes medidos han de salir números parecidos, y salen. El valor obtenido está cerca del $1/4$ de la derivada máxima de la sigmoide, lo que indica que la mayoría de las preactivaciones caen cerca de cero, donde esa derivada es mayor. ∎
+:::
+
+**Nota sobre la cota.** La cota $0{,}25^{L}$ de la Proposición 38.7 acota **solo el producto de las derivadas**. La vuelta completa incluye además las matrices de pesos, que también multiplican, de modo que el cociente medido y esa cota **no son comparables sin más**: el primer borrador de esta lección afirmaba que lo medido quedaba por debajo, y la comprobación devolvió falso.
+
+```{pyodide}
+import numpy as np
+
+# La cota de la celda anterior decia lo que como MUCHO deja pasar cada
+# activacion. Aqui se mide el gradiente que de verdad llega a la primera
+# capa de una red profunda, propagandolo hacia atras.
+def mide(activacion, derivada, capas, escala, ancho=64, n=256, semilla=5):
+    r = np.random.default_rng(semilla)
+    X = r.standard_normal((n, ancho))
+    Ws = [r.standard_normal((ancho, ancho)) * escala for _ in range(capas)]
+    # ida, guardando las preactivaciones
+    A, Zs, As = X, [], [X]
+    for W in Ws:
+        Z = A @ W
+        A = activacion(Z)
+        Zs.append(Z); As.append(A)
+    # vuelta desde un gradiente unitario en la salida
+    G = np.ones_like(A) / A.size
+    normas = []
+    for k in range(capas - 1, -1, -1):
+        G = G * derivada(Zs[k])
+        normas.append(float(np.linalg.norm(G)))
+        G = G @ Ws[k].T
+    return normas[::-1]      # de la primera capa a la ultima
+
+def sig(z): return 1.0 / (1.0 + np.exp(-z))
+def d_sig(z): s = sig(z); return s * (1 - s)
+def relu(z): return np.maximum(z, 0.0)
+def d_relu(z): return (z > 0).astype(float)
+
+CAPAS, ANCHO = 12, 64
+print("norma del gradiente al llegar a cada capa, en una red de %d capas" % CAPAS)
+print("  %-10s %12s %12s %12s %12s" % ("activacion", "capa 1", "capa 4", "capa 8", "capa 12"))
+for nombre, act, der, esc in (
+        ("sigmoide", sig, d_sig, 1.0 / np.sqrt(ANCHO)),
+        ("relu", relu, d_relu, np.sqrt(2.0 / ANCHO))):
+    ns = mide(act, der, CAPAS, esc, ancho=ANCHO)
+    print("  %-10s %12.3e %12.3e %12.3e %12.3e"
+          % (nombre, ns[0], ns[3], ns[7], ns[11]))
+print()
+
+ns_sig = mide(sig, d_sig, CAPAS, 1.0 / np.sqrt(ANCHO), ancho=ANCHO)
+ns_relu = mide(relu, d_relu, CAPAS, np.sqrt(2.0 / ANCHO), ancho=ANCHO)
+print("cociente entre la ultima capa y la primera")
+print("  sigmoide: %.3e   <- el gradiente que llega abajo, frente al de arriba"
+      % (ns_sig[0] / ns_sig[-1]))
+print("  relu    : %.3e" % (ns_relu[0] / ns_relu[-1]))
+print()
+print("con la sigmoide el gradiente que alcanza la primera capa es %.1e"
+      % (ns_sig[0] / ns_sig[-1]))
+print("veces el de la ultima: esa capa practicamente no se entrena. Con")
+print("relu y la escala compensada, el cociente se queda en el mismo orden")
+print()
+
+# La cota de la celda anterior acota SOLO el producto de las derivadas.
+# La vuelta incluye ademas las matrices de pesos, que tambien multiplican,
+# asi que el cociente medido no tiene por que quedar por debajo de ella.
+# Lo que si se puede comprobar es que el decaimiento es GEOMETRICO.
+print("el factor por capa, deducido de lo medido")
+print("  %-8s %14s %14s" % ("capas", "capa 1 / ultima", "factor por capa"))
+for c in (4, 8, 12):
+    ns = mide(sig, d_sig, c, 1.0 / np.sqrt(ANCHO), ancho=ANCHO)
+    coc = ns[0] / ns[-1]
+    print("  %-8d %14.3e %14.4f" % (c, coc, coc ** (1.0 / (c - 1))))
+print()
+print("el factor por capa sale parecido con 4, 8 y 12 capas: el gradiente")
+print("se multiplica por el mismo numero en cada una, y por eso el cociente")
+print("total cae como una potencia. La cota 0.25 de la celda anterior acota")
+print("solo las derivadas; la vuelta incluye ademas los pesos, que tambien")
+print("multiplican, asi que las dos cantidades no son comparables sin mas")
+print()
+
+# La misma red con menos capas: el problema es exponencial en la profundidad.
+print("el mismo cociente segun la profundidad, con sigmoide")
+print("  %-8s %14s" % ("capas", "capa 1 / ultima"))
+for c in (2, 4, 8, 12):
+    ns = mide(sig, d_sig, c, 1.0 / np.sqrt(ANCHO), ancho=ANCHO)
+    print("  %-8d %14.3e" % (c, ns[0] / ns[-1]))
+print()
+print("cada capa añadida multiplica por el mismo factor: la profundidad")
+print("entra en el exponente, y por eso el cociente cae tan deprisa")
+```
+
+## 5. Lo que esta lección no resuelve
+
+No se ha tratado la normalización dentro de la red, que ataca el mismo problema por otra vía: en lugar de elegir la escala inicial para que la varianza se conserve, se reajusta la escala de las activaciones **en cada paso**, con lo que la elección inicial deja de ser crítica. Tampoco las conexiones que saltan capas, que dan al gradiente un camino sin derivadas que lo multipliquen y son la razón de que las redes muy profundas puedan entrenarse.
+
+Tampoco se ha derivado la escala exacta que ESL §11.5 recomienda ni se ha entrado en las activaciones suaves más recientes, cuya derivada no se anula en el lado negativo pero tampoco vale uno. Y la medición de la Sección 4 usa una red sin entrenar: durante el entrenamiento las preactivaciones se desplazan, y el factor por capa cambia con ellas.
+
+## Ejercicios
+
+### Ejercicio 1, La escala que conserva la señal
+
+Con la Proposición 38.4, calcular el factor por capa y lo que queda de la señal tras 10 capas, para una capa de 256 entradas con desviación típica de los pesos de 0,04.
+
+```{pyodide}
+#| exercise: ex_escala
+import numpy as np
+
+n, s, capas = 256, 0.04, 10
+
+factor = ______
+queda = ______
+correcta = ______
+
+print(round(factor, 4), round(queda, 6), round(correcta, 4))
+```
+
+::: {.hint exercise="ex_escala"}
+El factor por capa es la raíz de `n` multiplicada por la desviación típica, y tras `L` capas la señal queda multiplicada por ese factor elevado a `L`.
+:::
+
+::: {.solution exercise="ex_escala"}
+```{pyodide}
+import numpy as np
+
+n, s, capas = 256, 0.04, 10
+
+factor = np.sqrt(n) * s
+queda = factor ** capas
+correcta = 1.0 / np.sqrt(n)
+
+print(round(factor, 4), round(queda, 6), round(correcta, 4))
+```
+
+El factor es 0,64 y tras diez capas queda el 0,0115 de la señal: se ha perdido el 99 %. La escala correcta es 0,0625, un 56 % mayor que la usada, y esa diferencia se convierte en dos órdenes de magnitud al elevarla a la décima potencia.
+:::
+
+```{pyodide}
+#| exercise: ex_escala
+#| check: true
+if round(factor, 4) == 0.64 and round(queda, 6) == 0.011529 and round(correcta, 4) == 0.0625:
+    feedback = {"correct": True, "message": "Correcto: factor 0.64 y queda el 1,15 % tras diez capas."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 0.64, 0.011529 y 0.0625."}
+feedback
+```
+
+### Ejercicio 2, Cuánto deja pasar la sigmoide
+
+Con la Proposición 38.7, calcular cuánto del gradiente deja pasar una red de 8 capas de sigmoide en el mejor caso, y cuántas capas hacen falta para bajar de una millonésima.
+
+```{pyodide}
+#| exercise: ex_sigmoide
+maxima = 0.25
+
+tras_8 = ______
+
+capas = 0
+resto = 1.0
+while resto >= 1e-6:
+    ______
+    ______
+
+print(round(tras_8, 10), capas)
+```
+
+::: {.hint exercise="ex_sigmoide"}
+Cada capa multiplica por la derivada máxima, así que el producto es esa derivada elevada al número de capas.
+:::
+
+::: {.solution exercise="ex_sigmoide"}
+```{pyodide}
+maxima = 0.25
+
+tras_8 = maxima ** 8
+
+capas = 0
+resto = 1.0
+while resto >= 1e-6:
+    resto = resto * maxima
+    capas = capas + 1
+
+print(round(tras_8, 10), capas)
+```
+
+Ocho capas dejan pasar `1,526e-05` en el mejor caso, y bastan **10** para bajar de una millonésima. Diez capas no es una red profunda, y ese es el motivo por el que la sigmoide dejó de usarse en las capas ocultas.
+:::
+
+```{pyodide}
+#| exercise: ex_sigmoide
+#| check: true
+if round(tras_8, 10) == 1.52588e-05 and capas == 10:
+    feedback = {"correct": True, "message": "Correcto: 1.52588e-05 tras ocho capas, y diez para bajar de una millonesima."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 1.52588e-05 y 10 capas."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **ML 38**:
+
+1. Entrenar la red de la Lección 37 arrancando todos los pesos iguales y con pesos distintos, y anotar cuántos valores distintos produce la capa oculta en cada caso y qué pérdida alcanza.
+2. Medir la desviación típica de las activaciones por capa en una red de diez capas con tres escalas distintas, antes de entrenar. Anotar cuál conserva la señal y comparar con $1/\sqrt{n}$.
+3. Contar cuántas unidades de una capa no producen ningún valor positivo tras la primera pasada, variando el sesgo inicial. Guardar en `50-Errores/` el sesgo a partir del cual muere más de la mitad.
+
+## Del libro
+
+ESL §11.5 *Some Issues in Training Neural Networks* trata los valores iniciales y el escalado de las entradas como dos de los problemas centrales del entrenamiento, y advierte de que arrancar con pesos exactamente nulos deja el modelo en un punto sin gradiente. Esta lección desarrolla esa advertencia hasta la escala concreta y la mide.
+
+## Para el Cerebro
+
+- Todos los pesos iguales: la capa tiene $H$ unidades y el poder de **una**. Medido: **1 valor distinto de 6**.
+- Todo en cero es peor: el gradiente que llega a la primera capa es **exactamente cero**.
+- La varianza se conserva cuando $n\cdot\operatorname{Var}(w)=1$, es decir con desviación típica $1/\sqrt{n}$.
+- El efecto es **exponencial en la profundidad**: 0,0002 contra 0,96 contra 124 tras doce capas.
+- Si la activación anula la mitad, la escala pasa a $\sqrt{2/n}$. **Depende de la activación.**
+- Lo que decide es el tamaño de $\sigma'$: la sigmoide vale como mucho **0,25**; la relu, **1**.
+- Medido: el gradiente que llega abajo en doce capas es **1,3 × 10⁻⁷** veces el de arriba.
+- **148 de 200** unidades pueden nacer muertas con sesgos negativos.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico: que tras 200 pasos arrancando con pesos iguales la capa oculta produce 1 valor distinto de 6 y con pesos distintos 6 de 6, con pérdidas 0,129026 y 0,117594; que con los pesos de salida en cero la capa oculta y su gradiente valen ambos cero; que con $n=100$ las escalas 0,05, 0,10 y 0,15 llevan la señal a 0,0002, 0,96 y 124 tras doce capas, y que la predicción por potencias coincide con lo medido hasta un cociente de 0,974; que con la activación que anula el lado negativo la señal queda en 0,008986 con $1/\sqrt{n}$ y 0,575105 con $\sqrt{2/n}$; las derivadas de las tres activaciones en 0,5, 3 y 6; que 148 de 200 unidades no producen ningún valor positivo con sesgos de media $-4$; que el gradiente medido en la primera capa de doce vale $1{,}3\times10^{-7}$ veces el de la última con sigmoide y 1,68 con la otra; y que el factor por capa deducido con 4, 8 y 12 capas vale 0,2512, 0,2305 y 0,2365.
+
+**Lo que viene de los libros.** De ESL §11.5, que los valores iniciales y el escalado son problemas centrales del entrenamiento y que arrancar con pesos nulos deja el modelo sin gradiente. La sección se cita por su número y su título; no se reproduce su texto.
+
+**Lo que es mío, no del libro.** La organización en cuatro secciones, que separa **romper la simetría** de **elegir la escala** porque son dos problemas distintos con dos remedios distintos; la derivación de $1/\sqrt{n}$ a partir de la varianza y su comprobación por potencias; la elección de medir el gradiente **real** que llega a la primera capa en lugar de quedarse en la cota; la construcción de un caso con 148 unidades muertas de 200, que hizo falta buscar porque el primer intento no mataba ninguna; y la nota que advierte de que la cota $0{,}25^{L}$ y el cociente medido **no son comparables**, escrita después de que la comprobación devolviera falso.
+:::
