@@ -3397,6 +3397,128 @@ Se eligió exhibir `'ab' * 3 == 'ababab'` aquí a propósito: es la misma
 exhibición sobre la que se apoya Python 19 para demostrar que una anotación no
 comprueba nada, ochenta semanas más adelante.
 
+### 3.59 Fundamentos 2 y 3, y una regla de orden nueva (22-09-2026)
+
+**Una regla que este módulo impone y los demás no: una lección no usa nada que
+no se haya enseñado ya.** Salió al escribir la 2, donde el primer borrador usaba
+una comprehension —que es la lección 11— y un `def` —que es la 10— solo para no
+repetir código. En un módulo creado precisamente porque «los bucles se usan en
+todas partes y no se enseñan en ninguna», eso no vale. Las dos celdas se
+reescribieron con asignaciones sueltas.
+
+Y obligó a **volver sobre la 1, ya publicada**: sus celdas 0 y 3 recorrían tablas
+con un `for`, que es la lección 5. Se desenrollaron a `print` explícitos. La
+celda 1 tenía además un `for _ in range(10)` para el error acumulado.
+
+**Al desenrollarlo apareció que la afirmación era falsa.** La prosa decía que
+sumar `0.1` diez veces da `0.9999999999999999` «porque el error se acumula».
+Mostrando paso a paso las cinco primeras sumas, lo que ocurre es otra cosa: solo
+el **tercer** paso se desvía y el cuarto vuelve a caer justo, porque el redondeo
+al `float` más cercano deshace el error del anterior. El error **va y viene**, y
+eso es peor que acumularse: no se puede saber de antemano en qué paso la igualdad
+exacta va a fallar. La lección lo dice así ahora.
+
+**Fundamentos 2, «Condicionales y verdad».** 3 def / 7 prop / 7 dem. Lo que
+sostiene la lección es una cadena de `elif` escrita dos veces con las mismas
+cuatro condiciones, en orden exigente y en orden inverso: a la nota 8 le asigna
+`'notable'` y `'aprobado'` respectivamente. La segunda es **código válido que se
+ejecuta sin error y responde mal**, con las ramas de abajo inalcanzables y sin
+que Python avise. El cortocircuito se enseña con `divisor != 0 and 10 / divisor > 1`,
+que no levanta excepción con divisor cero mientras la expresión intercambiada sí.
+
+**Fundamentos 3, «El bucle while».** 3 def / 6 prop / 6 dem. Tres medidas que
+enseñan solas, todas atadas a la Proposición 1.3 de la lección anterior:
+
+· con `x != 1.0` sumando `0.1`, el bucle **no para nunca**: a las 50 vueltas del
+tope `x` vale `4.999999999999998`;
+· con `x < 1.0` para, pero en **11 vueltas y no 10**, en `1.0999999999999999`:
+el error acumulado obliga a un paso de más;
+· contando con un entero se dan **10 justas**, y `10 * 0.1` vale `1.0` exacto.
+
+La regla que queda es «lo que controla un bucle se cuenta con enteros», y llega
+medida en vez de enunciada.
+
+**Dos deslices propios.** El índice de celda de las soluciones depende de cuántas
+celdas de enseñanza tenga la lección: con 4 celdas las soluciones caen en 5 y 8,
+con 3 caen en 4 y 7. Se declararon las de la 3 como si tuviera 4. Y el ejercicio
+de partir 500 por la mitad da **8** divisiones y no 9 —500 es la mitad de 1000,
+así que se ahorra el primer corte—; estaba escrito 9 en el enunciado, en la
+comprobación y en la afirmación. Lo cazó `salidas.py`, que es para lo que está.
+
+### 3.60 Fundamentos 4 y 5: el bloque de listas y bucles (23-09-2026)
+
+**Fundamentos 4, «Listas y sus métodos».** 3 def / 7 prop / 7 dem. La decisión de
+fondo fue **no presentar como convención lo que tiene consecuencias medibles**.
+Que una rebanada excluya su extremo derecho se justifica por dos hechos que la
+celda comprueba: `len(letras[1:4])` vale `3 = 4 − 1`, y `letras[0:2] +
+letras[2:4] + letras[4:6]` reconstruye la lista sin huecos ni solapamientos. Si
+incluyera el extremo, ninguna de las dos sería cierta. El visual dibuja los dos
+cortes **entre** casillas y no sobre ellas, que es lo que hace obvia la cuenta.
+
+La sección del alias va al final a propósito: sin haber visto antes la
+mutabilidad y los métodos que modifican en el sitio, el alias no muerde.
+
+**Fundamentos 5, «El bucle for y range».** 3 def / 7 prop / 7 dem. El `for` se
+presenta como **la desaparición de dos modos de fallo concretos** de la Lección
+3 —pasarse del final y olvidar el avance— en vez de como una sintaxis más
+cómoda; las dos versiones del mismo recorrido están una al lado de la otra.
+
+Lo que sostiene la lección es la Proposición 5.9: borrando los doses de
+`[1, 2, 2, 3, 2, 4]` mientras se recorre queda `[1, 3, 2, 4]`, **con un 2 vivo y
+sin ningún error**. Para que el salto se vea hizo falta elegir una lista con
+doses **adyacentes**; con doses separados el fallo no se manifiesta y la
+demostración no demuestra nada. El visual reproduce la simulación vuelta a
+vuelta, con el puesto interno dibujado, y el segundo control lo contrasta con la
+forma correcta.
+
+**El patrón de los índices de celda, otra vez.** Como en la 3: la lección 4
+tiene 4 celdas de enseñanza y sus soluciones caen en 5 y 8; la 5 tiene 4 también.
+Conviene contar las celdas `{pyodide}` antes de declarar, porque el gate solo
+dice «declarada pero no se ejecutó» y no cuál era la buena.
+
+**Dos cosas que cazaron los gates y no yo.** `formato.py --estricto` encontró un
+«no es una arbitrariedad: es…» en la 4 (regla 14) y que la 5 no marcaba **ningún**
+término con `{.g}` (regla 17). Las dos lecciones anteriores sí lo hacían, así que
+no es un descuido del molde sino de esa lección concreta.
+
+### 3.61 Fundamentos 6, y que `visuales.py` acepta rutas sueltas (23-09-2026)
+
+**`python3 verificar/visuales.py --estricto ruta/leccion.qmd` revisa solo esa.**
+Estaba en el código desde siempre —`args = [a for a in sys.argv[1:] if not
+a.startswith("--")]`— y no en ninguna nota. Sobre las 116 lecciones el gate tarda
+unos quince minutos; sobre una, segundos. Escribiendo seis lecciones seguidas se
+lanzó cuatro veces el gate completo, y **cada una quedó obsoleta antes de
+terminar** porque mientras tanto ya había una lección más. El ciclo correcto es:
+la ruta suelta mientras se escribe, el gate entero antes de comitear.
+
+**Lo que apareció al poder mirar seis de golpe:** tres controles rotos que los
+gates completos anteriores no habían visto porque las lecciones aún no existían.
+Los tres por la **misma razón, que conviene anotar como patrón**: el control
+cambiaba el dibujo solo cuando *el otro* control ya estaba movido, y el gate mide
+en el **estado inicial**.
+
+· `wh-a` de la 3 (avanza el contador sí/no) con cero vueltas dadas pinta lo
+mismo. Arreglado dibujando, en cada fila de la escalera, un punto cuya posición
+codifica el valor de `i`: con avance forman una diagonal, sin avance una columna.
+
+· `sa-b` de la 5 (borrar mientras se recorre sí/no) igual. Arreglado poniendo una
+**segunda fila de casillas** —la lista nueva— que en modo borrado no existe. Una
+fila más o menos es geometría con cualquier número de vueltas.
+
+· `rg-k` de la 5 (el paso del rango) cambiaba el **radio** de los círculos pero
+no su posición, y el gate mide desplazamiento. Arreglado **levantando** sobre la
+recta los números que el rango produce.
+
+La regla que queda: un control se comprueba con los demás **en su posición
+inicial**, y lo que debe cambiar es dónde está algo, no cómo de grande es.
+
+**Fundamentos 6, «Tuplas y desempaquetado».** 3 def / 6 prop / 6 dem. La lección
+cierra explicando dos cosas que quedaron colgando: el `i, j = j, i` de la Lección
+1 —el lado derecho construye la tupla entera antes de asignar nada— y el
+`for i, x in enumerate(...)` de la 5, que era un desempaquetado por vuelta.
+Y termina con lo que la inmutabilidad **compra** en vez de con lo que prohíbe:
+una tupla sirve de clave de diccionario y una lista levanta `TypeError`.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
