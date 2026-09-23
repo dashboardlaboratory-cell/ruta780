@@ -157,6 +157,7 @@ MIGRADAS = {
     "python/18-decoradores.qmd",
     "python/19-tipado-gradual.qmd",
     "python/20-texto-unicode-y-regex.qmd",
+    "python/21-sql-desde-python.qmd",
     "fundamentos/01-valores-nombres-y-tipos.qmd",
     "fundamentos/02-condicionales-y-verdad.qmd",
     "fundamentos/03-el-bucle-while.qmd",

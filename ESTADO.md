@@ -3701,6 +3701,56 @@ listados. Los dos se regeneraron desde las filas publicadas. El gate comprueba
 ahora también que no haya ids duplicados y que `data-total` no sea menor que el
 número de filas.
 
+### 3.66 Python 21: SQL, y por qué los parámetros no son una regla de seguridad (23-09-2026)
+
+4 def / 7 prop / 7 dem, cuatro «Modo de falla». Base en memoria, para que la
+página no escriba nada en disco.
+
+**La decisión de fondo: justificar los parámetros por corrección y no por
+amenaza.** La demostración es el apellido `O'Brien`, que rompe una consulta
+construida por sustitución y funciona como parámetro. Así el argumento llega
+antes —es un apellido corriente, no un ataque— y **no admite la excusa de «este
+dato es de confianza»**. La lección dice después, en su Modo de falla, que el
+error ruidoso es la forma benigna del problema y que la forma dañina es que el
+texto pegado resulte una consulta válida y distinta.
+
+Y una consecuencia que casi nunca se enseña: **un parámetro es un valor, no un
+nombre**. `SELECT ? FROM clientes` con `'nombre'` devuelve la cadena repetida
+una vez por fila, sin fallar. Cuando lo que varía es una columna, se elige de
+una lista fija escrita en el programa.
+
+**`NULL` explicado por las dos condiciones opuestas.** Sobre 4 filas con 2 nulos,
+`WHERE nota = 5` devuelve 1 y `WHERE nota <> 5` devuelve 1: suman **2 de 4**, y
+esa diferencia son exactamente los ausentes. Es más contundente que enunciar la
+lógica de tres valores.
+
+**Dos medias que difieren por un factor de dos.** `AVG(nota)` vale **7,0** y
+`AVG(COALESCE(nota, 0))` vale **3,5** sobre los mismos datos. Las dos son
+correctas y responden a preguntas distintas; lo que no es correcto es no haber
+elegido. El visual dibuja el divisor como una barra que se acorta con cada
+ausente.
+
+**Dónde ocurre el trabajo, contado en filas que cruzan la frontera.** Sobre una
+tabla de 10 000: filtrar en Python hace cruzar **10 000**, filtrar en SQL hace
+cruzar **654**, y dejar también la suma a la base hace cruzar **1**. Los tres
+dan el mismo total. La medida es en filas y no en segundos, como siempre.
+
+**El `replace` anclado, esta vez.** Tras el §3.65 se escribió con
+`re.subn(r'(data-progreso="python"[^>]*?data-ids=")([^"]*)(")', …)`, que no
+puede tocar un `data-leccion`. Falló otra cosa: el índice prometía el título
+**«SQL desde Python: cursor y transacciones»** y la lección se había escrito
+como «SQL desde Python» a secas. La lección adoptó el título prometido; el
+índice es el contrato. Y como el script murió en esa comprobación, las
+afirmaciones se quedaron sin declarar: `salidas.py` lo dijo con «sin
+afirmaciones declaradas (solo se comprobó que no revientan)», que es un aviso
+fácil de pasar por alto y conviene leer.
+
+**Un aviso de visuales convertido en fallo propio.** El deslizador de filas
+cambiaba el **grosor** del caño y nada de sitio, y el gate lo marcó con 0,0 px.
+Se añadió un aforo junto a la base cuyo **borde superior** sube con el número de
+filas. Vale la pena aplicar la regla del §3.61 de entrada: lo que cambia es
+dónde está algo, no su tamaño.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

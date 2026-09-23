@@ -1,0 +1,705 @@
+---
+title: "SQL desde Python: cursor y transacciones"
+subtitle: "Python · Lección 21"
+nivel: L4
+modulo: python
+fase: F2
+prereqs: [python/20-texto-unicode-y-regex, python/04-archivos-y-errores, python/09-pandas-series-dataframe]
+siguientes: []
+libro: "—"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="python/21-sql-desde-python"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F2]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Texto, Unicode y regex](20-texto-unicode-y-regex.qmd) · [Excepciones y contextos](04-archivos-y-errores.qmd) · [pandas: Series y DataFrame](09-pandas-series-dataframe.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Consultar una base con `sqlite3`, y distinguir el [cursor]{.g} de las filas que entrega.
+2. **Demostrar por qué un valor va como [parámetro]{.g data-t="parámetro de consulta"} y no pegado en el texto**, con un apellido que lleva comilla.
+3. Explicar por qué un parámetro **no sirve** para un nombre de columna, y qué hacer en su lugar.
+4. **Demostrar que `NULL` no es un valor**: dos filas que no salen ni en `nota = 5` ni en `nota <> 5`.
+5. Distinguir `COUNT(*)` de `COUNT(columna)`, y **exhibir dos medias que difieren por un factor de dos**.
+6. **Medir dónde conviene hacer el trabajo**: 10 000 filas cruzando contra 654 contra **1**.
+7. Usar una [transacción]{.g} para que dos cambios ocurran juntos o no ocurra ninguno.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 4**: los gestores de contexto, que aquí son la transacción.
+- **Python 20**: la codificación del texto, que viaja entre el programa y la base.
+- **Python 9**: los `DataFrame`, que son el destino habitual de lo que una consulta devuelve.
+- **Fundamentos 12**: contar operaciones, que aquí se aplica a filas que cruzan una frontera.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 22**: las APIs, que traen datos que acaban en una tabla.
+- **Python 23**: Parquet y Arrow, el otro camino para datos que no caben en memoria.
+- **Python 28**: los datos que no caben, donde esta misma medición decide la arquitectura.
+- **Estadística 17**: el `p-hacking`, donde filtrar antes de mirar tiene consecuencias distintas.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| `con` | con | La **conexión** a la base |
+| `cur` | cur | El **cursor**, que entrega las filas de una consulta |
+| `?` | interrogante | El hueco de un parámetro posicional |
+| `:nombre` | dos puntos nombre | El hueco de un parámetro con nombre |
+| `NULL` | null | La **ausencia** de valor, que no es ningún valor |
+| `IS NULL` | is null | La única comparación que responde sobre un `NULL` |
+| `N` | ene mayúscula | El número de filas de la tabla |
+:::
+
+## 1. La conexión, el cursor y las filas
+
+:::: {.definicion}
+**Definición 21.1 (conexión y cursor).** Una **conexión** representa la sesión abierta con la base. `con.execute` devuelve un **cursor**, que entrega las filas **según se piden**: recorrerlo con un `for` trae de poco en poco, y `fetchall` las trae todas a memoria de una vez. Un cursor recorrido queda agotado.
+::::
+
+:::: {.proposicion}
+**Proposición 21.2.** Cada fila llega como una tupla y se accede por puesto. Asignando `sqlite3.Row` a `row_factory`, la misma fila admite además el acceso por nombre de columna.
+::::
+
+:::: {.demostracion}
+*Demostración.* El protocolo estándar solo garantiza que una fila sea una secuencia, y la implementación por defecto usa tuplas. `sqlite3.Row` es una clase que conserva los nombres de las columnas del cursor y define el acceso por clave además del posicional, de modo que las dos formas funcionan sobre el mismo objeto. La celda comprueba que `fila['ciudad']` y `fila[0]` devuelven lo mismo, y que `keys()` enumera las columnas. ∎
+::::
+
+**Modo de falla.** Acceder por puesto ata el programa al orden de las columnas del `SELECT`. El día que alguien añade una columna en medio, `fila[2]` sigue funcionando y devuelve otra cosa, sin levantar ningún error: los importes pasan a leerse de la columna de fechas y el informe sale con números absurdos. La defensa es escribir siempre las columnas en el `SELECT` —nunca `*`— y leerlas por nombre.
+
+```{pyodide}
+import sqlite3
+
+# Una base en memoria, para que la pagina no escriba nada en disco.
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE ventas (id INTEGER, ciudad TEXT, importe REAL)")
+con.executemany("INSERT INTO ventas VALUES (?, ?, ?)", [
+    (1, "Lima", 120.0), (2, "Quito", 80.5), (3, "Lima", 45.0),
+    (4, "Bogota", 210.0), (5, "Quito", 15.25),
+])
+con.commit()
+
+print("execute devuelve un cursor; el cursor entrega las filas")
+cur = con.execute("SELECT id, ciudad, importe FROM ventas ORDER BY id")
+print("  tipo de lo que devuelve execute: %s" % type(cur).__name__)
+for fila in cur:
+    print("    %s" % (fila,))
+print()
+print("cada fila es una %s, no un diccionario: se accede por puesto"
+      % type(con.execute("SELECT 1").fetchone()).__name__)
+print()
+
+# Para acceder por nombre hay que pedirlo. Es lo que se quiere casi siempre.
+con.row_factory = sqlite3.Row
+fila = con.execute("SELECT ciudad, importe FROM ventas WHERE id = 1").fetchone()
+print("con row_factory = sqlite3.Row se accede por nombre")
+print("  fila['ciudad']  = %r" % fila["ciudad"])
+print("  fila['importe'] = %r" % fila["importe"])
+print("  fila[0]         = %r   <- y el puesto sigue funcionando" % fila[0])
+print("  sus columnas    = %s" % list(fila.keys()))
+con.row_factory = None
+print()
+
+# fetchall trae TODO a memoria; recorrer el cursor trae de a poco.
+cur = con.execute("SELECT id FROM ventas")
+print("fetchall trae todo; el cursor entrega segun se pide")
+print("  fetchall()      -> %s" % cur.fetchall())
+print("  y el cursor queda agotado: %s" % cur.fetchall())
+print()
+print("con cinco filas da igual; con cinco millones, fetchall las quiere")
+print("todas en memoria a la vez y recorrer el cursor no")
+```
+
+## 2. Los valores van aparte
+
+:::: {.definicion}
+**Definición 21.3 (parámetro de consulta).** Un **parámetro** es un hueco en la consulta, `?` o `:nombre`, cuyo valor se pasa **aparte** en una tupla o un diccionario. El motor recibe la consulta y los valores por separado, de modo que un valor nunca puede leerse como parte de la consulta.
+::::
+
+:::: {.proposicion}
+**Proposición 21.4.** Pegar un valor dentro del texto de la consulta falla en cuanto el valor contiene una comilla. El apellido `O'Brien` basta.
+::::
+
+:::: {.demostracion}
+*Demostración.* Al construir el texto por sustitución, la comilla del dato cierra la que delimitaba el literal, y lo que sigue deja de leerse como valor: el resultado es un texto que el analizador no reconoce y que levanta `OperationalError`. Con un parámetro no hay ningún texto que cerrar, porque el valor no forma parte de la consulta. La celda ejecuta las dos formas con el mismo apellido: la pegada levanta la excepción y la parametrizada devuelve `[('Quito',)]`. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 21.5.** Un parámetro es un **valor** y no un nombre. `SELECT ? FROM clientes` con `'nombre'` devuelve la cadena `'nombre'` repetida una vez por fila, y no el contenido de esa columna.
+::::
+
+:::: {.demostracion}
+*Demostración.* La consulta se analiza **antes** de recibir los valores, de modo que en ese momento el `?` ya ocupa la posición de una expresión y no puede convertirse en un identificador; al llegar el valor, se usa como constante. La celda lo comprueba: el resultado son tres tuplas con la cadena `'nombre'`, una por cada fila de la tabla, en lugar de los tres nombres. ∎
+::::
+
+**Modo de falla.** Lo que la Proposición 21.4 exhibe como un error ruidoso es la forma benigna del problema; la forma dañina es que el texto pegado sí resulte una consulta válida y distinta de la pretendida. Por eso la regla no admite excepciones «cuando el dato es de confianza»: un dato interno hoy es un dato de formulario mañana. Cuando lo que varía es un **nombre** de tabla o de columna, se elige de una lista fija escrita en el programa y se comprueba la pertenencia antes de construir el texto; nunca se interpola lo que llegue de fuera.
+
+```{pyodide}
+import sqlite3
+
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE clientes (nombre TEXT, ciudad TEXT)")
+con.executemany("INSERT INTO clientes VALUES (?, ?)", [
+    ("Ana Ruiz", "Lima"), ("O'Brien", "Quito"), ("Eva Sol", "Lima"),
+])
+con.commit()
+
+# Un parametro NO es un hueco de texto: viaja aparte de la consulta y el
+# motor lo trata siempre como un valor, nunca como codigo.
+buscado = "Ana Ruiz"
+print("la forma correcta: un interrogante por parametro")
+r = con.execute("SELECT ciudad FROM clientes WHERE nombre = ?", (buscado,)).fetchall()
+print("  con parametro: %s" % r)
+print()
+
+# Pegar el valor dentro del texto de la consulta falla en cuanto el dato
+# contiene una comilla. Y una comilla en un apellido es algo corriente.
+apellido = "O'Brien"
+print("pegar el valor dentro del texto se rompe con un apellido normal")
+print("  el dato es %r" % apellido)
+try:
+    con.execute("SELECT ciudad FROM clientes WHERE nombre = '%s'" % apellido).fetchall()
+    print("  pegado    : funciono")
+except sqlite3.OperationalError:
+    print("  pegado    : sqlite3.OperationalError")
+r = con.execute("SELECT ciudad FROM clientes WHERE nombre = ?", (apellido,)).fetchall()
+print("  parametro : %s" % r)
+print()
+print("la comilla del apellido cierra la del texto y lo que sigue deja de")
+print("ser un valor. Con parametro no hay texto que cerrar: el valor viaja")
+print("aparte y el motor lo recibe ya separado de la consulta")
+print()
+
+# Los parametros tambien se pueden nombrar, y entonces se pasan en un
+# diccionario. Con varios, es mucho mas legible.
+r = con.execute(
+    "SELECT nombre FROM clientes WHERE ciudad = :ciudad AND nombre <> :excluir",
+    {"ciudad": "Lima", "excluir": "Ana Ruiz"},
+).fetchall()
+print("parametros con nombre, pasados en un diccionario")
+print("  %s" % r)
+print()
+
+# Y NO sirven para nombres de tabla o de columna: un parametro es un VALOR.
+print("un parametro es un valor, no un nombre de columna")
+try:
+    con.execute("SELECT ? FROM clientes", ("nombre",)).fetchall()
+    print("  SELECT ? con 'nombre'  -> %s"
+          % con.execute("SELECT ? FROM clientes", ("nombre",)).fetchall())
+except sqlite3.OperationalError:
+    print("  SELECT ? levanta OperationalError")
+print()
+print("no falla, pero tampoco hace lo que parece: devuelve la CADENA")
+print("'nombre' repetida una vez por fila, no la columna. Cuando lo que")
+print("varia es un nombre de columna, hay que elegirlo de una lista fija")
+print("escrita en el programa, nunca construirlo con lo que llegue de fuera")
+```
+
+## 3. `NULL` no es un valor
+
+:::: {.definicion}
+**Definición 21.6 (`NULL`).** `NULL` representa la **ausencia** de valor. Comparar cualquier cosa con `NULL` no devuelve ni verdadero ni falso: devuelve `NULL`. Una fila entra en un resultado solo cuando la condición del `WHERE` resulta **verdadera**, de modo que las filas con `NULL` en la columna comparada quedan fuera de las dos ramas de cualquier igualdad.
+::::
+
+:::: {.proposicion}
+**Proposición 21.7.** Las filas con `NULL` no aparecen ni en `nota = 5` ni en `nota <> 5`. Sobre una tabla de 4 filas con 2 nulos, las dos condiciones devuelven 1 y 1, y suman 2 en lugar de 4.
+::::
+
+:::: {.demostracion}
+*Demostración.* Por la Definición 21.6 las dos comparaciones valen `NULL` para esas filas, y `NULL` no es verdadero, de modo que ninguna de las dos las admite. La única forma de encontrarlas es `IS NULL`, que sí responde con un valor de verdad. La celda cuenta las cuatro cantidades y comprueba que las dos condiciones opuestas suman 2 de 4. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 21.8.** `COUNT(*)` cuenta filas y `COUNT(columna)` cuenta valores presentes. En consecuencia `AVG` divide entre los valores que hay, no entre las filas: sobre la misma tabla, `AVG(nota)` vale **7,0** y `AVG(COALESCE(nota, 0))` vale **3,5**.
+::::
+
+:::: {.demostracion}
+*Demostración.* Las funciones de agregación ignoran los `NULL`, de modo que `SUM(nota)` vale 14 sobre los dos valores presentes y `AVG` lo divide entre 2 y no entre 4. `COALESCE(nota, 0)` sustituye cada ausencia por un cero **antes** de agregar, con lo que la suma sigue siendo 14 pero el divisor pasa a 4. Las dos medias son correctas y responden a preguntas distintas: la primera es la nota media de quienes tienen nota, la segunda la de todos contando al ausente como cero. La celda exhibe las dos. ∎
+::::
+
+**Modo de falla.** La diferencia entre 7,0 y 3,5 es un factor de dos, y aparece sin que nadie haya elegido nada: `AVG` tiene un comportamiento por defecto y el informe sale con uno de los dos números. El síntoma es una media que no cuadra con la que calcula otro equipo sobre los mismos datos, y la causa es que uno rellenó los ausentes y el otro no. La defensa es decidir explícitamente qué significa el ausente —y escribirlo en la consulta— en lugar de aceptar el valor por defecto.
+
+```{pyodide}
+import sqlite3
+
+# NULL no es un valor: es la ausencia de valor. Comparar con el no da ni
+# verdadero ni falso, da NULL, y una fila solo entra si la condicion es
+# verdadera. De ahi salen casi todas las sorpresas de SQL.
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE t (id INTEGER, nota INTEGER)")
+con.executemany("INSERT INTO t VALUES (?, ?)", [(1, 5), (2, None), (3, 9), (4, None)])
+con.commit()
+
+def uno(sql):
+    return con.execute(sql).fetchone()[0]
+
+print("comparar con NULL no devuelve ni verdadero ni falso")
+print("  SELECT 1 = 1        -> %r" % uno("SELECT 1 = 1"))
+print("  SELECT 1 = 2        -> %r" % uno("SELECT 1 = 2"))
+print("  SELECT NULL = NULL  -> %r   <- None, o sea NULL" % uno("SELECT NULL = NULL"))
+print("  SELECT NULL IS NULL -> %r   <- IS si responde" % uno("SELECT NULL IS NULL"))
+print()
+
+print("y por eso una condicion con = deja fuera las filas con NULL")
+print("  filas en total            : %d" % uno("SELECT COUNT(*) FROM t"))
+print("  WHERE nota = 5            : %d" % uno("SELECT COUNT(*) FROM t WHERE nota = 5"))
+print("  WHERE nota <> 5           : %d   <- las dos con NULL no salen"
+      % uno("SELECT COUNT(*) FROM t WHERE nota <> 5"))
+print("  WHERE nota IS NULL        : %d" % uno("SELECT COUNT(*) FROM t WHERE nota IS NULL"))
+print()
+print("las dos filas sin nota no aparecen NI en 'nota = 5' NI en 'nota <> 5'.")
+print("Sumando las dos condiciones salen %d de %d filas: faltan las de NULL"
+      % (uno("SELECT COUNT(*) FROM t WHERE nota = 5") +
+         uno("SELECT COUNT(*) FROM t WHERE nota <> 5"), uno("SELECT COUNT(*) FROM t")))
+print()
+
+# COUNT(*) cuenta filas; COUNT(columna) cuenta valores no nulos.
+print("COUNT(*) cuenta filas; COUNT(columna) cuenta valores presentes")
+print("  COUNT(*)      = %d" % uno("SELECT COUNT(*) FROM t"))
+print("  COUNT(nota)   = %d" % uno("SELECT COUNT(nota) FROM t"))
+print("  SUM(nota)     = %r   <- ignora los NULL" % uno("SELECT SUM(nota) FROM t"))
+print("  AVG(nota)     = %r   <- divide entre %d, no entre %d"
+      % (uno("SELECT AVG(nota) FROM t"), uno("SELECT COUNT(nota) FROM t"),
+         uno("SELECT COUNT(*) FROM t")))
+print()
+print("la media de SQL divide entre los valores que HAY. Si se quiere tratar")
+print("el ausente como un cero hay que decirlo: COALESCE(nota, 0)")
+print("  AVG(COALESCE(nota, 0)) = %r" % uno("SELECT AVG(COALESCE(nota, 0)) FROM t"))
+```
+
+```{=html}
+<div class="viz-null">
+  <div class="controles">
+    <label>Filas sin nota: <input id="nu-n" type="range" min="0" max="6" step="1" value="2"><span id="nu-n-v" class="mono">2</span></label>
+    <label>Qué se calcula:
+      <select id="nu-q">
+        <option value="avg" selected>AVG(nota)</option>
+        <option value="coal">AVG(COALESCE(nota, 0))</option>
+        <option value="eq">WHERE nota = 5</option>
+        <option value="ne">WHERE nota &lt;&gt; 5</option>
+      </select>
+    </label>
+  </div>
+  <svg id="nu-svg" viewBox="0 0 660 215" role="img" aria-label="Qué filas entran y qué divisor se usa"></svg>
+  <div id="nu-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-null { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-null .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-null label { display: flex; align-items: center; gap: .4rem; }
+.viz-null input[type=range] { width: 140px; padding: 0; }
+.viz-null .mono { font-family: var(--bs-font-monospace, monospace); font-size: .8rem; }
+.viz-null svg { width: 100%; height: auto; display: block; }
+.viz-null .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("nu-svg"), lec = document.getElementById("nu-lectura");
+  var cn = document.getElementById("nu-n"), cq = document.getElementById("nu-q"), en = document.getElementById("nu-n-v");
+  // las ocho casillas estan ancladas; lo que cambia es cuales llevan NULL
+  // y cuales quedan marcadas por la consulta (regla 19b)
+  var X0 = 52, W = 74, Y = 78, N = 8;
+  var NOTAS = [5, 7, 5, 9, 5, 3, 8, 5];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var nn = +cn.value, q = cq.value;
+    en.textContent = nn;
+    var k, entran = 0, suma = 0, divisor = 0;
+    for (k = 0; k < N; k++) {
+      var nulo = k >= N - nn;
+      var v = nulo ? null : NOTAS[k];
+      var entra;
+      if (q === "eq") entra = (v === 5);
+      else if (q === "ne") entra = (v !== null && v !== 5);
+      else if (q === "avg") entra = (v !== null);
+      else entra = true;
+      if (entra) { entran++; suma += (v === null ? 0 : v); divisor++; }
+      svg.appendChild(el("rect", { x: X0 + k * W, y: Y - 20, width: W - 8, height: 40, rx: 5,
+        fill: entra ? C_A : (nulo ? C_B : "none"), opacity: entra ? .22 : (nulo ? .14 : 1),
+        stroke: entra ? C_A : (nulo ? C_B : C_L), "stroke-width": entra ? 2 : (nulo ? 1.6 : 1.1) }));
+      svg.appendChild(el("text", { x: X0 + k * W + (W - 8) / 2, y: Y + 6, "text-anchor": "middle",
+        "font-size": nulo ? 11 : 15, fill: C_T, opacity: entra || nulo ? 1 : .35 },
+        nulo ? "NULL" : String(v)));
+    }
+    svg.appendChild(el("text", { x: X0, y: Y + 46, "font-size": 10.5, fill: C_T, opacity: .65 },
+      "en verde, las filas que la consulta tiene en cuenta"));
+
+    // la barra del divisor: su largo dice entre cuantas se divide
+    var largo = divisor * W - 8;
+    svg.appendChild(el("rect", { x: X0, y: 148, width: Math.max(4, largo), height: 20, rx: 4,
+      fill: C_A, opacity: .3, stroke: C_A, "stroke-width": 1.6 }));
+    svg.appendChild(el("text", { x: X0, y: 192, "font-size": 12.5, fill: C_T },
+      (q === "avg" || q === "coal")
+        ? ("suma " + suma + "   ÷   " + divisor + "   =   " + (divisor ? (suma / divisor).toFixed(2) : "NULL"))
+        : ("filas que salen: " + entran + " de " + N)));
+
+    var t;
+    if (q === "avg") t = "<code>AVG(nota)</code> ignora los <code>NULL</code>: suma <strong>" + suma + "</strong> y divide entre <strong>" + divisor + "</strong>, las filas que <em>tienen</em> nota. La barra verde es el divisor, y se acorta cada vez que aparece un ausente más.";
+    else if (q === "coal") t = "<code>COALESCE(nota, 0)</code> convierte cada ausencia en un cero <em>antes</em> de agregar: la suma no cambia pero el divisor pasa a ser <strong>" + divisor + "</strong>, todas las filas. La barra verde llega al final, y la media baja.";
+    else if (q === "eq") t = "<code>WHERE nota = 5</code> deja fuera las <strong>" + nn + "</strong> filas con <code>NULL</code>, porque comparar con la ausencia no da verdadero. Salen <strong>" + entran + "</strong> de " + N + ".";
+    else t = "<code>WHERE nota &lt;&gt; 5</code> deja fuera <em>las mismas</em> " + nn + " filas con <code>NULL</code>. Salen <strong>" + entran + "</strong>: sumadas con las de la condición contraria no dan " + N + ", y esa diferencia son exactamente los ausentes.";
+    lec.innerHTML = t;
+  }
+  cn.addEventListener("input", dibujar);
+  cq.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Dónde ocurre el trabajo
+
+:::: {.definicion}
+**Definición 21.9 (transacción).** Una **transacción** agrupa varios cambios de modo que o entran todos o no entra ninguno. `with con:` abre una: al salir sin excepción confirma, y si se levanta una excepción deshace todo lo hecho dentro.
+::::
+
+:::: {.proposicion}
+**Proposición 21.10.** Filtrar y agregar en SQL reduce las filas que cruzan desde la base al programa. Sobre una tabla de 10 000, traer todo y filtrar en Python hace cruzar **10 000** filas, filtrar en SQL hace cruzar **654**, y dejar también la suma a la base hace cruzar **1**. Las tres dan el mismo total.
+::::
+
+:::: {.demostracion}
+*Demostración.* Cada fila que cruza se convierte en objetos de Python, y ese coste se paga aunque la fila se descarte a continuación. El `WHERE` descarta antes de convertir, y una agregación reduce el resultado a una sola fila. La celda cuenta las filas recibidas en las tres versiones y comprueba que las tres sumas coinciden: la primera trae **15 veces** más filas que la segunda para producir el mismo número. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 21.11.** Dentro de un bloque `with con:`, una excepción deshace los cambios ya realizados. Una transferencia interrumpida a mitad deja el total intacto.
+::::
+
+:::: {.demostracion}
+*Demostración.* El gestor de contexto de la conexión confirma al salir normalmente y deshace al salir por excepción, que es el protocolo de la Lección 4. Como el descuento y el abono están dentro del mismo bloque, una excepción entre ambos deshace el descuento y ninguno de los dos queda escrito. La celda interrumpe una transferencia entre los dos pasos y comprueba que el total sigue valiendo 150; después la ejecuta entera y comprueba que los saldos cambian y el total se conserva. ∎
+::::
+
+**Modo de falla.** Sin transacción, una interrupción entre los dos cambios deja el dinero descontado y no abonado, y el error no es visible en ninguna fila: cada una es correcta por separado y solo el total delata la pérdida. La defensa es que los cambios que tienen que ocurrir juntos estén dentro del mismo bloque, y que las comprobaciones de invariantes —como que el total se conserve— se hagan explícitas.
+
+```{pyodide}
+import sqlite3
+
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE ventas (id INTEGER, ciudad TEXT, importe REAL)")
+filas = [(i, ["Lima", "Quito", "Bogota"][i % 3], float(i % 250)) for i in range(10000)]
+con.executemany("INSERT INTO ventas VALUES (?, ?, ?)", filas)
+con.commit()
+
+# Todo lo que se filtra o se agrega en Python tuvo que viajar entero desde
+# la base. Aqui se cuentan las filas que cruzan esa frontera.
+total_filas = con.execute("SELECT COUNT(*) FROM ventas").fetchone()[0]
+
+# (a) traer todo y filtrar en Python
+traidas_a = 0
+suma_a = 0.0
+for _id, ciudad, importe in con.execute("SELECT id, ciudad, importe FROM ventas"):
+    traidas_a = traidas_a + 1
+    if ciudad == "Lima" and importe > 200:
+        suma_a = suma_a + importe
+
+# (b) filtrar en SQL y traer solo lo que hace falta
+traidas_b = 0
+suma_b = 0.0
+for (importe,) in con.execute(
+        "SELECT importe FROM ventas WHERE ciudad = ? AND importe > ?", ("Lima", 200)):
+    traidas_b = traidas_b + 1
+    suma_b = suma_b + importe
+
+# (c) dejar que la base haga tambien la suma
+traidas_c = 0
+cur = con.execute(
+    "SELECT SUM(importe) FROM ventas WHERE ciudad = ? AND importe > ?", ("Lima", 200))
+for (suma_c,) in cur:
+    traidas_c = traidas_c + 1
+
+print("las mismas cuentas, contando filas que cruzan desde la base")
+print("  filas en la tabla                    : %d" % total_filas)
+print("  (a) traer todo y filtrar en Python   : %5d filas  -> %.1f" % (traidas_a, suma_a))
+print("  (b) filtrar en SQL                   : %5d filas  -> %.1f" % (traidas_b, suma_b))
+print("  (c) filtrar y sumar en SQL           : %5d fila   -> %.1f" % (traidas_c, suma_c))
+print()
+print("  los tres dan el mismo total: %s" % (suma_a == suma_b == suma_c))
+print("  (a) trae %d veces mas filas que (b)" % (traidas_a // traidas_b))
+print()
+print("cada fila que cruza se convierte en objetos de Python, y eso cuesta")
+print("aunque despues se descarte. Lo que se puede decir en SQL se dice en SQL")
+print()
+
+# Una transaccion agrupa cambios: o entran todos o no entra ninguno. El
+# bloque with sobre la conexion confirma al salir bien y deshace si algo falla.
+con.execute("CREATE TABLE saldos (quien TEXT, cuanto INTEGER)")
+con.executemany("INSERT INTO saldos VALUES (?, ?)", [("ana", 100), ("luis", 50)])
+con.commit()
+
+def total():
+    return con.execute("SELECT SUM(cuanto) FROM saldos").fetchone()[0]
+
+print("una transferencia son dos cambios que tienen que ocurrir juntos")
+print("  total antes: %d" % total())
+try:
+    with con:
+        con.execute("UPDATE saldos SET cuanto = cuanto - 30 WHERE quien = 'ana'")
+        raise ValueError("algo falla entre los dos cambios")
+        con.execute("UPDATE saldos SET cuanto = cuanto + 30 WHERE quien = 'luis'")
+except ValueError:
+    print("  falló a mitad, y el bloque with deshizo lo hecho")
+print("  total despues: %d   <- no se perdieron 30" % total())
+print()
+with con:
+    con.execute("UPDATE saldos SET cuanto = cuanto - 30 WHERE quien = 'ana'")
+    con.execute("UPDATE saldos SET cuanto = cuanto + 30 WHERE quien = 'luis'")
+print("  y la transferencia completa si entra")
+print("  saldos: %s   total %d" % (con.execute("SELECT quien, cuanto FROM saldos").fetchall(), total()))
+```
+
+```{=html}
+<div class="viz-frontera">
+  <div class="controles">
+    <label>Dónde se filtra y se suma:
+      <select id="fr-d">
+        <option value="py" selected>todo en Python</option>
+        <option value="sql">filtrar en SQL</option>
+        <option value="agg">filtrar y sumar en SQL</option>
+      </select>
+    </label>
+    <label>Filas en la tabla: <input id="fr-n" type="range" min="1000" max="10000" step="1000" value="10000"><span id="fr-n-v" class="mono">10000</span></label>
+  </div>
+  <svg id="fr-svg" viewBox="0 0 660 210" role="img" aria-label="Cuántas filas cruzan la frontera"></svg>
+  <div id="fr-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-frontera { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-frontera .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-frontera label { display: flex; align-items: center; gap: .4rem; }
+.viz-frontera input[type=range] { width: 150px; padding: 0; }
+.viz-frontera .mono { font-family: var(--bs-font-monospace, monospace); font-size: .8rem; }
+.viz-frontera svg { width: 100%; height: auto; display: block; }
+.viz-frontera .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("fr-svg"), lec = document.getElementById("fr-lectura");
+  var cd = document.getElementById("fr-d"), cn = document.getElementById("fr-n"), en = document.getElementById("fr-n-v");
+  // la base, la frontera y el programa estan en sitios fijos; lo que cambia
+  // es el grosor del caño que las une y dónde está el embudo (regla 19b)
+  var XB = 110, XF = 340, XP = 570, Y = 96;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var d = cd.value, n = +cn.value;
+    en.textContent = n;
+    var cruzan = (d === "py") ? n : (d === "sql") ? Math.round(n * 654 / 10000) : 1;
+    var grosor = Math.max(2, 46 * Math.sqrt(cruzan / 10000));
+
+    // la base y el programa
+    svg.appendChild(el("rect", { x: XB - 64, y: Y - 34, width: 128, height: 68, rx: 8,
+      fill: C_A, opacity: .14, stroke: C_A, "stroke-width": 1.8 }));
+    svg.appendChild(el("text", { x: XB, y: Y + 4, "text-anchor": "middle", "font-size": 12, fill: C_T }, "la base"));
+    svg.appendChild(el("text", { x: XB, y: Y + 52, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .65 },
+      n + " filas"));
+    // un aforo a la izquierda de la base, cuyo BORDE SUPERIOR sube con el
+    // número de filas: el control mueve una posición, no solo un tamaño
+    var yTope = Y + 34 - 68 * (n / 10000);
+    svg.appendChild(el("rect", { x: XB - 92, y: Y - 34, width: 18, height: 68, rx: 3,
+      fill: "none", stroke: C_L, "stroke-width": 1.1 }));
+    svg.appendChild(el("rect", { x: XB - 92, y: yTope, width: 18, height: (Y + 34) - yTope, rx: 3,
+      fill: C_A, opacity: .35 }));
+    svg.appendChild(el("path", { d: "M" + (XB - 96) + " " + yTope + " L" + (XB - 70) + " " + yTope,
+      stroke: C_A, "stroke-width": 2 }));
+    svg.appendChild(el("rect", { x: XP - 64, y: Y - 34, width: 128, height: 68, rx: 8,
+      fill: C_A, opacity: .14, stroke: C_A, "stroke-width": 1.8 }));
+    svg.appendChild(el("text", { x: XP, y: Y + 4, "text-anchor": "middle", "font-size": 12, fill: C_T }, "Python"));
+
+    // el cano, con su grosor proporcional a lo que cruza
+    svg.appendChild(el("rect", { x: XB + 64, y: Y - grosor / 2, width: XP - 64 - (XB + 64), height: grosor,
+      fill: C_B, opacity: .3, stroke: C_B, "stroke-width": 1.4 }));
+    // la frontera
+    svg.appendChild(el("path", { d: "M" + XF + " " + (Y - 58) + " L" + XF + " " + (Y + 58),
+      stroke: C_T, "stroke-width": 1.6, "stroke-dasharray": "5 4", opacity: .55 }));
+    svg.appendChild(el("text", { x: XF, y: Y - 66, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 },
+      "la frontera"));
+    svg.appendChild(el("text", { x: XF, y: Y + 74, "text-anchor": "middle", "font-size": 11.5, fill: C_B },
+      cruzan + (cruzan === 1 ? " fila cruza" : " filas cruzan")));
+
+    // donde esta el embudo: en la base si filtra SQL, en Python si no
+    var xe = (d === "py") ? XP - 64 : XB + 64;
+    svg.appendChild(el("path", { d: "M" + xe + " " + (Y - 30) + " L" + (xe + (d === "py" ? -18 : 18)) + " " + Y +
+      " L" + xe + " " + (Y + 30), fill: "none", stroke: C_A, "stroke-width": 2.4 }));
+    svg.appendChild(el("text", { x: xe + (d === "py" ? -40 : 40), y: Y - 40, "text-anchor": "middle",
+      "font-size": 10.5, fill: C_A }, "se filtra aquí"));
+
+    lec.innerHTML = (d === "py")
+      ? "Filtrando en Python cruzan <strong>las " + n + "</strong> filas, y cada una se convierte en objetos antes de que el programa decida descartarla. El caño está a su grosor máximo y el embudo queda del lado equivocado de la frontera."
+      : (d === "sql")
+        ? "Con el <code>WHERE</code> en SQL el embudo pasa al lado de la base: cruzan <strong>" + cruzan + "</strong> filas en lugar de " + n + ", unas quince veces menos, y el resultado es idéntico."
+        : "Dejando también la suma a la base cruza <strong>una sola fila</strong>: el número pedido. El caño se reduce a un hilo, y da igual que la tabla tenga " + n + " filas o mil veces más.";
+  }
+  cd.addEventListener("change", dibujar);
+  cn.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Lo que esta lección no resuelve
+
+No se ha hablado de índices. La Proposición 21.10 mide las filas que **cruzan**, no las que la base tiene que mirar para encontrarlas; sin un índice adecuado, un `WHERE` recorre la tabla entera aunque devuelva una fila. Es el mismo asunto de la Lección 7 de Fundamentos, con la diferencia de que aquí el índice se declara y se mantiene.
+
+Tampoco se ha tratado la diferencia entre SQLite y los motores que corren en un servidor, donde la conexión es de red, varios programas escriben a la vez y una transacción tiene que decidir qué ve cada uno. Los tipos también difieren: SQLite acepta casi cualquier valor en cualquier columna y los demás no.
+
+## Ejercicios
+
+### Ejercicio 1, El apellido con comilla
+
+Con la Proposición 21.4, buscar un cliente cuyo apellido lleva comilla, usando un parámetro.
+
+```{pyodide}
+#| exercise: ex_param
+import sqlite3
+
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE c (nombre TEXT, ciudad TEXT)")
+con.executemany("INSERT INTO c VALUES (?, ?)", [("O'Brien", "Quito"), ("Ana", "Lima")])
+
+buscado = "O'Brien"
+ciudad = con.execute(______, ______).fetchone()[0]
+
+print(ciudad)
+```
+
+::: {.hint exercise="ex_param"}
+El hueco se escribe `?` dentro del texto, y el valor se pasa en una **tupla** como segundo argumento. Una tupla de un solo elemento lleva coma, por la Proposición 6.2.
+:::
+
+::: {.solution exercise="ex_param"}
+```{pyodide}
+import sqlite3
+
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE c (nombre TEXT, ciudad TEXT)")
+con.executemany("INSERT INTO c VALUES (?, ?)", [("O'Brien", "Quito"), ("Ana", "Lima")])
+
+buscado = "O'Brien"
+ciudad = con.execute("SELECT ciudad FROM c WHERE nombre = ?", (buscado,)).fetchone()[0]
+
+print(ciudad)
+```
+
+Devuelve `Quito`. El error más frecuente al empezar es escribir `(buscado)` sin la coma: eso no es una tupla sino la cadena entre paréntesis, y `sqlite3` la interpreta como siete parámetros, uno por carácter.
+:::
+
+```{pyodide}
+#| exercise: ex_param
+#| check: true
+if ciudad == "Quito":
+    feedback = {"correct": True, "message": "Correcto: el parametro no se rompe con la comilla."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 'Quito'."}
+feedback
+```
+
+### Ejercicio 2, Las dos medias
+
+Con la Proposición 21.8, calcular la media de una columna con ausentes de las dos formas, y comprobar que difieren.
+
+```{pyodide}
+#| exercise: ex_null
+import sqlite3
+
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE t (nota INTEGER)")
+con.executemany("INSERT INTO t VALUES (?)", [(4,), (8,), (None,), (None,)])
+
+media_presentes = con.execute(______).fetchone()[0]
+media_con_ceros = con.execute(______).fetchone()[0]
+
+print(media_presentes, media_con_ceros)
+```
+
+::: {.hint exercise="ex_null"}
+`AVG` ignora los `NULL` por su cuenta. Para contar el ausente como cero hay que sustituirlo antes de agregar, con `COALESCE`.
+:::
+
+::: {.solution exercise="ex_null"}
+```{pyodide}
+import sqlite3
+
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE t (nota INTEGER)")
+con.executemany("INSERT INTO t VALUES (?)", [(4,), (8,), (None,), (None,)])
+
+media_presentes = con.execute("SELECT AVG(nota) FROM t").fetchone()[0]
+media_con_ceros = con.execute("SELECT AVG(COALESCE(nota, 0)) FROM t").fetchone()[0]
+
+print(media_presentes, media_con_ceros)
+```
+
+6,0 y 3,0: la suma es 12 en los dos casos y el divisor pasa de 2 a 4. Las dos son correctas y responden a preguntas distintas; lo que no es correcto es no haber elegido.
+:::
+
+```{pyodide}
+#| exercise: ex_null
+#| check: true
+if media_presentes == 6.0 and media_con_ceros == 3.0:
+    feedback = {"correct": True, "message": "Correcto: 6.0 y 3.0, el mismo numerador y distinto divisor."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 6.0 y 3.0."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Python 21**:
+
+1. Cargar una tabla con ausentes y calcular un promedio por grupo de las dos formas de la Proposición 21.8. Anotar cuál de las dos coincide con lo que devuelve `pandas` por defecto, y por qué.
+2. Escribir la misma consulta pegando el valor en el texto y pasándolo como parámetro, sobre un dato con comilla. Guardar en `50-Errores/` el mensaje de la versión pegada y la línea exacta que la arregla.
+3. Medir, contando filas como hace la celda, cuánto cruza una agregación por grupo hecha en SQL frente a la misma hecha en Python sobre la tabla entera. Anotar cuántas filas cruzan en cada caso y confirmar que los resultados coinciden.
+
+## Del libro
+
+Esta lección no se apoya en ninguno de los libros del plan. El material de referencia es la documentación del módulo `sqlite3` y la del propio SQLite.
+
+## Para el Cerebro
+
+- `con.execute` devuelve un **cursor**; recorrerlo trae de poco en poco y `fetchall` lo trae todo.
+- Las filas son tuplas; con `sqlite3.Row` se accede **por nombre**. Nunca `SELECT *`.
+- Los valores van **aparte**, como parámetros. `O'Brien` rompe la consulta pegada.
+- Un parámetro es un **valor**, no un nombre de columna: `SELECT ?` devuelve la cadena.
+- `NULL` no es un valor: las filas con `NULL` no salen **ni** en `= 5` **ni** en `<> 5`.
+- `COUNT(*)` cuenta filas, `COUNT(col)` cuenta valores. `AVG(nota)` = **7,0** y `AVG(COALESCE(nota,0))` = **3,5**.
+- Filtrar en SQL: **10 000** filas cruzando contra **654** contra **1**, con el mismo total.
+- `with con:` deshace todo si algo falla en medio.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico: que `execute` devuelve un `Cursor` y las filas son tuplas; que con `sqlite3.Row` `fila['ciudad']` y `fila[0]` coinciden; que un cursor recorrido queda agotado; que la consulta con el apellido pegado levanta `OperationalError` y la parametrizada devuelve `[('Quito',)]`; que `SELECT ?` con `'nombre'` devuelve la cadena repetida una vez por fila; que `NULL = NULL` devuelve `None` y `NULL IS NULL` devuelve 1; que sobre 4 filas con 2 nulos las condiciones `= 5` y `<> 5` devuelven 1 y 1; que `COUNT(*)` vale 4 y `COUNT(nota)` vale 2, `SUM` vale 14, `AVG(nota)` vale 7,0 y `AVG(COALESCE(nota, 0))` vale 3,5; que las tres versiones de la consulta agregada traen 10 000, 654 y 1 filas dando el mismo total; y que una transferencia interrumpida dentro de `with con:` deja el total en 150.
+
+**Lo que viene de los libros.** Nada. Ninguno de los libros verificados del plan trata SQL.
+
+**Lo que es mío, no del libro.** La organización en cuatro secciones, la decisión de justificar los parámetros con un apellido corriente en lugar de con una amenaza —el argumento de corrección llega antes y no admite la excusa de «este dato es de confianza»—; la elección de exhibir la semántica de `NULL` por las **dos** condiciones opuestas que no suman el total; las dos medias que difieren por un factor de dos como forma de mostrar que hay una decisión que nadie tomó; la medición del trabajo en **filas que cruzan la frontera**; y los dos visuales, uno donde la barra del divisor se acorta con cada ausente y otro donde el grosor del caño y la posición del embudo cambian con dónde se filtra.
+:::
