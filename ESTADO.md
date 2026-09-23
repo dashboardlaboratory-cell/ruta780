@@ -4090,6 +4090,44 @@ emparejamiento**, que se cruzan en un caso y son paralelas en el otro. Y el
 deslizador de zonas con datos cambiaba solo el relleno: se añadieron los
 **registros de cada categoría** como puntos, cuyo número y posición sí se mueven.
 
+### 3.75 Python 30, y el módulo cerrado: 30 de 30 (23-09-2026)
+
+3 def / 7 prop / 7 dem, cuatro «Modo de falla». **Ni `zoneinfo` ni `pytz` están
+en las dos versiones** —el primero llegó en Python 3.9 y la máquina tiene 3.8.8;
+el segundo está solo en local—, así que la regla del horario de verano se
+escribe dentro de la lección, en dos funciones de cinco líneas. El `datetime`
+estándar sí resultó **idéntico** en todo lo comprobado: `isocalendar`,
+`astimezone`, `timestamp`, `strftime`, y el `TypeError` al mezclar con zona y
+sin zona.
+
+**La medida que explica por qué este fallo llega siempre a producción:** los
+relojes locales problemáticos son 60 minutos que no existen y 60 que ocurren dos
+veces, el **0,0228 %** del año. No aparece en ninguna prueba salvo que alguien la
+escriba para esos dos días.
+
+**Lo demás medido:** sumar 24 horas y «el día siguiente a la misma hora» difieren
+en **una hora** en la víspera del cambio; los días del cambio duran **23** y
+**25** horas; el **29 de diciembre de 2025** pertenece al año ISO **2026** y 2020
+y 2026 tienen **53** semanas; y sumar un mes al 31 de enero y restarlo devuelve
+el **28 de enero**, porque la información del día 31 se perdió.
+
+**Un remate que salió del ejercicio.** Las dos horas del cambio **se compensan
+en el total del año** —8760 horas de las dos formas— y por eso el error no
+aparece en un agregado anual, solo en la serie diaria, donde produce dos puntos
+anómalos siempre en las mismas fechas.
+
+**Con esta lección el módulo de Python queda cerrado: 30 de 30.** El sitio pasa
+de las **3000 afirmaciones**: 133 lecciones, 727 celdas, 3006 afirmaciones.
+
+**Balance de las once lecciones 20–30.** De las once, **ocho** se escribieron sin
+la biblioteca del tema —`pyarrow`, `pytest`, `requests`, Polars, Dask,
+`zoneinfo`, `pytz` y un depurador interactivo— porque no estaban en los dos
+entornos. En los ocho casos la restricción acabó mejorando la lección: medir la
+librería habría medido su implementación en lugar de la idea, y enumerar todas
+las intercalaciones dice **cuántas** donde un ejemplo solo dice **una**. Conviene
+tenerlo presente antes de buscar cómo instalar algo: **la pregunta primera no es
+qué biblioteca usar sino qué se quiere medir**.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
