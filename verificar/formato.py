@@ -120,6 +120,7 @@ MIGRADAS = {
     "ml/29-sesgo-varianza-formal.qmd",
     "ml/30-algoritmo-em.qmd",
     "ml/31-aditivos-y-mars.qmd",
+    "ml/32-boosting-descenso-funcional.qmd",
     "series/01-descomposicion.qmd",
     "series/02-estacionariedad.qmd",
     "series/03-autocorrelacion.qmd",

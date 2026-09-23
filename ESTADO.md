@@ -106,15 +106,15 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 11 | 11 | **11 de 11** | — |
-| Machine Learning | 31 | 90 | **31 de 31** | el resto de ESL y deep learning |
+| Machine Learning | 32 | 90 | **32 de 32** | el resto de ESL y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **101 lecciones** publicadas, **101** cumplen el molde nuevo: cero pendientes
-  de reescritura. Pendientes de **escribir** quedan 73 según el plan.
+- **102 lecciones** publicadas, **102** cumplen el molde nuevo: cero pendientes
+  de reescritura. Pendientes de **escribir** quedan 72 según el plan.
 - **Cuatro módulos cerrados**: Estadística 25/25, Álgebra 18/18, Python 16/16 y
   **Series de tiempo 11/11**, cerrado el 21-09-2026.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
@@ -162,7 +162,7 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   numpy 1.24 y en Python 3.14 con numpy 2.5.3. **Al rehacerlo faltaba
   `scikit-learn`**, y el gate lo dijo en vez de callarse: las celdas que lo
   importan salieron como REVENTÓ, no como aprobadas.
-- Glosario: **437 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **440 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -2874,6 +2874,71 @@ que comparar RSS en vez de predicciones.
 De paso apareció el segundo caso de nombres que cambian entre versiones de
 `scikit-learn`, anotado en el punto 2: `"mse"` contra `"squared_error"`. La
 salida fue no nombrar el criterio.
+
+---
+
+### 3.49 ML 32: AdaBoost no era una receta (22-09-2026)
+
+El capítulo 10 de ESL se sostiene sobre un resultado que reordena todo lo
+anterior, y la lección lo mide en vez de derivarlo y dar por buena la
+derivación.
+
+> **32.2**: AdaBoost **es** el ajuste por etapas hacia adelante con pérdida
+> exponencial, con $\alpha_m=2\beta_m$.
+
+Programados los dos algoritmos **por separado** —uno con pesos, como se publicó;
+otro minimizando $\sum_i e^{-y_iF(x_i)}$ sin nombrar AdaBoost— y enfrentados
+etapa a etapa: las doce reglas coinciden, $\alpha=2\beta$ a diez decimales
+—$0{,}86322176$ en la primera etapa, $0{,}55831525$ en la última— y las
+predicciones coinciden en los trescientos puntos.
+
+#### Las dos pérdidas apuntan al mismo sitio
+
+> **32.3**: el minimizador de población de la exponencial y el de la desvianza
+> es $\tfrac12\log\frac{p}{1-p}$, el mismo.
+
+Medido en cinco valores de $p$, con los tres números iguales a seis decimales.
+Así que **elegir entre las dos no es elegir objetivo**: se diferencian en el
+camino, y ahí está la robustez. Con margen $-6$ la exponencial cobra
+$403{,}4288$ y la desvianza $12{,}0000$; con $-4$, $54{,}5982$ contra $8{,}0003$.
+Un punto mal etiquetado tiene margen muy negativo por construcción, de modo que
+bajo pérdida exponencial acapara los pesos.
+
+#### La robustez se paga
+
+> **32.5**: la pérdida solo decide a qué se ajusta el árbol: el residuo con la
+> cuadrática, su signo con la absoluta.
+
+El experimento va en dos mitades, que es lo que lo hace informativo. Con nueve
+puntos desplazados doce unidades, la absoluta deja $0{,}128660$ de error y la
+cuadrática $0{,}407457$: **tres veces más**. Sin esos puntos el orden se
+invierte, $0{,}107446$ contra $0{,}129528$. Decir que una pérdida es robusta sin
+la segunda mitad esconde lo que cuesta.
+
+#### Tres condiciones para empatar, y la tercera es la que enseña
+
+El contraste con `GradientBoostingRegressor` empata a diez decimales en
+entrenamiento y en prueba, pero solo si se aciertan tres cosas: que arranca en
+**la media de $y$**, que el árbol usa **`friedman_mse`** por dentro, y que el
+azar es **un solo objeto compartido por las sesenta etapas**, no una semilla por
+etapa.
+
+La tercera es la interesante porque **su incumplimiento no se nota en
+entrenamiento**: con semilla por etapa las predicciones sobre los datos siguen
+coincidiendo y solo se separan **3 de 500** puntos nuevos, los que caen junto a
+un empate que un árbol de los sesenta rompió del otro lado. Es el aviso de ML 31
+visto de cerca: con empates, «el mismo algoritmo» no garantiza «el mismo
+resultado» fuera de los datos de ajuste.
+
+#### El gate de visuales cazó lo que antes cazaba el navegador
+
+Los dos visuales salieron **muertos**: los cuatro controles sin mover nada.
+Faltaba el `</script>` de cierre en los dos bloques, así que el navegador se
+tragaba el código como texto. Es el mismo fallo de `series/02` que está anotado
+en la regla 9, con una diferencia que conviene registrar: **allí lo encontró la
+comprobación con navegador y aquí lo encontró `visuales.py`**, que es más barato
+y corre antes. El orden bueno de la tubería sigue siendo el mismo, pero la red
+tiene ahora dos mallas en vez de una.
 
 ---
 
