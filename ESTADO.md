@@ -3798,6 +3798,40 @@ criterios, hay que **dibujar los criterios**, no solo su resultado.
 de registro extrae el título de la fila pendiente y **afirma** que coincide con
 el `title:` de la lección antes de publicar nada. El índice es el contrato.
 
+### 3.68 Python 23: medir la idea y no la librería (23-09-2026)
+
+3 def / 6 prop / 6 dem, cuatro «Modo de falla». **`pyarrow` no está instalado en
+ninguno de los dos entornos**, y en lugar de buscar cómo instalarlo se construyó
+todo a mano. La razón no es la falta: **medir la librería mediría su
+implementación en vez de la idea**, y lo que la lección quiere es el cociente.
+
+Cinco mediciones, todas dentro de la página:
+
+| | |
+|---|---|
+| consulta de 2 de 10 columnas | **80 000** bytes contra **16 000**, y el cociente es `C/q` |
+| la misma tabla comprimida | **712** por filas contra **478** columnar |
+| columna de texto por diccionario | **37 500** contra **5030**, 7,5 a 1 |
+| la misma, ordenada y por rachas | **24 bytes** |
+| filtro con min/max por grupo | ordenada salta **18 de 20**; desordenada, **ninguno** |
+
+**Lo que hace buena la Proposición 23.6**: ordenar **no cambia ningún dato** y
+cambia el tamaño en tres órdenes de magnitud. Y la 23.8 es su reverso: perder el
+orden no rompe nada, no avisa de nada, y multiplica por diez lo que hay que
+leer. El visual lo enseña como doce barras igual de altas.
+
+**El CSV, cerrado contra la Lección 19.** Cinco columnas de cinco tipos vuelven
+las cinco como texto, y `bool('False')` vale `True` —Fundamentos 2 apareciendo
+donde duele—. El Modo de falla señala que la pérdida más cara no es ninguna de
+las cinco sino la del que **sí** adivina: `'007'` deducido como entero pasa a
+`7` y deja de cruzar con su origen, sin error y con resultado plausible.
+
+**Un visual con dos deslizadores acoplados.** El de columnas pedidas se limita
+al de columnas totales con `cq.max = C` dentro del dibujo, para que no se pueda
+pedir más de las que hay. Con los dos al máximo las dos tiras salen enteras
+verdes y las barras de lectura coinciden, que es precisamente el caso en que la
+disposición columnar no aporta nada: el visual **enseña también cuándo no sirve**.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
