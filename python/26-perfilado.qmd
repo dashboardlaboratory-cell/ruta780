@@ -1,0 +1,724 @@
+---
+title: "Perfilado: dónde se va el tiempo y la memoria"
+subtitle: "Python · Lección 26"
+nivel: L4
+modulo: python
+fase: F2
+prereqs: [python/25-depuracion, python/15-rendimiento, python/18-decoradores]
+siguientes: []
+libro: "—"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="python/26-perfilado"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F2]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Depuración](25-depuracion.qmd) · [Rendimiento](15-rendimiento.qmd) · [Decoradores](18-decoradores.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Contar llamadas con un decorador, y explicar por qué un [perfil por conteo]{.g data-t="perfilado por conteo"} vale más que un tiempo en segundos.
+2. Distinguir el conteo plano del **árbol de llamadas**, y decir qué añade saber quién llama a quién.
+3. **Demostrar el [techo de una optimización]{.g data-t="techo de una optimización"}**: un trozo que ocupa el 5 % no puede dar más de **1,05 veces**, ni borrándolo entero.
+4. **Exhibir una función llamada una sola vez que se lleva el 75 %** del trabajo, frente a otra llamada 200 veces.
+5. Explicar qué mide y qué **no** mide `sys.getsizeof`, y medir que un generador no depende de `n`.
+6. **Medir el coste en memoria de guardar los intermedios** de una transformación: 7 listas vivas contra 1.
+7. Distinguir **[instrumentar de muestrear]{.g data-t="muestreo de perfilado"}**, y exhibir un muestreo que pierde una función entera.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 25**: la instrumentación, que aquí responde «dónde se va el tiempo» en lugar de «dónde está el fallo».
+- **Python 18**: los decoradores, que son cómo se cuenta sin tocar el código medido.
+- **Python 15**: vectorizar contra iterar, que es una de las optimizaciones que esta lección enseña a **decidir**.
+- **Fundamentos 11**: la expresión generadora, medida aquí en memoria en lugar de en evaluaciones.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 27**: el GIL, que decide si una optimización por paralelismo puede funcionar.
+- **Python 28**: los datos que no caben, donde la memoria deja de ser una mejora y pasa a ser la condición.
+- **ML 28**: la selección de modelos, donde lo que cuesta probar cada uno decide cuántos se pueden probar.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| `p` | pe | La fracción del trabajo total que ocupa un trozo |
+| `s` | ese | Las veces que se acelera ese trozo |
+| `1/(1−p)` | uno partido por uno menos pe | El **techo** de la mejora total |
+| `getsizeof` | getsizeof | El tamaño del objeto **por sí solo**, sin lo que cuelga de él |
+| instrumentar | instrumentar | Anotar cada llamada: exacto, y cambia lo que mide |
+| muestrear | muestrear | Mirar dónde está el programa cada cierto tiempo: aproximado, y no lo toca |
+:::
+
+## 1. Contar en lugar de cronometrar
+
+:::: {.definicion}
+**Definición 26.1 (perfilado por conteo).** **Perfilar por conteo** es registrar cuántas veces se ejecuta cada parte del programa, en lugar de cuánto tarda. Un conteo es el mismo en cualquier máquina y en cualquier ejecución; un tiempo depende del procesador, de la carga y de qué más esté corriendo.
+::::
+
+:::: {.proposicion}
+**Proposición 26.2.** Un decorador basta para contar las llamadas de una función sin tocar su código, porque por la Proposición 18.2 aplicar `@d` es sustituir la función por el envoltorio.
+::::
+
+:::: {.demostracion}
+*Demostración.* El envoltorio recibe la llamada, apunta en un diccionario y delega en la función original, de modo que el comportamiento observable no cambia y queda el registro. La celda cuenta tres funciones sobre 200 filas: `procesa` una vez, `clasifica` y `normaliza` doscientas cada una. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 26.3.** El conteo plano dice **cuánto** se llama a cada función; el árbol de llamadas dice **por culpa de quién**. Las 200 llamadas a `normaliza` no las pide el programa: todas vienen de `clasifica`.
+::::
+
+:::: {.demostracion}
+*Demostración.* Un conteo plano agrega todas las llamadas a una función sin distinguir de dónde vienen, de modo que una función muy llamada aparece arriba sin indicar qué la está llamando tanto. El árbol conserva esa relación. La celda exhibe los dos: el plano invita a optimizar `normaliza`, y el árbol lleva a preguntarse si hace falta llamar a `clasifica` 200 veces. ∎
+::::
+
+**Modo de falla.** Un tiempo medido una sola vez sobre una máquina describe esa ejecución y no el programa: la siguiente da otro número, y comparar dos versiones medidas en momentos distintos puede invertir el orden. El síntoma es una «optimización» que mejora en el portátil y empeora en el servidor. La defensa es comparar conteos, que no dependen de nada, y reservar los segundos para confirmar al final.
+
+```{pyodide}
+import sys
+
+# Medir el tiempo en segundos da un numero distinto en cada maquina y en
+# cada ejecucion. Un perfilador de CONTEO dice cuantas veces se llamo a
+# cada funcion, y eso no depende de nada.
+llamadas = {}
+
+def cuenta(f):
+    """Envuelve una funcion para llevar la cuenta de sus llamadas."""
+    def envoltorio(*a, **k):
+        llamadas[f.__name__] = llamadas.get(f.__name__, 0) + 1
+        return f(*a, **k)
+    envoltorio.__name__ = f.__name__
+    return envoltorio
+
+@cuenta
+def normaliza(texto):
+    return texto.strip().lower()
+
+@cuenta
+def clasifica(texto):
+    limpio = normaliza(texto)          # llama a otra que tambien se cuenta
+    return "largo" if len(limpio) > 5 else "corto"
+
+@cuenta
+def procesa(filas):
+    return [clasifica(f) for f in filas]
+
+FILAS = ["  Hola ", "Bienvenido", "  ok", "Buenos dias", "si"] * 40
+
+procesa(FILAS)
+print("cuantas veces se llamo a cada funcion, sobre %d filas" % len(FILAS))
+for nombre in sorted(llamadas, key=lambda k: -llamadas[k]):
+    print("  %-12s %5d llamadas" % (nombre, llamadas[nombre]))
+print()
+print("  procesa se llama una vez y las otras dos una por fila. El conteo")
+print("  no depende de la maquina: es el mismo aqui y en el servidor")
+print()
+
+# El arbol de quien llama a quien dice donde esta el trabajo. Un conteo
+# plano dice cuanto, pero no por culpa de quien.
+print("el arbol de llamadas dice POR CULPA DE QUIEN")
+print("  procesa       1")
+print("    clasifica   %d      <- una por fila" % llamadas["clasifica"])
+print("      normaliza %d      <- una por cada clasifica" % llamadas["normaliza"])
+print()
+print("normaliza se llama %d veces y ninguna la pide el programa de forma"
+      % llamadas["normaliza"])
+print("directa: todas vienen de clasifica. Mirar solo el conteo plano lleva")
+print("a optimizar normaliza; mirar el arbol lleva a preguntarse si hace")
+print("falta llamar a clasifica %d veces" % llamadas["clasifica"])
+```
+
+## 2. Qué merece la pena optimizar
+
+:::: {.definicion}
+**Definición 26.4 (techo de una optimización).** Si un trozo ocupa la fracción `p` del trabajo total y se acelera `s` veces, el total pasa a ser `(1 − p) + p/s`. Haciendo `s` arbitrariamente grande, el total no baja de `1 − p`: la mejora **no puede superar** `1/(1 − p)`.
+::::
+
+:::: {.proposicion}
+**Proposición 26.5.** Un trozo que ocupa el 5 % del trabajo no puede dar más de **1,05 veces** de mejora, ni borrándolo entero. Para llegar a 5 veces hace falta que ocupe el 80 %.
+::::
+
+:::: {.demostracion}
+*Demostración.* Lo que no se acelera sigue costando `1 − p` por mucho que el resto se reduzca, de modo que el total está acotado inferiormente por esa cantidad y la mejora por su inversa. Con `p = 0,05` el techo es `1/0,95 = 1,05`; con `p = 0,80` es `1/0,20 = 5`. La celda tabula los dos casos —aceleración infinita y aceleración por diez— para cinco fracciones. **Antes de optimizar hay que saber qué fracción es.** ∎
+::::
+
+:::: {.proposicion}
+**Proposición 26.6.** El número de llamadas por sí solo engaña: lo que decide es el **producto** por lo que cuesta cada una. Una función llamada **una sola vez** puede llevarse el **75 %** del trabajo frente a otra llamada 200 veces.
+::::
+
+:::: {.demostracion}
+*Demostración.* El peso de una función es su número de llamadas multiplicado por su coste unitario, y los dos factores pueden compensarse: 200 llamadas de coste 1 pesan 200, y una llamada de coste 600 pesa 600. Por la Proposición 26.5, acelerar diez veces la primera deja el total en 0,775 —una mejora de 1,29— y acelerar la segunda lo deja en 0,325, una mejora de **3,08**. La celda calcula las dos. ∎
+::::
+
+**Modo de falla.** Ordenar el perfil por número de llamadas pone arriba las funciones pequeñas y muy repetidas, que suelen ser justamente las que ya están optimizadas, y esconde la que se llama una vez y tarda un minuto. El síntoma es una semana de trabajo que mejora el total un 3 %. La defensa es ordenar por **tiempo acumulado**, no por llamadas, y comprobar el techo antes de empezar.
+
+```{pyodide}
+# Optimizar un trozo que ocupa el 5 % del trabajo no puede mejorar el
+# total mas de un 5 %, por rapido que se haga. Esa es toda la ley, y dice
+# QUE NO merece la pena tocar.
+def acelera(fraccion, veces):
+    """Tiempo total tras acelerar 'fraccion' del trabajo 'veces'."""
+    return (1.0 - fraccion) + fraccion / veces
+
+print("acelerar un trozo INFINITAMENTE: el techo de lo que se puede ganar")
+print("  el trozo ocupa   techo de mejora")
+for frac in (0.05, 0.20, 0.50, 0.80, 0.95):
+    techo = 1.0 / (1.0 - frac)
+    print("     %4.0f %%          %5.1f veces mas rapido" % (100 * frac, techo))
+print()
+print("un trozo que ocupa el 5 % no puede dar mas de 1.05 veces, ni")
+print("borrandolo entero. Antes de optimizar hay que saber que fraccion es")
+print()
+
+print("y acelerar 10 veces un trozo, segun lo que ocupe")
+print("  el trozo ocupa   el total queda en   mejora")
+for frac in (0.05, 0.20, 0.50, 0.80, 0.95):
+    t = acelera(frac, 10)
+    print("     %4.0f %%             %5.3f           %4.2f veces"
+          % (100 * frac, t, 1.0 / t))
+print()
+
+# El caso concreto: dos funciones, una llamada muchas veces y otra pocas.
+# El conteo plano dice cual se llama mas; lo que decide es el producto.
+print("dos funciones: cual conviene optimizar")
+print("  %-12s %8s %10s %12s" % ("funcion", "llamadas", "coste c/u", "coste total"))
+casos = [("normaliza", 200, 1), ("carga_csv", 1, 600)]
+total = sum(n * c for _, n, c in casos)
+for nombre, n, c in casos:
+    print("  %-12s %8d %10d %12d  (%4.1f %% del total)"
+          % (nombre, n, c, n * c, 100.0 * n * c / total))
+print()
+print("  normaliza se llama 200 veces y carga_csv UNA, y aun asi carga_csv")
+print("  se lleva el %.1f %% del trabajo." % (100.0 * 600 / total))
+print("  acelerar carga_csv 10 veces deja el total en %.3f  (%.2f veces mejor)"
+      % (acelera(600.0 / total, 10), 1.0 / acelera(600.0 / total, 10)))
+print("  acelerar normaliza 10 veces lo deja en %.3f  (%.2f veces)"
+      % (acelera(200.0 / total, 10), 1.0 / acelera(200.0 / total, 10)))
+print()
+print("el conteo de llamadas por si solo enganna: hay que multiplicarlo por")
+print("lo que cuesta cada una. Un perfilador de verdad mide las dos cosas")
+```
+
+```{=html}
+<div class="viz-amdahl">
+  <div class="controles">
+    <label>El trozo ocupa: <input id="am-p" type="range" min="5" max="95" step="5" value="50"><span id="am-p-v" class="mono">50 %</span></label>
+    <label>Se acelera: <input id="am-s" type="range" min="1" max="20" step="1" value="10"><span id="am-s-v" class="mono">10×</span></label>
+  </div>
+  <svg id="am-svg" viewBox="0 0 660 215" role="img" aria-label="El techo de una optimización"></svg>
+  <div id="am-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-amdahl { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-amdahl .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-amdahl label { display: flex; align-items: center; gap: .4rem; }
+.viz-amdahl input[type=range] { width: 150px; padding: 0; }
+.viz-amdahl .mono { font-family: var(--bs-font-monospace, monospace); font-size: .8rem; }
+.viz-amdahl svg { width: 100%; height: auto; display: block; }
+.viz-amdahl .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("am-svg"), lec = document.getElementById("am-lectura");
+  var cp = document.getElementById("am-p"), cs = document.getElementById("am-s");
+  var ep = document.getElementById("am-p-v"), es = document.getElementById("am-s-v");
+  // las dos barras arrancan en el mismo sitio y la escala es fija: el
+  // ancho total representa siempre el trabajo original (regla 19b)
+  var X0 = 80, ANCHO = 520, Y1 = 56, Y2 = 116, H = 34;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var p = +cp.value / 100, s = +cs.value;
+    ep.textContent = (+cp.value) + " %"; es.textContent = s + "×";
+    var resto = 1 - p, acelerado = p / s, total = resto + acelerado;
+    var techo = 1 / resto;
+
+    // barra de antes
+    svg.appendChild(el("text", { x: 12, y: Y1 + 5, "font-size": 10.5, fill: C_T, opacity: .7 }, "antes"));
+    svg.appendChild(el("rect", { x: X0, y: Y1 - H / 2, width: ANCHO * resto, height: H,
+      fill: C_L, opacity: .7 }));
+    svg.appendChild(el("rect", { x: X0 + ANCHO * resto, y: Y1 - H / 2, width: ANCHO * p, height: H,
+      fill: C_A, opacity: .45 }));
+    // barra de despues: el trozo verde se encoge, el gris no se mueve
+    svg.appendChild(el("text", { x: 12, y: Y2 + 5, "font-size": 10.5, fill: C_T, opacity: .7 }, "después"));
+    svg.appendChild(el("rect", { x: X0, y: Y2 - H / 2, width: ANCHO * resto, height: H,
+      fill: C_L, opacity: .7 }));
+    svg.appendChild(el("rect", { x: X0 + ANCHO * resto, y: Y2 - H / 2, width: ANCHO * acelerado, height: H,
+      fill: C_A, opacity: .75 }));
+    // la linea del techo: donde acabaria con aceleracion infinita
+    var xt = X0 + ANCHO * resto;
+    svg.appendChild(el("path", { d: "M" + xt + " " + (Y1 - H / 2 - 14) + " L" + xt + " " + (Y2 + H / 2 + 14),
+      stroke: C_B, "stroke-width": 2, "stroke-dasharray": "5 4" }));
+    svg.appendChild(el("text", { x: xt + 6, y: Y1 - H / 2 - 18, "font-size": 10, fill: C_B }, "el techo: aquí no se baja"));
+
+    svg.appendChild(el("text", { x: X0, y: 182, "font-size": 12.5, fill: C_T },
+      "total: " + total.toFixed(3) + "   ·   mejora: " + (1 / total).toFixed(2) +
+      "×   ·   techo: " + techo.toFixed(2) + "×"));
+    svg.appendChild(el("text", { x: X0, y: 202, "font-size": 10.5, fill: C_T, opacity: .65 },
+      "en gris, lo que no se toca; en verde, el trozo que se acelera"));
+
+    lec.innerHTML = "El trozo gris <strong>no se mueve</strong> por mucho que se acelere el verde, y por eso la barra de abajo nunca puede cruzar la línea roja: el techo es <strong>" + techo.toFixed(2) + "×</strong>. Acelerando <strong>" + s + "×</strong> se consigue " + (1 / total).toFixed(2) + "×, que es el " + Math.round(100 * (1 / total - 1) / (techo - 1 || 1)) + " % de lo que da de sí. " +
+      (p <= 0.2 ? "Con un trozo tan pequeño, ni borrándolo entero se nota." : (s >= 10 ? "A partir de cierto punto, acelerar más ya casi no mueve la barra." : "Subiendo la aceleración se ve acercarse a la línea, sin llegar nunca."));
+  }
+  cp.addEventListener("input", dibujar);
+  cs.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. La memoria también engaña
+
+:::: {.proposicion}
+**Proposición 26.7.** `sys.getsizeof` mide el objeto **por sí solo**, sin lo que cuelga de él. Una lista de diez sublistas ocupa, ella sola, **menos que una** de sus sublistas, y contando lo que apunta ocupa 47 veces más.
+::::
+
+:::: {.demostracion}
+*Demostración.* Una lista guarda referencias, no objetos, de modo que su tamaño propio es proporcional a su número de elementos y no al de los objetos referidos; una lista de 10 referencias es menor que una de 100 enteros. Sumar el tamaño de lo referido da la cifra útil. La celda imprime la comparación y el cociente. Los números absolutos de `getsizeof` **cambian entre versiones de Python**, de modo que la celda imprime solo comparaciones. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 26.8.** Una lista crece con `n` y una expresión generadora **no depende de `n`**: la de un millón ocupa lo mismo que la de mil, y la lista de un millón ocupa más de mil veces el generador.
+::::
+
+:::: {.demostracion}
+*Demostración.* Por la Proposición 11.7 el generador no guarda los valores, sino cómo calcular el siguiente, de modo que su tamaño es el de un objeto fijo con tres números dentro. La lista guarda una referencia por valor. La celda comprueba las dos cosas y que los dos caminos dan la misma suma. Es la Proposición 11.7 medida en memoria en lugar de en evaluaciones. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 26.9.** Guardar los resultados intermedios de una transformación de `k` pasos mantiene `k + 1` estructuras vivas a la vez; reasignar el nombre mantiene **una**.
+::::
+
+:::: {.demostracion}
+*Demostración.* Cada intermedio guardado en una lista conserva una referencia, y por la Proposición 4.9 mientras exista una referencia el objeto no puede liberarse. Reasignando el nombre, el valor anterior queda sin ninguna referencia en cuanto la nueva lista está construida. La celda mide **7 listas vivas contra 1** sobre 6 pasos, y comprueba que los dos resultados coinciden. ∎
+::::
+
+**Modo de falla.** Guardar los intermedios es justamente lo que la Lección 25 quería para poder bisecar, de modo que las dos necesidades chocan: lo cómodo para depurar es lo caro en memoria. Con datos que caben no importa; con datos que no caben decide si el programa termina. La defensa es guardar los intermedios **solo cuando se está depurando**, detrás del mismo interruptor que los mensajes de detalle.
+
+```{pyodide}
+import sys
+
+# La memoria tambien se cuenta, y tambien enganna. Los numeros absolutos
+# de sys.getsizeof cambian de una version de Python a otra, asi que aqui
+# se imprimen solo COMPARACIONES, que son las que enseñan algo.
+anidada = [[0] * 100 for _ in range(10)]
+solo_fuera = sys.getsizeof(anidada)
+con_dentro = solo_fuera + sum(sys.getsizeof(s) for s in anidada)
+
+print("getsizeof mide el objeto, no lo que cuelga de el")
+print("  la lista de 10 sublistas, ella sola, es MENOR que una sublista: %s"
+      % (solo_fuera < sys.getsizeof(anidada[0])))
+print("  sumando las sublistas, ocupa %d veces mas" % (con_dentro // solo_fuera))
+print()
+print("la primera cifra cuenta 10 punteros; la segunda cuenta los 1000")
+print("enteros a los que apuntan. Para medir memoria de verdad hay que")
+print("recorrer lo que cuelga, o usar una herramienta que lo haga")
+print()
+
+# Lo que de verdad decide: cuantos objetos hay vivos a la vez.
+def lista(n):
+    return [x * x for x in range(n)]
+
+def generador(n):
+    return (x * x for x in range(n))
+
+print("una lista crece con n; un generador no depende de n")
+l_mil, l_millon = sys.getsizeof(lista(1000)), sys.getsizeof(lista(1000000))
+g_mil, g_millon = sys.getsizeof(generador(1000)), sys.getsizeof(generador(1000000))
+print("  la lista de un millon ocupa mas de 900 veces la de mil: %s"
+      % (l_millon > 900 * l_mil))
+print("  el generador de un millon ocupa lo mismo que el de mil: %s"
+      % (g_mil == g_millon))
+print("  la lista de un millon ocupa mas de mil veces el generador: %s"
+      % (l_millon > 1000 * g_millon))
+print()
+print("  y los dos dan el mismo resultado al recorrerlos:")
+print("    suma de la lista    : %d" % sum(lista(100000)))
+print("    suma del generador  : %d" % sum(generador(100000)))
+print()
+print("el generador no guarda el millon de valores: guarda como calcular el")
+print("siguiente. Es la Proposicion 11.7 medida en memoria en vez de en")
+print("evaluaciones")
+print()
+
+# Y el patron que mas memoria gasta sin que nadie lo note: guardar los
+# resultados intermedios de cada paso de una tuberia.
+PASOS = 6
+datos = list(range(10000))
+intermedios = [datos]
+for k in range(PASOS):
+    intermedios.append([x + 1 for x in intermedios[-1]])
+
+actual = list(range(10000))
+for k in range(PASOS):
+    actual = [x + 1 for x in actual]     # el anterior queda sin nombre
+
+print("una tuberia de %d pasos, guardando o no los intermedios" % PASOS)
+print("  guardando cada paso   : %d listas vivas a la vez" % len(intermedios))
+print("  reasignando el nombre : 1 lista viva a la vez")
+print("  cociente              : %d a 1" % len(intermedios))
+print("  los dos resultados coinciden: %s" % (intermedios[-1] == actual))
+print()
+print("guardar los intermedios es comodo para depurar —la Leccion 25 los")
+print("queria— y multiplica la memoria por el numero de pasos. Con datos")
+print("que caben no importa; con datos que no caben, decide si el programa")
+print("termina o no")
+```
+
+## 4. Instrumentar o muestrear
+
+:::: {.definicion}
+**Definición 26.10 (instrumentar y muestrear).** **Instrumentar** es anotar cada llamada: el reparto sale exacto y cada anotación cuesta, de modo que el programa medido tarda más que el real. **Muestrear** es mirar cada cierto tiempo dónde está el programa: el reparto sale aproximado y el programa no se toca.
+::::
+
+:::: {.proposicion}
+**Proposición 26.11.** Un muestreo demasiado espaciado **pierde funciones enteras**. Con muestras cada 250 unidades sobre un trabajo de 1000, una función que ocupa el 5 % aparece con **0 %**.
+::::
+
+:::: {.demostracion}
+*Demostración.* El muestreo estima la fracción de tiempo por la fracción de muestras que caen en cada función, y una función que ocupa una fracción menor que el espaciado puede no recibir ninguna. Con 4 muestras sobre tres funciones, la más pequeña tiene una probabilidad alta de quedar fuera. La celda muestrea a cuatro resoluciones y exhibe cómo el reparto converge al real al apretar el muestreo, y cómo con el espaciado mayor `informe` desaparece. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 26.12.** Los dos métodos responden preguntas distintas. Sobre una función llamada un millón de veces con coste 0,001, instrumentar cuesta **mil veces** más que la función misma; muestrear ve su peso correcto y no sabe cuántas veces se llamó.
+::::
+
+:::: {.demostracion}
+*Demostración.* El coste de instrumentar es proporcional al **número de llamadas**, de modo que una función muy llamada y muy corta queda dominada por la anotación: un millón de anotaciones frente a mil unidades de trabajo real. El coste de muestrear depende solo de cada cuánto se mira, y por eso no crece con las llamadas; a cambio, una muestra dice **dónde** está el programa y no cuántas veces ha pasado por ahí. La celda calcula las dos cifras. ∎
+::::
+
+```{pyodide}
+# Hay dos formas de perfilar. Instrumentar anota cada llamada y ve todo,
+# pero cambia lo que mide. Muestrear mira donde esta el programa cada
+# cierto tiempo y no lo toca, a cambio de ver solo una parte.
+#
+# Aqui se simulan las dos sobre una ejecucion conocida, para comparar lo
+# que cada una concluye con la verdad.
+VERDAD = {"carga": 700, "limpia": 250, "informe": 50}   # unidades de trabajo
+TOTAL = sum(VERDAD.values())
+
+# (a) instrumentar: se anota cada unidad, asi que el reparto sale exacto,
+# pero cada anotacion cuesta y se suma al total medido.
+COSTE_ANOTACION = 1
+instrumentado = {}
+overhead = 0
+for f, u in VERDAD.items():
+    instrumentado[f] = u
+    overhead = overhead + u * COSTE_ANOTACION
+
+print("instrumentar: exacto, y cambia lo que mide")
+for f in sorted(instrumentado, key=lambda k: -instrumentado[k]):
+    print("  %-9s %4d unidades   %5.1f %% del total real"
+          % (f, instrumentado[f], 100.0 * instrumentado[f] / TOTAL))
+print("  trabajo real medido : %d unidades" % TOTAL)
+print("  anotaciones anadidas: %d unidades  (el programa tarda %.1f veces mas)"
+      % (overhead, (TOTAL + overhead) / TOTAL))
+print()
+
+# (b) muestrear: cada N unidades se mira donde esta el programa. El
+# reparto sale aproximado y el programa no se toca.
+def muestrea(cada):
+    """Recorre la ejecucion y anota en que funcion cae cada muestra."""
+    cuenta, pos, orden = {}, 0, ["carga", "limpia", "informe"]
+    limites, acum = [], 0
+    for f in orden:
+        acum = acum + VERDAD[f]
+        limites.append((acum, f))
+    t = 0
+    while t < TOTAL:
+        for lim, f in limites:
+            if t < lim:
+                cuenta[f] = cuenta.get(f, 0) + 1
+                break
+        t = t + cada
+    return cuenta
+
+print("muestrear: aproximado, y no toca el programa")
+print("  cada        muestras   reparto estimado contra el real")
+for cada in (250, 50, 10, 1):
+    c = muestrea(cada)
+    n = sum(c.values())
+    est = " ".join("%s %4.1f%%" % (f[:4], 100.0 * c.get(f, 0) / n)
+                   for f in ("carga", "limpia", "informe"))
+    print("  %4d          %5d    %s" % (cada, n, est))
+print("  real                     %s"
+      % " ".join("%s %4.1f%%" % (f[:4], 100.0 * VERDAD[f] / TOTAL)
+                 for f in ("carga", "limpia", "informe")))
+print()
+print("con muestras espaciadas el reparto sale burdo y hasta se pierde una")
+print("funcion entera; apretando el muestreo se acerca al real. Y el coste")
+print("del muestreo no depende de cuantas llamadas haga el programa, sino")
+print("de cada cuanto se mira")
+print()
+
+# Lo que decide cual usar: el instrumentado ve funciones que se llaman
+# muchisimas veces y duran poquisimo; el muestreo las pierde.
+print("una funcion muy llamada y muy corta: que ve cada forma")
+CORTA = {"llamadas": 1000000, "unidades_cada": 0.001}
+peso = CORTA["llamadas"] * CORTA["unidades_cada"]
+print("  se llama %d veces y cada una cuesta %.3f unidades"
+      % (CORTA["llamadas"], CORTA["unidades_cada"]))
+print("  peso real: %.0f unidades" % peso)
+print("  instrumentando: se cuentan las %d llamadas, y anotarlas cuesta"
+      % CORTA["llamadas"])
+print("    %d unidades, o sea %.0f veces mas que la funcion misma"
+      % (CORTA["llamadas"], CORTA["llamadas"] / peso))
+print("  muestreando   : se ve su peso correcto y no cuesta nada,")
+print("    pero no se sabe cuantas veces se llamo")
+print()
+print("los dos responden preguntas distintas: instrumentar responde")
+print("'cuantas veces' y muestrear responde 'donde esta el tiempo'")
+```
+
+**Modo de falla.** Instrumentar cambia el reparto que pretende medir: como el coste añadido es proporcional al número de llamadas, las funciones pequeñas y muy repetidas aparecen más pesadas de lo que son, y una optimización guiada por ese perfil puede dedicarse a la función equivocada. El síntoma es un perfil en el que todo parece estar en las funciones más triviales. La defensa es contrastar con un muestreo, que no tiene ese sesgo, cuando el reparto resulte sospechoso.
+
+```{=html}
+<div class="viz-muestreo">
+  <div class="controles">
+    <label>Se mira cada: <input id="mu-c" type="range" min="1" max="12" step="1" value="5"><span id="mu-c-v" class="mono">5</span></label>
+    <label>Método:
+      <select id="mu-m"><option value="mues" selected>muestrear</option><option value="inst">instrumentar</option></select>
+    </label>
+  </div>
+  <svg id="mu-svg" viewBox="0 0 660 215" role="img" aria-label="Qué ve cada método"></svg>
+  <div id="mu-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-muestreo { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-muestreo .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-muestreo label { display: flex; align-items: center; gap: .4rem; }
+.viz-muestreo input[type=range] { width: 150px; padding: 0; }
+.viz-muestreo .mono { font-family: var(--bs-font-monospace, monospace); font-size: .8rem; }
+.viz-muestreo svg { width: 100%; height: auto; display: block; }
+.viz-muestreo .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("mu-svg"), lec = document.getElementById("mu-lectura");
+  var cc = document.getElementById("mu-c"), cm = document.getElementById("mu-m"), ec = document.getElementById("mu-c-v");
+  // la linea de ejecucion es fija: 60 unidades, siempre el mismo ancho
+  var X0 = 44, ANCHO = 572, Y = 74, N = 60;
+  var TRAMOS = [{ n: "carga", u: 42, c: C_A }, { n: "limpia", u: 15, c: C_L }, { n: "informe", u: 3, c: C_B }];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var cada = +cc.value, mues = cm.value === "mues";
+    ec.textContent = cada;
+    var w = ANCHO / N, x = X0, k, t;
+    // la ejecucion, por tramos
+    for (k = 0; k < TRAMOS.length; k++) {
+      svg.appendChild(el("rect", { x: x, y: Y - 18, width: TRAMOS[k].u * w, height: 36,
+        fill: TRAMOS[k].c, opacity: .45 }));
+      svg.appendChild(el("text", { x: x + TRAMOS[k].u * w / 2, y: Y + 5, "text-anchor": "middle",
+        "font-size": 10.5, fill: C_T }, TRAMOS[k].n));
+      x = x + TRAMOS[k].u * w;
+    }
+    // las marcas de lo que cada metodo mira
+    var vistas = [0, 0, 0], marcas = 0;
+    if (mues) {
+      for (t = 0; t < N; t = t + cada) {
+        var acum = 0, idx = 0;
+        for (k = 0; k < TRAMOS.length; k++) { acum = acum + TRAMOS[k].u; if (t < acum) { idx = k; break; } }
+        vistas[idx]++; marcas++;
+        var xm = X0 + t * w;
+        svg.appendChild(el("path", { d: "M" + xm + " " + (Y - 30) + " L" + xm + " " + (Y - 20),
+          stroke: C_T, "stroke-width": 2 }));
+      }
+    } else {
+      for (k = 0; k < TRAMOS.length; k++) { vistas[k] = TRAMOS[k].u; marcas = marcas + TRAMOS[k].u; }
+      for (t = 0; t < N; t++) {
+        var xi = X0 + t * w;
+        svg.appendChild(el("path", { d: "M" + xi + " " + (Y - 30) + " L" + xi + " " + (Y - 20),
+          stroke: C_T, "stroke-width": 1, opacity: .55 }));
+      }
+    }
+    svg.appendChild(el("text", { x: X0, y: Y - 38, "font-size": 10, fill: C_T, opacity: .65 },
+      mues ? "cada marca es una mirada" : "cada marca es una anotación: una por unidad de trabajo"));
+
+    // el reparto estimado, como barras
+    var yb = 140, xb = X0;
+    for (k = 0; k < 3; k++) {
+      var frac = marcas ? vistas[k] / marcas : 0;
+      svg.appendChild(el("rect", { x: xb, y: yb, width: ANCHO * frac, height: 20,
+        fill: TRAMOS[k].c, opacity: .6 }));
+      xb = xb + ANCHO * frac;
+    }
+    svg.appendChild(el("rect", { x: X0, y: yb, width: ANCHO, height: 20, rx: 2,
+      fill: "none", stroke: C_L, "stroke-width": 1 }));
+    svg.appendChild(el("text", { x: X0, y: yb - 6, "font-size": 10, fill: C_T, opacity: .65 }, "reparto estimado"));
+
+    var perdidas = [0, 1, 2].filter(function (i) { return vistas[i] === 0; }).length;
+    svg.appendChild(el("text", { x: X0, y: 196, "font-size": 12.5, fill: C_T },
+      (mues ? "miradas: " + marcas : "anotaciones: " + marcas) +
+      "   ·   funciones perdidas: " + perdidas));
+
+    lec.innerHTML = mues
+      ? ("Mirando cada <strong>" + cada + "</strong> unidades se toman <strong>" + marcas + "</strong> muestras, y el reparto de abajo es lo que el perfilador concluiría. " +
+         (perdidas > 0
+           ? "Con este espaciado se <strong>pierde " + perdidas + " función</strong> entera: ninguna muestra cayó dentro."
+           : "Con este espaciado ninguna función se pierde, y el reparto se parece al real.") +
+         " El coste no depende de cuántas llamadas haga el programa.")
+      : "Instrumentando se anota <strong>cada</strong> unidad de trabajo: el reparto sale exacto y no se pierde nada, pero las marcas de arriba son el coste añadido, y ese coste crece con el número de llamadas. El deslizador no lo cambia, porque instrumentar no mira cada cierto tiempo: mira siempre.";
+  }
+  cc.addEventListener("input", dibujar);
+  cm.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Lo que esta lección no resuelve
+
+No se han usado las herramientas reales: `cProfile` instrumenta y da el árbol de llamadas con tiempos acumulados, `timeit` repite una medición para reducir el ruido, y los perfiladores de muestreo permiten mirar un proceso que ya está corriendo en producción sin detenerlo. Lo de aquí es lo que hacen por dentro, construido para poder **contarlo**.
+
+Tampoco se ha tratado la memoria de verdad. Recorrer lo que cuelga de un objeto tropieza con las referencias compartidas —dos listas que apuntan al mismo valor no lo ocupan dos veces— y con los objetos que Python reutiliza. Las herramientas que lo miden bien llevan la cuenta de qué ya se ha visitado, y `tracemalloc` atribuye cada asignación a la línea que la pidió.
+
+## Ejercicios
+
+### Ejercicio 1, El techo
+
+Con la Proposición 26.5, calcular el techo de mejora de un trozo que ocupa el 30 % del trabajo, y la mejora real al acelerarlo 4 veces.
+
+```{pyodide}
+#| exercise: ex_techo
+p, s = 0.30, 4
+
+techo = ______
+total = ______
+mejora = ______
+
+print(round(techo, 2), round(total, 3), round(mejora, 2))
+```
+
+::: {.hint exercise="ex_techo"}
+El techo es la inversa de lo que no se toca. Y el total tras acelerar es lo que no se toca más el trozo dividido entre las veces.
+:::
+
+::: {.solution exercise="ex_techo"}
+```{pyodide}
+p, s = 0.30, 4
+
+techo = 1 / (1 - p)
+total = (1 - p) + p / s
+mejora = 1 / total
+
+print(round(techo, 2), round(total, 3), round(mejora, 2))
+```
+
+El techo es 1,43 y acelerando 4 veces se consigue 1,29: ya se ha sacado el **67 %** de lo que ese trozo puede dar. Acelerarlo 40 veces en lugar de 4 llevaría la mejora de 1,29 a 1,41, que probablemente no justifica el trabajo.
+:::
+
+```{pyodide}
+#| exercise: ex_techo
+#| check: true
+if round(techo, 2) == 1.43 and round(total, 3) == 0.775 and round(mejora, 2) == 1.29:
+    feedback = {"correct": True, "message": "Correcto: techo 1.43 y mejora real 1.29."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 1.43, 0.775 y 1.29."}
+feedback
+```
+
+### Ejercicio 2, Cuál pesa más
+
+Con la Proposición 26.6, decidir cuál de las dos funciones conviene optimizar, calculando el peso de cada una.
+
+```{pyodide}
+#| exercise: ex_peso
+a_llamadas, a_coste = 50000, 2
+b_llamadas, b_coste = 3, 20000
+
+peso_a = ______
+peso_b = ______
+conviene = ______
+
+print(peso_a, peso_b, conviene)
+```
+
+::: {.hint exercise="ex_peso"}
+El peso es llamadas por coste. Conviene la que más pese.
+:::
+
+::: {.solution exercise="ex_peso"}
+```{pyodide}
+a_llamadas, a_coste = 50000, 2
+b_llamadas, b_coste = 3, 20000
+
+peso_a = a_llamadas * a_coste
+peso_b = b_llamadas * b_coste
+conviene = "a" if peso_a > peso_b else "b"
+
+print(peso_a, peso_b, conviene)
+```
+
+100 000 contra 60 000: conviene la `a`, la de las 50 000 llamadas. Pero la `b` se lleva el 37 % y no es despreciable: con las dos aceleradas a la mitad el total baja más que con cualquiera sola, y el techo de cada una —2,7 y 1,6— dice cuánto puede dar cada camino antes de empezar.
+:::
+
+```{pyodide}
+#| exercise: ex_peso
+#| check: true
+if peso_a == 100000 and peso_b == 60000 and conviene == "a":
+    feedback = {"correct": True, "message": "Correcto: 100000 contra 60000, conviene la a."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 100000, 60000 y 'a'."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Python 26**:
+
+1. Contar con un decorador las llamadas de las funciones de un análisis propio y dibujar el árbol de quién llama a quién. Anotar cuál aparece arriba en el conteo plano y cuál en el árbol.
+2. Estimar la fracción que ocupa la parte más lenta de ese análisis y calcular su techo. Anotar si el techo justifica el trabajo **antes** de hacerlo.
+3. Medir cuántas estructuras quedan vivas al guardar los intermedios de una transformación propia, y reescribirla reasignando el nombre. Guardar en `50-Errores/` el paso en que dejaría de poder depurarse.
+
+## Del libro
+
+Esta lección no se apoya en ninguno de los libros del plan. El material de referencia es la documentación de `cProfile`, `timeit` y `tracemalloc`.
+
+## Para el Cerebro
+
+- Contar llamadas vale más que cronometrar: **un conteo es el mismo en cualquier máquina**.
+- El conteo plano dice cuánto; el **árbol** dice por culpa de quién.
+- Un trozo que ocupa el 5 % no puede dar más de **1,05 veces**, ni borrándolo entero.
+- Lo que decide es **llamadas × coste**: una función llamada **una vez** puede llevarse el 75 %.
+- `getsizeof` mide el objeto **sin lo que cuelga**: una lista de 10 sublistas es menor que una sublista.
+- Un generador **no depende de `n`**; una lista sí.
+- Guardar los intermedios de 6 pasos mantiene **7 estructuras vivas** contra 1.
+- Instrumentar es exacto y cuesta por llamada; muestrear no toca el programa y **puede perder una función entera**.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico: que sobre 200 filas `procesa` se llama 1 vez y `clasifica` y `normaliza` 200 cada una, y que las de `normaliza` vienen todas de `clasifica`; la tabla de techos para cinco fracciones y la de mejoras al acelerar diez veces; que una función llamada una vez con coste 600 pesa el 75 % frente a otra de 200 llamadas de coste 1, y que acelerarlas diez veces deja el total en 0,325 y 0,775; que una lista de diez sublistas ocupa ella sola menos que una de sus sublistas y 47 veces menos que contando lo que apunta; que un generador de un millón ocupa lo mismo que uno de mil mientras la lista crece más de 900 veces; que guardar los intermedios de 6 pasos deja 7 listas vivas contra 1 y los resultados coinciden; y que muestrear cada 250 unidades da 0 % a una función que ocupa el 5 %, convergiendo al reparto real al apretar el muestreo.
+
+**Lo que viene de los libros.** Nada. Ninguno de los libros verificados del plan trata perfilado.
+
+**Lo que es mío, no del libro.** La decisión de **contar en lugar de cronometrar**, que hace la lección idéntica en las dos versiones y de paso enseña la práctica correcta; la elección de imprimir **solo comparaciones** de `getsizeof`, cuyos valores absolutos cambian entre versiones, y de decirlo en la demostración; el ejemplo de la función llamada una sola vez que se lleva el 75 %, construido para desmentir la lectura ingenua del conteo; la simulación de las dos formas de perfilar sobre una ejecución **conocida**, que permite comparar lo que cada una concluye con la verdad; y el visual donde el trozo gris no se mueve y la barra nunca cruza la línea del techo.
+:::

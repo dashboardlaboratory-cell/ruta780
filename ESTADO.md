@@ -3932,6 +3932,46 @@ algo: 96 contra 6.
 antes de lanzar Playwright y salieron limpios; el gate confirmó sin fallos ni
 avisos a la primera.
 
+### 3.71 Python 26: perfilar sin cronometrar (23-09-2026)
+
+3 def / 9 prop / 9 dem, cuatro «Modo de falla». Una lección sobre rendimiento
+que **no mide un solo segundo**, por la misma razón que las demás: un tiempo
+depende de la máquina y rompería el gate de las dos versiones. Y la restricción
+vuelve a coincidir con la buena práctica: un conteo es el mismo aquí y en el
+servidor.
+
+**Lo que sostiene la lección son dos desmentidos:**
+
+· **El conteo de llamadas por sí solo engaña.** Una función llamada **200
+veces** con coste 1 pesa 200; otra llamada **una sola vez** con coste 600 pesa
+600, el **75 %** del trabajo. Acelerarlas diez veces deja el total en 0,775 y en
+0,325 respectivamente. El primer borrador no demostraba esto —los costes
+elegidos dejaban ganando a la muy llamada— y hubo que corregirlo para que el
+ejemplo dijera lo que la prosa afirmaba.
+
+· **El techo.** Un trozo que ocupa el 5 % no puede dar más de **1,05 veces**, ni
+borrándolo entero. El visual lo dibuja como una barra gris que no se mueve y una
+línea roja que la barra de abajo nunca cruza.
+
+**Los valores absolutos de `sys.getsizeof` cambian entre versiones** —el entero
+0 ocupa 24 bytes en 3.8 y 28 en 3.14, y las listas sobreasignan distinto—. La
+celda imprime **solo comparaciones**: que una lista de diez sublistas ocupa ella
+sola menos que una de sus sublistas, que un generador de un millón ocupa lo
+mismo que uno de mil, y que la lista crece más de 900 veces. La demostración lo
+dice en el texto, para que se entienda por qué no hay cifras.
+
+**El muestreo que pierde una función entera.** Simulando las dos formas de
+perfilar sobre una ejecución **conocida** se puede comparar lo que cada una
+concluye con la verdad: con muestras cada 250 unidades, una función que ocupa el
+5 % aparece con **0 %**. Y al revés, instrumentar una función llamada un millón
+de veces con coste 0,001 cuesta **mil veces** más que la función misma.
+
+**El choque con la Lección 25, dicho explícitamente.** Guardar los intermedios
+de una transformación es lo que la depuración quería para poder bisecar, y
+multiplica la memoria por el número de pasos: **7 estructuras vivas contra 1**
+sobre 6 pasos. La lección no elige por el lector: dice que van detrás del mismo
+interruptor que los mensajes de detalle.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
