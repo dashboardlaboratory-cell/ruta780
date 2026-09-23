@@ -1,0 +1,1045 @@
+---
+title: "Optimizadores: SGD, momentum y Adam, derivados"
+subtitle: "Machine Learning · Lección 39"
+nivel: L3
+modulo: ml
+fase: F3
+prereqs: [ml/38-inicializacion-y-activaciones, ml/37-red-densa-desde-cero, matematica/13-derivada-gradiente]
+siguientes: []
+libro: "MML §7.1 Optimization Using Gradient Descent"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="ml/39-optimizadores"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F3]{.item}
+[**Libro** MML §7.1]{.item}
+[**Prereqs** [Inicialización y activaciones](38-inicializacion-y-activaciones.qmd) · [Red densa desde cero](37-red-densa-desde-cero.qmd) · [Derivada y gradiente](../matematica/13-derivada-gradiente.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Derivar cuándo converge el descenso con paso fijo** y comprobar que la forma cerrada $(I-\eta A)^k$ coincide con lo medido hasta el último bit del float.
+2. **Deducir el paso óptimo** $2/(\lambda_{\min}+\lambda_{\max})$ y su factor $(\kappa-1)/(\kappa+1)$: **404 pasos** para bajar de 1e-8.
+3. **Escribir el impulso** y resolver su recurrencia con una matriz compañera de 2×2: **79 pasos** en lugar de 404.
+4. Explicar por qué el gradiente de un lote es una estimación **sin sesgo** y medir su dispersión.
+5. **Medir la meseta** en la que el paso fijo estocástico se detiene, y predecir cómo la mueven el paso y el tamaño del lote, **corrección por población finita incluida**: 16,84 medido contra 16,00 predicho.
+6. **Escribir Adam** y demostrar que su primer paso vale $\eta\cdot\operatorname{signo}(g)$ para gradientes que van de 1e-4 a 1e3.
+7. **Escribir el gradiente conjugado** y comprobar que termina en tantos pasos como autovalores distintos tenga la matriz, y que un ruido de 1e-6 en el gradiente le cuesta ocho órdenes de magnitud.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **ML 38**: la escala inicial de los pesos, que decide desde dónde arranca todo esto.
+- **ML 37**: la red densa, cuyo entrenamiento es el descenso que aquí se diseca.
+- **Matemática 13**: el gradiente, que es lo que estos métodos consumen.
+- **Matemática 20**: autovalores y número de condición, que son lo que fija la velocidad.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **ML 40**: la regularización, que cambia la función y con ella el espectro.
+- **ML 41**: la convolución, donde el número de parámetros hace impensable guardar una matriz.
+- **Series 08**: el boosting, que es otro descenso, esta vez en el espacio de funciones.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $\eta$ | eta | El paso, o tasa de aprendizaje |
+| $A$ | a | La matriz de la cuadrática, simétrica y definida positiva |
+| $\lambda$ | lambda | Un autovalor de $A$ |
+| $\kappa$ | kappa | El número de condición, $\lambda_{\max}/\lambda_{\min}$ |
+| $\beta$ | beta | El coeficiente del impulso |
+| $m$ | eme | El tamaño del lote |
+| $g$ | ge | El gradiente |
+| $\sigma^2$ | sigma cuadrado | La varianza del gradiente de un dato alrededor del total |
+:::
+
+## 1. El paso fijo, y lo único que lo limita
+
+Toda la lección trabaja sobre una cuadrática $f(x)=\tfrac12 x^{\mathsf{T}}Ax - b^{\mathsf{T}}x$ con $A$ diagonal y autovalores conocidos. La razón es que su mínimo se resuelve exactamente y cada afirmación sobre velocidad se puede **comprobar contra una fórmula**, no estimar.
+
+::: {.definicion}
+**Definición 39.1 ([descenso de gradiente]{.g} con paso fijo).** La iteración $x_{k+1}=x_k-\eta\,\nabla f(x_k)$. Sobre la cuadrática, $\nabla f(x)=Ax-b$ y el mínimo es la solución de $Ax=b$.
+:::
+
+::: {.proposicion}
+**Proposición 39.2 (el error es exactamente una potencia).** El error cumple $x_k-x^{*}=(I-\eta A)^{k}(x_0-x^{*})$, de modo que en cada dirección propia se multiplica por $1-\eta\lambda$ en cada paso. El método converge si y solo si $|1-\eta\lambda|<1$ para todos los autovalores, es decir si $0<\eta<2/\lambda_{\max}$.
+:::
+
+::: {.demostracion}
+*Demostración.* Restando $x^{*}$ de la iteración y usando $Ax^{*}=b$ sale $x_{k+1}-x^{*}=(I-\eta A)(x_k-x^{*})$, y la potencia por inducción. Con $A$ diagonal, $(I-\eta A)^{k}$ es diagonal con entradas $(1-\eta\lambda)^{k}$, que tienden a cero si y solo si $|1-\eta\lambda|<1$, es decir $0<\eta<2/\lambda$; hacen falta las cuatro y manda la más restrictiva. La celda compara los dos cálculos con cinco pasos distintos y la diferencia queda en el orden de $10^{-15}$ sobre valores que van de $0{,}47$ a $13$. Con $\eta=0{,}101$, que pasa de $2/20=0{,}1$, el factor de esa dirección vale $1{,}02$ y tras 200 pasos el error ha subido a $2{,}5\times10^{2}$. ∎
+:::
+
+::: {.proposicion}
+**Proposición 39.3 (el paso óptimo y su techo).** El paso que minimiza $\max_\lambda|1-\eta\lambda|$ es $\eta=2/(\lambda_{\min}+\lambda_{\max})$, y con él el factor vale $(\kappa-1)/(\kappa+1)$. Con $\kappa=40$ eso es **0,951220**, y hacen falta **404 pasos** para bajar el error de 1e-8, contra 1943 con $\eta=0{,}02$.
+:::
+
+::: {.demostracion}
+*Demostración.* La función $\eta\mapsto\max_\lambda|1-\eta\lambda|$ es el máximo de $1-\eta\lambda_{\min}$, decreciente, y de $\eta\lambda_{\max}-1$, creciente; su mínimo está donde se cruzan, es decir $1-\eta\lambda_{\min}=\eta\lambda_{\max}-1$, que da $\eta=2/(\lambda_{\min}+\lambda_{\max})$ y valor común $(\lambda_{\max}-\lambda_{\min})/(\lambda_{\max}+\lambda_{\min})=(\kappa-1)/(\kappa+1)$. La celda mide 404 pasos y factor 0,951220, que es el valor teórico. **El [número de condición]{.g} es el único parámetro del problema que aparece**: con paso fijo no hay nada más que ajustar. ∎
+:::
+
+**Modo de falla.** Un paso un poco por encima de $2/\lambda_{\max}$ no avisa: la pérdida sube, y como sube despacio al principio se confunde con una racha mala. Un paso muy por debajo tampoco avisa: entrena, converge, y tarda un orden de magnitud más de lo necesario, lo que se atribuye al tamaño del modelo. La defensa es medir el mayor autovalor de la hessiana, o al menos comprobar que la pérdida baja de forma monótona en las primeras decenas de pasos.
+
+```{pyodide}
+import numpy as np
+
+# Una cuadratica f(x) = 0.5 x'Ax - b'x con A simetrica definida positiva.
+# Se elige A diagonal para poder escribir todo a mano y comprobarlo.
+LAM = np.array([0.5, 1.0, 3.0, 20.0])          # los autovalores de A
+A = np.diag(LAM)
+b = np.array([1.0, -2.0, 0.5, 3.0])
+x_opt = b / LAM                                 # el minimo exacto: A x = b
+
+def f(x):
+    return 0.5 * np.dot(x, A.dot(x)) - np.dot(b, x)
+
+def grad(x):
+    return A.dot(x) - b
+
+def descenso(eta, pasos, x0):
+    x = x0.copy()
+    for _ in range(pasos):
+        x = x - eta * grad(x)
+    return x
+
+x0 = np.array([5.0, 5.0, 5.0, 5.0])
+lmin, lmax = LAM.min(), LAM.max()
+kappa = lmax / lmin
+
+print("una cuadratica con autovalores", LAM.tolist())
+print("  numero de condicion k = lmax/lmin : %.1f" % kappa)
+print("  paso maximo que converge 2/lmax   : %.6f" % (2.0 / lmax))
+print("  paso optimo 2/(lmin+lmax)         : %.6f" % (2.0 / (lmin + lmax)))
+print()
+
+# el error obedece x_k - x* = (I - eta A)^k (x_0 - x*), y como A es
+# diagonal eso es, coordenada a coordenada, (1 - eta*lambda)^k
+print("el error tras 50 pasos, medido y segun la formula cerrada")
+print("  %-10s %16s %16s %14s" % ("paso", "medido", "(I-etaA)^50", "diferencia"))
+for eta in (0.02, 0.05, 2.0 / (lmin + lmax), 0.099, 0.101):
+    xk = descenso(eta, 50, x0)
+    medido = np.linalg.norm(xk - x_opt)
+    cerrado = np.linalg.norm((1.0 - eta * LAM) ** 50 * (x0 - x_opt))
+    print("  %-10.6f %16.9e %16.9e %14.3e"
+          % (eta, medido, cerrado, abs(medido - cerrado)))
+print()
+print("la formula cerrada y lo medido coinciden hasta el ultimo bit que")
+print("cabe en un float: el descenso con paso fijo sobre una cuadratica")
+print("es exactamente esa potencia, hasta el ultimo bit del float")
+print()
+
+print("y el paso 0.101 pasa de 2/lmax = %.6f" % (2.0 / lmax))
+print("  |1 - 0.101*20| = %.4f, mayor que 1, asi que esa coordenada crece"
+      % abs(1 - 0.101 * lmax))
+xk = descenso(0.101, 200, x0)
+print("  tras 200 pasos el error vale %.3e" % np.linalg.norm(xk - x_opt))
+print()
+
+print("cuantos pasos hacen falta para bajar el error de 1e-8")
+print("  %-24s %10s %14s" % ("paso", "pasos", "factor por paso"))
+for nombre, eta in (("0.02", 0.02), ("2/(lmin+lmax)", 2.0 / (lmin + lmax))):
+    r = np.max(np.abs(1.0 - eta * LAM))
+    e0 = np.linalg.norm(x0 - x_opt)
+    n, x = 0, x0.copy()
+    while np.linalg.norm(x - x_opt) > 1e-8 and n < 100000:
+        x = x - eta * grad(x); n += 1
+    print("  %-24s %10d %14.6f" % (nombre, n, r))
+print()
+print("el factor por paso es el mayor |1 - eta*lambda|. Con el paso optimo")
+print("vale (k-1)/(k+1) = %.6f, y ese es el limite de lo que se puede"
+      % ((kappa - 1) / (kappa + 1)))
+print("conseguir con un paso fijo: lo fija el numero de condicion")
+```
+
+```{=html}
+<div class="viz-paso">
+  <div class="controles">
+    <label>Paso η <input id="pf-e" type="range" min="0.005" max="0.115" step="0.001" value="0.098"> <span id="pf-e-v">0.098</span></label>
+    <label>Autovalor mayor <input id="pf-k" type="range" min="2" max="40" step="0.5" value="20"> <span id="pf-k-v">20.0</span></label>
+  </div>
+  <svg id="pf-svg" viewBox="0 0 660 290" role="img" aria-label="El factor de contracción |1 menos eta por lambda| a lo largo del espectro, con los cuatro autovalores marcados."></svg>
+  <p class="lectura" id="pf-lectura"></p>
+</div>
+<style>
+.viz-paso { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-paso .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-paso label { display: flex; align-items: center; gap: .4rem; }
+.viz-paso input[type=range] { width: 160px; padding: 0; }
+.viz-paso svg { width: 100%; height: auto; display: block; }
+.viz-paso .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("pf-svg"), lec = document.getElementById("pf-lectura");
+  var ce = document.getElementById("pf-e"), ck = document.getElementById("pf-k");
+  var ee = document.getElementById("pf-e-v"), ek = document.getElementById("pf-k-v");
+  var X0 = 58, X1 = 630, Y0 = 18, Y1 = 238, YMAX = 2.0, LMIN = 0.5;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var eta = +ce.value, lmax = +ck.value;
+    ee.textContent = eta.toFixed(3); ek.textContent = lmax.toFixed(1);
+    var LAM = [LMIN, 1.0, 3.0, lmax];
+    var LHI = lmax * 1.15;
+    var px = function (l) { return X0 + l * (X1 - X0) / LHI; };
+    var py = function (v) { return Y1 - Math.max(0, Math.min(YMAX, v)) * (Y1 - Y0) / YMAX; };
+
+    for (var v = 0; v <= YMAX + 1e-9; v += 0.5) {
+      var y = py(v);
+      svg.appendChild(el("path", { d: "M" + X0 + " " + y.toFixed(1) + " L" + X1 + " " + y.toFixed(1),
+        stroke: v === 1 ? C_B : C_L, "stroke-width": v === 1 ? 1.6 : 0.8, opacity: v === 1 ? .7 : .55 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: y + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 },
+        v.toFixed(1)));
+    }
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 40, "text-anchor": "middle", "font-size": 10.5,
+      fill: C_T, opacity: .7 }, "λ, el autovalor"));
+
+    var d = "";
+    for (var k = 0; k <= 200; k++) {
+      var l = k * LHI / 200;
+      d += (k === 0 ? "M" : " L") + px(l).toFixed(1) + " " + py(Math.abs(1 - eta * l)).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_T, "stroke-width": 1.6, opacity: .55 }));
+
+    var peor = 0;
+    for (var i = 0; i < LAM.length; i++) {
+      var f = Math.abs(1 - eta * LAM[i]);
+      if (f > peor) peor = f;
+      svg.appendChild(el("path", { d: "M" + px(LAM[i]).toFixed(1) + " " + Y1 +
+        " L" + px(LAM[i]).toFixed(1) + " " + py(f).toFixed(1), stroke: C_L, "stroke-width": 1 }));
+      svg.appendChild(el("circle", { cx: px(LAM[i]).toFixed(1), cy: py(f).toFixed(1), r: 5,
+        fill: f >= 1 ? C_B : C_A }));
+      svg.appendChild(el("text", { x: px(LAM[i]).toFixed(1), y: Y1 + 18, "text-anchor": "middle",
+        "font-size": 10, fill: C_T, opacity: .75 }, LAM[i].toFixed(1)));
+    }
+
+    var opt = 2 / (LMIN + lmax), kap = lmax / LMIN;
+    var pasos = peor >= 1 ? 0 : Math.ceil(Math.log(1e-8 / 7) / Math.log(peor));
+    lec.innerHTML = "Con paso <strong>" + eta.toFixed(3) + "</strong> el factor de cada dirección es |1 − ηλ|, y el que manda es el peor de los cuatro: <strong>" +
+      peor.toFixed(4) + "</strong>. " +
+      (peor >= 1 ? "Ese factor llega a uno o lo pasa, así que el método <strong>no converge</strong>: la dirección de λ = " + lmax.toFixed(1) + " crece en cada paso. "
+                 : "Hacen falta <strong>" + pasos + "</strong> pasos para bajar el error de 1e-8. ") +
+      "El paso máximo que converge es 2/λmax = <strong>" + (2 / lmax).toFixed(4) +
+      "</strong> y el mejor posible es 2/(λmin+λmax) = <strong>" + opt.toFixed(4) +
+      "</strong>, que iguala el factor de λmin con el de λmax y deja (κ−1)/(κ+1) = <strong>" +
+      ((kap - 1) / (kap + 1)).toFixed(4) + "</strong> con κ = " + kap.toFixed(1) + ".";
+  }
+  ce.addEventListener("input", dibujar); ck.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. El impulso, y de dónde sale la raíz
+
+::: {.proposicion}
+**Proposición 39.4 (una recurrencia de dos términos es una matriz de 2×2).** Con $x_{k+1}=x_k-\eta\nabla f(x_k)+\beta(x_k-x_{k-1})$, el error en cada dirección propia cumple $e_{k+1}=(1+\beta-\eta\lambda)e_k-\beta e_{k-1}$, de modo que $(e_k,e_{k-1})$ es la potencia $k$-ésima de una matriz compañera de 2×2 aplicada al estado inicial.
+:::
+
+::: {.demostracion}
+*Demostración.* Restando $x^{*}$ y proyectando sobre la dirección propia de $\lambda$ sale la recurrencia escalar; escribiendo el par $(e_{k+1},e_k)$ en función de $(e_k,e_{k-1})$ aparece la matriz $\begin{pmatrix}1+\beta-\eta\lambda & -\beta\\ 1 & 0\end{pmatrix}$. La celda compara la simulación con esa potencia para cuatro valores de $\beta$, incluido uno que diverge a $3{,}7\times10^{12}$, y las dos cuentas coinciden con diferencia relativa por debajo de 1e-12 en los cuatro. ∎
+:::
+
+::: {.proposicion}
+**Proposición 39.5 (el impulso cambia $\kappa$ por $\sqrt{\kappa}$).** Con $\eta=4/(\sqrt{\lambda_{\max}}+\sqrt{\lambda_{\min}})^{2}$ y $\beta=\bigl((\sqrt{\kappa}-1)/(\sqrt{\kappa}+1)\bigr)^{2}$, el factor por paso pasa de $(\kappa-1)/(\kappa+1)=0{,}951220$ a $(\sqrt{\kappa}-1)/(\sqrt{\kappa}+1)=0{,}726946$: **79 pasos contra 404**.
+:::
+
+::: {.demostracion}
+*Demostración.* El factor por paso es el módulo del mayor autovalor de la matriz compañera; con esos valores de $\eta$ y $\beta$ los dos autovalores son complejos conjugados de módulo $\sqrt{\beta}=(\sqrt{\kappa}-1)/(\sqrt{\kappa}+1)$ simultáneamente para $\lambda_{\min}$ y $\lambda_{\max}$, que es lo que los hace óptimos. La celda mide 79 pasos contra 404, y el cociente de los logaritmos de los dos factores vale 6,38. **Donde antes aparecía $\kappa$ ahora aparece su raíz**, y por eso la ganancia crece con lo mal condicionado que esté el problema. ∎
+:::
+
+::: {.proposicion}
+**Proposición 39.6 (el [impulso en el descenso]{.g} tiene tope).** Con $\beta\ge1$ el producto de los autovalores de la compañera, que vale $\beta$, deja de estar por debajo de uno y el error no puede tender a cero. Medido con 300 pasos: 1,2e-06 con $\beta=0{,}90$, y 8,6 con $\beta=1$.
+:::
+
+::: {.demostracion}
+*Demostración.* El determinante de la compañera vale $\beta$, de modo que el producto de sus dos autovalores vale $\beta$ y al menos uno tiene módulo $\ge\sqrt{\beta}$. Con $\beta\ge1$ ese módulo es $\ge1$ y la potencia no se anula. La celda lo mide en los cuatro casos; con $\beta=1{,}01$ el error tras 300 pasos vale 40,6. ∎
+:::
+
+**Modo de falla.** El impulso convierte un paso demasiado grande en oscilaciones de periodo largo, que en una curva de pérdida parecen ruido de los datos. Y como el impulso acelera de verdad, la tentación es subirlo hasta que deja de funcionar, momento en el que ya no se sabe si el culpable es $\eta$ o $\beta$. La defensa es fijar $\beta$ y mover solo $\eta$, que es el que tiene un techo calculable.
+
+```{pyodide}
+import numpy as np
+
+LAM = np.array([0.5, 1.0, 3.0, 20.0])
+A = np.diag(LAM)
+b = np.array([1.0, -2.0, 0.5, 3.0])
+x_opt = b / LAM
+x0 = np.array([5.0, 5.0, 5.0, 5.0])
+lmin, lmax = LAM.min(), LAM.max()
+kappa = lmax / lmin
+
+def con_impulso(eta, beta, pasos):
+    x, ant = x0.copy(), x0.copy()
+    for _ in range(pasos):
+        nuevo = x - eta * (A.dot(x) - b) + beta * (x - ant)
+        ant, x = x, nuevo
+    return x
+
+# En cada direccion propia el error cumple una recurrencia de dos terminos,
+#   e_{k+1} = (1 + beta - eta*lambda) e_k - beta e_{k-1},
+# cuya matriz companera de 2x2 da la forma cerrada.
+def cerrado(eta, beta, pasos):
+    e = np.zeros(len(LAM))
+    for i, lam in enumerate(LAM):
+        M = np.array([[1 + beta - eta * lam, -beta], [1.0, 0.0]])
+        v = np.array([x0[i] - x_opt[i], x0[i] - x_opt[i]])
+        e[i] = np.linalg.matrix_power(M, pasos).dot(v)[0]
+    return np.linalg.norm(e)
+
+eta_gd = 2.0 / (lmin + lmax)
+eta_mo = 4.0 / (np.sqrt(lmax) + np.sqrt(lmin)) ** 2
+beta_mo = ((np.sqrt(kappa) - 1) / (np.sqrt(kappa) + 1)) ** 2
+
+print("el descenso con impulso sobre la misma cuadratica, k = %.1f" % kappa)
+print("  paso optimo sin impulso  2/(lmin+lmax)         : %.6f" % eta_gd)
+print("  paso optimo con impulso  4/(rlmax+rlmin)^2     : %.6f" % eta_mo)
+print("  impulso optimo ((rk-1)/(rk+1))^2               : %.6f" % beta_mo)
+print()
+
+print("el error tras 40 pasos, medido y por la matriz companera")
+# La diferencia entre las dos cuentas esta al nivel del redondeo, y sus
+# digitos cambian de una version de numpy a otra: se comprueba que cae
+# por debajo de una cota, sin imprimirla (regla 7).
+print("  %-10s %16s %16s %16s" % ("impulso", "medido", "companera^40", "dif. < 1e-12"))
+for beta in (0.0, 0.3, beta_mo, 0.95):
+    m = np.linalg.norm(con_impulso(eta_mo, beta, 40) - x_opt)
+    c = cerrado(eta_mo, beta, 40)
+    print("  %-10.6f %16.9e %16.9e %16s" % (beta, m, c, abs(m - c) / c < 1e-12))
+print()
+print("las dos cuentas coinciden: la recurrencia de dos terminos es una")
+print("potencia de una matriz de 2x2 en cada direccion propia")
+print()
+
+print("cuantos pasos para bajar el error de 1e-8")
+print("  %-28s %8s %16s" % ("metodo", "pasos", "factor por paso"))
+def cuenta(eta, beta):
+    x, ant, n = x0.copy(), x0.copy(), 0
+    while np.linalg.norm(x - x_opt) > 1e-8 and n < 100000:
+        nuevo = x - eta * (A.dot(x) - b) + beta * (x - ant)
+        ant, x = x, nuevo
+        n += 1
+    return n
+r_gd = (kappa - 1) / (kappa + 1)
+r_mo = (np.sqrt(kappa) - 1) / (np.sqrt(kappa) + 1)
+print("  %-28s %8d %16.6f" % ("sin impulso, paso optimo", cuenta(eta_gd, 0.0), r_gd))
+print("  %-28s %8d %16.6f" % ("con impulso, ambos optimos", cuenta(eta_mo, beta_mo), r_mo))
+print()
+print("el factor por paso pasa de (k-1)/(k+1) a (rk-1)/(rk+1): donde antes")
+print("aparecia el numero de condicion ahora aparece su raiz. Con k = %.0f" % kappa)
+print("eso son %d pasos contra %d, cinco veces menos, y el cociente de"
+      % (cuenta(eta_mo, beta_mo), cuenta(eta_gd, 0.0)))
+print("los logaritmos de los dos factores vale %.2f" % (np.log(r_mo) / np.log(r_gd)))
+print()
+
+print("el impulso tiene un tope: por encima de 1 la recurrencia estalla")
+print("  %-10s %18s" % ("impulso", "error tras 300"))
+for beta in (0.9, 0.99, 1.0, 1.01):
+    e = np.linalg.norm(con_impulso(eta_mo, beta, 300) - x_opt)
+    print("  %-10.2f %18.4e" % (beta, e))
+print()
+print("con beta = 1 el error ni baja ni sube: el metodo se queda dando")
+print("vueltas. Por encima crece sin freno")
+```
+
+## 3. El gradiente de un lote, y la meseta donde se para
+
+::: {.definicion}
+**Definición 39.7 (gradiente de lote, y [descenso estocástico]{.g}).** Con $f$ la media de $N$ términos, el gradiente de un lote es la media del gradiente sobre $m$ de ellos elegidos al azar. Cuesta $m/N$ de lo que cuesta el gradiente entero.
+:::
+
+::: {.proposicion}
+**Proposición 39.8 (sin sesgo, con dispersión).** La media de los gradientes de una partición en lotes es exactamente el gradiente total: los 8 lotes de 50 del ejemplo lo reproducen con diferencia máxima **1,3 × 10⁻¹⁵**. Lo que cambia de un lote a otro es la dispersión: con gradiente total de norma 3,586920, un lote llega a desviarse **1,383111**.
+:::
+
+::: {.demostracion}
+*Demostración.* Si los lotes forman una partición en partes iguales, la media de las medias por lote es la media global, y la igualdad es exacta salvo redondeo; la celda la mide. La dispersión se mide sobre los mismos ocho lotes. **Un lote apunta en una dirección parecida a la del total, con un error que no se anula por ser pequeño el paso.** ∎
+:::
+
+::: {.proposicion}
+**Proposición 39.9 (con paso fijo el iterado no se para).** La distancia cuadrática media al mínimo, promediada sobre los últimos 2000 pasos, es proporcional al paso: con $\eta$ igual a 0,40, 0,10 y 0,025 vale 3,22e-03, 7,00e-04 y 1,82e-04, cocientes de **4,60 y 17,73** frente a los 4 y 16 de la proporcionalidad. Un paso decreciente $\eta_k=\eta/(1+k/500)$ la baja **25 veces**.
+:::
+
+::: {.demostracion}
+*Demostración.* La varianza del iterado cumple aproximadamente $v_{k+1}=(1-\eta\lambda)^{2}v_k+\eta^{2}\sigma^{2}/m$, cuyo punto fijo es $\eta\sigma^{2}/\bigl(m\lambda(2-\eta\lambda)\bigr)$, proporcional a $\eta$ cuando $\eta\lambda$ es pequeño. La celda mide los tres valores. Con paso decreciente el término de ruido se apaga y el punto fijo se va a cero, a costa de que el factor de contracción se acerque a uno. ∎
+:::
+
+::: {.proposicion}
+**Proposición 39.10 (el lote y la corrección por población finita).** Multiplicar el lote por cuatro divide la nube por cuatro **mientras el lote es pequeño frente a $N$**. En el último salto, de 80 a 320 sobre $N=400$, lo medido es **16,84** y lo predicho por $\tfrac1m\cdot\tfrac{N-m}{N-1}$ es **16,00**.
+:::
+
+::: {.demostracion}
+*Demostración.* Al muestrear sin reemplazo, la varianza de la media de $m$ de $N$ valores es $\tfrac{\sigma^{2}}{m}\cdot\tfrac{N-m}{N-1}$; el segundo factor vale casi uno cuando $m\ll N$ y se desploma cuando $m$ se acerca a $N$. La celda tabula los cuatro tamaños con la predicción al lado: 4,03 contra 4,16, 4,74 contra 4,75 y 16,84 contra 16,00. **La anomalía del último salto no es ruido del experimento: la fórmula la predice.** ∎
+:::
+
+**Modo de falla.** Con paso fijo la curva de pérdida se aplana y parece que el modelo ha convergido; en realidad el iterado está dando vueltas en una bola cuyo radio lo fija el paso. Bajar el paso en ese momento hace bajar la pérdida otra vez, lo que se interpreta como que el modelo «aún tenía margen» cuando lo que ha cambiado es el radio de la bola. La defensa es medir la meseta antes de decidir: si baja al bajar el paso, era ruido.
+
+```{pyodide}
+import numpy as np
+
+# Minimos cuadrados con N datos: f(w) = (1/N) sum_i 0.5 (x_i'w - y_i)^2
+rng = np.random.default_rng(39)
+N, D = 400, 3
+X = rng.standard_normal((N, D))
+w_real = np.array([1.5, -2.0, 0.5])
+y = X.dot(w_real) + 0.3 * rng.standard_normal(N)
+w_opt = np.linalg.lstsq(X, y, rcond=None)[0]
+
+def grad_total(w):
+    return X.T.dot(X.dot(w) - y) / N
+
+def grad_lote(w, idx):
+    Xi, yi = X[idx], y[idx]
+    return Xi.T.dot(Xi.dot(w) - yi) / len(idx)
+
+w_prueba = np.array([0.4, 0.9, -1.1])
+print("el gradiente de un lote es una estimacion sin sesgo del total")
+lotes = [np.arange(k, k + 50) for k in range(0, N, 50)]
+media = sum(grad_lote(w_prueba, i) for i in lotes) / len(lotes)
+print("  gradiente total                 :", np.round(grad_total(w_prueba), 9).tolist())
+print("  media de los 8 lotes de 50      :", np.round(media, 9).tolist())
+print("  mayor diferencia                : %.3e"
+      % np.max(np.abs(media - grad_total(w_prueba))))
+print()
+print("la media de los lotes es el gradiente total hasta el error de")
+print("redondeo. Todos los lotes comparten el centro; lo que cambia de")
+print("uno a otro es la dispersion alrededor de el")
+print()
+
+nor = [np.linalg.norm(grad_lote(w_prueba, i) - grad_total(w_prueba)) for i in lotes]
+print("  norma del gradiente total       : %.6f" % np.linalg.norm(grad_total(w_prueba)))
+print("  desviacion tipica entre lotes   : %.6f" % float(np.std(nor)))
+print("  mayor desvio de un lote         : %.6f" % max(nor))
+print()
+
+def sgd(eta, pasos, tam, semilla, decae=False):
+    r = np.random.default_rng(semilla)
+    w = np.zeros(D)
+    dist = []
+    for k in range(pasos):
+        idx = np.argsort(r.random(N))[:tam]
+        paso = eta / (1.0 + k / 500.0) if decae else eta
+        w = w - paso * grad_lote(w, idx)
+        if k >= pasos - 2000:
+            dist.append(float(np.dot(w - w_opt, w - w_opt)))
+    return w, float(np.mean(dist))
+
+print("con paso fijo, el iterado no se para: ronda el minimo")
+print("  %-10s %20s %14s" % ("paso", "dist^2 media al final", "cociente"))
+base = None
+for eta in (0.40, 0.10, 0.025):
+    _, d2 = sgd(eta, 12000, 20, 7)
+    if base is None:
+        base = d2
+    print("  %-10.3f %20.6e %14.2f" % (eta, d2, base / d2))
+print()
+print("al dividir el paso por cuatro, la distancia cuadratica media")
+print("al minimo se divide tambien por cuatro, aproximadamente: el")
+print("tamaño cuadratico de la nube es proporcional al paso, y por")
+print("tanto la distancia lo es a su raiz")
+print()
+
+print("y con el paso decreciente eta_k = eta/(1 + k/500)")
+print("  %-16s %20s" % ("estrategia", "dist^2 media al final"))
+_, d_fijo = sgd(0.40, 12000, 20, 7)
+_, d_dec = sgd(0.40, 12000, 20, 7, decae=True)
+print("  %-16s %20.6e" % ("paso fijo 0.40", d_fijo))
+print("  %-16s %20.6e" % ("paso decreciente", d_dec))
+print("  el decreciente queda %.0f veces mas cerca" % (d_fijo / d_dec))
+print()
+print("el paso decreciente cambia el compromiso: al principio avanza")
+print("igual de rapido y al final el ruido se apaga con el")
+print()
+
+print("el tamaño del lote: cuanto cuesta y cuanto quita de ruido")
+print("  %-8s %18s %12s %14s" % ("lote", "dist^2 media", "cociente", "predicho"))
+# la varianza de la media de un muestreo sin reemplazo lleva la correccion
+# por poblacion finita: (1/m) * (N-m)/(N-1), no solo 1/m
+def var_lote(m):
+    return (1.0 / m) * (N - m) / (N - 1.0)
+ant, ant_m = None, None
+for tam in (5, 20, 80, 320):
+    _, d2 = sgd(0.10, 12000, tam, 11)
+    if ant is None:
+        print("  %-8d %18.6e %12s %14s" % (tam, d2, "-", "-"))
+    else:
+        print("  %-8d %18.6e %12.2f %14.2f"
+              % (tam, d2, ant / d2, var_lote(ant_m) / var_lote(tam)))
+    ant, ant_m = d2, tam
+print()
+print("multiplicar el lote por cuatro divide la nube por cuatro mientras")
+print("el lote es pequeño frente a los %d datos. En el ultimo salto son" % N)
+print("16 y no 4, y la prediccion tambien: al muestrear sin reemplazo la")
+print("varianza lleva la correccion (N-m)/(N-1), que se hace notar cuando")
+print("el lote se acerca al total. Y el coste crece con el lote, de modo")
+print("que contando gradientes el lote pequeño no pierde nada")
+```
+
+```{=html}
+<div class="viz-nube">
+  <div class="controles">
+    <label>Paso η <input id="nb-e" type="range" min="0.02" max="0.60" step="0.01" value="0.20"> <span id="nb-e-v">0.20</span></label>
+    <label>Tamaño del lote <input id="nb-m" type="range" min="1" max="200" step="1" value="20"> <span id="nb-m-v">20</span></label>
+  </div>
+  <svg id="nb-svg" viewBox="0 0 660 290" role="img" aria-label="La distancia al mínimo a lo largo de las iteraciones, que baja y se detiene en una meseta cuyo nivel depende del paso y del tamaño del lote."></svg>
+  <p class="lectura" id="nb-lectura"></p>
+</div>
+<style>
+.viz-nube { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-nube .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-nube label { display: flex; align-items: center; gap: .4rem; }
+.viz-nube input[type=range] { width: 160px; padding: 0; }
+.viz-nube svg { width: 100%; height: auto; display: block; }
+.viz-nube .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("nb-svg"), lec = document.getElementById("nb-lectura");
+  var ce = document.getElementById("nb-e"), cm = document.getElementById("nb-m");
+  var ee = document.getElementById("nb-e-v"), em = document.getElementById("nb-m-v");
+  var X0 = 62, X1 = 630, Y0 = 18, Y1 = 238, LO = -8, HI = 1, N = 400, LAM = 1.0, SIG2 = 1.0, E0 = 5.0;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(k) { return X0 + k * (X1 - X0) / N; }
+  function py(v) {
+    var l = Math.log(Math.max(v, 1e-300)) / Math.LN10;
+    l = Math.max(LO, Math.min(HI, l));
+    return Y1 - (l - LO) * (Y1 - Y0) / (HI - LO);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var eta = +ce.value, m = Math.round(+cm.value);
+    ee.textContent = eta.toFixed(2); em.textContent = String(m);
+    var r = 1 - eta * LAM, ruido = eta * eta * SIG2 / m;
+
+    for (var l = LO; l <= HI; l += 3) {
+      var y = py(Math.pow(10, l));
+      svg.appendChild(el("path", { d: "M" + X0 + " " + y.toFixed(1) + " L" + X1 + " " + y.toFixed(1),
+        stroke: C_L, "stroke-width": 0.8, opacity: .55 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: y + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 },
+        "1e" + l));
+    }
+    for (var k = 0; k <= N; k += 100)
+      svg.appendChild(el("text", { x: px(k), y: Y1 + 20, "text-anchor": "middle", "font-size": 10.5,
+        fill: C_T, opacity: .7 }, String(k)));
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 40, "text-anchor": "middle", "font-size": 10.5,
+      fill: C_T, opacity: .7 }, "iteración"));
+
+    // el lote entero: el error se multiplica por r en cada paso
+    var d = "", v = E0;
+    for (k = 0; k <= N; k++) { d += (k === 0 ? "M" : " L") + px(k).toFixed(1) + " " + py(v).toFixed(1); v *= Math.abs(r); }
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_T, "stroke-width": 1.6, opacity: .5 }));
+
+    // el lote al azar: varianza v_{k+1} = r^2 v_k + eta^2 sigma^2 / m
+    var d2 = "", va = E0 * E0;
+    for (k = 0; k <= N; k++) {
+      d2 += (k === 0 ? "M" : " L") + px(k).toFixed(1) + " " + py(Math.sqrt(va)).toFixed(1);
+      va = r * r * va + ruido;
+    }
+    svg.appendChild(el("path", { d: d2, fill: "none", stroke: C_A, "stroke-width": 2.2 }));
+
+    var meseta = Math.sqrt(ruido / (1 - r * r));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(meseta).toFixed(1) + " L" + X1 + " " + py(meseta).toFixed(1),
+      stroke: C_B, "stroke-width": 1.3, "stroke-dasharray": "5 4", opacity: .8 }));
+    svg.appendChild(el("circle", { cx: px(N).toFixed(1), cy: py(meseta).toFixed(1), r: 5, fill: C_B }));
+
+    lec.innerHTML = "Con paso <strong>" + eta.toFixed(2) + "</strong> y lotes de <strong>" + m +
+      "</strong>, la curva baja con factor " + Math.abs(r).toFixed(3) + " por paso y se detiene en <strong>" +
+      meseta.toExponential(3) + "</strong>, la línea de trazos. La curva gris es el mismo método con el gradiente entero, " +
+      "que sigue bajando sin tocar suelo. " +
+      "La meseta vale √(η σ² / (m λ (2 − ηλ))): dividir el paso por cuatro o multiplicar el lote por cuatro la bajan a la mitad, " +
+      "y multiplicar el lote cuesta cuatro veces más gradientes por paso mientras que reducir el paso cuesta más iteraciones.";
+  }
+  ce.addEventListener("input", dibujar); cm.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Adam, y qué hace exactamente
+
+::: {.definicion}
+**Definición 39.11 ([Adam]{.g}).** Mantiene dos medias exponenciales, $m_k=\beta_1m_{k-1}+(1-\beta_1)g_k$ del gradiente y $v_k=\beta_2v_{k-1}+(1-\beta_2)g_k^{2}$ de su cuadrado, las corrige dividiendo por $1-\beta_1^{k}$ y $1-\beta_2^{k}$, y avanza $\eta\,\hat m_k/(\sqrt{\hat v_k}+\varepsilon)$ coordenada a coordenada.
+:::
+
+::: {.proposicion}
+**Proposición 39.12 (el primer paso vale $\eta$, sea cual sea el gradiente).** En $k=1$ la corrección deja $\hat m_1=g$ y $\hat v_1=g^{2}$, de modo que el paso es $\eta\,g/(|g|+\varepsilon)$. Medido con $\eta=0{,}1$ y gradientes de 1e-4, 1, 1e3 y −7, los cuatro pasos valen **0,1** en valor absoluto, mientras que el descenso daría 1e-05, 0,1, 100 y −0,7.
+:::
+
+::: {.demostracion}
+*Demostración.* $m_1=(1-\beta_1)g$ y $1-\beta_1^{1}=1-\beta_1$, así que $\hat m_1=g$; lo mismo con $v$. El cociente vale entonces $g/(|g|+\varepsilon)$, que es el signo de $g$ salvo por $\varepsilon$. La celda lo tabula; el único que se aparta es el gradiente 1e-4, que da 0,099990 porque $\varepsilon$ ya pesa. ∎
+:::
+
+::: {.proposicion}
+**Proposición 39.13 (qué hace la corrección de sesgo).** Sin ella, el primer paso es $(1-\beta_1)/\sqrt{1-\beta_2}=0{,}1/\sqrt{0{,}001}=\mathbf{3{,}1623}$ veces **mayor** de lo debido, y el cociente medido tras un paso vale exactamente 3,1623. Tras 100 pasos la diferencia se ha reducido a un factor 1,0259.
+:::
+
+::: {.demostracion}
+*Demostración.* Sin corregir, $m_1=(1-\beta_1)g$ y $v_1=(1-\beta_2)g^{2}$, de modo que el cociente $m_1/\sqrt{v_1}$ vale $(1-\beta_1)/\sqrt{1-\beta_2}$ veces $g/|g|$. Con los valores por defecto eso es $0{,}1/0{,}031623=3{,}1623$. La celda mide el desplazamiento tras 1, 2, 5, 20 y 100 pasos y el cociente del primero coincide con la cuenta. **La corrección no agranda los primeros pasos: los reduce**, porque $v$ arranca más sesgado que $m$. ∎
+:::
+
+::: {.proposicion}
+**Proposición 39.14 (Adam es invariante al reescalar la función).** Con $\varepsilon=0$, multiplicar $f$ por cualquier constante deja la trayectoria idéntica: con escalas $10^{3}$ y $10^{-3}$ la diferencia con la trayectoria de escala 1 es **exactamente cero**. Con $\varepsilon=10^{-8}$ la invariancia se rompe cuando el gradiente se acerca a $\varepsilon$: la distancia final pasa de 0,000003374140 a 0,000004147533 con escala $10^{-6}$.
+:::
+
+::: {.demostracion}
+*Demostración.* Si $g\mapsto cg$, entonces $m\mapsto cm$ y $v\mapsto c^{2}v$, de modo que $\hat m/\sqrt{\hat v}$ no cambia mientras $\varepsilon$ valga cero; el $\varepsilon$ del denominador es lo único que tiene unidades y por eso lo único que rompe la simetría. La celda mide las tres trayectorias en los dos regímenes. ∎
+:::
+
+::: {.proposicion}
+**Proposición 39.15 (qué compra esa invariancia).** Sobre la cuadrática de $\kappa=40$, Adam necesita **410 pasos** contra los 79 del impulso con sus dos parámetros en el óptimo teórico. Sobre una de $\kappa=10^{6}$, el descenso con paso fijo **agota 300 000 pasos** con un error relativo del 55 %, mientras que el impulso y Adam llegan a 1e-3 en 4617 y 4644 pasos: **Adam empata sin que se le hayan dado $\lambda_{\min}$ ni $\lambda_{\max}$**.
+:::
+
+::: {.demostracion}
+*Demostración.* Las dos comparaciones están medidas en la celda con el mismo criterio de parada. El impulso necesita el espectro para elegir $\eta$ y $\beta$; Adam estima una escala por coordenada a partir de los gradientes que va viendo. Sobre una cuadrática diagonal esa estimación acaba pareciéndose a $1/\sqrt{\lambda}$ en cada coordenada, que es exactamente lo que el impulso obtiene de conocer el espectro. ∎
+:::
+
+**Modo de falla.** Como el primer paso de Adam vale $\eta$ sea cual sea el gradiente, un $\eta$ pensado para el descenso es catastrófico con Adam y al revés: son escalas distintas y el mismo nombre. Y como Adam avanza igual con gradientes minúsculos, sigue moviéndose cuando ya no hay señal, lo que en una meseta plana produce un paseo que se confunde con exploración. La defensa es no reutilizar tasas entre optimizadores y vigilar la norma del paso, no la del gradiente.
+
+```{pyodide}
+import numpy as np
+
+LAM = np.array([0.5, 1.0, 3.0, 20.0])
+A = np.diag(LAM)
+b = np.array([1.0, -2.0, 0.5, 3.0])
+x_opt = b / LAM
+x0 = np.array([5.0, 5.0, 5.0, 5.0])
+
+def grad(x, escala=1.0):
+    return escala * (A.dot(x) - b)
+
+def adam(eta, pasos, x_ini, b1=0.9, b2=0.999, eps=1e-8, escala=1.0, corrige=True):
+    x = x_ini.copy()
+    m = np.zeros(len(x)); v = np.zeros(len(x))
+    for k in range(1, pasos + 1):
+        g = grad(x, escala)
+        m = b1 * m + (1 - b1) * g
+        v = b2 * v + (1 - b2) * g * g
+        if corrige:
+            mh = m / (1 - b1 ** k); vh = v / (1 - b2 ** k)
+        else:
+            mh, vh = m, v
+        x = x - eta * mh / (np.sqrt(vh) + eps)
+    return x
+
+print("el primer paso de Adam no mira cuanto vale el gradiente")
+g = np.array([1e-4, 1.0, 1e3, -7.0])
+b1, b2, eps, eta = 0.9, 0.999, 1e-8, 0.1
+m1 = (1 - b1) * g / (1 - b1)          # con correccion de sesgo, m_1 = g
+v1 = (1 - b2) * g * g / (1 - b2)      # y v_1 = g*g
+paso = eta * m1 / (np.sqrt(v1) + eps)
+print("  %-14s %14s %16s" % ("gradiente", "paso de Adam", "paso de SGD eta=0.1"))
+for i in range(len(g)):
+    print("  %-14.4g %14.9f %16.4g" % (g[i], paso[i], eta * g[i]))
+print()
+print("los cuatro pasos valen %.6f en valor absoluto aunque los gradientes"
+      % abs(paso[1]))
+print("vayan de 1e-4 a 1e3: en el primer paso m_1 = g y v_1 = g*g, asi que")
+print("el cociente vale eta * signo(g) salvo por epsilon")
+print()
+
+print("que hace la correccion de sesgo en los primeros pasos")
+print("  %-6s %18s %18s %12s" % ("paso", "con correccion", "sin correccion", "cociente"))
+for k in (1, 2, 5, 20, 100):
+    con = adam(0.1, k, x0)
+    sin = adam(0.1, k, x0, corrige=False)
+    dc = np.linalg.norm(con - x0); ds = np.linalg.norm(sin - x0)
+    print("  %-6d %18.9f %18.9f %12.4f" % (k, dc, ds, ds / dc if dc else 0))
+print()
+print("en el primer paso, sin correccion m_1 vale (1-b1)*g = 0.1*g y v_1")
+print("vale (1-b2)*g*g = 0.001*g*g, de modo que el cociente sale")
+print("0.1/raiz(0.001) = %.4f veces mayor de lo debido" % (0.1 / np.sqrt(0.001)))
+print("y esa es exactamente la diferencia medida arriba")
+print()
+
+print("Adam no cambia si se multiplica la funcion entera por una constante")
+print("  %-16s %20s %20s" % ("escala de f", "distancia al optimo", "dif. con escala 1"))
+ref = None
+for esc in (1.0, 1e3, 1e-3):
+    xk = adam(0.1, 300, x0, eps=0.0, escala=esc)
+    d = np.linalg.norm(xk - x_opt)
+    if ref is None:
+        ref = xk
+        print("  %-16.0e %20.12f %20s" % (esc, d, "-"))
+    else:
+        print("  %-16.0e %20.12f %20.3e" % (esc, d, np.linalg.norm(xk - ref)))
+print()
+print("con epsilon = 0 las tres trayectorias son la misma hasta el")
+print("redondeo: el cociente m/raiz(v) es invariante al reescalar. Con")
+print("el epsilon de verdad esa invariancia se rompe cuando el gradiente")
+print("se acerca a el")
+print("  %-16s %20s" % ("escala de f", "distancia, con eps=1e-8"))
+for esc in (1.0, 1e-3, 1e-6):
+    print("  %-16.0e %20.12f" % (esc, np.linalg.norm(adam(0.1, 300, x0, escala=esc) - x_opt)))
+print()
+
+print("cuantos pasos necesita cada metodo para bajar de 1e-8")
+print("  %-26s %10s %18s" % ("metodo", "pasos", "error final"))
+def cuenta_gd(eta, beta, tope):
+    x, ant, n = x0.copy(), x0.copy(), 0
+    while np.linalg.norm(x - x_opt) > tope and n < 200000:
+        nuevo = x - eta * grad(x) + beta * (x - ant)
+        ant, x = x, nuevo; n += 1
+    return n, np.linalg.norm(x - x_opt)
+
+def cuenta_adam(eta, tope, x_ini, esc=1.0, b1=0.9, b2=0.999, eps=1e-8):
+    x = x_ini.copy(); m = np.zeros(len(x)); v = np.zeros(len(x)); k = 0
+    while np.linalg.norm(x - x_opt) > tope and k < 200000:
+        k += 1
+        g = grad(x, esc)
+        m = b1 * m + (1 - b1) * g
+        v = b2 * v + (1 - b2) * g * g
+        x = x - eta * (m / (1 - b1 ** k)) / (np.sqrt(v / (1 - b2 ** k)) + eps)
+    return k, np.linalg.norm(x - x_opt)
+
+n1, e1 = cuenta_gd(2.0 / (0.5 + 20.0), 0.0, 1e-8)
+n2, e2 = cuenta_gd(4.0 / (np.sqrt(20.0) + np.sqrt(0.5)) ** 2, 0.52845, 1e-8)
+n3, e3 = cuenta_adam(0.1, 1e-8, x0)
+print("  %-26s %10d %18.3e" % ("descenso, paso optimo", n1, e1))
+print("  %-26s %10d %18.3e" % ("impulso, ambos optimos", n2, e2))
+print("  %-26s %10d %18.3e" % ("Adam, eta=0.1", n3, e3))
+print()
+print("sobre esta cuadratica Adam necesita %d pasos contra los %d del" % (n3, n2))
+print("impulso con sus dos parametros puestos en el optimo teorico. El")
+print("impulso gana porque aqui se conocen lmin y lmax; sin ellos no hay")
+print("con que elegir el paso ni el impulso, y Adam no los necesita")
+print()
+
+print("cuando las coordenadas tienen escalas muy distintas")
+LAM2 = np.array([1e-3, 1.0, 1e3])
+A2 = np.diag(LAM2); b2v = np.array([1.0, 1.0, 1.0])
+x2_opt = b2v / LAM2
+x2_0 = np.zeros(3)
+print("  autovalores %s, k = %.0e" % (LAM2.tolist(), LAM2.max() / LAM2.min()))
+
+def baja(metodo, tope=1e-3):
+    x, ant, m, v, k = x2_0.copy(), x2_0.copy(), np.zeros(3), np.zeros(3), 0
+    rel = lambda z: np.linalg.norm(z - x2_opt) / np.linalg.norm(x2_opt)
+    while rel(x) > tope and k < 300000:
+        k += 1
+        g = A2.dot(x) - b2v
+        if metodo == "sgd":
+            x = x - (2.0 / (LAM2.min() + LAM2.max())) * g
+        elif metodo == "impulso":
+            be = ((np.sqrt(1e6) - 1) / (np.sqrt(1e6) + 1)) ** 2
+            nuevo = x - (4.0 / (np.sqrt(LAM2.max()) + np.sqrt(LAM2.min())) ** 2) * g + be * (x - ant)
+            ant, x = x, nuevo
+        else:
+            m = 0.9 * m + 0.1 * g
+            v = 0.999 * v + 0.001 * g * g
+            x = x - 0.5 * (m / (1 - 0.9 ** k)) / (np.sqrt(v / (1 - 0.999 ** k)) + 1e-8)
+    return k, rel(x)
+
+print("  %-26s %10s %18s %10s" % ("metodo", "pasos", "error relativo", "llego"))
+for nombre, met in (("descenso, paso optimo", "sgd"), ("impulso, ambos optimos", "impulso"),
+                    ("Adam, eta=0.5", "adam")):
+    k, r = baja(met)
+    print("  %-26s %10d %18.3e %10s" % (nombre, k, r, "si" if r <= 1e-3 else "NO"))
+print()
+print("con condicion 1e6 el descenso con paso fijo agota los trescientos")
+print("mil pasos y se queda con un error relativo del 55 %. El impulso y")
+print("Adam llegan los dos, en unos 4600 pasos cada uno: sesenta veces")
+print("menos. Y ahi esta el interes de Adam, que empata con el impulso")
+print("SIN que se le hayan dado lmin ni lmax, que es lo que el impulso")
+print("necesita para elegir sus dos parametros y lo que en un problema")
+print("real no se conoce")
+```
+
+## 5. Contraste: el método que sí termina
+
+::: {.proposicion}
+**Proposición 39.16 (el gradiente conjugado termina).** Sobre una cuadrática, el [gradiente conjugado]{.g} alcanza el mínimo exacto en tantos pasos como **autovalores distintos** tenga $A$. Medido: 4 pasos con autovalores $\{0{,}5,1,3,20\}$, **2** con $\{0{,}5,0{,}5,3,3\}$ y **1** con los cuatro iguales. Los cuatro métodos —el escrito a mano, BFGS y CG de la librería, y la solución exacta de $Ax=b$— coinciden a 6 decimales.
+:::
+
+::: {.demostracion}
+*Demostración.* El método construye direcciones conjugadas respecto de $A$ y en el paso $k$ minimiza $f$ sobre el subespacio de Krylov generado por el residuo inicial; ese subespacio deja de crecer cuando su dimensión alcanza el número de autovalores distintos presentes en el residuo, y ahí el mínimo del subespacio es el mínimo global. La celda mide los tres espectros y compara los puntos. Las **cuentas de pasos de la librería cambian de una versión de scipy a otra**, así que lo que aquí se comprueba es el punto al que se llega. ∎
+:::
+
+::: {.proposicion}
+**Proposición 39.17 (por qué eso no sirve con lotes).** La garantía exige el gradiente exacto. Perturbando el residuo con ruido de desviación típica $10^{-6}$, el error tras los cuatro pasos pasa de estar **por debajo de 1e-10** a **2,362e-04**: ocho órdenes de magnitud por un ruido de seis.
+:::
+
+::: {.demostracion}
+*Demostración.* La conjugación de las direcciones es una propiedad algebraica exacta del residuo; un residuo perturbado genera direcciones que ya no son conjugadas y la minimización sobre el subespacio deja de ser exacta, sin ningún mecanismo que recupere lo perdido en pasos posteriores. La celda lo mide con tres niveles de ruido; con $10^{-3}$ el error final vale 7,073e-01. **Un método que no promedia sus errores no puede usarse con gradientes que son una muestra.** ∎
+:::
+
+```{pyodide}
+import numpy as np
+from scipy.optimize import minimize
+
+# Sobre una cuadratica hay un metodo que termina en un numero exacto de
+# pasos. Se escribe entero y se compara con la libreria.
+LAM = np.array([0.5, 1.0, 3.0, 20.0])
+A = np.diag(LAM)
+b = np.array([1.0, -2.0, 0.5, 3.0])
+x_opt = b / LAM
+x0 = np.array([5.0, 5.0, 5.0, 5.0])
+
+def gradiente_conjugado(A, b, x0, pasos):
+    x = x0.copy()
+    r = b - A.dot(x)          # el residuo, que es menos el gradiente
+    p = r.copy()
+    hist = [np.max(np.abs(x - x_opt))]
+    for _ in range(pasos):
+        Ap = A.dot(p)
+        alfa = float(np.dot(r, r) / np.dot(p, Ap))
+        x = x + alfa * p
+        r_nuevo = r - alfa * Ap
+        beta = float(np.dot(r_nuevo, r_nuevo) / np.dot(r, r))
+        p = r_nuevo + beta * p
+        r = r_nuevo
+        hist.append(np.max(np.abs(x - x_opt)))
+    return x, hist
+
+# Por debajo de 1e-10 lo que queda son digitos de redondeo, que cambian
+# de una version de numpy a otra: se dice que estan por debajo y ya (regla 7).
+def muestra(e):
+    return "< 1e-10" if e < 1e-10 else "%.3e" % e
+
+print("el gradiente conjugado, escrito entero, sobre 4 autovalores distintos")
+x_cg, hist = gradiente_conjugado(A, b, x0, 6)
+print("  %-8s %22s" % ("paso", "mayor error coordenada"))
+for k, e in enumerate(hist):
+    print("  %-8d %22s" % (k, muestra(e)))
+print()
+print("en el paso 4 el error cae al redondeo y se queda. El metodo termina")
+print("en tantos pasos como autovalores DISTINTOS tenga A, y aqui son %d"
+      % len(set(LAM.tolist())))
+print()
+
+print("y con autovalores repetidos termina antes")
+for lam in ([0.5, 0.5, 3.0, 3.0], [2.0, 2.0, 2.0, 2.0]):
+    Ar = np.diag(lam)
+    x_opt_r = b / np.array(lam)
+    xr = x0.copy(); r = b - Ar.dot(xr); pr = r.copy()
+    pasos = 0
+    while np.max(np.abs(xr - x_opt_r)) > 1e-12 and pasos < 20:
+        Ap = Ar.dot(pr)
+        al = float(np.dot(r, r) / np.dot(pr, Ap))
+        xr = xr + al * pr
+        rn = r - al * Ap
+        be = float(np.dot(rn, rn) / np.dot(r, r))
+        pr = rn + be * pr; r = rn
+        pasos += 1
+    print("  autovalores %-22s distintos %d  pasos hasta 1e-12: %d"
+          % (str(lam), len(set(lam)), pasos))
+print()
+
+# A 9 decimales los digitos de scipy cambian de una version a otra; a 6
+# los cuatro puntos son el mismo (regla 7).
+print("el contraste con la libreria: el mismo punto, a 6 decimales")
+r_bfgs = minimize(lambda z: 0.5 * float(np.dot(z, A.dot(z))) - float(np.dot(b, z)),
+                  x0, jac=lambda z: A.dot(z) - b, method="BFGS", tol=1e-14)
+r_cg = minimize(lambda z: 0.5 * float(np.dot(z, A.dot(z))) - float(np.dot(b, z)),
+                x0, jac=lambda z: A.dot(z) - b, method="CG", tol=1e-14)
+print("  solucion exacta de A x = b     :", np.round(x_opt, 6).tolist())
+print("  gradiente conjugado a mano     :", np.round(x_cg, 6).tolist())
+print("  scipy BFGS                     :", np.round(r_bfgs.x, 6).tolist())
+print("  scipy CG                       :", np.round(r_cg.x, 6).tolist())
+print()
+print("  coinciden con la exacta a 6 decimales")
+for nombre, z in (("a mano", x_cg), ("scipy BFGS", r_bfgs.x), ("scipy CG", r_cg.x)):
+    print("    %-16s %s" % (nombre, bool(np.max(np.abs(z - x_opt)) < 5e-7)))
+print()
+print("las cuentas de pasos de la libreria cambian de una version de scipy")
+print("a otra, asi que aqui se comprueba el punto al que llegan y no el")
+print("camino que siguen")
+print()
+
+print("lo que el gradiente conjugado cuesta, y por que no se usa en redes")
+print("  guarda tres vectores: x, el residuo y la direccion")
+print("  pero exige el gradiente EXACTO en cada paso: con un lote al azar")
+print("  las direcciones dejan de ser conjugadas y la garantia se cae")
+Ar = A
+for tam, ruido in ((0.0, "sin ruido"), (1e-6, "ruido 1e-6"), (1e-3, "ruido 1e-3")):
+    rng = np.random.default_rng(4)
+    x = x0.copy(); r = b - Ar.dot(x); p = r.copy()
+    for _ in range(4):
+        Ap = Ar.dot(p)
+        al = float(np.dot(r, r) / np.dot(p, Ap))
+        x = x + al * p
+        rn = b - Ar.dot(x) + tam * rng.standard_normal(4)
+        be = float(np.dot(rn, rn) / np.dot(r, r))
+        p = rn + be * p; r = rn
+    print("  %-14s error tras 4 pasos: %s" % (ruido, muestra(np.max(np.abs(x - x_opt)))))
+```
+
+## 6. Lo que esta lección no resuelve
+
+Todo se ha medido sobre cuadráticas, donde la hessiana es constante y el mínimo se conoce. En una red la hessiana cambia con el punto, tiene autovalores negativos y su condición varía a lo largo del entrenamiento, de modo que $\kappa$ deja de ser un número y pasa a ser una película. Lo que sobrevive del análisis es la forma de las cotas, no sus valores.
+
+Tampoco se han tratado los programas de tasa que se usan de verdad —calentamiento, coseno, reinicios—, ni la interacción entre la tasa y el tamaño del lote, ni AdamW, cuya diferencia con Adam está en dónde se aplica la regularización y pertenece a la lección siguiente. Y no se ha demostrado el resultado que dice que Adam puede no converger en problemas convexos sencillos: exige construir la sucesión de gradientes que lo rompe, y con ella la lección sería otra.
+
+## Ejercicios
+
+### Ejercicio 1, El paso máximo y el óptimo
+
+Para una cuadrática con autovalores 0,2 y 8, calcular el paso máximo que converge, el paso óptimo, el factor por paso con el óptimo y cuántos pasos hacen falta para que el error se divida por mil.
+
+```{pyodide}
+#| exercise: ex_paso
+import numpy as np
+
+lmin, lmax = 0.2, 8.0
+
+maximo = ______
+optimo = ______
+factor = ______
+
+pasos = 0
+resto = 1.0
+while resto > 1e-3:
+    ______
+    ______
+
+print(round(maximo, 4), round(optimo, 6), round(factor, 6), pasos)
+```
+
+::: {.hint exercise="ex_paso"}
+El paso máximo es $2/\lambda_{\max}$ y el óptimo $2/(\lambda_{\min}+\lambda_{\max})$; el factor con el óptimo es $(\kappa-1)/(\kappa+1)$.
+:::
+
+::: {.solution exercise="ex_paso"}
+```{pyodide}
+import numpy as np
+
+lmin, lmax = 0.2, 8.0
+
+maximo = 2.0 / lmax
+optimo = 2.0 / (lmin + lmax)
+factor = (lmax / lmin - 1) / (lmax / lmin + 1)
+
+pasos = 0
+resto = 1.0
+while resto > 1e-3:
+    resto = resto * factor
+    pasos = pasos + 1
+
+print(round(maximo, 4), round(optimo, 6), round(factor, 6), pasos)
+```
+
+El paso máximo es 0,25 y el óptimo 0,243902, que está muy cerca de él: con $\kappa=40$ el paso óptimo casi toca el borde de la divergencia. El factor vale 0,95122 y hacen falta **139** pasos para dividir el error por mil. Con impulso el factor sería 0,726946 y bastarían 22.
+:::
+
+```{pyodide}
+#| exercise: ex_paso
+#| check: true
+if (round(maximo, 4) == 0.25 and round(optimo, 6) == 0.243902
+        and round(factor, 6) == 0.95122 and pasos == 139):
+    feedback = {"correct": True, "message": "Correcto: 0.25, 0.243902, factor 0.95122 y 139 pasos."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 0.25, 0.243902, 0.95122 y 139."}
+feedback
+```
+
+### Ejercicio 2, La meseta del ruido
+
+Con la Proposición 39.9, calcular la meseta $\sqrt{\eta\sigma^{2}/(m\lambda(2-\eta\lambda))}$ para $\eta=0{,}2$, $m=20$, $\lambda=1$ y $\sigma^{2}=1$, y el lote que la divide por diez sin tocar el paso.
+
+```{pyodide}
+#| exercise: ex_meseta
+import numpy as np
+
+eta, m, lam, s2 = 0.2, 20, 1.0, 1.0
+
+def meseta(eta, m, lam, s2):
+    return ______
+
+actual = ______
+lote = ______
+
+print(round(actual, 6), lote, round(meseta(eta, lote, lam, s2), 6))
+```
+
+::: {.hint exercise="ex_meseta"}
+La meseta va como $1/\sqrt{m}$, así que dividirla por diez exige multiplicar el lote por cien.
+:::
+
+::: {.solution exercise="ex_meseta"}
+```{pyodide}
+import numpy as np
+
+eta, m, lam, s2 = 0.2, 20, 1.0, 1.0
+
+def meseta(eta, m, lam, s2):
+    return np.sqrt(eta * s2 / (m * lam * (2 - eta * lam)))
+
+actual = meseta(eta, m, lam, s2)
+lote = m * 100
+
+print(round(actual, 6), lote, round(meseta(eta, lote, lam, s2), 6))
+```
+
+La meseta vale 0,074536 y hace falta un lote de **2000** para bajarla a 0,007454. Cien veces más gradientes por paso para ganar un factor diez en precisión: ese es el trato que hace que, cuando lo que se cuenta es el trabajo, el lote pequeño no pierda.
+:::
+
+```{pyodide}
+#| exercise: ex_meseta
+#| check: true
+if round(actual, 6) == 0.074536 and lote == 2000:
+    feedback = {"correct": True, "message": "Correcto: meseta 0.074536 y lote de 2000 para dividirla por diez."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 0.074536 y un lote de 2000."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **ML 39**:
+
+1. Escribir el descenso con paso fijo sobre una cuadrática de espectro elegido y comprobar la forma cerrada $(I-\eta A)^{k}$ para cinco pasos distintos, incluido uno que diverja. Anotar el paso máximo y el óptimo.
+2. Escribir el impulso y medir cuántos pasos necesita para 1e-8 con $\kappa$ igual a 10, 100 y 1000. Comparar con $(\sqrt{\kappa}-1)/(\sqrt{\kappa}+1)$.
+3. Medir la meseta del paso fijo estocástico con tres pasos y tres tamaños de lote, y comprobar la predicción con la corrección $\tfrac{N-m}{N-1}$. Guardar en `50-Errores/` el caso en que la predicción falle y la razón.
+
+## Del libro
+
+MML §7.1 *Optimization Using Gradient Descent* plantea el descenso con paso fijo sobre una cuadrática, deriva la condición sobre el paso a partir del espectro de la matriz y presenta el impulso y el descenso estocástico como las dos modificaciones que atacan, respectivamente, el mal condicionamiento y el coste por paso. Esta lección sigue ese orden y añade la medición de cada cota.
+
+## Para el Cerebro
+
+- El error del paso fijo es **exactamente** $(I-\eta A)^{k}(x_0-x^{*})$, no una aproximación.
+- Converge si y solo si $0<\eta<2/\lambda_{\max}$. Con $\eta=0{,}101$ y $\lambda_{\max}=20$: error $2{,}5\times10^{2}$ tras 200 pasos.
+- Paso óptimo $2/(\lambda_{\min}+\lambda_{\max})$, factor $(\kappa-1)/(\kappa+1)$. Con $\kappa=40$: **404 pasos**.
+- El impulso cambia $\kappa$ por $\sqrt{\kappa}$: **79 pasos**. Y exige $\beta<1$.
+- El gradiente de un lote es insesgado (**1,3e-15**) y disperso (un lote se desvía **1,38** de una norma de 3,59).
+- Con paso fijo el iterado ronda una meseta proporcional al paso: **4,60 y 17,73**.
+- El lote sigue $\tfrac1m\cdot\tfrac{N-m}{N-1}$: **16,84 medido, 16,00 predicho**.
+- El primer paso de Adam vale $\eta$ para gradientes de **1e-4 a 1e3**.
+- Sin corrección de sesgo, ese primer paso es **3,1623 veces mayor**.
+- Con $\varepsilon=0$ Adam es **exactamente invariante** al reescalar $f$.
+- El gradiente conjugado termina en tantos pasos como **autovalores distintos**: 4, 2 y 1.
+- Un ruido de **1e-6** en el gradiente le cuesta **ocho órdenes de magnitud**.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico: que la simulación y $(I-\eta A)^{k}$ coinciden en los cinco pasos probados; que con $\eta=0{,}101$ el error tras 200 pasos vale 2,546e+02; que el paso óptimo da factor 0,951220 y 404 pasos contra 1943 con 0,02; que simulación y matriz compañera coinciden con diferencia relativa por debajo de 1e-12 para los cuatro valores de $\beta$; que el impulso óptimo da 79 pasos y factor 0,726946, con cociente de logaritmos 6,38; que con $\beta$ igual a 0,90, 0,99, 1 y 1,01 el error tras 300 pasos vale 1,2467e-06, 2,1692, 8,6468 y 40,610; que la media de los 8 lotes reproduce el gradiente total con diferencia 1,332e-15 y que un lote se desvía hasta 1,383111 de una norma de 3,586920; que la distancia cuadrática media vale 3,218736e-03, 7,004115e-04 y 1,815571e-04 para los tres pasos, y 1,266111e-04 con paso decreciente; que los cocientes por tamaño de lote valen 4,03, 4,74 y 16,84 contra 4,16, 4,75 y 16,00 predichos; que los cuatro primeros pasos de Adam valen 0,1 en valor absoluto; que sin corrección de sesgo el primero es 3,1623 veces mayor y tras 100 pasos el factor es 1,0259; que con $\varepsilon=0$ las tres escalas dan la misma trayectoria y con $\varepsilon=10^{-8}$ la distancia pasa de 0,000003374140 a 0,000004147533; que Adam necesita 410 pasos contra 79 del impulso, y que con $\kappa=10^{6}$ el descenso agota 300 000 pasos con error relativo 5,488e-01 mientras impulso y Adam llegan en 4617 y 4644; que el gradiente conjugado termina en 4, 2 y 1 pasos según los autovalores distintos; que los cuatro métodos coinciden a 6 decimales; y que con ruido 1e-6 y 1e-3 el error tras cuatro pasos vale 2,362e-04 y 7,073e-01.
+
+**Lo que viene de los libros.** De MML §7.1, el planteamiento del descenso sobre una cuadrática, la condición sobre el paso deducida del espectro, y el impulso y el descenso estocástico como las dos modificaciones clásicas. La sección se cita por su número y su título; no se reproduce su texto.
+
+**Lo que es mío, no del libro.** La decisión de medirlo todo sobre una cuadrática de espectro conocido para poder **comprobar cada cota contra una fórmula** en lugar de ilustrarla; la resolución del impulso mediante la matriz compañera de 2×2, que convierte la afirmación sobre $\sqrt{\kappa}$ en algo verificable paso a paso; la corrección por población finita de la Proposición 39.10, que apareció al ver que el último salto medía 16,84 donde yo esperaba 4 y que resultó estar predicha; la demostración de que la corrección de sesgo de Adam **reduce** el primer paso en 3,1623, que es lo contrario de lo que yo había escrito antes de medirlo; el experimento de invariancia de escala con $\varepsilon=0$ y con $\varepsilon$ real; y la sección 5 entera, que existe porque la comparación honesta de Adam contra el impulso con parámetros óptimos la gana el impulso, y hacía falta enseñar qué se compra a cambio.
+:::

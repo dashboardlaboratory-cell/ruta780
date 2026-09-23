@@ -127,6 +127,7 @@ MIGRADAS = {
     "ml/36-backpropagation.qmd",
     "ml/37-red-densa-desde-cero.qmd",
     "ml/38-inicializacion-y-activaciones.qmd",
+    "ml/39-optimizadores.qmd",
     "series/01-descomposicion.qmd",
     "series/02-estacionariedad.qmd",
     "series/03-autocorrelacion.qmd",
