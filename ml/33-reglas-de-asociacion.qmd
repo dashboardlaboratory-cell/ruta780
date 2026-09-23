@@ -1,0 +1,704 @@
+---
+title: "Reglas de asociación y market basket"
+subtitle: "Machine Learning · Lección 33"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [estadistica/05-covarianza-correlacion, ml/12-arboles-de-decision, ml/21-clustering]
+siguientes: []
+libro: "ESL §14.2 Association Rules"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - scikit-learn
+---
+
+::: {.meta-leccion data-leccion="ml/33-reglas-de-asociacion"}
+[[L3]{.nivel .nivel-L3} **ESL 14**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ESL §14.2]{.item}
+[**Prereqs** [Covarianza](../estadistica/05-covarianza-correlacion.qmd) · [Árboles](12-arboles-de-decision.qmd) · [Clustering](21-clustering.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir el soporte, la confianza y el [lift]{.g}, y decir qué mide cada uno.
+2. **Demostrar que la confianza sola no informa**: una regla dice algo solo si su confianza supera la frecuencia del consecuente.
+3. **Demostrar el principio a priori** —el soporte no sube al añadir artículos— y medir cuánto poda.
+4. Comprobar que la poda no cambia el resultado, enfrentándola a los $2^p-1$ subconjuntos.
+5. Medir cuántas reglas de confianza alta son en realidad señales negativas.
+6. **Demostrar que separar los datos de una copia sin dependencias estima el lift**, y comprobarlo con `scikit-learn`.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Estadística 5**: la independencia y la covarianza, de las que el lift es la versión para sucesos.
+- **Machine Learning 12**: los árboles, que aquí sirven para estimar una razón de momios.
+- **Machine Learning 21**: el aprendizaje no supervisado, del que esto es el caso de variables binarias.
+- **Estadística 2**: la probabilidad condicional, que es exactamente la confianza.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 34**: el clustering avanzado, que ataca el mismo problema no supervisado sin reducirlo a reglas.
+- **Machine Learning 22**: las pruebas múltiples, que es el problema que aparece al mirar miles de reglas a la vez.
+- **Estadística 16**: el lift en su versión de evaluación, que es la misma cuenta con otro nombre.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | El número de cestas |
+| $p$ | pe | El número de artículos distintos |
+| $\mathcal{A},\mathcal{B}$ | a y be caligráficas | Conjuntos de artículos |
+| $\operatorname{sop}(\mathcal{A})$ | sop de A | La fracción de cestas que contienen todo $\mathcal{A}$; no es el soporte de una distribución |
+| $\operatorname{conf}$ | conf | La confianza de una regla; nada que ver con la de un intervalo de confianza |
+| $\operatorname{lift}$ | lift | La confianza dividida por la frecuencia del consecuente |
+| $x$ | equis | Una cesta, como vector de ceros y unos |
+| $p_0(x)$ | pe cero de equis | La densidad de la copia sin dependencias |
+| $k$ | ka | El tamaño de un conjunto de artículos |
+:::
+
+## 1. Tres números, y solo dos sirven
+
+::: {.definicion}
+**Definición 33.1 (soporte, confianza y lift).** Para conjuntos de artículos $\mathcal{A}$ y $\mathcal{B}$ disjuntos,
+$$\operatorname{sop}(\mathcal{A})=\frac{\#\{\text{cestas que contienen }\mathcal{A}\}}{n},\qquad
+\operatorname{conf}(\mathcal{A}\Rightarrow\mathcal{B})=\frac{\operatorname{sop}(\mathcal{A}\cup\mathcal{B})}{\operatorname{sop}(\mathcal{A})},$$
+$$\operatorname{lift}(\mathcal{A}\Rightarrow\mathcal{B})=\frac{\operatorname{conf}(\mathcal{A}\Rightarrow\mathcal{B})}{\operatorname{sop}(\mathcal{B})}
+=\frac{\operatorname{sop}(\mathcal{A}\cup\mathcal{B})}{\operatorname{sop}(\mathcal{A})\operatorname{sop}(\mathcal{B})} .$$
+:::
+
+La confianza es la probabilidad condicional $P(\mathcal{B}\mid\mathcal{A})$ estimada por frecuencias. El lift la compara con lo que habría bajo independencia.
+
+::: {.proposicion}
+**Proposición 33.2 (la confianza sola no informa).** $\operatorname{lift}(\mathcal{A}\Rightarrow\mathcal{B})\ge1$ si y solo si $\operatorname{conf}(\mathcal{A}\Rightarrow\mathcal{B})\ge\operatorname{sop}(\mathcal{B})$. En particular, una confianza alta con un consecuente frecuente puede significar que $\mathcal{A}$ hace $\mathcal{B}$ **menos** probable.
+:::
+
+::: {.demostracion}
+*Demostración.* Por definición, $\operatorname{lift}=\operatorname{conf}/\operatorname{sop}(\mathcal{B})$ y $\operatorname{sop}(\mathcal{B})>0$, de modo que dividir conserva la desigualdad. La segunda afirmación es esa equivalencia leída al revés: si $\operatorname{sop}(\mathcal{B})=0{,}93$, una confianza de $0{,}85$ da lift $0{,}914<1$. [∎]{.fin-demo}
+:::
+
+El lift es simétrico —cambiar $\mathcal{A}$ por $\mathcal{B}$ da el mismo número— mientras que la confianza no lo es, y eso ya avisa de que la flecha de una regla no indica causa. Machine Learning 34 y el módulo de inferencia causal vuelven sobre esto.
+
+```{=html}
+<div class="viz-lift">
+  <div class="controles">
+    <label>Frecuencia del consecuente <input id="lf-b" type="range" min="0.05" max="0.95" step="0.01" value="0.93"> <span id="lf-b-v">0.93</span></label>
+    <label>Confianza de la regla <input id="lf-c" type="range" min="0.05" max="0.99" step="0.01" value="0.85"> <span id="lf-c-v">0.85</span></label>
+  </div>
+  <svg id="lf-svg" viewBox="0 0 660 270" role="img" aria-label="El plano de la frecuencia del consecuente contra la confianza, con la diagonal que separa las reglas informativas de las que no lo son y la regla elegida marcada."></svg>
+  <p class="lectura" id="lf-lectura"></p>
+</div>
+<style>
+.viz-lift { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-lift .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-lift label { display: flex; align-items: center; gap: .4rem; }
+.viz-lift input[type=range] { width: 160px; padding: 0; }
+.viz-lift svg { width: 100%; height: auto; display: block; }
+.viz-lift .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("lf-svg"), lec = document.getElementById("lf-lectura");
+  var cb = document.getElementById("lf-b"), cc = document.getElementById("lf-c");
+  var eb = document.getElementById("lf-b-v"), ec = document.getElementById("lf-c-v");
+  var X0 = 58, XW = 400, Y0 = 20, YH = 200;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(u) { return X0 + u * XW; }
+  function py(v) { return Y0 + (1 - v) * YH; }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var sb = +cb.value, cf = +cc.value;
+    eb.textContent = sb.toFixed(2); ec.textContent = cf.toFixed(2);
+    // la region informativa: confianza por encima de la frecuencia del consecuente
+    svg.appendChild(el("path", { d: "M" + px(0) + " " + py(0) + " L" + px(1) + " " + py(1) + " L" + px(0) + " " + py(1) + " Z",
+      fill: C_A, opacity: .12 }));
+    svg.appendChild(el("path", { d: "M" + px(0) + " " + py(0) + " L" + px(1) + " " + py(1) + " L" + px(1) + " " + py(0) + " Z",
+      fill: C_B, opacity: .12 }));
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .7 }));
+    svg.appendChild(el("path", { d: "M" + px(0) + " " + py(0) + " L" + px(1) + " " + py(1), stroke: C_T, "stroke-width": 1.8, "stroke-dasharray": "5 3" }));
+    svg.appendChild(el("circle", { cx: px(sb).toFixed(1), cy: py(cf).toFixed(1), r: 5, fill: C_T }));
+    svg.appendChild(el("text", { x: px(0.04), y: py(0.93), "font-size": 10.5, fill: C_A }, "lift > 1: la regla informa"));
+    svg.appendChild(el("text", { x: px(0.42), y: py(0.10), "font-size": 10.5, fill: C_B }, "lift < 1: señal negativa"));
+    svg.appendChild(el("text", { x: px(0.5), y: Y0 + YH + 16, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .75 }, "frecuencia del consecuente"));
+    svg.appendChild(el("text", { x: X0 - 8, y: Y0 + 6, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .75 }, "conf 1"));
+    svg.appendChild(el("text", { x: X0 - 8, y: Y0 + YH, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .75 }, "conf 0"));
+
+    // la barra del lift, a la derecha
+    var lift = cf / sb, BX = 510, BW = 92;
+    var alto = Math.min(YH, (Math.min(lift, 3) / 3) * YH);
+    svg.appendChild(el("rect", { x: BX, y: Y0, width: BW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .7 }));
+    svg.appendChild(el("rect", { x: BX, y: (Y0 + YH - alto).toFixed(1), width: BW, height: alto.toFixed(1),
+      fill: lift >= 1 ? C_A : C_B, opacity: .55 }));
+    var uno = Y0 + YH - YH / 3;
+    svg.appendChild(el("path", { d: "M" + BX + " " + uno.toFixed(1) + " L" + (BX + BW) + " " + uno.toFixed(1),
+      stroke: C_T, "stroke-width": 1.6, "stroke-dasharray": "4 3" }));
+    svg.appendChild(el("text", { x: BX + BW + 6, y: uno + 4, "font-size": 10.5, fill: C_T, opacity: .75 }, "lift = 1"));
+    svg.appendChild(el("text", { x: BX + BW / 2, y: Y0 + YH + 16, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .75 }, "lift"));
+
+    lec.innerHTML = "Un consecuente que aparece en el <strong>" + (100 * sb).toFixed(0) + " %</strong> de las cestas y una regla con confianza <strong>" +
+      (100 * cf).toFixed(0) + " %</strong> dan lift <strong>" + lift.toFixed(4) + "</strong>. " +
+      (lift >= 1
+        ? "La regla está por encima de la diagonal: el antecedente hace el consecuente más probable, y multiplica sus posibilidades por " + lift.toFixed(2) + "."
+        : "La regla está por debajo de la diagonal: <strong>el antecedente hace el consecuente menos probable</strong>, por mucho que la confianza parezca alta.") +
+      " La diagonal es donde confianza y frecuencia coinciden, o sea la independencia.";
+  }
+  cb.addEventListener("input", dibujar);
+  cc.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. El principio a priori
+
+Buscar conjuntos frecuentes parece imposible: con $p$ artículos hay $2^p-1$ subconjuntos no vacíos, y los catálogos reales tienen miles de artículos. La salida es una propiedad elemental.
+
+::: {.proposicion}
+**Proposición 33.3 (el soporte no sube al añadir artículos).** Si $\mathcal{A}\subseteq\mathcal{A}'$, entonces $\operatorname{sop}(\mathcal{A}')\le\operatorname{sop}(\mathcal{A})$. En consecuencia, **si un conjunto no es frecuente, ninguno de sus superconjuntos lo es**, y no hace falta contarlos.
+:::
+
+::: {.demostracion}
+*Demostración.* Una cesta que contiene $\mathcal{A}'$ contiene en particular $\mathcal{A}$, así que el suceso «contener $\mathcal{A}'$» está incluido en «contener $\mathcal{A}$» y su probabilidad no puede ser mayor. La consecuencia es el contrarrecíproco. [∎]{.fin-demo}
+:::
+
+El algoritmo que sale de ahí recorre los tamaños en orden: cuenta los conjuntos de tamaño uno, se queda con los frecuentes, forma los candidatos de tamaño dos uniendo pares de frecuentes, y así. Un candidato solo se cuenta si **todos** sus subconjuntos de un tamaño menos ya resultaron frecuentes.
+
+```{pyodide}
+import numpy as np
+from itertools import combinations
+
+def cestas(n, p, semilla):
+    """Cestas sinteticas con asociaciones puestas a mano."""
+    rng = np.random.default_rng(semilla)
+    base = rng.uniform(0.08, 0.35, p)
+    X = (rng.random((n, p)) < base).astype(np.int8)
+    # un grupo que aparece junto: 0, 1 y 2
+    junto = rng.random(n) < 0.18
+    X[junto, 0] = X[junto, 1] = X[junto, 2] = 1
+    # un par que aparece junto: 3 y 4
+    par = rng.random(n) < 0.12
+    X[par, 3] = X[par, 4] = 1
+    # el articulo 5 es muy comun; el 7 lo hace MENOS probable
+    X[:, 5] = (rng.random(n) < 0.90).astype(np.int8)
+    X[:, 7] = (rng.random(n) < 0.20).astype(np.int8)
+    con7 = X[:, 7] == 1
+    X[con7, 5] = (rng.random(con7.sum()) < 0.80).astype(np.int8)
+    return X
+
+def soporte(X, conjunto):
+    return float(X[:, list(conjunto)].all(axis=1).mean())
+
+def apriori(X, minimo):
+    """Genera los conjuntos frecuentes por niveles, podando con la Proposicion."""
+    n, p = X.shape
+    frecuentes = {}
+    nivel = [(i,) for i in range(p)]
+    candidatos_por_nivel, k = [], 1
+    while nivel:
+        candidatos_por_nivel.append(len(nivel))
+        sobreviven = []
+        for c in nivel:
+            s = soporte(X, c)
+            if s >= minimo:
+                frecuentes[c] = s
+                sobreviven.append(c)
+        # el nivel siguiente: solo uniones de dos frecuentes que compartan el prefijo
+        nuevo = []
+        for i in range(len(sobreviven)):
+            for j in range(i + 1, len(sobreviven)):
+                a, b = sobreviven[i], sobreviven[j]
+                if a[:-1] == b[:-1]:
+                    cand = a + (b[-1],)
+                    # poda: todos sus subconjuntos de tamano k tienen que ser frecuentes
+                    if all(tuple(sorted(sub)) in frecuentes for sub in combinations(cand, k)):
+                        nuevo.append(cand)
+        nivel, k = nuevo, k + 1
+    return frecuentes, candidatos_por_nivel
+
+n, p, MINIMO = 4000, 16, 0.05
+X = cestas(n, p, 33)
+frec, cands = apriori(X, MINIMO)
+
+print("la poda a priori: un conjunto solo se mira si todos sus trozos son frecuentes")
+print("  tamano   candidatos mirados   todos los del tamano   ahorro")
+total_mirados = 0
+for k, c in enumerate(cands, start=1):
+    todos = len(list(combinations(range(p), k)))
+    total_mirados += c
+    print("    %2d          %8d             %12d     %6.2f %%"
+          % (k, c, todos, 100 * (1 - c / todos)))
+print()
+print("  subconjuntos no vacios de %d articulos : %d" % (p, 2 ** p - 1))
+print("  conjuntos que apriori llego a mirar    : %d" % total_mirados)
+print("  conjuntos frecuentes encontrados       : %d" % len(frec))
+print("  se miro el %.4f %% del total" % (100 * total_mirados / (2 ** p - 1)))
+print()
+
+# --- el oraculo: recorrer los 2^p - 1 subconjuntos sin podar nada ---
+fuerza = {}
+for k in range(1, p + 1):
+    for c in combinations(range(p), k):
+        s = soporte(X, c)
+        if s >= MINIMO:
+            fuerza[c] = s
+print("  a fuerza bruta se encuentran           : %d" % len(fuerza))
+print("  los dos conjuntos coinciden            : %s" % bool(set(fuerza) == set(frec)))
+print("  y los soportes tambien, a diez decimales: %s"
+      % bool(max(abs(fuerza[c] - frec[c]) for c in fuerza) < 5e-11))
+print()
+print("podar no cambia el resultado: cambia cuanto cuesta obtenerlo")
+```
+
+Los dos primeros niveles no ahorran nada —hay que contar los dieciséis artículos y los ciento veinte pares—, pero a partir del tercero la poda muerde: de los $560$ tríos posibles se cuentan $127$, un ahorro del $77{,}32\ \%$; de los $1820$ cuartetos, $24$, o sea el $98{,}68\ \%$. En total **se miran $290$ de los $65535$ subconjuntos, el $0{,}4425\ \%$**.
+
+Y lo que importa: los $145$ conjuntos frecuentes son exactamente los mismos que encuentra la fuerza bruta, con los mismos soportes. La poda no es una aproximación; es una forma de no contar lo que ya se sabe que no puede pasar el umbral.
+
+```{=html}
+<div class="viz-reticulo">
+  <div class="controles">
+    <label>Soporte mínimo <input id="rt-s" type="range" min="0.05" max="0.45" step="0.01" value="0.18"> <span id="rt-s-v">0.18</span></label>
+    <label>Cuánto van juntos A y B <input id="rt-d" type="range" min="0" max="0.5" step="0.02" value="0.30"> <span id="rt-d-v">0.30</span></label>
+  </div>
+  <svg id="rt-svg" viewBox="0 0 660 310" role="img" aria-label="El retículo de los subconjuntos de cuatro artículos por niveles, con cada nodo marcado como frecuente, contado y descartado, o podado sin contar."></svg>
+  <p class="lectura" id="rt-lectura"></p>
+</div>
+<style>
+.viz-reticulo { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-reticulo .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-reticulo label { display: flex; align-items: center; gap: .4rem; }
+.viz-reticulo input[type=range] { width: 150px; padding: 0; }
+.viz-reticulo svg { width: 100%; height: auto; display: block; }
+.viz-reticulo .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("rt-svg"), lec = document.getElementById("rt-lectura");
+  var cs = document.getElementById("rt-s"), cd = document.getElementById("rt-d");
+  var es = document.getElementById("rt-s-v"), ed = document.getElementById("rt-d-v");
+  var NOM = ["A", "B", "C", "D"], MARG = [0.55, 0.50, 0.40, 0.30];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // soporte de un subconjunto: producto de marginales, con A y B pegados por d
+  function sop(m, d) {
+    var s = 1, i;
+    for (i = 0; i < 4; i++) if (m & (1 << i)) s *= MARG[i];
+    if ((m & 3) === 3) s += d * Math.min(MARG[0], MARG[1]) * (m & 12 ? 0.6 : 1);
+    return Math.min(s, 1);
+  }
+  function bits(m) { var c = 0, i; for (i = 0; i < 4; i++) if (m & (1 << i)) c++; return c; }
+  function nombre(m) { var s = "", i; for (i = 0; i < 4; i++) if (m & (1 << i)) s += NOM[i]; return s; }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var minimo = +cs.value, d = +cd.value;
+    es.textContent = minimo.toFixed(2); ed.textContent = d.toFixed(2);
+
+    // estado de cada nodo: 0 podado, 1 contado y descartado, 2 frecuente
+    var estado = new Array(16).fill(0), m, i, j;
+    estado[0] = 2;
+    for (var k = 1; k <= 4; k++) {
+      for (m = 1; m < 16; m++) {
+        if (bits(m) !== k) continue;
+        var todos = true;
+        for (i = 0; i < 4; i++) if (m & (1 << i)) { if (estado[m ^ (1 << i)] !== 2) todos = false; }
+        if (!todos) { estado[m] = 0; continue; }
+        estado[m] = sop(m, d) >= minimo ? 2 : 1;
+      }
+    }
+    var filas = [[], [], [], [], []];
+    for (m = 1; m < 16; m++) filas[bits(m)].push(m);
+    var pos = {};
+    for (k = 1; k <= 4; k++) {
+      var fila = filas[k], ancho = 560 / (fila.length + 1);
+      for (j = 0; j < fila.length; j++) pos[fila[j]] = [50 + ancho * (j + 1), 40 + (k - 1) * 62];
+    }
+    for (m = 1; m < 16; m++) {
+      if (bits(m) < 2) continue;
+      for (i = 0; i < 4; i++) if (m & (1 << i)) {
+        var pa = pos[m ^ (1 << i)], pb = pos[m];
+        if (pa && pb) svg.appendChild(el("path", { d: "M" + pa[0].toFixed(1) + " " + pa[1] + " L" + pb[0].toFixed(1) + " " + pb[1],
+          stroke: C_L, "stroke-width": 1, opacity: .55 }));
+      }
+    }
+    var cuenta = [0, 0, 0];
+    for (m = 1; m < 16; m++) {
+      var q = pos[m], e = estado[m], sm = sop(m, d);
+      cuenta[e]++;
+      // el radio lleva el soporte: los nodos crecen y encogen con los datos
+      var rad = 7 + 16 * Math.sqrt(Math.min(sm, 1));
+      svg.appendChild(el("circle", { cx: q[0].toFixed(1), cy: q[1], r: rad.toFixed(1),
+        fill: e === 2 ? C_A : (e === 1 ? C_B : "none"), opacity: e === 0 ? 1 : .28,
+        stroke: e === 0 ? C_L : (e === 2 ? C_A : C_B), "stroke-width": e === 0 ? 1 : 1.6,
+        "stroke-dasharray": e === 0 ? "3 3" : "" }));
+      svg.appendChild(el("text", { x: q[0].toFixed(1), y: q[1] + 4, "text-anchor": "middle", "font-size": 10.5,
+        fill: e === 0 ? C_L : C_T, opacity: e === 0 ? .8 : 1 }, nombre(m)));
+    }
+    // la tira de soportes, con el umbral que se mueve con el control
+    var TY = 282, TX0 = 50, TXW = 500;
+    svg.appendChild(el("path", { d: "M" + TX0 + " " + TY + " L" + (TX0 + TXW) + " " + TY,
+      stroke: C_L, "stroke-width": 1.4 }));
+    for (m = 1; m < 16; m++) {
+      var u = TX0 + Math.min(sop(m, d), 1) * TXW;
+      svg.appendChild(el("path", { d: "M" + u.toFixed(1) + " " + (TY - 7) + " L" + u.toFixed(1) + " " + (TY + 7),
+        stroke: estado[m] === 2 ? C_A : C_B, "stroke-width": 1.6, opacity: .8 }));
+    }
+    var ux = TX0 + minimo * TXW;
+    svg.appendChild(el("path", { d: "M" + ux.toFixed(1) + " " + (TY - 14) + " L" + ux.toFixed(1) + " " + (TY + 14),
+      stroke: C_T, "stroke-width": 2.4 }));
+    svg.appendChild(el("text", { x: (TX0 + TXW + 8), y: TY + 4, "font-size": 10.5, fill: C_T, opacity: .75 }, "soporte"));
+    svg.appendChild(el("text", { x: 600, y: 40, "text-anchor": "end", "font-size": 10.5, fill: C_A }, "frecuente"));
+    svg.appendChild(el("text", { x: 600, y: 53, "text-anchor": "end", "font-size": 10.5, fill: C_B }, "contado y descartado"));
+    svg.appendChild(el("text", { x: 600, y: 66, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .55 }, "podado sin contar"));
+
+    lec.innerHTML = "Con soporte mínimo <strong>" + minimo.toFixed(2) + "</strong>, de los quince subconjuntos hay <strong>" +
+      cuenta[2] + "</strong> frecuentes, " + cuenta[1] + " que hubo que contar para descartarlos y <strong>" + cuenta[0] +
+      "</strong> que <strong>no se contaron</strong>: alguno de sus trozos ya había fallado. " +
+      "Subir el mínimo mueve nodos del verde al rojo, y cada uno que cae arrastra a todos los de arriba que pasan por él. " +
+      "El tamaño de cada círculo es su soporte, y la tira de abajo los pone sobre un eje con el umbral: " +
+      "los que quedan a su izquierda son los que caen. Ahí está el ahorro, y por eso crece con el tamaño.";
+  }
+  cs.addEventListener("input", dibujar);
+  cd.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Cuántas reglas de confianza alta engañan
+
+La Proposición 33.2 dice que la confianza sola no sirve. La cuestión práctica es cuánto importa eso sobre datos reales, y la respuesta es: mucho.
+
+```{pyodide}
+import numpy as np
+from itertools import combinations
+
+def cestas(n, p, semilla):
+    """Cestas sinteticas con asociaciones puestas a mano."""
+    rng = np.random.default_rng(semilla)
+    base = rng.uniform(0.08, 0.35, p)
+    X = (rng.random((n, p)) < base).astype(np.int8)
+    junto = rng.random(n) < 0.18
+    X[junto, 0] = X[junto, 1] = X[junto, 2] = 1        # 0,1,2 van juntos
+    par = rng.random(n) < 0.12
+    X[par, 3] = X[par, 4] = 1                          # 3 y 4 van juntos
+    X[:, 5] = (rng.random(n) < 0.95).astype(np.int8)   # el 5 esta en casi toda cesta
+    X[:, 7] = (rng.random(n) < 0.20).astype(np.int8)
+    con7 = X[:, 7] == 1
+    X[con7, 5] = (rng.random(con7.sum()) < 0.85).astype(np.int8)   # el 7 lo hace MENOS probable
+    return X
+
+def soporte(X, c):
+    return float(X[:, list(c)].all(axis=1).mean())
+
+n, p, MINIMO = 4000, 16, 0.05
+X = cestas(n, p, 33)
+
+# todas las reglas con un solo articulo en el consecuente, sobre conjuntos frecuentes
+reglas = []
+for k in (2, 3):
+    for c in combinations(range(p), k):
+        s = soporte(X, c)
+        if s < MINIMO:
+            continue
+        for b in c:
+            a = tuple(x for x in c if x != b)
+            sa, sb = soporte(X, a), soporte(X, (b,))
+            conf = s / sa
+            reglas.append((conf, conf / sb, s, a, b, sb))
+
+def muestra(titulo, orden, cuantas=5):
+    print(titulo)
+    print("     regla                confianza   P(consecuente)   lift")
+    for conf, lift, s, a, b, sb in orden[:cuantas]:
+        print("     %-18s   %.6f      %.6f     %.6f"
+              % ("{%s} -> {%d}" % (",".join(map(str, a)), b), conf, sb, lift))
+    print()
+
+muestra("las cinco reglas de mayor CONFIANZA", sorted(reglas, reverse=True))
+muestra("las cinco reglas de mayor LIFT", sorted(reglas, key=lambda r: -r[1]))
+
+trampa = [r for r in reglas if r[3] == (7,) and r[4] == 5]
+if trampa:
+    conf, lift, sop, a_, b_, sb = trampa[0]
+    print("la trampa, puesta a proposito en los datos:")
+    print("     {7} -> {5}   confianza %.6f, P(consecuente) %.6f, lift %.6f"
+          % (conf, sb, lift))
+    print("     una confianza del %.0f por ciento que en realidad es una senal NEGATIVA"
+          % (100 * conf))
+    print()
+
+peor = min(reglas, key=lambda r: r[1])
+print("la regla de menor lift de todas:")
+print("     {%s} -> {%d}   confianza %.6f, P(consecuente) %.6f, lift %.6f"
+      % (",".join(map(str, peor[3])), peor[4], peor[0], peor[5], peor[1]))
+print()
+altas = [r for r in reglas if r[0] > 0.8]
+malas = [r for r in altas if r[1] < 1.0]
+print("reglas con confianza por encima de 0.8 : %d" % len(altas))
+print("de esas, con lift por debajo de uno    : %d" % len(malas))
+print()
+print("la confianza sola no dice nada: lift = confianza / P(consecuente), asi que")
+print("una regla informa solo si su confianza supera a la frecuencia del consecuente")
+print("a secas. Con un articulo que esta en el 93 por ciento de las cestas, una")
+print("confianza del 85 por ciento significa que el antecedente lo hace MENOS probable")
+```
+
+Las cinco reglas de mayor confianza tienen todas el mismo consecuente, el artículo $5$, que aparece en el $93{,}1\ \%$ de las cestas; sus lifts rondan $1{,}02$, o sea nada. Las cinco de mayor lift son otras: $\{1,2\}\Rightarrow\{0\}$ con lift $2{,}309809$ encabeza la lista, y las tres primeras son las combinaciones de los artículos $0$, $1$ y $2$ que se plantaron en los datos.
+
+La trampa sale medida: $\{7\}\Rightarrow\{5\}$ tiene **confianza $0{,}850560$ y lift $0{,}913599$**. Ochenta y cinco de cada cien cestas con el artículo $7$ llevan también el $5$, y eso suena a regla fuerte; pero sin el $7$ la proporción sería del $93\ \%$, así que el $7$ **resta**.
+
+El recuento final es el que conviene recordar: de las $58$ reglas con confianza por encima de $0{,}8$, **$28$ tienen lift menor que uno**. Casi la mitad de lo que un umbral de confianza habría sacado a la luz son señales negativas disfrazadas.
+
+## 4. Contraste con la librería
+
+Esta lección es de nivel **L3**, y ese nivel promete implementar el resultado en NumPy puro y **empatar con la librería**. Aquí hay que precisar dos cosas.
+
+La primera es que **ninguna librería del entorno implementa apriori**: `scikit-learn` no trae reglas de asociación. El contraste de la sección 2 se hace por eso contra un oráculo más fuerte que cualquier librería, la enumeración de los $65535$ subconjuntos, y sale exacto.
+
+La segunda es que sí hay dónde usar la librería, y es la idea de ESL §14.2 que convierte el problema en uno supervisado.
+
+::: {.proposicion}
+**Proposición 33.4 (lo no supervisado como supervisado).** Sean $x$ una cesta, $p(x)$ su densidad verdadera y $p_0(x)$ la densidad de una copia con las mismas marginales y sin dependencias. Tómense $n$ cestas reales con etiqueta $1$ y $n$ cestas de referencia con etiqueta $0$. Entonces
+$$\frac{P(\text{real}\mid x)}{1-P(\text{real}\mid x)}=\frac{p(x)}{p_0(x)},$$
+que es el lift de la cesta entera. Estimar esa probabilidad con **cualquier** clasificador estima el lift.
+:::
+
+::: {.demostracion}
+*Demostración.* Por Bayes con priores iguales a $\tfrac12$, $P(\text{real}\mid x)=\frac{\frac12p(x)}{\frac12p(x)+\frac12p_0(x)}$. Dividiendo por su complemento, los factores $\tfrac12$ y el denominador común se cancelan y queda $p(x)/p_0(x)$. Como $p_0$ es el producto de las marginales, ese cociente es la definición de lift aplicada a todos los artículos de la cesta a la vez. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+from itertools import product
+from sklearn.tree import DecisionTreeClassifier
+
+def cestas(n, p, semilla):
+    rng = np.random.default_rng(semilla)
+    base = rng.uniform(0.2, 0.45, p)
+    X = (rng.random((n, p)) < base).astype(np.int8)
+    junto = rng.random(n) < 0.20
+    X[junto, 0] = X[junto, 1] = X[junto, 2] = 1      # 0, 1 y 2 van juntos
+    par = rng.random(n) < 0.15
+    X[par, 3] = X[par, 4] = 1                        # 3 y 4 van juntos
+    return X
+
+p, n = 6, 60000
+X = cestas(n, p, 331)
+
+# la clase de referencia: las mismas marginales y ninguna dependencia, barajando
+# cada columna por separado
+rng = np.random.default_rng(332)
+X0 = np.column_stack([rng.permutation(X[:, j]) for j in range(p)])
+
+# un arbol sin limite de profundidad sobre las dos muestras juntas
+arbol = DecisionTreeClassifier(random_state=0)
+arbol.fit(np.vstack([X, X0]).astype(float), np.r_[np.ones(n), np.zeros(n)])
+
+patrones = np.array(list(product([0, 1], repeat=p)), dtype=float)
+clave = lambda A: (A * (2 ** np.arange(p))).sum(axis=1).astype(int)
+idx = clave(patrones)
+c1 = np.bincount(clave(X), minlength=2 ** p)[idx]
+c0 = np.bincount(clave(X0), minlength=2 ** p)[idx]
+
+q = arbol.predict_proba(patrones)[:, 1]
+momios = q / (1 - q)
+vistos = (c1 >= 200) & (c0 >= 200)
+
+print("la reduccion de ESL 14.2: separar los datos de una copia sin dependencias")
+print("  patrones posibles con %d articulos : %d" % (p, 2 ** p))
+print("  hojas del arbol                    : %d" % arbol.get_n_leaves())
+print("  patrones con al menos 200 de cada  : %d" % int(vistos.sum()))
+print()
+print("  los momios del arbol son el cociente de cuentas, a diez decimales: %s"
+      % bool(np.abs(momios[vistos] - c1[vistos] / c0[vistos]).max() < 5e-11))
+
+marg = X.mean(axis=0)
+p_real = c1 / n
+p_indep = np.prod(np.where(patrones == 1, marg, 1 - marg), axis=1)
+lift = p_real / p_indep
+r = float(np.corrcoef(np.log(momios[vistos]), np.log(lift[vistos]))[0, 1])
+print("  correlacion entre log(momios) y log(lift del patron)            : %.6f" % r)
+print()
+print("  los cinco patrones de mayor lift")
+print("    articulos en la cesta   lift    momios del arbol")
+for i in np.flatnonzero(vistos)[np.argsort(-lift[vistos])][:5]:
+    art = ",".join(str(j) for j in range(p) if patrones[i, j] == 1)
+    print("    {%-12s}      %6.4f       %10.4f" % (art, lift[i], momios[i]))
+print()
+print("los cinco llevan 0, 1 y 2 dentro, que es justo lo que se planto. El arbol")
+print("no sabe nada de reglas de asociacion: solo separa los datos de su copia")
+print("sin dependencias, y sus momios resultan ser el lift de la cesta entera")
+```
+
+El árbol crece hasta $64$ hojas, una por patrón posible, así que sus momios son exactamente el cociente de cuentas entre las dos muestras: la celda lo comprueba a diez decimales. Y ese cociente sigue al lift verdadero con **correlación $0{,}998665$** en el logaritmo, sobre los $59$ patrones vistos al menos doscientas veces en cada muestra.
+
+Los cinco patrones de mayor lift llevan todos los artículos $0$, $1$ y $2$, que son los que se plantaron. El árbol nunca oyó hablar de soporte ni de confianza: solo distingue los datos de una baraja de sí mismos, y eso basta. Lo que la Proposición 33.4 aporta es que ese ejercicio **no es una analogía**, sino el mismo número por otro camino, y que con él se puede usar cualquier método supervisado —con sus variables continuas, sus interacciones y su regularización— donde apriori solo admite cestas de ceros y unos.
+
+## 5. Lo que esta lección no resuelve
+
+- **Las pruebas múltiples.** Mirar miles de reglas y quedarse con las de mayor lift es el escenario de Estadística 17 y de Machine Learning 22. Aquí no se controla nada, y los lifts altos de conjuntos raros son sobre todo ruido.
+- **La dirección de la flecha.** El lift es simétrico, así que una regla no dice qué causa qué. Es la pregunta del módulo de inferencia causal.
+- **Los artículos raros.** Un umbral de soporte descarta por construcción todo lo infrecuente, que a veces es justo lo interesante. ESL comenta las variantes con soportes por artículo.
+- **Las variables continuas.** Apriori exige binarizar, y dónde se corte cambia las reglas. La reducción de la sección 4 evita ese paso.
+- **El coste real.** El ahorro medido es el de este conjunto de datos; con artículos muy correlacionados la poda muerde mucho menos, y existen algoritmos —FP-growth y otros— que evitan generar candidatos.
+
+## Ejercicios
+
+### Ejercicio 1, Cuándo informa una regla
+
+Con la Proposición 33.2, calcular el lift de varias reglas y decidir cuáles informan.
+
+```{pyodide}
+#| exercise: ex_lift
+def lift(confianza, soporte_consecuente):
+    return ______
+
+casos = [(0.85, 0.93), (0.60, 0.25), (0.95, 0.95)]
+for c, s in casos:
+    print(c, s, round(lift(c, s), 6), "informa" if lift(c, s) > 1 else "no informa")
+
+round(lift(0.85, 0.93), 6)
+```
+
+::: {.hint exercise="ex_lift"}
+La definición da $\operatorname{lift}=\operatorname{conf}/\operatorname{sop}(\mathcal{B})$.
+:::
+
+::: {.solution exercise="ex_lift"}
+```{pyodide}
+def lift(confianza, soporte_consecuente):
+    return confianza / soporte_consecuente
+
+casos = [(0.85, 0.93), (0.60, 0.25), (0.95, 0.95)]
+for c, s in casos:
+    print(c, s, round(lift(c, s), 6), "informa" if lift(c, s) > 1 else "no informa")
+
+round(lift(0.85, 0.93), 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_lift
+#| check: true
+if abs(result - 0.913978) < 1e-5:
+    feedback = {"correct": True, "message": "Correcto: 0,913978. La regla con más confianza de las tres es la única que no informa, y la de confianza 0,60 multiplica por 2,4 las posibilidades del consecuente. El tercer caso da exactamente uno: independencia.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.913978 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuánto poda el principio a priori
+
+Con la Proposición 33.3, contar cuántos superconjuntos quedan descartados de golpe cuando un conjunto de tamaño $k$ resulta infrecuente.
+
+```{pyodide}
+#| exercise: ex_poda
+def descartados(p, k):
+    """Superconjuntos propios y no propios de un conjunto de tamano k, con p articulos."""
+    return ______
+
+for k in (1, 2, 3):
+    print(k, descartados(16, k))
+
+descartados(16, 3)
+```
+
+::: {.hint exercise="ex_poda"}
+Un superconjunto se forma eligiendo cualquier subconjunto de los $p-k$ artículos restantes, así que hay $2^{p-k}$.
+:::
+
+::: {.solution exercise="ex_poda"}
+```{pyodide}
+def descartados(p, k):
+    """Superconjuntos propios y no propios de un conjunto de tamano k, con p articulos."""
+    return 2 ** (p - k)
+
+for k in (1, 2, 3):
+    print(k, descartados(16, k))
+
+descartados(16, 3)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_poda
+#| check: true
+if result == 8192:
+    feedback = {"correct": True, "message": "Correcto: 8192, que es la octava parte de los 65536 subconjuntos, descartada por contar uno solo. Un artículo infrecuente se lleva por delante 32768, la mitad del retículo, y por eso conviene empezar por los tamaños pequeños.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 8192 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 33**:
+
+1. Medir cómo cambia el ahorro de la poda al variar el soporte mínimo entre $0{,}01$ y $0{,}2$, y dibujar los conjuntos mirados contra el umbral. Anotar a partir de qué umbral apriori deja de ser viable con dieciséis artículos.
+2. Repetir la sección 3 controlando las pruebas múltiples: quedarse solo con las reglas cuyo lift sea significativo por una prueba exacta, y anotar cuántas de las $28$ señales negativas sobreviven y cuántas de las positivas.
+3. Aplicar la reducción de la sección 4 con un método supervisado más potente y con artículos continuos sin binarizar, y guardar en `50-Errores/` la comparación con las reglas que encuentra apriori sobre los mismos datos binarizados.
+
+## Del libro
+
+**ESL §14.2** plantea el problema del análisis de cestas, define soporte, confianza y lift, presenta el algoritmo apriori con su principio de poda, y después propone la reformulación que convierte el problema no supervisado en uno supervisado comparando los datos con una muestra de referencia sin dependencias.
+
+Esta página mide las tres cosas. La poda, contando cuántos subconjuntos se miran de verdad —$290$ de $65535$— y comprobando contra la fuerza bruta que el resultado es el mismo. El aviso sobre la confianza, con un recuento: $28$ de las $58$ reglas con confianza por encima de $0{,}8$ tienen lift menor que uno. Y la reformulación, demostrando que los momios del clasificador **son** el lift de la cesta y comprobándolo con un árbol que los recupera con correlación $0{,}998665$.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/reglas-de-asociacion.md`, enlazada a [[covarianza-correlacion]], [[arboles-de-decision]] y [[clustering]]. Conviene rehacer a mano la Proposición 33.4: aplicar Bayes con priores iguales ocupa un renglón y deja grabado que **una razón de momios estimada es un cociente de densidades**, que es el truco que reaparece en aprendizaje contrastivo y en la estimación de razones de verosimilitud.
+
+```
+¿Qué es el soporte de un conjunto?::La fracción de cestas que lo contienen entero
+¿Y la confianza de una regla?::El soporte de la unión dividido por el del antecedente
+¿Y el lift?::La confianza dividida por la frecuencia del consecuente
+¿Cuándo informa una regla?::Cuando su confianza supera la frecuencia del consecuente, o sea lift > 1
+¿Es simétrico el lift?::Sí, y por eso una regla no indica causa
+¿Qué dice el principio a priori?::Que el soporte no sube al añadir artículos
+¿Qué permite?::No contar ningún superconjunto de algo infrecuente
+¿Cuánto podó en la lección?::290 subconjuntos mirados de 65535, el 0,4425 %
+¿Cambia el resultado?::No: los 145 conjuntos frecuentes son los mismos que a fuerza bruta
+¿Cuántas reglas de confianza alta engañaban?::28 de 58, con lift menor que uno
+¿Cómo se vuelve supervisado el problema?::Separando los datos de una copia con las marginales barajadas
+¿Qué estiman los momios de ese clasificador?::El lift de la cesta entera
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 33.2 es dividir por un número positivo; la 33.3, que un suceso contenido en otro no puede ser más probable; la 33.4, Bayes con priores iguales. Todo se comprueba: apriori mira $290$ de los $65535$ subconjuntos, el $0{,}4425\ \%$, y encuentra los mismos $145$ conjuntos frecuentes con los mismos soportes que la enumeración completa; $28$ de las $58$ reglas con confianza mayor que $0{,}8$ tienen lift menor que uno, con la trampa plantada dando confianza $0{,}850560$ y lift $0{,}913599$; y los momios del árbol coinciden con el cociente de cuentas a diez decimales y con el lift verdadero con correlación $0{,}998665$.
+
+**Lo que viene de los libros.** De **ESL §14.2** vienen el planteamiento del análisis de cestas, las tres medidas, el algoritmo apriori y la reformulación supervisada. El texto no se reproduce.
+
+**Lo que se usa de otras lecciones sin repetir.** La independencia y su medida son de Estadística 5. Los árboles de clasificación son de Machine Learning 12. La probabilidad condicional es de Estadística 2.
+
+**Lo que se enuncia sin demostrar.** La corrección del paso de generación de candidatos —que unir pares con prefijo común produce todos los candidatos y ninguno repetido— se usa sin demostrar, aunque la celda la comprueba en la práctica al reproducir la fuerza bruta. Y los algoritmos que evitan generar candidatos, como FP-growth, se nombran sin describirlos.
+
+**Lo que es mío, no del libro.** Contar el ahorro nivel a nivel y enfrentarlo a la enumeración completa, que convierte «apriori poda mucho» en $0{,}4425\ \%$. Plantar una trampa en los datos y medirla, junto con el recuento de cuántas reglas de confianza alta son señales negativas. Y llevar la reformulación de §14.2 hasta el final: usar un árbol **sin limitar la profundidad**, que tiene una hoja por patrón y cuyos momios son entonces exactamente el cociente de cuentas, de modo que la proposición deja de ser un argumento asintótico y pasa a comprobarse a diez decimales.
+
+**Lo que esta lección no puede contrastar.** Ninguna librería del entorno implementa apriori, así que el contraste de la sección 2 se hace contra la enumeración de los $2^p-1$ subconjuntos, que es exacta y por tanto más fuerte que una librería. La librería se usa en la sección 4, donde sí hay algo que ella sepa hacer.
+:::

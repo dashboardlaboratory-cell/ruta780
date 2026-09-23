@@ -106,15 +106,15 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 11 | 11 | **11 de 11** | — |
-| Machine Learning | 32 | 90 | **32 de 32** | el resto de ESL y deep learning |
+| Machine Learning | 33 | 90 | **33 de 33** | el resto de ESL y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **102 lecciones** publicadas, **102** cumplen el molde nuevo: cero pendientes
-  de reescritura. Pendientes de **escribir** quedan 72 según el plan.
+- **103 lecciones** publicadas, **103** cumplen el molde nuevo: cero pendientes
+  de reescritura. Pendientes de **escribir** quedan 71 según el plan.
 - **Cuatro módulos cerrados**: Estadística 25/25, Álgebra 18/18, Python 16/16 y
   **Series de tiempo 11/11**, cerrado el 21-09-2026.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
@@ -2939,6 +2939,65 @@ en la regla 9, con una diferencia que conviene registrar: **allí lo encontró l
 comprobación con navegador y aquí lo encontró `visuales.py`**, que es más barato
 y corre antes. El orden bueno de la tubería sigue siendo el mismo, pero la red
 tiene ahora dos mallas en vez de una.
+
+---
+
+### 3.50 ML 33: cuando no hay librería contra la que empatar (22-09-2026)
+
+Reglas de asociación, primera lección donde **el contraste con la librería no
+se puede hacer como siempre**: `scikit-learn` no trae apriori y no hay otra cosa
+en el entorno que lo haga.
+
+La salida no fue rebajar el nivel sino buscar un oráculo **más fuerte** que una
+librería: enumerar los $65535$ subconjuntos sin podar nada. Apriori mira $290$
+de ellos, el $0{,}4425\ \%$, y encuentra los **mismos $145$ conjuntos
+frecuentes con los mismos soportes**. La poda deja de ser una promesa y pasa a
+ser una identidad comprobada. Es el mismo razonamiento que ya se había usado en
+Est 22 y 23 con PyMC: cuando no hay librería, se busca algo exacto.
+
+Y la librería sí entra donde tiene algo que hacer, que es la reformulación de
+ESL §14.2.
+
+> **33.4**: con dos muestras del mismo tamaño, los momios de «este dato es
+> real» valen $p(x)/p_0(x)$, o sea el lift de la cesta entera.
+
+Comprobado con un árbol **sin límite de profundidad**, que tiene una hoja por
+patrón y cuyos momios son por tanto el cociente de cuentas exacto —a diez
+decimales—. Esos momios siguen al lift verdadero con correlación $0{,}998665$ en
+el logaritmo, y los cinco patrones de mayor lift llevan todos los tres artículos
+que se plantaron.
+
+#### La confianza, medida
+
+> **33.2**: una regla informa solo si su confianza supera la frecuencia del
+> consecuente.
+
+Con una trampa puesta a propósito: $\{7\}\Rightarrow\{5\}$ tiene confianza
+$0{,}850560$ y lift $0{,}913599$. Y el recuento que conviene recordar: de las
+$58$ reglas con confianza por encima de $0{,}8$, **$28$ tienen lift menor que
+uno**. Casi la mitad de lo que un umbral de confianza habría sacado a la luz son
+señales negativas disfrazadas.
+
+#### Dos colisiones de glosario en una sola lección
+
+`soporte` ya significa el soporte de una distribución en ocho lecciones, y
+`confianza` aparece dentro de «intervalo de confianza» en varias más. Las dos
+salen del glosario global por la regla 21b y viven en la tabla de notación, que
+ahora dice explícitamente «nada que ver con la de un intervalo de confianza» y
+«no es el soporte de una distribución».
+
+`lift` sí estaba, con el sentido de evaluación de Est 16. Ahí no hacía falta
+sacarlo: **son la misma idea** —lo observado dividido por lo que habría al
+azar—, así que la entrada pasó a nombrar los dos usos en vez de elegir uno.
+
+#### El aviso de la regla 19b, atendido en vez de declarado
+
+El visual del retículo pasó el gate pero con dos avisos: los nodos cambiaban de
+color y **no se movían ni un píxel**. Era cierto, y la respuesta no fue
+declararlos en `QUIETOS`: el radio de cada nodo pasó a ser su soporte y se añadió
+una tira donde los quince soportes caen sobre un eje con el umbral marcado. Ahora
+los dos controles mueven geometría, y de paso el dibujo enseña **por qué** cae
+cada nodo en vez de solo que cae.
 
 ---
 
