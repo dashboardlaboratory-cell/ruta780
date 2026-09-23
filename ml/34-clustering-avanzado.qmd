@@ -1,0 +1,834 @@
+---
+title: "Clustering avanzado: espectral, SOM y NMF"
+subtitle: "Machine Learning · Lección 34"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/21-clustering, ml/19-pca, matematica/11-formas-cuadraticas]
+siguientes: []
+libro: "ESL §14.4 Self-Organizing Maps · §14.5 Principal Components, Curves and Surfaces · §14.6 Non-negative Matrix Factorization"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - scikit-learn
+---
+
+::: {.meta-leccion data-leccion="ml/34-clustering-avanzado"}
+[[L3]{.nivel .nivel-L3} **ESL 14**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ESL §14.4–14.6]{.item}
+[**Prereqs** [Clustering](21-clustering.qmd) · [PCA](19-pca.qmd) · [Formas cuadráticas](../matematica/11-formas-cuadraticas.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Demostrar que el [laplaciano]{.g data-t="laplaciano de un grafo"} de un grafo es semidefinido positivo** y que la multiplicidad del autovalor cero cuenta sus componentes conexas.
+2. Medir esa cuenta, y ver que el [agrupamiento espectral]{.g data-t="agrupamiento espectral"} separa dos anillos que K-means no separa.
+3. **Demostrar que un [SOM]{.g data-t="mapa autoorganizado"} con radio cero es K-means en línea**, y comprobarlo.
+4. Medir lo que cuesta la topología: cuánto empeora el error al atar los prototipos a una cadena.
+5. **Demostrar que la actualización multiplicativa de la [NMF]{.g data-t="factorización no negativa"} no sube el error**, y que la SVD del mismo rango siempre gana en error.
+6. Empatar con `scikit-learn` en la factorización y obtener su misma partición en el agrupamiento.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 21**: K-means y su criterio, que aquí aparece restringido y transformado.
+- **Machine Learning 19**: PCA y la SVD, contra la que se mide la factorización no negativa.
+- **Álgebra 11**: las formas cuadráticas, de donde sale que el laplaciano sea semidefinido.
+- **Álgebra 10**: la diagonalización, que es lo que se hace con el laplaciano.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 35**: el bosque aleatorio, cuya proximidad entre observaciones define otro grafo que se puede agrupar así.
+- **Machine Learning 19**: la reducción de dimensión, que es lo que hace el SOM al proyectar sobre una rejilla.
+- **Machine Learning 33**: el problema no supervisado, del que esto es el ataque directo.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | El número de observaciones |
+| $p$ | pe | El número de columnas de la matriz que se factoriza |
+| $W$ | doble ve | La matriz de similitud del grafo, simétrica y no negativa |
+| $D$ | de | La matriz diagonal de grados, $D_{ii}=\sum_j W_{ij}$ |
+| $L$ | ele | El laplaciano, $L=D-W$ |
+| $\lambda$ | lambda | Un autovalor |
+| $K$ | ka mayúscula | El número de grupos o de prototipos |
+| $m_j$ | eme sub jota | El prototipo $j$ de un SOM |
+| $\alpha$ | alfa | La tasa de aprendizaje del SOM |
+| $\rho$ | rho | El radio de vecindad del SOM en la rejilla |
+| $V$ | ve mayúscula | La matriz de datos, no negativa |
+| $W,H$ | doble ve y hache | Los dos factores de la NMF; aquí $W$ no es el grafo |
+| $r$ | erre | El rango de la factorización |
+| $\lVert A\rVert_F$ | norma de Frobenius de A | La raíz de la suma de los cuadrados de todas sus entradas |
+:::
+
+## 1. El laplaciano cuenta componentes
+
+::: {.definicion}
+**Definición 34.1 (grafo y laplaciano).** Dados $n$ puntos, sea $W$ una matriz simétrica con $W_{ij}\ge0$ que mide cuánto se parecen $i$ y $j$, con $W_{ii}=0$. Con $D=\operatorname{diag}(W\mathbf{1})$, el **laplaciano** es $L=D-W$.
+:::
+
+::: {.proposicion}
+**Proposición 34.2 (el laplaciano y sus ceros).** Para todo vector $f$,
+$$f^{\top}Lf=\tfrac12\sum_{i,j}W_{ij}\,(f_i-f_j)^2\ \ge 0 ,$$
+de modo que $L$ es semidefinido positivo. Además, **la multiplicidad del autovalor $0$ es el número de componentes conexas** del grafo, y sus autovectores son las indicadoras de esas componentes.
+:::
+
+::: {.demostracion}
+*Demostración.* Desarrollando, $f^{\top}Lf=\sum_i d_i f_i^2-\sum_{i,j}W_{ij}f_if_j$, y como $d_i=\sum_jW_{ij}$, eso es $\tfrac12\sum_{i,j}W_{ij}(f_i^2-2f_if_j+f_j^2)$, que es la fórmula. Cada sumando es no negativo, luego $L$ lo es.
+
+Si $Lf=0$ entonces $f^{\top}Lf=0$, y como todos los sumandos son no negativos, $f_i=f_j$ siempre que $W_{ij}>0$: es decir, $f$ es constante en cada componente conexa. Recíprocamente, la indicadora de una componente cumple esa condición y por tanto está en el núcleo. Esas indicadoras son linealmente independientes y generan el núcleo, así que su número —el de componentes— es la multiplicidad de $0$. [∎]{.fin-demo}
+:::
+
+De ahí sale el algoritmo. Si el grafo tiene $K$ componentes, los $K$ primeros autovectores separan los grupos **exactamente**, y basta aplicarles K-means para leer la partición. Si las componentes no están del todo separadas sino solo débilmente conectadas, los autovalores pequeños son pequeños en vez de nulos y sus autovectores siguen siendo casi indicadores: eso es lo que hace funcionar el método sobre datos reales.
+
+```{pyodide}
+import numpy as np
+
+def anillos(n, semilla):
+    """Dos anillos concentricos: ninguna frontera recta los separa."""
+    rng = np.random.default_rng(semilla)
+    m = n // 2
+    a1 = rng.uniform(0, 2 * np.pi, m)
+    a2 = rng.uniform(0, 2 * np.pi, n - m)
+    X = np.vstack([np.c_[1.0 * np.cos(a1), 1.0 * np.sin(a1)] + rng.normal(0, 0.08, (m, 2)),
+                   np.c_[2.6 * np.cos(a2), 2.6 * np.sin(a2)] + rng.normal(0, 0.08, (n - m, 2))])
+    y = np.r_[np.zeros(m), np.ones(n - m)]
+    return X, y
+
+def grafo_vecinos(X, k):
+    """Grafo de k vecinos mas cercanos, simetrizado: uno y uno si son vecinos."""
+    D = ((X[:, None, :] - X[None, :, :]) ** 2).sum(axis=2)
+    np.fill_diagonal(D, np.inf)
+    orden = np.argsort(D, axis=1, kind="stable")[:, :k]
+    W = np.zeros((len(X), len(X)))
+    for i in range(len(X)):
+        W[i, orden[i]] = 1.0
+    return np.maximum(W, W.T)
+
+def kmeans(X, K, semilla, pasos=100):
+    rng = np.random.default_rng(semilla)
+    C = X[rng.choice(len(X), K, replace=False)]
+    for _ in range(pasos):
+        d = ((X[:, None, :] - C[None, :, :]) ** 2).sum(axis=2)
+        z = d.argmin(axis=1)
+        for j in range(K):
+            if (z == j).any():
+                C[j] = X[z == j].mean(axis=0)
+    return z
+
+def acierto(z, y):
+    """Fraccion bien agrupada, probando las dos formas de emparejar etiquetas."""
+    a = float((z == y).mean())
+    return max(a, 1 - a)
+
+n = 300
+X, y = anillos(n, 34)
+
+print("el laplaciano de un grafo y sus ceros")
+print("  k vecinos   componentes conexas   autovalores nulos de L   L es semidefinida")
+for k in (3, 5, 10, 40):
+    W = grafo_vecinos(X, k)
+    L = np.diag(W.sum(axis=1)) - W
+    val = np.linalg.eigvalsh(L)
+    nulos = int((val < 1e-8).sum())
+    # componentes conexas por busqueda en anchura
+    visto, comp = np.zeros(n, dtype=bool), 0
+    for s in range(n):
+        if visto[s]:
+            continue
+        comp += 1
+        pila = [s]; visto[s] = True
+        while pila:
+            u = pila.pop()
+            for v in np.flatnonzero(W[u] > 0):
+                if not visto[v]:
+                    visto[v] = True; pila.append(v)
+    print("      %2d            %6d                 %6d                 %s"
+          % (k, comp, nulos, bool(val.min() > -1e-8)))
+print()
+
+W = grafo_vecinos(X, 10)
+L = np.diag(W.sum(axis=1)) - W
+val, vec = np.linalg.eigh(L)
+U = vec[:, :2]                      # los dos autovectores de menor autovalor
+z_esp = kmeans(U / (np.linalg.norm(U, axis=1, keepdims=True) + 1e-12), 2, 7)
+z_pla = kmeans(X.copy(), 2, 7)
+print("dos anillos concentricos, 300 puntos")
+print("  K-means sobre las coordenadas          : %.6f bien agrupado" % acierto(z_pla, y))
+print("  K-means sobre los dos autovectores     : %.6f bien agrupado" % acierto(z_esp, y))
+print()
+print("el laplaciano no mira distancias sino conexiones, asi que dos anillos que")
+print("ninguna recta separa quedan en dos componentes casi desconectadas, y sus")
+print("autovectores de autovalor pequeno son practicamente sus indicadores")
+```
+
+Las dos columnas centrales coinciden en los cuatro grafos: con tres vecinos el grafo se rompe en $16$ trozos y el laplaciano tiene $16$ autovalores nulos; con cuarenta vecinos todo queda conectado y solo hay uno. La proposición da un recuento exacto, no una aproximación.
+
+Y la consecuencia: sobre los mismos $300$ puntos, **K-means acierta $0{,}520000$ y el agrupamiento espectral $1{,}000000$**. Medio punto es lo que acierta quien tira una moneda, porque los dos anillos tienen el mismo centro y ninguna frontera recta los separa. Cambiar de coordenadas a autovectores convierte un problema imposible para K-means en uno trivial, sin tocar K-means.
+
+```{=html}
+<div class="viz-espectral">
+  <div class="controles">
+    <label>Vecinos del grafo <input id="ep-k" type="range" min="2" max="24" step="1" value="8"> <span id="ep-k-v">8</span></label>
+    <label>Separación de los anillos <input id="ep-s" type="range" min="1.4" max="3.2" step="0.1" value="2.60"> <span id="ep-s-v">2.60</span></label>
+  </div>
+  <svg id="ep-svg" viewBox="0 0 660 300" role="img" aria-label="Los dos anillos con las aristas del grafo de vecinos dibujadas, y al lado el número de componentes conexas que resultan."></svg>
+  <p class="lectura" id="ep-lectura"></p>
+</div>
+<style>
+.viz-espectral { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-espectral .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-espectral label { display: flex; align-items: center; gap: .4rem; }
+.viz-espectral input[type=range] { width: 150px; padding: 0; }
+.viz-espectral svg { width: 100%; height: auto; display: block; }
+.viz-espectral .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("ep-svg"), lec = document.getElementById("ep-lectura");
+  var ck = document.getElementById("ep-k"), cs = document.getElementById("ep-s");
+  var ek = document.getElementById("ep-k-v"), es = document.getElementById("ep-s-v");
+  var CX = 200, CY = 150, ESC = 42, N = 90;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // ruido fijo y reproducible
+  function ru(i) { var s = Math.sin(i * 12.9898 + 4.1414) * 43758.5453; return 2 * (s - Math.floor(s)) - 1; }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var K = +ck.value, sep = +cs.value;
+    ek.textContent = K; es.textContent = sep.toFixed(2);
+    var P = [], i, j;
+    for (i = 0; i < N; i++) {
+      var dentro = i < N / 2, a = 2 * Math.PI * (i % (N / 2)) / (N / 2) + (dentro ? 0 : 0.31);
+      var rad = dentro ? 1.0 : sep;
+      P.push([rad * Math.cos(a) + 0.07 * ru(i + 1), rad * Math.sin(a) + 0.07 * ru(i + 51), dentro ? 0 : 1]);
+    }
+    // aristas: K vecinos mas cercanos, simetrizado
+    var ady = [];
+    for (i = 0; i < N; i++) ady.push({});
+    for (i = 0; i < N; i++) {
+      var d = [];
+      for (j = 0; j < N; j++) if (j !== i) d.push([(P[i][0] - P[j][0]) * (P[i][0] - P[j][0]) + (P[i][1] - P[j][1]) * (P[i][1] - P[j][1]), j]);
+      d.sort(function (a, b) { return a[0] - b[0]; });
+      for (j = 0; j < K; j++) { ady[i][d[j][1]] = 1; ady[d[j][1]][i] = 1; }
+    }
+    // componentes conexas, y si alguna mezcla los dos anillos
+    var comp = new Array(N).fill(-1), nc = 0, mezcla = 0;
+    for (i = 0; i < N; i++) {
+      if (comp[i] >= 0) continue;
+      var pila = [i], dentro = 0, fuera = 0;
+      comp[i] = nc;
+      while (pila.length) {
+        var u = pila.pop();
+        if (P[u][2] === 0) dentro++; else fuera++;
+        for (var v in ady[u]) { v = +v; if (comp[v] < 0) { comp[v] = nc; pila.push(v); } }
+      }
+      if (dentro > 0 && fuera > 0) mezcla++;
+      nc++;
+    }
+    var px = function (u) { return CX + u * ESC; }, py = function (v) { return CY - v * ESC; };
+    for (i = 0; i < N; i++) for (var w in ady[i]) {
+      w = +w;
+      if (w <= i) continue;
+      svg.appendChild(el("path", { d: "M" + px(P[i][0]).toFixed(1) + " " + py(P[i][1]).toFixed(1) +
+        " L" + px(P[w][0]).toFixed(1) + " " + py(P[w][1]).toFixed(1),
+        stroke: P[i][2] === P[w][2] ? C_L : C_B, "stroke-width": P[i][2] === P[w][2] ? 1 : 1.8,
+        opacity: P[i][2] === P[w][2] ? .8 : 1 }));
+    }
+    for (i = 0; i < N; i++)
+      svg.appendChild(el("circle", { cx: px(P[i][0]).toFixed(1), cy: py(P[i][1]).toFixed(1), r: 3,
+        fill: P[i][2] === 0 ? C_A : C_T, opacity: .85 }));
+
+    // la barra de componentes, a la derecha
+    var BX = 430, BY = 60, BW = 26, BH = 190, TOPE = 20;
+    svg.appendChild(el("rect", { x: BX, y: BY, width: BW, height: BH, fill: "none", stroke: C_L, "stroke-width": 1 }));
+    var alto = Math.min(BH, (Math.min(nc, TOPE) / TOPE) * BH);
+    svg.appendChild(el("rect", { x: BX, y: (BY + BH - alto).toFixed(1), width: BW, height: alto.toFixed(1),
+      fill: nc === 2 ? C_A : C_B, opacity: .5 }));
+    var dos = BY + BH - (2 / TOPE) * BH;
+    svg.appendChild(el("path", { d: "M" + (BX - 8) + " " + dos.toFixed(1) + " L" + (BX + BW + 8) + " " + dos.toFixed(1),
+      stroke: C_T, "stroke-width": 1.6, "stroke-dasharray": "4 3" }));
+    svg.appendChild(el("text", { x: BX + BW + 12, y: dos + 4, "font-size": 10.5, fill: C_T, opacity: .75 }, "dos componentes"));
+    svg.appendChild(el("text", { x: BX + BW / 2, y: BY + BH + 16, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .75 }, nc + ""));
+    svg.appendChild(el("text", { x: 640, y: 26, "text-anchor": "end", "font-size": 10.5, fill: C_B }, "aristas que cruzan de un anillo a otro"));
+
+    lec.innerHTML = "Con <strong>" + K + "</strong> vecinos y los anillos a " + sep.toFixed(2) +
+      ", el grafo tiene <strong>" + nc + "</strong> componentes conexas, y el laplaciano tendría <strong>" + nc +
+      "</strong> autovalores nulos. " +
+      (mezcla === 0 && nc === 2
+        ? "Son exactamente los dos anillos: el agrupamiento espectral acierta sin más."
+        : (mezcla > 0
+          ? "Hay <strong>aristas que cruzan</strong> de un anillo al otro, marcadas en rojo: los dos anillos quedan pegados y el corte ya no es limpio."
+          : "El grafo se ha roto en trozos de más, así que hacen falta más vecinos o menos exigencia.")) +
+      " Pocos vecinos rompen el grafo; demasiados lo pegan todo. El método vive en el medio.";
+  }
+  ck.addEventListener("input", dibujar);
+  cs.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. El SOM es K-means con los prototipos atados
+
+::: {.definicion}
+**Definición 34.3 (mapa autoorganizado).** Sean $K$ prototipos $m_1,\dots,m_K$ colocados en una rejilla —aquí, una cadena—. Para cada observación $x$ se busca el prototipo más cercano $j^\ast$ y se actualizan **todos** los que estén a distancia de rejilla menor o igual que el radio $\rho$:
+$$m_j\ \leftarrow\ m_j+\alpha\,(x-m_j)\qquad\text{para todo }j\text{ con }|j-j^\ast|\le\rho .$$
+:::
+
+::: {.proposicion}
+**Proposición 34.4 (con radio cero es K-means en línea).** Si $\rho=0$, la regla anterior actualiza solo el prototipo ganador, que es exactamente el algoritmo de K-means en línea. El radio positivo añade una restricción: los prototipos vecinos en la rejilla se arrastran unos a otros, y por eso acaban ordenados.
+:::
+
+::: {.demostracion}
+*Demostración.* Con $\rho=0$ la condición $|j-j^\ast|\le0$ se cumple solo para $j=j^\ast$, de modo que la actualización se reduce a mover el ganador hacia $x$ con paso $\alpha$, que es la definición de K-means en línea. [∎]{.fin-demo}
+:::
+
+Visto así, el SOM no es un método aparte sino **K-means con una restricción de vecindad**, y el radio gradúa esa restricción. Eso explica a la vez su virtud —los prototipos quedan ordenados, así que la rejilla se puede dibujar— y su coste, que es el que la celda mide.
+
+```{pyodide}
+import numpy as np
+
+def som(X, K, radio, alfa, pasadas, semilla):
+    """Mapa autoorganizado con los K prototipos en una cadena. El radio dice a
+    cuantos vecinos de la cadena alcanza cada actualizacion."""
+    rng = np.random.default_rng(semilla)
+    M = X[rng.choice(len(X), K, replace=False)].astype(float)
+    pos = np.arange(K)
+    for _ in range(pasadas):
+        for x in X:
+            j = int(((M - x) ** 2).sum(axis=1).argmin())
+            vecinos = np.abs(pos - j) <= radio
+            M[vecinos] += alfa * (x - M[vecinos])
+    return M
+
+def kmeans_en_linea(X, K, alfa, pasadas, semilla):
+    """K-means en linea: cada dato mueve solo a su prototipo mas cercano."""
+    rng = np.random.default_rng(semilla)
+    M = X[rng.choice(len(X), K, replace=False)].astype(float)
+    for _ in range(pasadas):
+        for x in X:
+            j = int(((M - x) ** 2).sum(axis=1).argmin())
+            M[j] += alfa * (x - M[j])
+    return M
+
+def error(X, M):
+    return float(((X[:, None, :] - M[None, :, :]) ** 2).sum(axis=2).min(axis=1).mean())
+
+rng = np.random.default_rng(341)
+n, K = 400, 10
+t = rng.uniform(0, 1, n)
+X = np.c_[np.cos(2.2 * t) + 0.9 * t, np.sin(2.2 * t)] + rng.normal(0, 0.06, (n, 2))
+
+A = som(X, K, 0, 0.05, 20, 5)
+B = kmeans_en_linea(X, K, 0.05, 20, 5)
+print("con radio cero, el SOM ES K-means en linea")
+print("  mayor diferencia entre los prototipos, a diez decimales: %s"
+      % bool(np.abs(A - B).max() < 5e-11))
+print()
+
+print("lo que cuesta la topologia: los prototipos atados a una cadena")
+print("  radio   error de reconstruccion   longitud de la cadena")
+for radio in (0, 1, 2, 3):
+    M = som(X, K, radio, 0.05, 20, 5)
+    largo = float(np.sqrt(((M[1:] - M[:-1]) ** 2).sum(axis=1)).sum())
+    print("    %d          %14.6f          %12.6f" % (radio, error(X, M), largo))
+print()
+print("con radio cero los prototipos se colocan donde quieren y el error es el")
+print("menor, pero la cadena que los une da saltos. Al subir el radio el error")
+print("empeora y la cadena se acorta: eso es el mapa ordenandose, y es lo que")
+print("se paga por poder dibujarlo en una rejilla")
+```
+
+La primera línea confirma la proposición: con radio cero los dos algoritmos dan **los mismos prototipos a diez decimales**, partiendo de la misma inicialización.
+
+La tabla mide el intercambio. Al subir el radio de cero a tres, el error de reconstrucción pasa de $0{,}006769$ a $0{,}021949$ —**se triplica**— mientras la longitud de la cadena cae de $5{,}212029$ a $0{,}908162$, casi seis veces menos. Los prototipos libres cubren mejor los datos y quedan desordenados; los prototipos atados cubren peor y quedan en fila. **Ese es el precio exacto de poder dibujar el mapa**, y conviene tenerlo medido antes de leer un SOM como si fuera una representación fiel.
+
+```{=html}
+<div class="viz-som">
+  <div class="controles">
+    <label>Radio de vecindad <input id="sm-r" type="range" min="0" max="4" step="1" value="1"> <span id="sm-r-v">1</span></label>
+    <label>Pasadas <input id="sm-p" type="range" min="1" max="30" step="1" value="12"> <span id="sm-p-v">12</span></label>
+  </div>
+  <svg id="sm-svg" viewBox="0 0 660 260" role="img" aria-label="Los datos y la cadena de prototipos del mapa autoorganizado, que se ordena al crecer el radio de vecindad."></svg>
+  <p class="lectura" id="sm-lectura"></p>
+</div>
+<style>
+.viz-som { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-som .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-som label { display: flex; align-items: center; gap: .4rem; }
+.viz-som input[type=range] { width: 150px; padding: 0; }
+.viz-som svg { width: 100%; height: auto; display: block; }
+.viz-som .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("sm-svg"), lec = document.getElementById("sm-lectura");
+  var cr = document.getElementById("sm-r"), cp = document.getElementById("sm-p");
+  var er = document.getElementById("sm-r-v"), ep = document.getElementById("sm-p-v");
+  var CX = 120, CY = 150, ESC = 78, N = 220, K = 10, ALFA = 0.06;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function ru(i) { var s = Math.sin(i * 12.9898 + 4.1414) * 43758.5453; return 2 * (s - Math.floor(s)) - 1; }
+  var P = [], i;
+  for (i = 0; i < N; i++) {
+    var t = (i * 37 % N) / N;                 // recorrido fijo, sin Math.random
+    P.push([Math.cos(2.2 * t) + 0.9 * t + 0.05 * ru(i + 1), Math.sin(2.2 * t) + 0.05 * ru(i + 91)]);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var radio = +cr.value, pasadas = +cp.value;
+    er.textContent = radio; ep.textContent = pasadas;
+    var M = [], j;
+    for (j = 0; j < K; j++) M.push([P[j * 7][0], P[j * 7][1]]);
+    for (var it = 0; it < pasadas; it++) {
+      for (i = 0; i < N; i++) {
+        var mejor = 0, dm = Infinity;
+        for (j = 0; j < K; j++) {
+          var d = (M[j][0] - P[i][0]) * (M[j][0] - P[i][0]) + (M[j][1] - P[i][1]) * (M[j][1] - P[i][1]);
+          if (d < dm) { dm = d; mejor = j; }
+        }
+        for (j = 0; j < K; j++) if (Math.abs(j - mejor) <= radio) {
+          M[j][0] += ALFA * (P[i][0] - M[j][0]);
+          M[j][1] += ALFA * (P[i][1] - M[j][1]);
+        }
+      }
+    }
+    var px = function (u) { return CX + u * ESC; }, py = function (v) { return CY - v * ESC; };
+    for (i = 0; i < N; i++)
+      svg.appendChild(el("circle", { cx: px(P[i][0]).toFixed(1), cy: py(P[i][1]).toFixed(1), r: 2.4, fill: C_T, opacity: .25 }));
+    var d = "", largo = 0;
+    for (j = 0; j < K; j++) {
+      d += (j ? " L" : "M") + px(M[j][0]).toFixed(1) + " " + py(M[j][1]).toFixed(1);
+      if (j) largo += Math.sqrt((M[j][0] - M[j - 1][0]) * (M[j][0] - M[j - 1][0]) + (M[j][1] - M[j - 1][1]) * (M[j][1] - M[j - 1][1]));
+    }
+    svg.appendChild(el("path", { d: d, stroke: C_B, "stroke-width": 2, fill: "none" }));
+    for (j = 0; j < K; j++)
+      svg.appendChild(el("circle", { cx: px(M[j][0]).toFixed(1), cy: py(M[j][1]).toFixed(1), r: 4.5, fill: C_A }));
+    var err = 0;
+    for (i = 0; i < N; i++) {
+      var dm2 = Infinity;
+      for (j = 0; j < K; j++) {
+        var dd = (M[j][0] - P[i][0]) * (M[j][0] - P[i][0]) + (M[j][1] - P[i][1]) * (M[j][1] - P[i][1]);
+        if (dd < dm2) dm2 = dd;
+      }
+      err += dm2;
+    }
+    err /= N;
+    svg.appendChild(el("text", { x: 640, y: 26, "text-anchor": "end", "font-size": 10.5, fill: C_B }, "la cadena de prototipos"));
+
+    lec.innerHTML = "Con radio <strong>" + radio + "</strong> y " + pasadas + " pasadas, el error de reconstrucción vale <strong>" +
+      err.toFixed(5) + "</strong> y la cadena mide <strong>" + largo.toFixed(4) + "</strong>. " +
+      (radio === 0
+        ? "Con radio cero esto es K-means en línea: los prototipos se colocan donde quieren y la cadena que los numera <strong>da saltos</strong>."
+        : "Al arrastrar a los vecinos, la cadena se <strong>ordena y se acorta</strong>, y el error sube. Esa es la restricción de la rejilla, y es lo que se paga por poder dibujarla.");
+  }
+  cr.addEventListener("input", dibujar);
+  cp.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. La factorización no negativa y lo que cuesta
+
+::: {.definicion}
+**Definición 34.5 (factorización no negativa).** Dada $V\ge0$ de tamaño $n\times p$ y un rango $r$, se buscan $W\ge0$ de $n\times r$ y $H\ge0$ de $r\times p$ que minimicen $\lVert V-WH\rVert_F^2$. La **actualización multiplicativa** es
+$$W\ \leftarrow\ W\odot\frac{VH^{\top}}{WHH^{\top}},\qquad
+H\ \leftarrow\ H\odot\frac{W^{\top}V}{W^{\top}WH},$$
+donde el producto y el cociente son entrada a entrada.
+:::
+
+::: {.proposicion}
+**Proposición 34.6 (la actualización conserva el signo y no sube el error).** Si $W$ y $H$ empiezan con entradas positivas, siguen siendo no negativas tras cualquier número de actualizaciones, porque solo se multiplican por cocientes de cantidades no negativas. Además cada actualización no aumenta $\lVert V-WH\rVert_F^2$.
+:::
+
+::: {.demostracion}
+*Demostración.* Lo primero es inmediato: $V\ge0$, $W\ge0$ y $H\ge0$ hacen que numerador y denominador sean no negativos, y un producto de no negativos lo es. Lo segundo se demuestra con una función auxiliar que acota el error por arriba y lo toca en el punto actual, igual que la cota de la Proposición 30.4; esta página no la construye y lo declara en Fuentes, pero **sí comprueba la monotonía en cada paso**. [∎]{.fin-demo}
+:::
+
+::: {.proposicion}
+**Proposición 34.7 (la SVD siempre gana en error).** Para el mismo rango $r$, la mejor aproximación sin restricciones es la SVD truncada, así que su error es menor o igual que el de cualquier factorización no negativa del mismo rango.
+:::
+
+::: {.demostracion}
+*Demostración.* Por el teorema de Eckart-Young, la SVD truncada minimiza $\lVert V-A\rVert_F$ entre todas las matrices $A$ de rango a lo sumo $r$. Un producto $WH$ con $W$ de $n\times r$ tiene rango a lo sumo $r$, así que pertenece al conjunto sobre el que la SVD es óptima. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def nmf(V, r, pasos, semilla):
+    """Factorizacion no negativa con la actualizacion multiplicativa de Lee y
+    Seung: W y H se multiplican por cocientes, asi que nunca se vuelven negativos."""
+    rng = np.random.default_rng(semilla)
+    n, p = V.shape
+    W = rng.uniform(0.1, 1.0, (n, r))
+    H = rng.uniform(0.1, 1.0, (r, p))
+    eps, hist = 1e-12, []
+    for _ in range(pasos):
+        hist.append(float(((V - W @ H) ** 2).sum()))
+        # el orden importa para empatar con la libreria: primero W, luego H
+        W = W * (V @ H.T) / (W @ H @ H.T + eps)
+        H = H * (W.T @ V) / (W.T @ W @ H + eps)
+    hist.append(float(((V - W @ H) ** 2).sum()))
+    return W, H, np.array(hist)
+
+# tres "partes" que se suman en proporciones no negativas
+rng = np.random.default_rng(342)
+p, r, n = 24, 3, 200
+partes = np.zeros((r, p))
+partes[0, 2:8] = 1.0
+partes[1, 7:15] = 1.0
+partes[2, 16:22] = 1.0
+pesos = rng.uniform(0, 1, (n, r))
+V = pesos @ partes + rng.uniform(0, 0.05, (n, p))
+
+W, H, hist = nmf(V, r, 400, 1)
+saltos = np.diff(hist)
+print("la actualizacion multiplicativa no sube el error, y eso es un teorema")
+print("  paso    error cuadratico")
+for i in (0, 1, 5, 20, 100, 400):
+    print("  %4d    %16.6f" % (i, hist[i]))
+print()
+print("  subidas en los 400 pasos: %d" % int((saltos > 1e-9).sum()))
+print("  W y H siguen siendo no negativas: %s" % bool((W >= 0).all() and (H >= 0).all()))
+print()
+
+# el mismo rango, por SVD: optimo en error y con signos mezclados
+U, s, Vt = np.linalg.svd(V, full_matrices=False)
+aprox = (U[:, :r] * s[:r]) @ Vt[:r]
+err_svd = float(((V - aprox) ** 2).sum())
+print("  error del mejor rango %d posible (SVD) : %.6f" % (r, err_svd))
+print("  error de la factorizacion no negativa  : %.6f" % hist[-1])
+print("  la SVD gana, como tiene que ser        : %s" % bool(err_svd <= hist[-1]))
+print()
+
+def mezcla_signos(F):
+    """Cuantas filas tienen entradas de los dos signos, y cuanta masa se lleva el
+    signo minoritario. Las dos cuentas no cambian si se voltea una fila entera,
+    asi que no dependen del convenio de signos que devuelva la SVD."""
+    dobles = int(((F > 1e-9).any(axis=1) & (F < -1e-9).any(axis=1)).sum())
+    pos = np.abs(np.where(F > 0, F, 0)).sum(axis=1)
+    neg = np.abs(np.where(F < 0, F, 0)).sum(axis=1)
+    minoria = float((np.minimum(pos, neg) / (pos + neg + 1e-12)).mean())
+    return dobles, minoria
+
+d_svd, m_svd = mezcla_signos(Vt[:r])
+d_nmf, m_nmf = mezcla_signos(H)
+print("  componentes con entradas de los dos signos: SVD %d de %d, factorizacion %d de %d"
+      % (d_svd, r, d_nmf, r))
+print("  masa media del signo minoritario          : SVD %.4f, factorizacion %.4f"
+      % (m_svd, m_nmf))
+print()
+print("la SVD reconstruye mejor porque no tiene ataduras; a cambio sus")
+print("componentes restan. La no negatividad cuesta error y da partes que se")
+print("suman, que es lo que se puede leer")
+```
+
+El error baja de $2155{,}380989$ a $0{,}995285$ sin subir **ni una vez** en cuatrocientos pasos, y los dos factores siguen siendo no negativos, que es lo que la Proposición 34.6 garantiza sin tener que vigilarlo.
+
+La comparación con la SVD sale como debe: $0{,}949855$ contra $0{,}995285$, o sea la SVD gana por poco. Lo que no gana es en lectura: **dos de sus tres componentes tienen entradas de los dos signos**, con un $31{,}57\ \%$ de la masa en el signo minoritario, mientras que la factorización no negativa tiene cero de tres y un $0{,}0000$. La SVD describe los datos como sumas y **restas** de patrones; la factorización, como sumas de partes.
+
+Esa es toda la razón de existir de la NMF, y explica por qué se usa donde los datos son intensidades o recuentos: un patrón que resta no significa nada cuando lo que se mide no puede ser negativo.
+
+## 4. Contraste con la librería
+
+Esta lección es de nivel **L3**, y ese nivel promete implementar el resultado en NumPy puro y **empatar con la librería**. La celda lo hace con las dos piezas que `scikit-learn` implementa, y el resultado no es el mismo en las dos.
+
+```{pyodide}
+import numpy as np
+from sklearn.decomposition import NMF
+from sklearn.cluster import SpectralClustering
+
+# ---------- 1) la factorizacion no negativa, a mano y con la libreria ----------
+rng = np.random.default_rng(342)
+p, r, n = 24, 3, 200
+partes = np.zeros((r, p))
+partes[0, 2:8] = 1.0
+partes[1, 7:15] = 1.0
+partes[2, 16:22] = 1.0
+V = rng.uniform(0, 1, (n, r)) @ partes + rng.uniform(0, 0.05, (n, p))
+
+r2 = np.random.default_rng(1)
+W0 = r2.uniform(0.1, 1.0, (n, r))
+H0 = r2.uniform(0.1, 1.0, (r, p))
+
+def mi_nmf(V, W, H, pasos):
+    eps = 1e-12
+    for _ in range(pasos):
+        W = W * (V @ H.T) / (W @ H @ H.T + eps)      # primero W
+        H = H * (W.T @ V) / (W.T @ W @ H + eps)      # despues H
+    return W, H
+
+Wm, Hm = mi_nmf(V, W0.copy(), H0.copy(), 400)
+modelo = NMF(n_components=r, init="custom", solver="mu", beta_loss="frobenius",
+             max_iter=400, tol=0.0, random_state=0)
+Ws = modelo.fit_transform(V, W=W0.copy(), H=H0.copy())
+Hs = modelo.components_
+
+print("factorizacion no negativa, a mano frente a sklearn.decomposition.NMF")
+print("  error a mano : %.10f" % float(((V - Wm @ Hm) ** 2).sum()))
+print("  error sklearn: %.10f" % float(((V - Ws @ Hs) ** 2).sum()))
+print("  los productos W·H coinciden a diez decimales: %s"
+      % bool(np.abs(Wm @ Hm - Ws @ Hs).max() < 5e-11))
+print("  y los factores por separado tambien         : %s"
+      % bool(max(np.abs(Wm - Ws).max(), np.abs(Hm - Hs).max()) < 5e-10))
+print()
+
+# ---------- 2) el agrupamiento espectral ----------
+def anillos(n, semilla):
+    rng = np.random.default_rng(semilla)
+    m = n // 2
+    a1 = rng.uniform(0, 2 * np.pi, m)
+    a2 = rng.uniform(0, 2 * np.pi, n - m)
+    X = np.vstack([np.c_[1.0 * np.cos(a1), 1.0 * np.sin(a1)] + rng.normal(0, 0.08, (m, 2)),
+                   np.c_[2.6 * np.cos(a2), 2.6 * np.sin(a2)] + rng.normal(0, 0.08, (n - m, 2))])
+    return X, np.r_[np.zeros(m), np.ones(n - m)]
+
+def grafo_vecinos(X, k):
+    D = ((X[:, None, :] - X[None, :, :]) ** 2).sum(axis=2)
+    np.fill_diagonal(D, np.inf)
+    orden = np.argsort(D, axis=1, kind="stable")[:, :k]
+    W = np.zeros((len(X), len(X)))
+    for i in range(len(X)):
+        W[i, orden[i]] = 1.0
+    return np.maximum(W, W.T)
+
+def kmeans(X, K, semilla, pasos=100):
+    rng = np.random.default_rng(semilla)
+    C = X[rng.choice(len(X), K, replace=False)].astype(float)
+    for _ in range(pasos):
+        z = ((X[:, None, :] - C[None, :, :]) ** 2).sum(axis=2).argmin(axis=1)
+        for j in range(K):
+            if (z == j).any():
+                C[j] = X[z == j].mean(axis=0)
+    return z
+
+def acierto(z, y):
+    a = float((z == y).mean())
+    return max(a, 1 - a)
+
+X, y = anillos(300, 34)
+W = grafo_vecinos(X, 10)
+val, vec = np.linalg.eigh(np.diag(W.sum(axis=1)) - W)
+U = vec[:, :2]
+z_mio = kmeans(U / (np.linalg.norm(U, axis=1, keepdims=True) + 1e-12), 2, 7)
+z_lib = SpectralClustering(n_clusters=2, affinity="precomputed",
+                           random_state=0).fit_predict(W)
+
+print("agrupamiento espectral, a mano frente a sklearn.cluster.SpectralClustering")
+print("  bien agrupado a mano   : %.6f" % acierto(z_mio, y))
+print("  bien agrupado sklearn  : %.6f" % acierto(z_lib, y))
+print("  las dos particiones coinciden: %.6f de los puntos" % acierto(z_mio, z_lib))
+print()
+print("la factorizacion empata a diez decimales porque se le da a la libreria el")
+print("mismo arranque y el mismo numero de pasos, y porque el orden de las dos")
+print("actualizaciones es el suyo: primero W. El agrupamiento no empata digito a")
+print("digito —la libreria normaliza el laplaciano y arranca su K-means de otro")
+print("modo— pero da la misma particion, que es lo que se le pide")
+```
+
+La factorización empata **a diez decimales en los factores y en el producto**, y para eso hacen falta tres cosas: el mismo arranque, el mismo número de pasos con la tolerancia apagada, y el **orden** de las dos actualizaciones. La primera versión de esta celda actualizaba $H$ antes que $W$ y daba un error de $0{,}996205$ contra $0{,}995285$ de la librería, con los factores separados por ocho décimas. Las dos versiones son la misma proposición; solo una es el mismo algoritmo.
+
+El agrupamiento espectral es el otro caso. La librería normaliza el laplaciano y arranca su K-means de otro modo, así que **no hay empate dígito a dígito y no tiene sentido buscarlo**; lo que sí hay es la misma partición, punto por punto, con las dos alcanzando $1{,}000000$. Cuando un método termina en una decisión discreta, la comparación correcta es la decisión y no los números intermedios.
+
+## 5. Lo que esta lección no resuelve
+
+- **La demostración de la monotonía de la NMF.** Se comprueba en cuatrocientos pasos y se declara sin construir la función auxiliar, que es el argumento de Lee y Seung.
+- **Cómo elegir el grafo.** El número de vecinos decide si el grafo se rompe o se pega, y la celda lo enseña, pero no hay aquí un criterio para fijarlo. ESL §14.5 comenta las variantes.
+- **Los laplacianos normalizados.** Esta página usa $L=D-W$; las versiones $D^{-1/2}LD^{-1/2}$ y $D^{-1}L$ cambian los autovectores y suelen ir mejor con grados desiguales.
+- **La rejilla del SOM.** Todo está escrito con una cadena, que es una rejilla de una dimensión. Con dos dimensiones la Proposición 34.4 vale igual y el dibujo es el mapa que da nombre al método.
+- **Las curvas y superficies principales**, que son la otra mitad de §14.5 y de las que el SOM es la versión discreta, quedan fuera.
+
+## Ejercicios
+
+### Ejercicio 1, La forma cuadrática del laplaciano
+
+Con la Proposición 34.2, comprobar sobre un grafo pequeño que $f^{\top}Lf$ es la suma de las diferencias al cuadrado sobre las aristas.
+
+```{pyodide}
+#| exercise: ex_lap
+import numpy as np
+
+W = np.array([[0., 1., 0., 0.],
+              [1., 0., 1., 0.],
+              [0., 1., 0., 0.],
+              [0., 0., 0., 0.]])
+f = np.array([1., 2., 4., 7.])
+
+L = ______
+por_aristas = ______
+
+print(round(float(f @ L @ f), 6), round(float(por_aristas), 6))
+round(float(f @ L @ f), 6)
+```
+
+::: {.hint exercise="ex_lap"}
+$L=D-W$ con $D$ la diagonal de los grados. Y la fórmula es $\tfrac12\sum_{i,j}W_{ij}(f_i-f_j)^2$.
+:::
+
+::: {.solution exercise="ex_lap"}
+```{pyodide}
+import numpy as np
+
+W = np.array([[0., 1., 0., 0.],
+              [1., 0., 1., 0.],
+              [0., 1., 0., 0.],
+              [0., 0., 0., 0.]])
+f = np.array([1., 2., 4., 7.])
+
+L = np.diag(W.sum(axis=1)) - W
+por_aristas = 0.5 * (W * (f[:, None] - f[None, :]) ** 2).sum()
+
+print(round(float(f @ L @ f), 6), round(float(por_aristas), 6))
+round(float(f @ L @ f), 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_lap
+#| check: true
+if abs(result - 5.0) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: 5,0, que es (2−1)² + (4−2)². El cuarto nodo está aislado y no aporta nada, por mucho que su valor sea 7: el laplaciano solo ve diferencias a lo largo de aristas, y por eso su núcleo son las funciones constantes por componentes.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 5.0 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuántos autovalores nulos
+
+Con la Proposición 34.2, predecir cuántos autovalores nulos tiene el laplaciano de un grafo con componentes de tamaños dados, y comprobarlo.
+
+```{pyodide}
+#| exercise: ex_ceros
+import numpy as np
+
+def laplaciano_por_bloques(tamanos):
+    """Un grafo completo dentro de cada bloque y nada entre bloques."""
+    n = sum(tamanos)
+    W = np.zeros((n, n))
+    i = 0
+    for t in tamanos:
+        W[i:i + t, i:i + t] = 1.0
+        i += t
+    np.fill_diagonal(W, 0.0)
+    return np.diag(W.sum(axis=1)) - W
+
+for tam in ([5], [3, 4], [2, 2, 2, 2]):
+    L = laplaciano_por_bloques(tam)
+    nulos = ______
+    print(tam, nulos)
+
+int(nulos)
+```
+
+::: {.hint exercise="ex_ceros"}
+Basta contar los autovalores por debajo de una tolerancia pequeña, con `np.linalg.eigvalsh`.
+:::
+
+::: {.solution exercise="ex_ceros"}
+```{pyodide}
+import numpy as np
+
+def laplaciano_por_bloques(tamanos):
+    """Un grafo completo dentro de cada bloque y nada entre bloques."""
+    n = sum(tamanos)
+    W = np.zeros((n, n))
+    i = 0
+    for t in tamanos:
+        W[i:i + t, i:i + t] = 1.0
+        i += t
+    np.fill_diagonal(W, 0.0)
+    return np.diag(W.sum(axis=1)) - W
+
+for tam in ([5], [3, 4], [2, 2, 2, 2]):
+    L = laplaciano_por_bloques(tam)
+    nulos = int((np.linalg.eigvalsh(L) < 1e-8).sum())
+    print(tam, nulos)
+
+int(nulos)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_ceros
+#| check: true
+if result == 4:
+    feedback = {"correct": True, "message": "Correcto: cuatro bloques, cuatro ceros. El recuento no depende de los tamaños ni de los pesos, solo de cuántos trozos desconectados hay, y por eso sirve para elegir K en lugar de adivinarlo.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 4 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 34**:
+
+1. Repetir la tabla de la sección 1 con el laplaciano normalizado $D^{-1/2}LD^{-1/2}$ y con grados muy desiguales, y anotar cuál de los dos separa mejor cuando un grupo es mucho más denso que el otro.
+2. Medir el intercambio del SOM en una rejilla de dos dimensiones: para varios radios, el error de reconstrucción y una medida de desorden de la rejilla. Anotar dónde está el codo.
+3. Aplicar la factorización no negativa y la SVD al mismo conjunto de datos de intensidades, y guardar en `50-Errores/` las componentes de las dos dibujadas una al lado de otra, con la fracción de masa negativa de cada una.
+
+## Del libro
+
+**ESL §14.4** presenta los mapas autoorganizados como una versión restringida de K-means, con los prototipos sobre una rejilla y una vecindad que se estrecha. **§14.5** incluye el agrupamiento espectral junto a las componentes y curvas principales, con el laplaciano y sus autovectores. **§14.6** introduce la factorización no negativa, su actualización multiplicativa y su lectura por partes.
+
+Esta página mide las tres. El recuento de componentes conexas, contra los autovalores nulos, en cuatro grafos distintos. La equivalencia del SOM con K-means en línea, programando los dos y comparándolos a diez decimales, junto con el precio de la topología: el error se triplica mientras la cadena se acorta seis veces. Y la comparación entre factorización y SVD con una medida que no depende del convenio de signos, porque los signos de la SVD **cambian de una versión de LAPACK a otra**.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/clustering-avanzado.md`, enlazada a [[clustering]], [[pca]] y [[formas-cuadraticas]]. Conviene rehacer a mano la Proposición 34.2: desarrollar $f^{\top}Lf$ ocupa dos renglones y deja grabado que **el laplaciano solo ve diferencias a lo largo de aristas**, de donde sale sin esfuerzo que su núcleo sean las funciones constantes por componentes.
+
+```
+¿Qué es el laplaciano de un grafo?::D − W, con D la diagonal de los grados
+¿Cuánto vale f'Lf?::La mitad de la suma de W_ij (f_i − f_j)² sobre todos los pares
+¿Qué se deduce de ahí?::Que L es semidefinido positivo
+¿Qué cuenta la multiplicidad del cero?::El número de componentes conexas del grafo
+¿Y quiénes son sus autovectores?::Las indicadoras de esas componentes
+¿Por qué separa dos anillos?::Porque mira conexiones y no distancias al centro
+¿Qué acertó K-means en los anillos?::0,520000, que es lo que acierta una moneda
+¿Qué es un SOM con radio cero?::K-means en línea, exactamente
+¿Qué añade el radio positivo?::Que los prototipos vecinos en la rejilla se arrastran
+¿Qué cuesta eso?::El error se triplicó mientras la cadena se acortaba seis veces
+¿Sube el error la actualización de la NMF?::No: cero subidas en cuatrocientos pasos
+¿Gana la SVD en error?::Siempre, por Eckart-Young; pierde en que sus componentes restan
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 34.2 se demuestra desarrollando la forma cuadrática; la 34.4, sustituyendo $\rho=0$; la 34.6 en su parte de signo, observando que solo se multiplica por cocientes no negativos; la 34.7, por Eckart-Young. Todo se comprueba: el número de autovalores nulos coincide con el de componentes conexas en cuatro grafos —$16$, $2$, $2$ y $1$—; K-means acierta $0{,}520000$ sobre los anillos y el espectral $1{,}000000$; el SOM con radio cero coincide con K-means en línea a diez decimales; el error del SOM pasa de $0{,}006769$ a $0{,}021949$ mientras la cadena cae de $5{,}212029$ a $0{,}908162$; y la factorización baja de $2155{,}380989$ a $0{,}995285$ sin una sola subida, contra $0{,}949855$ de la SVD.
+
+**Lo que viene de los libros.** De **ESL §14.4** viene el SOM y su lectura como K-means restringido; de **§14.5**, el agrupamiento espectral; de **§14.6**, la factorización no negativa y su actualización multiplicativa. El texto no se reproduce.
+
+**Lo que se usa de otras lecciones sin repetir.** K-means y su criterio son de Machine Learning 21. La SVD y su optimalidad son de Machine Learning 19 y de Álgebra 11. La diagonalización de una matriz simétrica es de Álgebra 10.
+
+**Lo que se enuncia sin demostrar.** La monotonía de la actualización multiplicativa se **enuncia y se comprueba**, pero no se demuestra: el argumento de Lee y Seung construye una función auxiliar que esta página no monta. El teorema de Eckart-Young se usa como conocido. Y que los autovectores de autovalor pequeño sigan siendo casi indicadores cuando las componentes están débilmente conectadas se afirma sin cota.
+
+**Lo que es mío, no del libro.** Contar las componentes conexas por separado y enfrentarlas a los autovalores nulos, que convierte la Proposición 34.2 en un recuento comprobado en lugar de un enunciado. Programar el SOM y K-means en línea **por separado** para comprobar la equivalencia en vez de derivarla, y medir el precio de la topología con dos números que se mueven en direcciones contrarias. Y medir la mezcla de signos de la SVD con una cantidad **invariante al volteo de cada componente**, porque el convenio de signos de LAPACK cambia entre versiones y contar entradas negativas daba $44$ en una máquina y $48$ en la otra.
+:::

@@ -106,15 +106,15 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 11 | 11 | **11 de 11** | — |
-| Machine Learning | 33 | 90 | **33 de 33** | el resto de ESL y deep learning |
+| Machine Learning | 34 | 90 | **34 de 34** | el resto de ESL y deep learning |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **103 lecciones** publicadas, **103** cumplen el molde nuevo: cero pendientes
-  de reescritura. Pendientes de **escribir** quedan 71 según el plan.
+- **104 lecciones** publicadas, **104** cumplen el molde nuevo: cero pendientes
+  de reescritura. Pendientes de **escribir** quedan 70 según el plan.
 - **Cuatro módulos cerrados**: Estadística 25/25, Álgebra 18/18, Python 16/16 y
   **Series de tiempo 11/11**, cerrado el 21-09-2026.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
@@ -162,7 +162,7 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   numpy 1.24 y en Python 3.14 con numpy 2.5.3. **Al rehacerlo faltaba
   `scikit-learn`**, y el gate lo dijo en vez de callarse: las celdas que lo
   importan salieron como REVENTÓ, no como aprobadas.
-- Glosario: **440 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **444 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -2998,6 +2998,72 @@ declararlos en `QUIETOS`: el radio de cada nodo pasó a ser su soporte y se aña
 una tira donde los quince soportes caen sobre un eje con el umbral marcado. Ahora
 los dos controles mueven geometría, y de paso el dibujo enseña **por qué** cae
 cada nodo en vez de solo que cae.
+
+---
+
+### 3.51 ML 34: tres métodos, tres proposiciones, y un signo que cambia de máquina (22-09-2026)
+
+Espectral, SOM y factorización no negativa. Cada uno con un resultado que se
+puede demostrar en dos renglones y medir en uno.
+
+> **34.2**: $f^{\top}Lf=\tfrac12\sum_{i,j}W_{ij}(f_i-f_j)^2$, así que el
+> laplaciano es semidefinido positivo y **la multiplicidad de su cero cuenta las
+> componentes conexas**.
+
+Comprobado en cuatro grafos: con tres vecinos el grafo se rompe en $16$ trozos y
+hay $16$ autovalores nulos; con cuarenta queda conectado y hay uno. Y la
+consecuencia sobre dos anillos concéntricos: **K-means acierta $0{,}520000$ —lo
+que acierta una moneda— y el espectral $1{,}000000$**, sin tocar K-means: solo
+cambiando las coordenadas por los autovectores.
+
+> **34.4**: un SOM con radio cero **es** K-means en línea.
+
+Programados los dos por separado: los mismos prototipos a diez decimales. Y el
+precio de la topología, medido con dos números que se mueven en direcciones
+contrarias: al subir el radio de cero a tres el error pasa de $0{,}006769$ a
+$0{,}021949$ mientras la cadena se acorta de $5{,}212029$ a $0{,}908162$. Eso es
+lo que cuesta poder dibujar el mapa.
+
+> **34.6** y **34.7**: la actualización multiplicativa no sube el error; la SVD
+> del mismo rango siempre gana en error.
+
+Cuatrocientos pasos sin una sola subida, de $2155{,}380989$ a $0{,}995285$,
+contra $0{,}949855$ de la SVD. Lo que la SVD no gana es en lectura: **dos de sus
+tres componentes tienen entradas de los dos signos**, con un $31{,}57\ \%$ de la
+masa en el minoritario; la factorización, cero de tres.
+
+#### El orden de dos líneas decide el empate
+
+El contraste con `sklearn.decomposition.NMF` empata **a diez decimales en los
+factores y en el producto**, pero la primera versión no: daba $0{,}996205$
+contra $0{,}995285$, con los factores separados por ocho décimas. La causa era el
+**orden** de las dos actualizaciones multiplicativas. La librería mueve $W$ y
+después $H$; la celda lo hacía al revés. Las dos versiones son la misma
+proposición, y solo una es el mismo algoritmo.
+
+Va quedando una lista de condiciones para que un empate L3 sea posible, y cada
+lección añade una: el arranque y `reg_covar` en ML 30, el número de pasos en vez
+de la tolerancia también en ML 30, `friedman_mse` y el generador compartido en
+ML 32, y ahora el orden de las actualizaciones.
+
+#### Y un caso donde buscar el empate no tiene sentido
+
+`SpectralClustering` normaliza el laplaciano y arranca su K-means de otro modo,
+así que no hay empate dígito a dígito. Lo que sí hay es **la misma partición,
+punto por punto**. Cuando un método termina en una decisión discreta, la
+comparación correcta es la decisión.
+
+#### El signo de la SVD, otra vez
+
+La primera versión de la celda contaba entradas negativas en las componentes de
+la SVD: **$44$ en una máquina y $48$ en la otra**. Es el aviso que ya estaba en
+el punto 5 —una base de la SVD no es única, LAPACK devuelve otra por versión—
+aplicado a algo que no parecía una base.
+
+La salida fue medir algo **invariante al volteo de cada componente**: cuántas
+filas tienen entradas de los dos signos, y qué fracción de la masa se lleva el
+signo minoritario. Las dos cuentas no cambian si se multiplica una fila entera
+por $-1$, y las dos versiones vuelven a coincidir.
 
 ---
 

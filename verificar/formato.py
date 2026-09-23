@@ -122,6 +122,7 @@ MIGRADAS = {
     "ml/31-aditivos-y-mars.qmd",
     "ml/32-boosting-descenso-funcional.qmd",
     "ml/33-reglas-de-asociacion.qmd",
+    "ml/34-clustering-avanzado.qmd",
     "series/01-descomposicion.qmd",
     "series/02-estacionariedad.qmd",
     "series/03-autocorrelacion.qmd",
