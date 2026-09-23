@@ -490,6 +490,217 @@ El cauce de cinco pasos se ordena solo, y la comprobación de la penúltima lín
 </script>
 ```
 
+## 4. Rehacer solo lo que hace falta
+
+La Proposición 16.4 dijo cuándo el cauce se puede ejecutar. La pregunta siguiente es **cuánto** hay que ejecutar cuando algo cambia.
+
+::: {.definicion}
+**Definición 16.5 (aguas abajo de un paso).** Los pasos **aguas abajo** de $p$ son aquellos a los que se llega siguiendo flechas desde $p$: los que leen lo que $p$ escribe, los que leen lo que aquellos escriben, y así en cadena. Son exactamente los que hay que rehacer cuando $p$ cambia.
+:::
+
+::: {.proposicion}
+**Proposición 16.6 (cuánto arrastra cada cambio).** Sobre un cauce de seis pasos, cambiar el paso que descarga obliga a rehacer **4** de los 6; cambiar el catálogo, **3**; y cambiar el informe, **ninguno**, porque nadie lee lo que escribe.
+
+Sumando los seis cambios posibles, rehacer solo lo debido cuesta **19** ejecuciones frente a las **36** de rehacerlo todo cada vez.
+:::
+
+::: {.demostracion}
+*Demostración.* El conjunto de pasos a rehacer es la clausura de la relación «lee lo que el otro escribe» a partir del paso cambiado, que la celda calcula recorriendo el grafo. Los pasos **fuera** de esa clausura no leen, ni directa ni indirectamente, nada que el cambio haya tocado, de modo que su resultado no puede haber cambiado y repetirlos produciría lo mismo. El cociente depende de la forma del grafo: en una cadena recta el primer paso lo arrastra todo y el último nada. ∎
+:::
+
+**Modo de falla.** La clausura solo es correcta si cada paso **declara de verdad** lo que lee y lo que escribe. Un paso que lee un archivo sin declararlo no aparece aguas abajo de quien lo produce, de modo que no se rehace y se queda con el resultado anterior: la salida mezcla datos de dos ejecuciones distintas y cada pieza es internamente coherente. La defensa es que los pasos no puedan leer nada que no hayan declarado, y comprobar contra las huellas de la Proposición 16.2 que lo que leyeron es lo que dijeron.
+
+::: {.proposicion}
+**Proposición 16.7 (detectar el ciclo antes de ejecutar).** Un ciclo se detecta intentando ordenar los pasos: si en algún momento no queda ninguno cuyas dependencias estén ya resueltas, y aún quedan pasos, hay ciclo. La detección **no requiere ejecutar nada**.
+:::
+
+::: {.demostracion}
+*Demostración.* El procedimiento retira en cada vuelta los pasos sin dependencias pendientes y los añade al orden; si el grafo no tiene ciclos, siempre queda al menos uno, por la Proposición 16.4. La celda ordena el cauce de seis pasos y después hace que el catálogo lea el resumen —que se escribe más abajo—: entonces solo **2** de los 6 llegan a ordenarse y los otros cuatro quedan atascados. **Es el interbloqueo de la Proposición 27.8 con artefactos en lugar de cerrojos**, y se detecta igual: intentando ordenar, no esperando a que el cauce se quede parado. ∎
+:::
+
+```{pyodide}
+# Un cauce con seis pasos. Cada uno declara que lee y que escribe.
+CAUCE = {
+    "descarga":   {"lee": [],                    "escribe": ["crudo"]},
+    "limpia":     {"lee": ["crudo"],             "escribe": ["limpio"]},
+    "catalogo":   {"lee": [],                    "escribe": ["cat"]},
+    "cruza":      {"lee": ["limpio", "cat"],     "escribe": ["unido"]},
+    "agrega":     {"lee": ["unido"],             "escribe": ["resumen"]},
+    "informe":    {"lee": ["resumen", "cat"],    "escribe": ["pdf"]},
+}
+
+def depende_de(paso):
+    """Los pasos que escriben algo que este lee."""
+    fuera = []
+    for otro, d in CAUCE.items():
+        if otro != paso and set(d["escribe"]) & set(CAUCE[paso]["lee"]):
+            fuera.append(otro)
+    return fuera
+
+def aguas_abajo(cambiado):
+    """Los pasos que hay que rehacer si 'cambiado' cambia, en cadena."""
+    pendientes, tocados = [cambiado], set()
+    while pendientes:
+        p = pendientes.pop()
+        for otro in CAUCE:
+            if p in depende_de(otro) and otro not in tocados:
+                tocados.add(otro)
+                pendientes.append(otro)
+    return tocados
+
+TOTAL = len(CAUCE)
+print("un cauce de %d pasos: que hay que rehacer si cambia uno" % TOTAL)
+print("  %-11s %-9s %s" % ("cambia", "rehacer", "cuales"))
+for paso in sorted(CAUCE):
+    ab = aguas_abajo(paso)
+    print("  %-11s %d de %d    %s" % (paso, len(ab), TOTAL, sorted(ab)))
+print()
+print("cambiar el catalogo obliga a rehacer %d pasos; cambiar el informe,"
+      % len(aguas_abajo("catalogo")))
+print("ninguno, porque nadie lee lo que escribe. Saberlo de antemano es")
+print("lo que permite no rehacer el cauce entero en cada cambio")
+print()
+
+# Cuanto se ahorra: rehacer solo lo de aguas abajo contra rehacerlo todo.
+total_rehechos = sum(len(aguas_abajo(p)) + 1 for p in CAUCE)
+total_ciegos = TOTAL * TOTAL
+print("sobre los %d cambios posibles, uno por paso" % TOTAL)
+print("  rehaciendo todo cada vez : %d ejecuciones" % total_ciegos)
+print("  rehaciendo solo lo debido: %d ejecuciones" % total_rehechos)
+print("  cociente                 : %.2f a 1" % (total_ciegos / float(total_rehechos)))
+print()
+print("el ahorro depende de la forma del grafo: en una cadena recta el")
+print("ultimo paso no arrastra nada y el primero lo arrastra todo")
+print()
+
+# El ciclo que impide ejecutar: un paso que lee lo que otro posterior escribe.
+def hay_ciclo(cauce):
+    """Intenta ordenar los pasos; si no puede, hay ciclo."""
+    pendientes = dict((p, set()) for p in cauce)
+    for p, d in cauce.items():
+        for otro, d2 in cauce.items():
+            if otro != p and set(d2["escribe"]) & set(d["lee"]):
+                pendientes[p].add(otro)
+    orden = []
+    while pendientes:
+        listos = [p for p, dep in pendientes.items() if not dep]
+        if not listos:
+            return True, orden
+        for p in sorted(listos):
+            orden.append(p)
+            del pendientes[p]
+        for dep in pendientes.values():
+            dep -= set(orden)
+    return False, orden
+
+ciclo, orden = hay_ciclo(CAUCE)
+print("el cauce se puede ejecutar: %s" % (not ciclo))
+print("  un orden valido: %s" % orden)
+print()
+
+ROTO = dict((k, dict(v)) for k, v in CAUCE.items())
+ROTO["catalogo"] = {"lee": ["resumen"], "escribe": ["cat"]}   # lee lo de mas abajo
+ciclo2, orden2 = hay_ciclo(ROTO)
+print("y si el catalogo pasa a leer el resumen, que se escribe despues")
+print("  hay ciclo: %s" % ciclo2)
+print("  pasos que llegaron a ordenarse: %d de %d" % (len(orden2), TOTAL))
+print("  los que quedaron atascados    : %s"
+      % sorted(set(ROTO) - set(orden2)))
+print()
+print("no hay ningun orden en que ejecutarlos: cada uno espera al otro.")
+print("Es el interbloqueo de la Leccion 27 con artefactos en vez de")
+print("cerrojos, y se detecta igual: intentando ordenar y viendo que no se")
+print("puede, no esperando a que el cauce se quede parado")
+```
+
+## 5. Qué hay que fijar
+
+::: {.definicion}
+**Definición 16.8 (entorno fijado).** Un **entorno fijado** anota las versiones **exactas** de todo lo que interviene en el cálculo: el lenguaje, cada biblioteca, y los **datos que esas bibliotecas traen dentro** —la tabla de Unicode, la de zonas horarias—. Fijar la semilla del generador es una parte pequeña de esto.
+:::
+
+::: {.proposicion}
+**Proposición 16.9 (fijar la versión del lenguaje no basta).** Entre dos versiones de Python y de sus bibliotecas hay diferencias que **cambian un número sin levantar ningún error**. Comprobando esta misma plataforma en dos versiones aparecieron **nueve**, repartidas entre `numpy` (3), `pandas` (2), el propio lenguaje (3) y los datos de Unicode (1).
+:::
+
+::: {.demostracion}
+*Demostración.* La celda las tabula con lo que las evita. Ninguna es un fallo de ninguna biblioteca: son decisiones legítimas que cambiaron —un generador que mejora su algoritmo, un `dtype` que se hace más preciso, una traza que añade información—. Por construcción, un cambio así no puede avisar: si avisara, no sería un cambio de comportamiento sino un error. En consecuencia, un manifiesto que anote solo la semilla y la versión del lenguaje deja fuera seis de las nueve. ∎
+:::
+
+**Modo de falla.** La diferencia no aparece al actualizar, porque al actualizar nadie vuelve a ejecutar lo viejo: aparece meses después, al comparar un resultado nuevo con uno archivado, y se atribuye a los datos. El síntoma es una cifra histórica que ya no se puede reproducir con el mismo código y la misma entrada. La defensa es anotar las versiones **exactas** de todo —incluidos los datos que las bibliotecas traen dentro, como la tabla de Unicode o la de zonas horarias— y, cuando el número importe, ejecutar en dos entornos distintos y comparar, que es lo que esta plataforma hace en cada construcción.
+
+```{pyodide}
+# Fijar la semilla no basta, y fijar la version de Python tampoco. Esta
+# tabla recoge diferencias REALES encontradas comprobando esta misma
+# plataforma en dos versiones del lenguaje y de sus bibliotecas.
+DIFERENCIAS = [
+    ("numpy", "rng.uniform(a, b, n)", "produce numeros distintos entre versiones",
+     "usar a + (b-a)*rng.random(n)"),
+    ("numpy", "rng.choice(p, m, replace=False)", "cambio de algoritmo",
+     "usar argsort sobre rng.random(p)"),
+    ("numpy", "repr de un escalar", "np.int64(5) contra 5",
+     "convertir con int() o .tolist()"),
+    ("pandas", "dtype de una columna de texto", "object contra str",
+     "no imprimirlo"),
+    ("pandas", "memory_usage(deep=True)", "cifras distintas",
+     "imprimir comparaciones"),
+    ("python", "texto de una traza", "marcadores ^^^ desde 3.11",
+     "recorrer la traza, no imprimirla"),
+    ("python", "marcos de una comprehension", "integrados desde 3.12",
+     "no contar marcos"),
+    ("python", "sys.getsizeof(0)", "24 bytes contra 28",
+     "imprimir comparaciones"),
+    ("unicode", "datos de la tabla", "12.1 contra 16.0",
+     "no usar unicodedata.name"),
+]
+
+print("diferencias reales entre dos versiones, encontradas comprobando")
+print("esta plataforma. Ninguna levanta un error: todas cambian un numero")
+print()
+print("  %-8s %-34s %s" % ("donde", "que", "como se evita"))
+for donde, que, _, arreglo in DIFERENCIAS:
+    print("  %-8s %-34s %s" % (donde, que, arreglo))
+print()
+print("  diferencias encontradas: %d" % len(DIFERENCIAS))
+por_donde = {}
+for donde, _, _, _ in DIFERENCIAS:
+    por_donde[donde] = por_donde.get(donde, 0) + 1
+print("  repartidas asi: %s" % por_donde)
+print()
+print("fijar la semilla no cubre ninguna de estas. Fijar la version de")
+print("Python cubre las de 'python'; hacen falta ademas las versiones")
+print("exactas de cada biblioteca Y de los datos que traen dentro, como la")
+print("tabla de Unicode o la de zonas horarias")
+print()
+
+# Lo que un manifiesto tiene que anotar, contado.
+MANIFIESTO = [
+    "la huella de cada entrada",
+    "la huella de cada salida",
+    "la version del codigo",
+    "la version de Python",
+    "la version exacta de cada biblioteca",
+    "la semilla de cada generador",
+    "los parametros del cauce",
+    "la fecha y hora de la ejecucion",
+]
+print("lo que un manifiesto tiene que anotar para que el numero se repita")
+for k, x in enumerate(MANIFIESTO, 1):
+    print("  %d. %s" % (k, x))
+print()
+print("  campos: %d, y los tres primeros son los que suelen faltar" % len(MANIFIESTO))
+print()
+print("con eso, dos ejecuciones que den numeros distintos se pueden")
+print("comparar campo a campo hasta encontrar cual difiere. Sin eso, la")
+print("unica respuesta posible es 'en mi maquina funciona'")
+print()
+print("y esta plataforma lo aplica: cada celda se ejecuta en DOS versiones")
+print("distintas de Python, con bibliotecas distintas, y el build falla si")
+print("las dos salidas no coinciden caracter a caracter. Esta misma linea")
+print("tuvo que reescribirse porque imprimia la version, que es justo lo")
+print("que difiere")
+```
+
 ## Ejercicios
 
 ### Ejercicio 1, Qué falta para reproducir

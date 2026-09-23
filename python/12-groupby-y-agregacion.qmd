@@ -450,6 +450,117 @@ De las $12$ combinaciones declaradas solo $5$ se observan, y las otras $7$ apare
 </script>
 ```
 
+## 4. La clave que falta, y lo que se lleva
+
+La Proposición 12.4 contaba grupos que existen sin tener filas. Queda el caso contrario: **filas que existen sin tener grupo**.
+
+::: {.definicion}
+**Definición 12.5 (fila sin clave).** Una fila cuyo valor de la clave de agrupación está **ausente** no pertenece a ningún grupo. Por omisión, `groupby` la **descarta**: no aparece en ningún resultado y no se emite ningún aviso. Con `dropna=False` esas filas forman un grupo propio.
+:::
+
+::: {.proposicion}
+**Proposición 12.6 (lo que se pierde al descartar).** Sea una tabla de $n$ filas de las que $a$ tienen la clave ausente, y sea $T$ el total de la columna agregada. La suma de las agregaciones por grupo vale $T$ **si y solo si** $a=0$ o no se descartan las ausentes; en otro caso vale $T$ menos lo que aportaban esas $a$ filas.
+
+En consecuencia, la comprobación «la suma de los grupos iguala al total» detecta el caso, y cuesta una pasada.
+:::
+
+::: {.demostracion}
+*Demostración.* Los grupos parten las filas **con clave** en bloques disjuntos, de modo que sus agregaciones suman lo que aportan esas filas y nada más; las ausentes quedan fuera de la partición. La celda lo mide sobre 6 filas de las que **2** no tienen zona: el total es 800, la suma por grupos es **300**, y se pierde el **62 %** en un tercio de las filas. Con `dropna=False` los tres grupos suman 800 y el invariante se cumple. ∎
+:::
+
+**Modo de falla.** La pérdida es proporcional a lo que esas filas aportaban, no a cuántas son: **dos filas de seis se llevaron el 62 % del importe**, porque eran las grandes. Y el resultado no tiene nada raro —los grupos que aparecen son correctos y sus números también—, de modo que solo el total delata la fuga. La defensa es comprobar que la suma de los grupos iguala al total antes de publicar cualquier agregado, que es la tercera comprobación de la Proposición 24.9.
+
+::: {.definicion}
+**Definición 12.7 (agregación con nombre).** Una **agregación con nombre** declara, para cada columna del resultado, de qué columna sale y con qué función se calcula. Evita que el resultado quede con columnas llamadas como la función —`sum`, `mean`— y permite aplicar funciones distintas a columnas distintas en una sola pasada.
+:::
+
+::: {.proposicion}
+**Proposición 12.8 (contar valores contra contar filas).** La función que cuenta dentro de una agregación cuenta los valores **presentes** de la columna agregada, no las filas del grupo. Las dos coinciden si y solo si esa columna no tiene ausentes.
+:::
+
+::: {.demostracion}
+*Demostración.* Es la Proposición 21.8 dentro de pandas: `count` sobre una columna descarta sus ausentes, mientras que el tamaño del grupo los incluye. En consecuencia una media calculada como suma partida por `count` divide entre los presentes, y la calculada como suma partida por el tamaño divide entre todas las filas, y las dos son legítimas para preguntas distintas. La celda agrega con tres funciones a la vez y exhibe las tres columnas; con nombres propios se evita además acabar con una columna llamada `sum`. ∎
+:::
+
+::: {.proposicion}
+**Proposición 12.9 (el orden de los grupos).** Por omisión los grupos salen **ordenados por la clave**, no en el orden en que aparecieron. Pedir que no se ordenen los devuelve en orden de aparición y ahorra la ordenación.
+:::
+
+::: {.demostracion}
+*Demostración.* La celda agrupa las claves `z`, `a`, `m` y obtiene `['a', 'm', 'z']` por omisión y `['z', 'a', 'm']` sin ordenar. La ordenación cuesta lo que cuesta ordenar $g$ elementos, despreciable con pocos grupos y apreciable con muchos; y cuando la clave es un categórico ordenado, el orden que se aplica es el **declarado** y no el alfabético, por la Proposición 29.4. ∎
+:::
+
+```{pyodide}
+import pandas as pd
+
+# Las filas cuya CLAVE esta ausente no van a ningun grupo, y por defecto
+# desaparecen del resultado. El total deja de cuadrar y nada avisa.
+df = pd.DataFrame({
+    "zona": ["norte", "sur", None, "norte", None, "sur"],
+    "importe": [100, 50, 300, 80, 200, 70],
+})
+
+total = int(df["importe"].sum())
+sin_clave = int(df["zona"].isna().sum())
+print("una tabla con %d filas, %d de ellas sin zona" % (len(df), sin_clave))
+print("  importe total: %d" % total)
+print()
+
+por_defecto = df.groupby("zona")["importe"].sum()
+con_ausentes = df.groupby("zona", dropna=False)["importe"].sum()
+print("el mismo groupby, con y sin descartar la clave ausente")
+print("  por defecto      : %d grupos, suma %d"
+      % (len(por_defecto), int(por_defecto.sum())))
+print("  con dropna=False : %d grupos, suma %d"
+      % (len(con_ausentes), int(con_ausentes.sum())))
+print("  grupos con dropna=False: %s" % [str(x) for x in con_ausentes.index])
+print()
+perdido = total - int(por_defecto.sum())
+print("se perdieron %d de %d, el %.0f %% del total, en %d filas de %d"
+      % (perdido, total, 100.0 * perdido / total, sin_clave, len(df)))
+print()
+print("la comprobacion que lo caza es la de la Proposicion 24.9: el total")
+print("antes y despues. Y el arreglo es una palabra, dropna=False, que")
+print("saca las filas sin clave a su propio grupo en vez de borrarlas")
+print()
+
+# La suma por grupos cuadra con el total SOLO si no se descarto nada.
+print("el invariante, escrito")
+for etiqueta, r in (("por defecto", por_defecto), ("dropna=False", con_ausentes)):
+    cuadra = int(r.sum()) == total
+    print("  %-14s suma de grupos = %3d, total = %3d, cuadra: %s"
+          % (etiqueta, int(r.sum()), total, cuadra))
+print()
+
+# agg con varias funciones de una vez, y con nombres propios.
+print("varias agregaciones de una vez")
+varias = df.groupby("zona", dropna=False)["importe"].agg(["sum", "count", "mean"])
+print("  columnas: %s" % list(varias.columns))
+for idx, fila in zip(varias.index, varias.values):
+    print("    %-6s suma %5.0f  cuantas %2.0f  media %6.1f"
+          % (str(idx), fila[0], fila[1], fila[2]))
+print()
+con_nombre = df.groupby("zona", dropna=False).agg(
+    total=("importe", "sum"), cuantas=("importe", "count"))
+print("y con nombres elegidos, que evita columnas llamadas 'sum'")
+print("  columnas: %s" % list(con_nombre.columns))
+print()
+print("count cuenta valores PRESENTES de la columna agregada, no filas del")
+print("grupo: si el importe tuviera ausentes, count y el tamaño del grupo")
+print("dejarian de coincidir. Es la Proposicion 21.8 dentro de pandas")
+print()
+
+# El orden de los grupos: ordenado por defecto, y cuesta.
+s = pd.DataFrame({"g": ["z", "a", "m"], "v": [1, 2, 3]})
+print("el orden de los grupos")
+print("  sort=True  (por defecto): %s" % list(s.groupby("g")["v"].sum().index))
+print("  sort=False              : %s" % list(s.groupby("g", sort=False)["v"].sum().index))
+print()
+print("por defecto los grupos salen ordenados por la clave, no en el orden")
+print("en que aparecieron. Con sort=False salen como aparecieron y se")
+print("ahorra la ordenacion, que sobre muchos grupos se nota")
+```
+
 ## Ejercicios
 
 ### Ejercicio 1, Las dos medias

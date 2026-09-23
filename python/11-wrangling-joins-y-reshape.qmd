@@ -517,6 +517,125 @@ print("el resto de las celdas observadas tienen cuenta 1:",
 
 **Remedio.** Si la repetición es un duplicado, quitarla. Si son mediciones distintas, el par de niveles elegido no identifica la observación y falta un nivel —la fecha, el intento, el instrumento—: añadirlo devuelve la unicidad y hace que la Proposición 11.3 vuelva a aplicarse. Agregar es legítimo solo cuando la media de esas mediciones es lo que se quiere, y entonces conviene dejarlo escrito.
 
+## 5. Comprobar la forma antes de unir
+
+La Proposición 11.2 cuenta las filas de una unión antes de ejecutarla. Lo que sigue es lo que pandas puede comprobar **por su cuenta**, y por qué conviene pedírselo.
+
+::: {.definicion}
+**Definición 11.5 (multiplicidad de una clave).** La **multiplicidad** de una clave en una tabla es el número de filas que la contienen. Una clave de multiplicidad 1 en todas sus apariciones se llama **única**, y es lo que un catálogo debería tener. Las multiplicidades de los dos lados determinan por completo el recuento de filas de cualquier unión, por la Proposición 11.2.
+:::
+
+::: {.proposicion}
+**Proposición 11.6 (la cuenta de filas no basta).** Una unión interna puede **conservar el número de filas** de la tabla izquierda y alterar los totales, cuando una clave se duplica en la derecha y otra falta.
+
+Sean $d$ las filas de la izquierda cuya clave aparece dos veces en la derecha, y $f$ las que no aparecen ninguna. La unión interna devuelve $n + d - f$ filas, que coincide con $n$ siempre que $d=f$. Los totales, en cambio, suben en lo que aportan las duplicadas y bajan en lo que aportaban las ausentes, y esas dos cantidades **no tienen por qué compensarse**.
+:::
+
+::: {.demostracion}
+*Demostración.* Cada fila de la izquierda produce tantas filas como coincidencias tenga su clave en la derecha: las duplicadas producen dos, las ausentes ninguna, y las demás una. Con $d=f=1$ el recuento sale igual y el conjunto de filas es otro. La celda lo exhibe sobre tres ventas y un catálogo con una clave repetida: salen **3 filas** de 3, y el importe total pasa de **170 a 250**, un **47 %** más. ∎
+:::
+
+**Modo de falla.** La comprobación «el cruce conserva el número de filas» de la Proposición 24.9 **pasa** en este caso, y da el visto bueno a un total un 47 % más alto. La comprobación está bien planteada; lo que ocurre es que una sola no basta, y la del total es la que aquí falla. La defensa son las tres juntas —clave única, filas conservadas, total conservado—, y la primera es además la más barata.
+
+::: {.proposicion}
+**Proposición 11.7 (declarar la forma).** El argumento `validate` declara qué forma debe tener la unión —`one_to_one`, `one_to_many`, `many_to_one`— y levanta `MergeError` si los datos no la tienen. La comprobación ocurre **antes** de producir ninguna fila.
+:::
+
+::: {.demostracion}
+*Demostración.* Para verificar la forma basta comprobar la unicidad de la clave en el lado o los lados que la declaración exige, lo que cuesta una pasada por cada uno. Si falla, no hay resultado que inspeccionar: el error llega donde está el problema. La celda prueba las tres formas sobre el mismo par de tablas: `one_to_many` se ejecuta, y `one_to_one` y `many_to_one` levantan `MergeError`. **`many_to_one` es lo que casi siempre se quiere de un catálogo**, y declararlo convierte un total equivocado en un error. ∎
+:::
+
+::: {.definicion}
+**Definición 11.8 (origen de una fila).** En el resultado de una unión, el **origen** de cada fila dice por qué lados casó: por los **dos**, solo por la **izquierda** o solo por la **derecha**. Las tres categorías son disjuntas y cubren el resultado de una unión externa.
+:::
+
+::: {.proposicion}
+**Proposición 11.9 (contar de dónde vino cada fila).** El argumento `indicator` añade una columna que dice, para cada fila del resultado, si casó por los dos lados o por uno solo. Sobre una unión externa, sus tres recuentos suman el total de filas y miden exactamente lo que cada lado aportó sin pareja.
+:::
+
+::: {.demostracion}
+*Demostración.* Las tres categorías —`both`, `left_only`, `right_only`— son disjuntas y cubren el resultado, de modo que sus recuentos suman las filas de la unión externa. Las filas `left_only` son las claves de la izquierda que la derecha no tiene y las `right_only` al revés. La celda lo mide sobre dos tablas de 3 filas con una clave distinta cada una: **2 casaron, 1 solo por la izquierda y 1 solo por la derecha**. En una unión por la izquierda esas filas habrían quedado con faltantes y nadie las habría contado. ∎
+:::
+
+**Modo de falla.** Una clave que llega como texto en una tabla y como número en otra hace que pandas **se niegue** a unir, con `ValueError`. Eso es lo mejor que puede pasar: es la pérdida de tipos de la Proposición 23.9 llegando hasta aquí, y el día que los dos lados son texto —uno con ceros a la izquierda y otro sin ellos— la unión sí se hace y no casa ninguna fila. La defensa es declarar los tipos al leer y comprobar `indicator` cuando el número de coincidencias importe.
+
+```{pyodide}
+import pandas as pd
+
+# La Proposicion 11.2 cuenta las filas de una union ANTES de ejecutarla.
+# pandas puede comprobar esa cuenta por su cuenta, y negarse si no cuadra.
+ventas = pd.DataFrame({"cliente": ["a", "b", "c"], "importe": [100, 50, 20]})
+catalogo = pd.DataFrame({"cliente": ["a", "a", "b"], "zona": ["N", "S", "N"]})
+
+print("una tabla de 3 ventas y un catalogo con 'a' repetida")
+print("  multiplicidades del catalogo: %s"
+      % catalogo["cliente"].value_counts().to_dict())
+print()
+
+r = ventas.merge(catalogo, on="cliente")
+print("sin comprobar nada")
+print("  filas que entraron: %d" % len(ventas))
+print("  filas que salieron: %d" % len(r))
+print("  importe total antes : %d" % ventas["importe"].sum())
+print("  importe total despues: %d   <- la venta de 'a' se conto dos veces"
+      % r["importe"].sum())
+print()
+print("y aqui esta lo peor: SALIERON LAS MISMAS 3 FILAS. La venta de 'a' se")
+print("duplico y la de 'c' desaparecio —el catalogo no la tiene— asi que la")
+print("cuenta de filas cuadra y el total no. Comprobar solo el numero de")
+print("filas habria dado el visto bueno a un total un %d %% mas alto"
+      % round(100.0 * (r["importe"].sum() - ventas["importe"].sum()) / ventas["importe"].sum()))
+print()
+
+# validate declara la forma que la union DEBE tener, y falla si no la tiene.
+print("declarando la forma esperada con validate")
+for forma in ("one_to_one", "many_to_one", "one_to_many"):
+    try:
+        ventas.merge(catalogo, on="cliente", validate=forma)
+        print("  validate=%-12s la union se hace" % forma)
+    except pd.errors.MergeError:
+        print("  validate=%-12s MergeError: la union no tiene esa forma" % forma)
+print()
+print("'many_to_one' dice que la derecha tiene la clave unica, que es lo que")
+print("casi siempre se quiere de un catalogo. Falla, y falla DONDE ESTA el")
+print("problema en vez de cuarenta lineas despues, en un total que no cuadra")
+print()
+
+# indicator dice de donde vino cada fila, y eso mide lo que se perdio.
+izq = pd.DataFrame({"k": ["a", "b", "c"], "v": [1, 2, 3]})
+der = pd.DataFrame({"k": ["a", "b", "d"], "w": [10, 20, 40]})
+m = izq.merge(der, on="k", how="outer", indicator=True)
+cuenta = m["_merge"].value_counts().to_dict()
+print("indicator=True dice de donde vino cada fila")
+print("  filas de cada origen: %s" % {str(k): int(v) for k, v in cuenta.items()})
+print("  casaron        : %d de %d por la izquierda y %d por la derecha"
+      % (cuenta.get("both", 0), len(izq), len(der)))
+print("  solo izquierda : %d   <- claves que el catalogo no tiene"
+      % cuenta.get("left_only", 0))
+print("  solo derecha   : %d   <- claves del catalogo que nadie usa"
+      % cuenta.get("right_only", 0))
+print()
+print("una union por la izquierda habria dejado esas filas con faltantes y")
+print("nadie las habria contado. Con indicator se cuentan, y el numero se")
+print("puede comprobar contra lo esperado")
+print()
+
+# Y la clave con tipos distintos: ni casa ni calla.
+a = pd.DataFrame({"k": [1, 2], "v": [1, 2]})
+b = pd.DataFrame({"k": ["1", "2"], "w": [9, 8]})
+print("una clave con tipos distintos a cada lado")
+print("  la izquierda guarda numeros y la derecha texto")
+try:
+    a.merge(b, on="k")
+    print("  la union se hizo")
+except ValueError:
+    print("  ValueError: pandas se niega a unir un numero con un texto")
+print()
+print("es la perdida de tipos de la Leccion 23 llegando hasta aqui: un CSV")
+print("leido sin declarar tipos deja la clave como texto en una tabla y")
+print("como numero en la otra, y el cruce deja de funcionar")
+```
+
 ## Ejercicios
 
 ### Ejercicio 1, Las filas de una unión externa

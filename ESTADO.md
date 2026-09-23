@@ -4128,6 +4128,51 @@ las intercalaciones dice **cuántas** donde un ejemplo solo dice **una**. Convie
 tenerlo presente antes de buscar cómo instalar algo: **la pregunta primera no es
 qué biblioteca usar sino qué se quiere medir**.
 
+### 3.76 La pasada de profundidad sobre Python 11, 12, 14 y 16 (23-09-2026)
+
+La deuda del §3.54, saldada. Las cuatro lecciones más flojas del módulo
+—**1 def / 3 prop / 3 dem** cada una— pasan a **3 / 6 / 6** salvo la 14, que
+queda en 3 / 5 / 5.
+
+**No se reescribieron: se les añadió una sección.** Al releerlas resultó que el
+contenido era sólido —la 11 cuenta las filas de las cuatro uniones con fórmulas,
+la 12 parte la suma de cuadrados, la 14 calcula el retraso exacto de una ventana
+móvil—; lo que faltaba era **cantidad**, no calidad. Cada una recibió una
+sección nueva con dos o tres proposiciones y una celda, sobre lo que las
+lecciones 20–30 habían dejado al descubierto.
+
+**Lo que se añadió, y por qué esas cosas:**
+
+· **11 — `validate` e `indicator`.** El caso central es mejor que el de la
+Lección 24: un cruce que **conserva las 3 filas** y sube el importe de **170 a
+250**, porque una clave se duplica y otra falta. La comprobación «el cruce
+conserva el número de filas» **pasa** y da el visto bueno a un total un 47 % más
+alto. Una sola comprobación no basta.
+
+· **12 — la clave ausente.** Las filas cuya clave de agrupación está ausente se
+descartan por omisión: **el total pasa de 800 a 300**, un 62 % perdido en 2 filas
+de 6. La pérdida es proporcional a lo que esas filas aportaban, no a cuántas son.
+
+· **14 — los huecos y los bordes.** Remuestrear rellena los periodos sin dato con
+**ceros que nadie midió**, y el total no cambia, de modo que la Proposición 14.2
+no lo delata. Y las cuatro combinaciones de cierre y etiqueta dan **3 intervalos
+con `[1, 5, 9]`** o **4 con `[0, 3, 7, 5]`** sobre los mismos datos.
+
+· **16 — rehacer y fijar.** Cuánto arrastra cada cambio en un cauce de seis
+pasos —de 0 a 4—, y la detección del ciclo **antes** de ejecutar, que es el
+interbloqueo del §3.72 con artefactos en lugar de cerrojos. Y una tabla con las
+**nueve diferencias reales entre versiones** encontradas al construir esta
+plataforma, con lo que evita cada una: fijar la semilla no cubre ninguna, y
+fijar la versión del lenguaje cubre tres de nueve.
+
+**Una trampa de plomería que se repitió cuatro veces.** Insertar una celda
+**desplaza el índice de todas las posteriores**, y las soluciones de los
+ejercicios estaban declaradas por número. Las cuatro veces hubo que renumerar
+`afirmaciones.json` sumando 1 —o 2 en la 16, que recibió dos celdas— a todas las
+claves desde el punto de inserción. Conviene listar las celdas con su marca
+—enseña, plantilla, comprobación— **antes** de tocar nada, que es lo que se hizo
+a partir de la segunda.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
