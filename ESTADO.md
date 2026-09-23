@@ -3832,6 +3832,64 @@ pedir más de las que hay. Con los dos al máximo las dos tiras salen enteras
 verdes y las barras de lectura coinciden, que es precisamente el caso en que la
 disposición columnar no aporta nada: el visual **enseña también cuándo no sirve**.
 
+### 3.69 Python 24, y comprobar la sintaxis del visual en un segundo (23-09-2026)
+
+3 def / 8 prop / 8 dem, cuatro «Modo de falla». Tampoco hay `pytest`, y otra vez
+la ausencia sale a favor: **el corredor de pruebas se escribe en quince líneas**
+dentro de la lección. Ver escrito lo que hace una librería de pruebas —recoger
+funciones con cierto nombre, llamarlas, anotar cuáles levantaron
+`AssertionError`— le quita el misterio, y lo que la librería añade encima es
+comodidad y no idea.
+
+**El orden importa: primero lo que una prueba NO demuestra.** Dos pruebas que
+pasan conviven con `media([])` reventando, y una prueba que compara el resultado
+consigo mismo pasa con la función devolviendo `999.0`. Solo después llegan las
+propiedades.
+
+**Lo medido:**
+
+· Cuatro ejemplos escritos a mano pasan sobre una ordenación rota; la propiedad
+halla un contraejemplo en el intento **5**, y se **reduce** de 6 elementos a
+`[13, 1]` en 6 pruebas. La reducción se implementó a mano para que ese paso sea
+un número y no una promesa.
+
+· El caso central, pensado para Luis: un cruce de 100 ventas contra un catálogo
+de 31 filas con **una clave repetida** devuelve **104** filas y un total de
+**6198** donde debía dar **5950**. Columnas correctas, números plausibles,
+ningún error. Las tres comprobaciones que lo cazan no miran el resultado, y la
+primera —clave única— cuesta una pasada por el catálogo.
+
+· Dos pruebas con estado compartido dan **2 pasadas en un orden y 1 pasada y 1
+fallo en el otro**, desde el mismo punto de partida. Es la Proposición 10.8 —el
+defecto mutable— aparecida en las pruebas, con el mismo arreglo.
+
+**Un hallazgo de método que ahorra minutos: `node --check` sobre el JavaScript
+extraído.** El segundo visual tenía un paréntesis de menos y el gate lo reportó
+como `ERROR DE JAVASCRIPT`, además de dos falsos «no cambia nada el dibujo» que
+eran consecuencia. Extraer el `<script>` de cada bloque `{=html}` y pasarle
+`node --check` da el número de línea exacto **en un segundo**, frente a los
+treinta que tarda Playwright en arrancar. Conviene hacerlo antes del gate cada
+vez que se escribe un visual nuevo:
+
+```sh
+python3 -c "
+import re,pathlib,subprocess
+s=pathlib.Path('ruta/leccion.qmd').read_text(encoding='utf-8')
+for i,b in enumerate(re.findall(r'\`\`\`\{=html\}(.*?)\`\`\`',s,re.S)):
+    js=re.search(r'<script>(.*?)</script>',b,re.S).group(1)
+    pathlib.Path('/tmp/v.js').write_text(js,encoding='utf-8')
+    r=subprocess.run(['node','--check','/tmp/v.js'],capture_output=True,text=True)
+    print(i, 'ok' if r.returncode==0 else r.stderr.strip().split(chr(10))[-1])
+"
+```
+
+**La concurrencia del CI, entendida.** Tres runs seguidos salieron `cancelled`
+—`141c2dc`, `49186a9`, `84a72da`— y ninguno era un fallo: el workflow tiene
+`concurrency: cancel-in-progress: true`, así que empujar otra vez cancela el
+anterior. Como cada run construye el sitio entero desde el estado actual, el
+último cubre todo lo anterior. Pero conviene **esperar a que un run confirme en
+verde antes de volver a empujar**, o no se llega a tener nunca una confirmación.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

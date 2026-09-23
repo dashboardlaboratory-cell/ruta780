@@ -1,0 +1,798 @@
+---
+title: "Pruebas: qué se prueba de un análisis"
+subtitle: "Python · Lección 24"
+nivel: L4
+modulo: python
+fase: F2
+prereqs: [python/23-parquet-y-arrow, python/10-carga-formatos-y-limpieza, python/11-wrangling-joins-y-reshape]
+siguientes: []
+libro: "—"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="python/24-pruebas"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F2]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Parquet y Arrow](23-parquet-y-arrow.qmd) · [pandas: carga y limpieza](10-carga-formatos-y-limpieza.qmd) · [pandas: joins](11-wrangling-joins-y-reshape.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Escribir un corredor de [pruebas]{.g data-t="prueba"} en quince líneas, y explicar que eso es lo que una librería de pruebas hace.
+2. **Demostrar que dos pruebas que pasan no prueban que el código esté bien**, y exhibir una prueba que pasa con la función completamente rota.
+3. Escribir una [prueba por propiedades]{.g}, y **medir que encuentra en 5 intentos lo que cuatro ejemplos no vieron**.
+4. **Reducir un contraejemplo** al caso mínimo: de 6 elementos a **2** en 6 pruebas.
+5. **Nombrar qué se prueba de un análisis**: no el resultado, sino los [invariantes]{.g data-t="invariante"} que la transformación conserva.
+6. **Exhibir un cruce que devuelve 6198 donde debía devolver 5950**, sin ningún error, y las tres comprobaciones que lo cazan.
+7. **Demostrar que dos pruebas que comparten estado dan resultados distintos según el orden**.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 11**: los cruces de pandas, cuya avería silenciosa es el centro de esta lección.
+- **Python 10**: la limpieza, que es donde nacen las claves repetidas.
+- **Fundamentos 10**: la Proposición 10.8, el defecto mutable, que aquí reaparece como estado compartido entre pruebas.
+- **Python 22**: el servicio simulado, que es el mismo recurso visto desde el otro lado.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 25**: la depuración, que empieza cuando una prueba falla.
+- **Python 16**: la anatomía de un proyecto, donde estas pruebas viven y se ejecutan solas.
+- **Estadística 17**: el `p-hacking`, que es lo que ocurre cuando la comprobación se elige **después** de ver el resultado.
+:::
+::::
+
+**Esta página no usa `pytest`.** El corredor de pruebas se escribe en quince líneas, porque lo que hace una librería de pruebas —recoger funciones con cierto nombre, llamarlas y anotar cuáles levantaron `AssertionError`— cabe en ellas, y verlo escrito quita el misterio. Lo que la librería añade encima es comodidad, no idea.
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| `assert c` | assert ce | Levanta `AssertionError` si `c` no es verdadera |
+| `prueba_x` | prueba equis | Una función que el corredor reconoce y ejecuta |
+| propiedad | propiedad | Algo que ha de cumplirse para **toda** entrada válida |
+| invariante | invariante | Algo que una transformación **conserva** |
+| `k` | ka | El número de entradas generadas antes de hallar un contraejemplo |
+:::
+
+## 1. Lo que una prueba demuestra, y lo que no
+
+:::: {.definicion}
+**Definición 24.1 (prueba).** Una **prueba** es código que se ejecuta aparte del programa y **falla cuando el comportamiento es incorrecto**. Un corredor de pruebas recoge las funciones cuyo nombre sigue un patrón, las llama, y anota cuáles levantaron `AssertionError`.
+::::
+
+:::: {.proposicion}
+**Proposición 24.2.** Que todas las pruebas pasen no demuestra que el código esté bien: demuestra que **los casos que miran** están bien. Dos pruebas que pasan conviven con una función que revienta en un caso que ninguna mira.
+::::
+
+:::: {.demostracion}
+*Demostración.* Una prueba comprueba el comportamiento sobre las entradas concretas que se le pasan, de modo que su alcance es exactamente ese conjunto y nada dice de las demás entradas. La celda prueba `media` con `[1, 2, 3]` y con `[5]`, las dos pasan, y `media([])` levanta `ZeroDivisionError`. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 24.3.** Una prueba que compara el resultado **consigo mismo** pasa siempre, incluso con la función completamente rota. La comprobación ha de enfrentar el resultado con algo calculado aparte.
+::::
+
+:::: {.demostracion}
+*Demostración.* `assert f(x) == f(x)` es verdadero para cualquier `f` determinista, sea cual sea lo que devuelva, de modo que la condición no depende del comportamiento que se pretende comprobar. La celda sustituye la función por una que devuelve siempre `999.0` y la prueba sigue pasando. El valor de referencia tiene que venir de fuera: un número escrito a mano, otra implementación, o una propiedad. ∎
+::::
+
+**Modo de falla.** La forma corriente de este error no es `f(x) == f(x)` sino calcular el esperado **con el mismo código** que se está probando, o copiar en la prueba el número que el programa imprimió la primera vez sin comprobarlo. La prueba queda verde para siempre y congela el comportamiento actual, correcto o no. La defensa es que el valor esperado se obtenga por un camino distinto: a mano, de una fuente externa, o de una propiedad que no mencione la implementación.
+
+```{pyodide}
+# Un corredor de pruebas cabe en quince lineas: busca las funciones cuyo
+# nombre empieza por prueba_, las llama, y anota cual levanto AssertionError.
+def corre(candidatas):
+    """Devuelve (pasadas, fallos) con el nombre de las que fallaron."""
+    pasadas, fallos = 0, []
+    for nombre in sorted(candidatas):
+        if not nombre.startswith("prueba_"):
+            continue
+        try:
+            candidatas[nombre]()
+            pasadas = pasadas + 1
+        except AssertionError as e:
+            fallos.append((nombre, str(e) or "sin mensaje"))
+    return pasadas, fallos
+
+# La funcion que se quiere probar. Tiene un fallo: con la lista vacia
+# deberia devolver 0 y revienta.
+def media(xs):
+    return sum(xs) / len(xs)
+
+def prueba_media_de_tres():
+    assert media([1, 2, 3]) == 2
+
+def prueba_media_de_uno():
+    assert media([5]) == 5
+
+pasadas, fallos = corre({k: v for k, v in list(globals().items()) if callable(v)})
+print("dos pruebas sobre una funcion con un fallo")
+print("  pasadas: %d   fallos: %d" % (pasadas, len(fallos)))
+print("  y sin embargo media([]) esta rota:")
+try:
+    media([])
+    print("    media([]) funciono")
+except ZeroDivisionError:
+    print("    media([]) levanta ZeroDivisionError")
+print()
+print("las dos pruebas pasan y la funcion esta rota. Una prueba no demuestra")
+print("que el codigo este bien: demuestra que los casos QUE MIRA estan bien")
+print()
+
+# Una prueba que no puede fallar no prueba nada. Este es el caso extremo,
+# y aparece de verdad cuando alguien compara una cosa consigo misma.
+def prueba_inutil():
+    resultado = media([1, 2, 3])
+    assert resultado == media([1, 2, 3])     # se compara consigo misma
+
+def media_rota(xs):
+    return 999.0
+
+print("una prueba que compara el resultado consigo mismo pasa siempre")
+antes = media
+media = media_rota                            # se rompe la funcion a proposito
+try:
+    prueba_inutil()
+    print("  con la funcion completamente rota, prueba_inutil: PASA")
+except AssertionError:
+    print("  prueba_inutil: falla")
+media = antes
+print()
+print("la comprobacion tiene que enfrentar el resultado con algo CALCULADO")
+print("APARTE: un numero escrito a mano, otra implementacion, o una")
+print("propiedad que tenga que cumplirse. Nunca con el propio resultado")
+```
+
+## 2. Comprobar una propiedad en lugar de un ejemplo
+
+:::: {.definicion}
+**Definición 24.4 (prueba por propiedades).** Una **prueba por propiedades** enuncia algo que ha de cumplirse para **toda** entrada válida y lo comprueba sobre entradas generadas, buscando un contraejemplo. No dice cuál es el fallo: dice qué tiene que cumplirse.
+::::
+
+:::: {.proposicion}
+**Proposición 24.5.** Una propiedad encuentra fallos que los ejemplos escritos a mano no cubren. Sobre una ordenación con un error en el último elemento, cuatro ejemplos razonables pasan y la propiedad halla un contraejemplo en el intento **5**.
+::::
+
+:::: {.demostracion}
+*Demostración.* Los ejemplos escritos a mano cubren los casos que se le ocurrieron a quien los escribió, y un fallo en el último elemento no se manifiesta en ninguna lista cuyo último elemento ya esté en su sitio, que es lo habitual en los ejemplos cortos. La propiedad —el resultado sale ordenado y tiene los mismos elementos— se comprueba sobre listas generadas, y basta que una de ellas termine con un valor pequeño. La celda usa una semilla fija, de modo que el resultado es el mismo en cada ejecución: los cuatro ejemplos pasan y el contraejemplo aparece en el quinto intento. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 24.6.** Un contraejemplo se **reduce** quitándole partes mientras siga fallando, hasta el caso mínimo. El de 6 elementos se reduce a **2** en 6 pruebas.
+::::
+
+:::: {.demostracion}
+*Demostración.* Si una entrada incumple la propiedad, cualquier subconjunto suyo que siga incumpliéndola es un contraejemplo igual de válido y más fácil de leer; quitando un elemento cada vez y quedándose con el recorte cuando sigue fallando, se llega a un caso del que ya no se puede quitar nada. La celda reduce `[2, 7, 2, 17, 13, 1]` a `[13, 1]`, sobre el que `ordena_rota` devuelve `[13, 1]` sin ordenar. **El caso mínimo dice dónde mirar; uno de ocho elementos no dice nada.** ∎
+::::
+
+```{pyodide}
+import random
+
+# Una prueba por EJEMPLOS comprueba los casos que a alguien se le ocurrieron.
+# Una prueba por PROPIEDADES comprueba algo que tiene que cumplirse SIEMPRE,
+# sobre entradas generadas, y busca un contraejemplo.
+
+def ordena(xs):
+    """Ordena por insercion. Tiene un fallo con los valores repetidos."""
+    r = list(xs)
+    for i in range(1, len(r)):
+        v, j = r[i], i - 1
+        while j >= 0 and r[j] > v:      # con >= en vez de > seria estable
+            r[j + 1] = r[j]
+            j = j - 1
+        r[j + 1] = v
+    return r
+
+def ordena_rota(xs):
+    """La misma, pero se deja el ultimo elemento sin colocar."""
+    r = list(xs)
+    for i in range(1, len(r) - 1):      # el -1 es el fallo
+        v, j = r[i], i - 1
+        while j >= 0 and r[j] > v:
+            r[j + 1] = r[j]
+            j = j - 1
+        r[j + 1] = v
+    return r
+
+print("las pruebas por ejemplos que alguien escribiria")
+ejemplos = [([3, 1, 2], [1, 2, 3]), ([], []), ([5], [5]), ([1, 2], [1, 2])]
+for entrada, esperado in ejemplos:
+    ok = ordena_rota(entrada) == esperado
+    print("  ordena_rota(%-10s) == %-10s  %s" % (entrada, esperado, "pasa" if ok else "FALLA"))
+print()
+print("los cuatro ejemplos pasan sobre la version rota: ninguno tiene el")
+print("ultimo elemento desordenado, que es lo unico que la rompe")
+print()
+
+# La propiedad: el resultado sale ordenado y tiene los mismos elementos.
+def propiedad(f, xs):
+    r = f(xs)
+    return all(r[i] <= r[i + 1] for i in range(len(r) - 1)) and sorted(r) == sorted(xs)
+
+print("la misma comprobacion escrita como PROPIEDAD, sobre entradas generadas")
+for nombre, f in (("ordena", ordena), ("ordena_rota", ordena_rota)):
+    rng = random.Random(7)             # semilla fija: la pagina da lo mismo siempre
+    intentos, contraejemplo = 0, None
+    while intentos < 500 and contraejemplo is None:
+        intentos = intentos + 1
+        xs = [rng.randrange(0, 20) for _ in range(rng.randrange(0, 8))]
+        if not propiedad(f, xs):
+            contraejemplo = xs
+    if contraejemplo is None:
+        print("  %-12s: 500 entradas generadas, ningun contraejemplo" % nombre)
+    else:
+        print("  %-12s: contraejemplo en el intento %d -> %s" % (nombre, intentos, contraejemplo))
+        print("  %-12s  devuelve %s" % ("", f(contraejemplo)))
+print()
+print("la propiedad encuentra en pocos intentos lo que cuatro ejemplos")
+print("elegidos a mano no vieron. Y no hace falta saber CUAL es el fallo:")
+print("basta saber que tiene que cumplirse")
+print()
+
+# Reducir el contraejemplo: quitarle trozos mientras siga fallando, para
+# que el que lo lea vea el caso minimo y no uno de ocho elementos.
+def reduce(f, xs):
+    """Quita elementos mientras la propiedad siga sin cumplirse."""
+    actual, pasos = list(xs), 0
+    cambio = True
+    while cambio:
+        cambio = False
+        for i in range(len(actual)):
+            menor = actual[:i] + actual[i + 1:]
+            pasos = pasos + 1
+            if not propiedad(f, menor):
+                actual, cambio = menor, True
+                break
+    return actual, pasos
+
+rng = random.Random(7)
+grande = None
+while grande is None:
+    xs = [rng.randrange(0, 20) for _ in range(rng.randrange(0, 8))]
+    if not propiedad(ordena_rota, xs):
+        grande = xs
+minimo, pasos = reduce(ordena_rota, grande)
+print("reducir el contraejemplo hasta el caso minimo")
+print("  encontrado : %s   (%d elementos)" % (grande, len(grande)))
+print("  reducido   : %s   (%d elementos) en %d pruebas" % (minimo, len(minimo), pasos))
+print("  ordena_rota(%s) = %s" % (minimo, ordena_rota(minimo)))
+print()
+print("el caso minimo se lee de un vistazo y dice donde mirar. Un")
+print("contraejemplo de ocho elementos no dice nada")
+```
+
+**Modo de falla.** Una propiedad mal elegida pasa siempre y da la misma falsa tranquilidad que la Proposición 24.3: «el resultado tiene el mismo número de elementos» no detecta una ordenación rota, porque la rota también los conserva. Y una generación sin semilla convierte la prueba en una que falla de vez en cuando, con un contraejemplo distinto cada vez, que es la peor clase de prueba. La defensa es comprobar que la propiedad **sí** falla sobre una versión rota a propósito —que es lo que esta celda hace— y fijar la semilla.
+
+```{=html}
+<div class="viz-propiedad">
+  <div class="controles">
+    <label>Entradas generadas: <input id="pr-n" type="range" min="1" max="40" step="1" value="10"><span id="pr-n-v" class="mono">10</span></label>
+    <label>Qué se comprueba:
+      <select id="pr-m"><option value="prop" selected>una propiedad, sobre generadas</option><option value="ej">cuatro ejemplos escritos a mano</option></select>
+    </label>
+  </div>
+  <svg id="pr-svg" viewBox="0 0 660 210" role="img" aria-label="Qué entradas cubre cada forma de probar"></svg>
+  <div id="pr-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-propiedad { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-propiedad .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-propiedad label { display: flex; align-items: center; gap: .4rem; }
+.viz-propiedad input[type=range] { width: 150px; padding: 0; }
+.viz-propiedad .mono { font-family: var(--bs-font-monospace, monospace); font-size: .8rem; }
+.viz-propiedad svg { width: 100%; height: auto; display: block; }
+.viz-propiedad .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("pr-svg"), lec = document.getElementById("pr-lectura");
+  var cn = document.getElementById("pr-n"), cm = document.getElementById("pr-m"), en = document.getElementById("pr-n-v");
+  // la rejilla de entradas posibles es fija: 10 x 4 celdas siempre en el
+  // mismo sitio, y la zona que falla tambien (regla 19b)
+  var X0 = 60, Y0 = 44, W = 56, H = 30, COLS = 10, FILS = 4;
+  // las entradas que hacen fallar a la funcion: la ultima columna
+  function falla(i, j) { return i === COLS - 1; }
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // una secuencia fija, para que el dibujo sea el mismo siempre
+  function celda(n) { var h = (n * 37 + 11) % (COLS * FILS); return [h % COLS, Math.floor(h / COLS)]; }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var n = +cn.value, prop = cm.value === "prop";
+    en.textContent = n;
+    var i, j, k;
+    // la franja de entradas que hacen fallar
+    svg.appendChild(el("rect", { x: X0 + (COLS - 1) * W, y: Y0, width: W, height: FILS * H,
+      fill: C_B, opacity: .12 }));
+    svg.appendChild(el("text", { x: X0 + (COLS - 0.5) * W, y: Y0 - 8, "text-anchor": "middle",
+      "font-size": 9.5, fill: C_B }, "fallan"));
+    for (i = 0; i < COLS; i++) {
+      for (j = 0; j < FILS; j++) {
+        svg.appendChild(el("rect", { x: X0 + i * W, y: Y0 + j * H, width: W - 2, height: H - 2,
+          fill: "none", stroke: C_L, "stroke-width": .8 }));
+      }
+    }
+    // las entradas probadas
+    var probadas = [], hallado = -1;
+    if (prop) {
+      for (k = 0; k < n; k++) {
+        var c = celda(k);
+        probadas.push(c);
+        if (hallado < 0 && falla(c[0], c[1])) hallado = k;
+      }
+    } else {
+      probadas = [[1, 0], [3, 1], [5, 2], [2, 3]];   // cuatro a mano, ninguna en la franja
+    }
+    for (k = 0; k < probadas.length; k++) {
+      var p = probadas[k], es = falla(p[0], p[1]);
+      svg.appendChild(el("circle", { cx: X0 + p[0] * W + (W - 2) / 2, cy: Y0 + p[1] * H + (H - 2) / 2,
+        r: es ? 9 : 6, fill: es ? C_B : C_A, opacity: es ? .9 : .6 }));
+    }
+    svg.appendChild(el("text", { x: X0, y: Y0 + FILS * H + 26, "font-size": 12.5, fill: C_T },
+      prop
+        ? ("entradas probadas: " + n + "   ·   " + (hallado >= 0
+            ? ("contraejemplo en el intento " + (hallado + 1)) : "sin contraejemplo todavía"))
+        : "entradas probadas: 4, todas fuera de la franja que falla"));
+
+    lec.innerHTML = prop
+      ? (hallado >= 0
+        ? "Generando entradas se acaba cayendo en la franja que falla: el contraejemplo aparece en el intento <strong>" + (hallado + 1) + "</strong>, marcado en rojo. No hacía falta sospechar dónde estaba el fallo, solo saber qué tenía que cumplirse."
+        : "Con <strong>" + n + "</strong> entradas generadas todavía no se ha caído en la franja roja. Subiendo el deslizador se ve en cuál aparece: la cobertura crece con los intentos, y no depende de que a nadie se le ocurra el caso.")
+      : "Los <strong>cuatro</strong> ejemplos escritos a mano caen todos fuera de la franja que falla, y por eso las cuatro pruebas pasan. No están mal elegidos: están elegidos por alguien que <em>no sabía</em> dónde estaba el fallo, que es la situación normal.";
+  }
+  cn.addEventListener("input", dibujar);
+  cm.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Qué se prueba de un análisis
+
+:::: {.definicion}
+**Definición 24.7 (invariante).** Un **invariante** es algo que una transformación tiene que **conservar**: el número de filas, un total, la unicidad de una clave, el rango de una columna. De un análisis no se prueba el resultado —que es justamente lo que no se sabe— sino sus invariantes.
+::::
+
+:::: {.proposicion}
+**Proposición 24.8.** Un cruce contra un catálogo con una clave repetida **duplica filas y altera los totales** sin levantar ningún error. Sobre 100 ventas y un catálogo de 31 filas con una repetida, el cruce devuelve **104** filas y un total de **6198** donde debía dar **5950**.
+::::
+
+:::: {.demostracion}
+*Demostración.* Un cruce empareja cada fila de la izquierda con **todas** las de la derecha que casan, de modo que una clave que aparece dos veces en el catálogo duplica cada fila que la use. El cliente repetido tiene 4 ventas, que pasan a 8: 104 filas en lugar de 100, con sus importes contados dos veces. El resultado conserva las columnas correctas y contiene números plausibles, de modo que ninguna comprobación de formato lo detecta. La celda mide las cuatro cantidades y comprueba que con el catálogo depurado las tres condiciones se cumplen. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 24.9.** Las tres comprobaciones que lo cazan no miran el resultado: miran propiedades que tenían que cumplirse —la clave del catálogo es única, el cruce conserva el número de filas, el cruce conserva el total— y la primera cuesta **una** pasada por el catálogo.
+::::
+
+:::: {.demostracion}
+*Demostración.* Comprobar la unicidad de la clave es construir el conjunto de sus valores y comparar su tamaño con el número de filas, que es una pasada por la Proposición 8.8. Las otras dos comparan una cantidad antes y después de la transformación. Ninguna necesita conocer el resultado esperado, y por eso se pueden escribir **antes** de mirar los datos. La celda ejecuta las tres sobre el catálogo con la repetición y sobre el depurado: fallan las tres y pasan las tres, respectivamente. ∎
+::::
+
+**Modo de falla.** El invariante elegido **después** de ver el resultado describe lo que salió, y por tanto no comprueba nada. Si el total cambió y se escribe la comprobación con el total nuevo, queda verde para siempre y el error queda consagrado. Por eso los invariantes de un análisis se escriben junto a la transformación, no junto al resultado, y se enuncian en términos de lo que la operación promete conservar.
+
+```{pyodide}
+# De un analisis no se prueba el resultado —ese es justamente lo que no se
+# sabe— sino las PROPIEDADES que la transformacion tiene que conservar.
+# Aqui, un cruce de dos tablas.
+ventas = [{"id": i, "cliente": "c%d" % (i % 30), "importe": 10.0 + i} for i in range(100)]
+# el catalogo de clientes tiene una fila repetida: pasa todo el tiempo
+clientes = [{"cliente": "c%d" % k, "zona": "norte" if k % 2 else "sur"} for k in range(30)]
+clientes.append({"cliente": "c7", "zona": "sur"})      # c7 esta dos veces
+
+def cruza(izq, der, clave):
+    """Un cruce sencillo: por cada fila de la izquierda, todas las que casan."""
+    fuera = []
+    for a in izq:
+        for b in der:
+            if a[clave] == b[clave]:
+                f = dict(a); f.update(b); fuera.append(f)
+    return fuera
+
+r = cruza(ventas, clientes, "cliente")
+print("un cruce con una clave repetida en el catalogo")
+print("  filas de ventas     : %d" % len(ventas))
+print("  filas del catalogo  : %d" % len(clientes))
+print("  filas tras el cruce : %d   <- no son %d" % (len(r), len(ventas)))
+print("  filas de mas        : %d" % (len(r) - len(ventas)))
+print()
+print("  el total de importes tambien cambia:")
+print("    antes  : %.1f" % sum(v["importe"] for v in ventas))
+print("    despues: %.1f" % sum(v["importe"] for v in r))
+print()
+print("cada venta del cliente c7 aparece dos veces, y con ella su importe.")
+print("El resultado tiene el formato correcto, las columnas correctas y")
+print("numeros plausibles: nada falla")
+print()
+
+# Las tres comprobaciones que lo habrian cazado. Ninguna mira el resultado
+# concreto: miran propiedades que tenian que cumplirse.
+def comprueba(nombre, condicion, detalle=""):
+    print("  %-38s %s %s" % (nombre, "pasa" if condicion else "FALLA", detalle))
+    return condicion
+
+print("las tres comprobaciones que lo habrian cazado")
+comprueba("la clave del catalogo es unica",
+          len({c["cliente"] for c in clientes}) == len(clientes),
+          "(%d distintas de %d filas)" % (len({c["cliente"] for c in clientes}), len(clientes)))
+comprueba("el cruce conserva el numero de filas",
+          len(r) == len(ventas), "(%d contra %d)" % (len(r), len(ventas)))
+comprueba("el cruce conserva el total",
+          abs(sum(v["importe"] for v in r) - sum(v["importe"] for v in ventas)) < 1e-9)
+print()
+
+# Con el catalogo arreglado, las tres pasan.
+catalogo_ok = [c for i, c in enumerate(clientes) if c["cliente"] not in
+               {x["cliente"] for x in clientes[:i]}]
+r2 = cruza(ventas, catalogo_ok, "cliente")
+print("con el catalogo sin repetidos")
+comprueba("la clave del catalogo es unica",
+          len({c["cliente"] for c in catalogo_ok}) == len(catalogo_ok))
+comprueba("el cruce conserva el numero de filas",
+          len(r2) == len(ventas), "(%d contra %d)" % (len(r2), len(ventas)))
+comprueba("el cruce conserva el total",
+          abs(sum(v["importe"] for v in r2) - sum(v["importe"] for v in ventas)) < 1e-9)
+print()
+print("la comprobacion de la clave unica va ANTES del cruce y es la barata:")
+print("cuesta recorrer el catalogo una vez y evita tener que explicar")
+print("despues por que el informe da %.1f en vez de %.1f"
+      % (sum(v["importe"] for v in r), sum(v["importe"] for v in ventas)))
+```
+
+```{=html}
+<div class="viz-cruce">
+  <div class="controles">
+    <label>Veces que aparece la clave en el catálogo: <input id="cr-d" type="range" min="1" max="4" step="1" value="2"><span id="cr-d-v" class="mono">2</span></label>
+    <label>Se comprueba la unicidad antes:
+      <select id="cr-c"><option value="no" selected>no</option><option value="si">sí</option></select>
+    </label>
+  </div>
+  <svg id="cr-svg" viewBox="0 0 660 225" role="img" aria-label="Filas que salen de un cruce"></svg>
+  <div id="cr-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-cruce { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-cruce .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-cruce label { display: flex; align-items: center; gap: .4rem; }
+.viz-cruce input[type=range] { width: 130px; padding: 0; }
+.viz-cruce .mono { font-family: var(--bs-font-monospace, monospace); font-size: .8rem; }
+.viz-cruce svg { width: 100%; height: auto; display: block; }
+.viz-cruce .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("cr-svg"), lec = document.getElementById("cr-lectura");
+  var cd = document.getElementById("cr-d"), cc = document.getElementById("cr-c"), ed = document.getElementById("cr-d-v");
+  // seis ventas en posiciones fijas a la izquierda; la salida crece hacia
+  // abajo desde una linea fija (regla 19b)
+  var XI = 96, XD = 540, Y0 = 46, DY = 26, VENTAS = 6, CONREPE = 2;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var d = +cd.value, comprueba = cc.value === "si";
+    ed.textContent = d;
+    var k, j, y = Y0, salida = 0;
+    svg.appendChild(el("text", { x: 12, y: Y0 - 14, "font-size": 10, fill: C_T, opacity: .7 }, "ventas"));
+    svg.appendChild(el("text", { x: XD - 40, y: Y0 - 14, "font-size": 10, fill: C_T, opacity: .7 }, "filas que salen"));
+    for (k = 0; k < VENTAS; k++) {
+      var repe = k < CONREPE;                 // las dos primeras usan la clave repetida
+      var copias = repe ? d : 1;
+      svg.appendChild(el("rect", { x: XI - 60, y: Y0 + k * DY - 9, width: 84, height: 18, rx: 3,
+        fill: repe ? C_B : C_A, opacity: .2, stroke: repe ? C_B : C_A, "stroke-width": 1.4 }));
+      svg.appendChild(el("text", { x: XI - 18, y: Y0 + k * DY + 4, "text-anchor": "middle",
+        "font-size": 9.5, fill: C_T }, repe ? "clave repe" : "venta " + (k + 1)));
+      if (comprueba) continue;
+      for (j = 0; j < copias; j++) {
+        svg.appendChild(el("rect", { x: XD - 46, y: y - 8, width: 92, height: 16, rx: 3,
+          fill: (repe && j > 0) ? C_B : C_A, opacity: (repe && j > 0) ? .35 : .2,
+          stroke: (repe && j > 0) ? C_B : C_A, "stroke-width": 1.2 }));
+        svg.appendChild(el("path", { d: "M" + (XI + 28) + " " + (Y0 + k * DY) + " L" + (XD - 50) + " " + y,
+          stroke: (repe && j > 0) ? C_B : C_L, "stroke-width": 1, opacity: .6 }));
+        y = y + 18; salida = salida + 1;
+      }
+    }
+    if (comprueba) {
+      svg.appendChild(el("rect", { x: 250, y: 84, width: 220, height: 42, rx: 7,
+        fill: C_A, opacity: .2, stroke: C_A, "stroke-width": 2 }));
+      svg.appendChild(el("text", { x: 360, y: 103, "text-anchor": "middle", "font-size": 11, fill: C_T },
+        d > 1 ? "la comprobación FALLA" : "la comprobación pasa"));
+      svg.appendChild(el("text", { x: 360, y: 119, "text-anchor": "middle", "font-size": 9.5, fill: C_T, opacity: .7 },
+        d > 1 ? "el cruce no llega a ejecutarse" : "y el cruce se ejecuta"));
+    }
+    svg.appendChild(el("text", { x: 12, y: 208, "font-size": 12.5, fill: C_T },
+      comprueba
+        ? ("clave repetida " + d + (d === 1 ? " vez" : " veces") + "   ·   " +
+           (d > 1 ? "cruce detenido antes de duplicar nada" : "salen " + VENTAS + " filas, las que entraron"))
+        : ("entraron " + VENTAS + " filas   ·   salieron " + salida + "   ·   de más: " + (salida - VENTAS))));
+
+    lec.innerHTML = comprueba
+      ? (d > 1
+        ? "Comprobando la unicidad <strong>antes</strong>, el cruce no llega a ejecutarse: el problema se ve donde está —en el catálogo— y no cuarenta líneas después, en un total que no cuadra. Cuesta una pasada por el catálogo."
+        : "La clave es única, la comprobación pasa y el cruce se ejecuta con normalidad: salen las mismas <strong>" + VENTAS + "</strong> filas que entraron.")
+      : (d > 1
+        ? "Cada venta de la clave repetida sale <strong>" + d + "</strong> veces. Entraron " + VENTAS + " filas y salen <strong>" + salida + "</strong>, con sus importes contados otras tantas. El resultado tiene las columnas correctas y números plausibles: <strong>nada falla</strong>."
+        : "Con la clave apareciendo una sola vez, cada venta sale una vez: <strong>" + salida + "</strong> filas, las que entraron. Subiendo el deslizador se ve aparecer la duplicación, que es la avería que ningún error señala.");
+  }
+  cd.addEventListener("input", dibujar);
+  cc.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Pruebas que no se estorban
+
+:::: {.proposicion}
+**Proposición 24.10.** Dos pruebas que comparten un objeto mutable dejan de ser independientes: **el mismo código y los mismos datos de partida dan resultados distintos según el orden**. En un orden pasan las dos; en el otro, una falla.
+::::
+
+:::: {.demostracion}
+*Demostración.* Por la Proposición 4.9, el objeto compartido es uno solo, y una prueba que lo modifica cambia lo que la siguiente encuentra. Es la Proposición 10.8 —el defecto mutable— aparecida en las pruebas, y su arreglo es el mismo de la 10.9: que cada prueba construya lo que necesita. La celda ejecuta las dos pruebas en los dos órdenes desde el mismo punto de partida y obtiene 2 pasadas y 0 fallos en uno, y 1 y 1 en el otro; con cada prueba construyendo su propio catálogo, los dos órdenes dan 2 y 0. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 24.11.** Una **prueba de regresión** es un fallo concreto, congelado. No se escribe antes de que el fallo ocurra: se escribe el día que ocurre, con el caso mínimo de la Proposición 24.6 y la fecha.
+::::
+
+:::: {.demostracion}
+*Demostración.* Una prueba de regresión no busca fallos nuevos —para eso están las propiedades— sino impedir que uno ya visto vuelva sin que nadie se entere, de modo que su contenido es exactamente el caso que falló. Escribirla antes exigiría prever el fallo, que es lo que no ocurre. La celda contiene una con su fecha y su descripción, construida sobre el caso mínimo del cruce de la sección anterior. ∎
+::::
+
+**Modo de falla.** Una prueba que falla de vez en cuando —por el orden, por la hora, por un número al azar sin semilla— es peor que no tenerla: se acostumbra a volver a lanzarla hasta que pase, y el día que falla por un motivo real nadie la mira. La defensa es que toda prueba sea reproducible: semilla fija en lo aleatorio, sin estado compartido, y sin depender de la fecha.
+
+```{pyodide}
+# Dos pruebas que comparten un objeto mutable dejan de ser independientes:
+# la que corre primero cambia lo que la otra encuentra. Es la Proposicion
+# 10.8 —el defecto mutable— aparecida en las pruebas.
+CATALOGO = {"c1": "norte"}          # estado compartido entre pruebas
+
+def prueba_anade_cliente():
+    CATALOGO["c2"] = "sur"
+    assert len(CATALOGO) == 2
+
+def prueba_catalogo_pequeno():
+    assert len(CATALOGO) == 1, "el catalogo deberia tener 1 cliente, tiene %d" % len(CATALOGO)
+
+def corre(pruebas):
+    pasadas, fallos = 0, []
+    for nombre, f in pruebas:
+        try:
+            f(); pasadas = pasadas + 1
+        except AssertionError as e:
+            fallos.append((nombre, str(e)))
+    return pasadas, fallos
+
+print("las mismas dos pruebas, en los dos ordenes posibles")
+for etiqueta, orden in (("pequeno primero", [("prueba_catalogo_pequeno", prueba_catalogo_pequeno),
+                                             ("prueba_anade_cliente", prueba_anade_cliente)]),
+                        ("anade primero", [("prueba_anade_cliente", prueba_anade_cliente),
+                                           ("prueba_catalogo_pequeno", prueba_catalogo_pequeno)])):
+    CATALOGO.clear(); CATALOGO["c1"] = "norte"      # mismo punto de partida
+    pasadas, fallos = corre(orden)
+    print("  %-18s pasadas %d, fallos %d %s"
+          % (etiqueta, pasadas, len(fallos), [n for n, _ in fallos]))
+print()
+print("el mismo codigo, los mismos datos de partida, y dos resultados.")
+print("Una prueba que depende del orden no dice nada del codigo: dice")
+print("en que orden se ejecuto")
+print()
+
+# El arreglo: que cada prueba construya lo que necesita. Es el mismo
+# arreglo de la Proposicion 10.9: no compartir el objeto mutable.
+def catalogo_nuevo():
+    """Se llama al empezar cada prueba y devuelve uno recien hecho."""
+    return {"c1": "norte"}
+
+def prueba_anade_bien():
+    cat = catalogo_nuevo()
+    cat["c2"] = "sur"
+    assert len(cat) == 2
+
+def prueba_pequeno_bien():
+    cat = catalogo_nuevo()
+    assert len(cat) == 1
+
+print("con cada prueba construyendo el suyo, el orden deja de importar")
+for etiqueta, orden in (("pequeno primero", [("prueba_pequeno_bien", prueba_pequeno_bien),
+                                             ("prueba_anade_bien", prueba_anade_bien)]),
+                        ("anade primero", [("prueba_anade_bien", prueba_anade_bien),
+                                           ("prueba_pequeno_bien", prueba_pequeno_bien)])):
+    pasadas, fallos = corre(orden)
+    print("  %-18s pasadas %d, fallos %d" % (etiqueta, pasadas, len(fallos)))
+print()
+
+# Y una prueba de regresion: el fallo de la celda anterior, congelado.
+def cruza(izq, der, clave):
+    fuera = []
+    for a in izq:
+        for b in der:
+            if a[clave] == b[clave]:
+                f = dict(a); f.update(b); fuera.append(f)
+    return fuera
+
+def prueba_regresion_clave_repetida():
+    """23-09-2026: un catalogo con c7 dos veces duplico 4 filas del cruce."""
+    ventas = [{"id": 1, "cliente": "c7"}, {"id": 2, "cliente": "c1"}]
+    catalogo = [{"cliente": "c7", "zona": "sur"}, {"cliente": "c7", "zona": "sur"},
+                {"cliente": "c1", "zona": "norte"}]
+    unicas = len({c["cliente"] for c in catalogo})
+    assert unicas == len(catalogo), "el catalogo tiene claves repetidas"
+
+print("una prueba de regresion es un fallo concreto, congelado")
+try:
+    prueba_regresion_clave_repetida()
+    print("  la prueba de regresion pasa")
+except AssertionError as e:
+    print("  la prueba de regresion FALLA: %s" % e)
+print()
+print("lleva la fecha y la descripcion del caso que la motivo. No se escribe")
+print("antes de que el fallo ocurra: se escribe el dia que ocurre, con el")
+print("caso minimo, y a partir de ahi ese fallo no puede volver en silencio")
+```
+
+## 5. Lo que esta lección no resuelve
+
+No se ha hablado de qué proporción del código ejecutan las pruebas, ni de las herramientas que lo miden. Esa proporción es fácil de subir sin mejorar nada —ejecutar una línea no es comprobar lo que hace, y la Proposición 24.3 exhibe una prueba que la ejecuta entera sin comprobar nada—, y por eso la lección ha preferido hablar de **qué** se comprueba.
+
+Tampoco se ha tratado cómo sustituir una dependencia lenta o externa por una falsa durante la prueba, que es lo que el servicio simulado de la Lección 22 hacía sin nombrarlo. Ni las herramientas reales: `pytest` para el corredor y `hypothesis` para las propiedades con reducción automática de contraejemplos, que hace lo de la Proposición 24.6 sin que haya que escribirlo.
+
+## Ejercicios
+
+### Ejercicio 1, La prueba que no prueba
+
+Con la Proposición 24.3, escribir una comprobación de `duplica` que **falle** cuando la función está rota. Dejar en `pasa_con_rota` si la comprobación pasa con la versión rota.
+
+```{pyodide}
+#| exercise: ex_prueba
+def duplica(x):
+    return 2 * x
+
+def duplica_rota(x):
+    return 0
+
+def comprueba(f):
+    return ______
+
+pasa_con_buena = comprueba(duplica)
+pasa_con_rota = comprueba(duplica_rota)
+
+print(pasa_con_buena, pasa_con_rota)
+```
+
+::: {.hint exercise="ex_prueba"}
+El valor esperado tiene que venir de fuera de la función: un número escrito a mano. Comparar `f(x)` con `f(x)` pasa siempre.
+:::
+
+::: {.solution exercise="ex_prueba"}
+```{pyodide}
+def duplica(x):
+    return 2 * x
+
+def duplica_rota(x):
+    return 0
+
+def comprueba(f):
+    return f(3) == 6 and f(0) == 0 and f(-2) == -4
+
+pasa_con_buena = comprueba(duplica)
+pasa_con_rota = comprueba(duplica_rota)
+
+print(pasa_con_buena, pasa_con_rota)
+```
+
+`True False`. El caso `f(0) == 0` por sí solo **no** distingue las dos funciones, porque la rota acierta ahí por casualidad: una comprobación necesita al menos un caso en que las dos difieran.
+:::
+
+```{pyodide}
+#| exercise: ex_prueba
+#| check: true
+if pasa_con_buena is True and pasa_con_rota is False:
+    feedback = {"correct": True, "message": "Correcto: pasa con la buena y falla con la rota."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba True y False: la comprobacion tiene que distinguirlas."}
+feedback
+```
+
+### Ejercicio 2, El invariante del cruce
+
+Con la Proposición 24.9, escribir las dos comprobaciones que hay que hacer **antes** y **después** de un cruce, sobre los datos dados.
+
+```{pyodide}
+#| exercise: ex_invariante
+ventas = [{"c": "a"}, {"c": "b"}, {"c": "a"}]
+catalogo = [{"c": "a", "z": 1}, {"c": "b", "z": 2}, {"c": "a", "z": 3}]
+
+cruce = [dict(v, **k) for v in ventas for k in catalogo if v["c"] == k["c"]]
+
+clave_unica = ______
+conserva_filas = ______
+
+print(clave_unica, conserva_filas, len(cruce))
+```
+
+::: {.hint exercise="ex_invariante"}
+La clave es única cuando el número de valores distintos coincide con el número de filas. Y el cruce conserva las filas cuando el resultado mide lo mismo que la tabla de la izquierda.
+:::
+
+::: {.solution exercise="ex_invariante"}
+```{pyodide}
+ventas = [{"c": "a"}, {"c": "b"}, {"c": "a"}]
+catalogo = [{"c": "a", "z": 1}, {"c": "b", "z": 2}, {"c": "a", "z": 3}]
+
+cruce = [dict(v, **k) for v in ventas for k in catalogo if v["c"] == k["c"]]
+
+clave_unica = len({k["c"] for k in catalogo}) == len(catalogo)
+conserva_filas = len(cruce) == len(ventas)
+
+print(clave_unica, conserva_filas, len(cruce))
+```
+
+Las dos dan `False` y el cruce devuelve **5** filas donde entraron 3: la clave `'a'` está dos veces en el catálogo y las dos ventas que la usan salen duplicadas. La primera comprobación cuesta una pasada por el catálogo y habría detenido todo antes.
+:::
+
+```{pyodide}
+#| exercise: ex_invariante
+#| check: true
+if clave_unica is False and conserva_filas is False and len(cruce) == 5:
+    feedback = {"correct": True, "message": "Correcto: las dos fallan y salen 5 filas de 3."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba False, False y 5 filas."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Python 24**:
+
+1. Escribir el corredor de quince líneas y usarlo sobre una función propia con un fallo conocido. Anotar cuántos ejemplos hicieron falta para que alguna prueba lo detectara.
+2. Escribir una propiedad para una transformación de un análisis propio —un `groupby`, una limpieza— y generar entradas hasta hallar un contraejemplo. Reducirlo al caso mínimo y guardar los dos en `50-Errores/`.
+3. Tomar un cruce de un trabajo real y añadirle las tres comprobaciones de la Proposición 24.9. Anotar si alguna falla, y si no, cuánto tardarían en ejecutarse sobre los datos completos.
+
+## Del libro
+
+Esta lección no se apoya en ninguno de los libros del plan. El material de referencia es la documentación de `pytest` y de `hypothesis`.
+
+## Para el Cerebro
+
+- Un corredor de pruebas cabe en **quince líneas**. La librería añade comodidad, no idea.
+- Que las pruebas pasen no prueba que el código esté bien: prueba que **los casos que miran** están bien.
+- Una prueba que compara el resultado **consigo mismo** pasa con la función completamente rota.
+- Una propiedad halla en **5 intentos** lo que cuatro ejemplos a mano no vieron.
+- Un contraejemplo se **reduce**: de 6 elementos a **2** en 6 pruebas.
+- De un análisis se prueban **invariantes**, no resultados: clave única, filas conservadas, total conservado.
+- Un cruce con clave repetida devuelve **6198** donde debía dar **5950**, sin ningún error.
+- Dos pruebas con estado compartido dan **resultados distintos según el orden**.
+- Una prueba de regresión se escribe **el día que el fallo ocurre**, con el caso mínimo y la fecha.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico: que dos pruebas pasan mientras `media([])` levanta `ZeroDivisionError`; que una prueba que compara el resultado consigo mismo pasa con la función devolviendo `999.0`; que cuatro ejemplos escritos a mano pasan sobre una ordenación rota y la propiedad halla un contraejemplo en el intento 5, `[2, 7, 2, 17, 13, 1]`; que ese contraejemplo se reduce a `[13, 1]` en 6 pruebas y que `ordena_rota([13, 1])` devuelve `[13, 1]`; que el cruce de 100 ventas contra un catálogo de 31 con una clave repetida devuelve 104 filas y un total de 6198 frente a 5950, y que las tres comprobaciones fallan con ese catálogo y pasan con el depurado; que las mismas dos pruebas con estado compartido dan 2 pasadas en un orden y 1 pasada y 1 fallo en el otro, y 2 y 2 al construir cada una lo suyo; y que la prueba de regresión falla sobre el catálogo con la clave repetida.
+
+**Lo que viene de los libros.** Nada. Ninguno de los libros verificados del plan trata pruebas.
+
+**Lo que es mío, no del libro.** La decisión de **escribir el corredor** en lugar de usar `pytest`, porque verlo escrito quita el misterio de lo que una librería de pruebas hace; el orden que pone primero lo que una prueba **no** demuestra; la reducción de contraejemplos implementada a mano para que el paso de 6 elementos a 2 sea un número y no una promesa; la elección del cruce con clave repetida como caso central, por ser una avería que conserva las columnas y produce números plausibles; los dos visuales, uno donde los cuatro ejemplos a mano caen todos fuera de la franja que falla y otro donde la duplicación se ve aparecer al subir un deslizador; y el cierre que ata el estado compartido entre pruebas con el defecto mutable de Fundamentos 10.
+:::
