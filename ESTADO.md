@@ -3599,6 +3599,53 @@ primera llamada y crece; con `None` no existe ninguno. Ya conviene escribirlo de
 entrada así: **un control tiene que mover algo con los demás en su posición
 inicial**, y lo que se mueve es dónde está algo, no su tamaño.
 
+### 3.64 Fundamentos 11 y 12, y el módulo queda cerrado (23-09-2026)
+
+**Fundamentos 11, «Comprehensions».** 3 def / 5 prop / 5 dem. La lección se
+organiza alrededor de una comprobación que se hace de un vistazo: **la longitud
+del resultado dice qué `if` se ha escrito**. `[n if n > 3 else 0 for n in xs]`
+da `[0, 0, 0, 4, 5]`, cinco elementos; `[n for n in xs if n > 3]` da `[4, 5]`,
+dos. La confusión entre las dos posiciones es el error más común con
+comprehensions, y contar la salida lo resuelve sin tener que razonar.
+
+El final mide el cortocircuito llegando hasta aquí: `any` sobre una lista ya
+construida hace **10** evaluaciones y sobre una expresión generadora hace **4**,
+porque el primero que cumple está en el puesto 3.
+
+**Sin `global`, usando la lección anterior.** Contar esas evaluaciones pedía una
+variable que sobreviviera a las llamadas, y `global` es ámbito, que es Python 2.
+Se resolvió con un contador guardado **en una lista** —`cuenta[0] += 1`—, que
+funciona por la Proposición 10.10 de la lección inmediatamente anterior. El
+apaño obligado salió mejor que lo que iba a escribir: en vez de introducir una
+palabra clave nueva, **usa** un resultado ya demostrado.
+
+**Fundamentos 12, «Pensar el algoritmo».** 4 def / 5 prop / 5 dem. Cierra el
+módulo recogiendo lo que las lecciones 3, 8 y 11 fueron midiendo por el camino,
+y abre por **cómo se mide** antes que por qué algoritmos hay: se cuentan
+operaciones y no segundos, porque un conteo es el mismo en cualquier máquina.
+
+Lo medido, todo contado dentro de la página:
+
+| | |
+|---|---|
+| binaria contra lineal, n = 1000 | **10** contra 1000 |
+| lo mismo con n = 10 000 | **14** contra 10 000 |
+| `fib(25)` recursivo contra bucle | **242 785** llamadas contra 1 |
+| dos punteros, peor caso n = 100 | **99** pruebas contra 4950 |
+| ventana deslizante, serie 20 y k = 5 | **35** operaciones contra 80 |
+
+**La tesis de la Proposición 12.6**, que es lo que separa esta lección de un
+recetario: lo que encarece `fib` recursivo no es la recursión sino que **sus
+subproblemas se solapan**. Se demuestra exhibiendo en la misma celda un
+factorial recursivo que no sufre nada, porque los suyos no se solapan. Y enlaza
+con Python 18, que mide exactamente ese caso con una caché.
+
+**El módulo queda cerrado: 12 de 12, 24 visuales, 0 fallos.** El orden de
+dependencias se sostuvo hasta el final —ninguna lección usa nada que no esté ya
+enseñado—, y esa restricción cambió el contenido dos veces para mejor: la
+lección 9 sustituyó `sorted(key=str.lower)` por una demostración con `ord`, y la
+11 sustituyó `global` por el contador en una lista.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

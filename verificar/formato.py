@@ -166,6 +166,8 @@ MIGRADAS = {
     "fundamentos/08-conjuntos.qmd",
     "fundamentos/09-cadenas.qmd",
     "fundamentos/10-funciones.qmd",
+    "fundamentos/11-comprehensions.qmd",
+    "fundamentos/12-pensar-el-algoritmo.qmd",
     "matematica/01-vectores-y-espacios.qmd",
     "matematica/02-matriz-como-transformacion.qmd",
     "matematica/03-espacio-columna.qmd",
