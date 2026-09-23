@@ -106,15 +106,15 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 11 | 11 | **11 de 11** | — |
-| Machine Learning | 34 | 90 | **34 de 34** | el resto de ESL y deep learning |
+| Machine Learning | 35 | 90 | **35 de 35** | deep learning y lo que quede de ESL |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **104 lecciones** publicadas, **104** cumplen el molde nuevo: cero pendientes
-  de reescritura. Pendientes de **escribir** quedan 70 según el plan.
+- **105 lecciones** publicadas, **105** cumplen el molde nuevo: cero pendientes
+  de reescritura. Pendientes de **escribir** quedan 69 según el plan.
 - **Cuatro módulos cerrados**: Estadística 25/25, Álgebra 18/18, Python 16/16 y
   **Series de tiempo 11/11**, cerrado el 21-09-2026.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
@@ -162,7 +162,7 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   numpy 1.24 y en Python 3.14 con numpy 2.5.3. **Al rehacerlo faltaba
   `scikit-learn`**, y el gate lo dijo en vez de callarse: las celdas que lo
   importan salieron como REVENTÓ, no como aprobadas.
-- Glosario: **444 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **445 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -3067,6 +3067,64 @@ por $-1$, y las dos versiones vuelven a coincidir.
 
 ---
 
+### 3.52 ML 35: cinco arreglos para que un árbol dé lo mismo dos veces (22-09-2026)
+
+Cierra ESL. Dos proposiciones cortas y una tabla que las junta.
+
+> **35.2**: $\operatorname{Var}(\bar Z)=\rho\sigma^2+\frac{1-\rho}{B}\sigma^2$.
+> **35.3**: $\mathbb{E}[\bar Z]=\mathbb{E}[Z_1]$, así que el sesgo de un bosque
+> es el de **un** árbol aleatorizado.
+
+La primera se comprueba sobre cuatrocientas mil repeticiones de un modelo donde
+$\rho$ y $\sigma^2$ **se conocen**: ocho combinaciones que coinciden en la
+tercera cifra. Los árboles se dejan para lo que solo ellos pueden dar, que es
+medir cómo se mueven $\rho$ y $\sigma^2$ de verdad. Separar así las dos cosas
+evitó lo que la primera versión hacía: comprobar una identidad algebraica contra
+sí misma.
+
+La segunda se mide con el sesgo al cuadrado quieto en $0{,}397403$ y $0{,}379543$
+mientras la varianza **se divide por $11{,}72$**. De ahí que $B$ no se ajuste.
+
+#### Los dos regímenes de m, en la misma tabla
+
+Con **tres relevantes de doce**, $\sigma^2$ casi se duplica al bajar $m$ —de
+$0{,}619405$ a $1{,}136664$— porque los cortes se gastan en columnas sin señal, y
+el mejor $m$ queda cerca de $p$. Con **los doce relevantes**, $\sigma^2$ se
+queda entre $2{,}481136$ y $2{,}513107$, un uno por ciento, así que
+descorrelacionar sale gratis y el mejor $m$ baja a cuatro. La recomendación de
+$\sqrt p$ es un punto de partida, no un resultado.
+
+#### El árbol tuvo que escribirse a mano, y costó cinco arreglos
+
+La primera versión usaba `DecisionTreeRegressor`, y **las tres celdas daban
+números distintos en las dos versiones de Python**: el constructor de árboles de
+`scikit-learn` cambió entre 0.24 y 1.9. Un árbol de veinte líneas en NumPy lo
+arregla, pero conseguir que diera lo mismo dos veces pidió cinco cosas, y cada
+una es una trampa reutilizable:
+
+1. **El árbol, a mano**, porque el de la librería no es reproducible entre esas
+   dos versiones.
+2. **`rng.choice(p, m, replace=False)` fuera**, sustituido por
+   `np.argsort(rng.random(p))[:m]`: el sorteo sin reemplazo cambió de algoritmo.
+3. **La ganancia de un corte, sin la resta.** El RSS escrito como
+   $\sum y^2 - s_1^2/k - (t_1-s_1)^2/(n-k)$ cancela los términos de cuadrados, de
+   modo que basta maximizar los dos últimos. Escrito con la resta, la
+   cancelación entre cantidades grandes y parecidas movía el corte elegido.
+4. **`rng.uniform` fuera**, sustituido por `a + (b-a)*rng.random(forma)`. Este es
+   el hallazgo que vale para todo el proyecto y está anotado en el punto 5:
+   `uniform` con forma **no da los mismos bits** en numpy 1.24 y 2.5.3, mientras
+   que `random`, `normal`, `standard_normal` e `integers` sí.
+5. **Los empates, por posición.** Entre cortes que empatan hasta una
+   milmillonésima se elige el primero; con `argmax` a secas la elección quedaba
+   en el último bit.
+
+Los cuatro primeros se encontraron a ciegas y el quinto por eliminación,
+comparando hashes de cada paso intermedio hasta ver que **X ya difería antes de
+tocar el árbol**. Esa técnica —hashear los intermedios en vez de mirar la salida
+final— es lo que conviene recordar del episodio.
+
+---
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
@@ -3109,6 +3167,20 @@ python3 verificar/visuales.py --estricto
 ## 5. Errores que ya se cometieron
 
 No repetirlos sale más barato que volver a encontrarlos.
+
+**`rng.uniform(a, b, forma)` no da los mismos bits en todas las versiones de
+NumPy (22-09-2026).** Encontrado al escribir ML 35: con la misma semilla,
+`rng.uniform(-1.5, 1.5, (120, 8))` devuelve arrays con hash distinto en numpy
+1.24 y en 2.5.3, mientras que `rng.random`, `rng.normal`, `rng.standard_normal`
+y `rng.integers` coinciden **bit a bit**. La diferencia es de un ulp y pasa
+desapercibida en casi todo, pero basta para que un `argmax` cambie de corte.
+
+**La regla para las celdas nuevas:** generar con `rng.random(forma)` y hacer la
+transformación afín a mano, `a + (b - a) * rng.random(forma)`. Lo mismo con
+`rng.choice(p, m, replace=False)`, cuyo algoritmo también cambió: se sustituye
+por `np.argsort(rng.random(p))[:m]`. Las lecciones anteriores que usan
+`rng.uniform` pasan el gate tal cual —sus dígitos impresos no dependen de ese
+bit—, así que no se tocan; la regla es para lo que se escriba a partir de ahora.
 
 **Números escritos de cabeza en los bloques de comprobación (19-09-2026).**
 Van tres en dos días: Python 12 en su momento, ML 18 con $0{,}343207$ cuando la

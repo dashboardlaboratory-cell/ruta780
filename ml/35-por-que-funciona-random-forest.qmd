@@ -1,0 +1,660 @@
+---
+title: "Por qué funciona random forest"
+subtitle: "Machine Learning · Lección 35"
+nivel: L2
+modulo: ml
+fase: F2
+prereqs: [ml/13-bagging-bosques-y-boosting, ml/29-sesgo-varianza-formal, estadistica/05-covarianza-correlacion]
+siguientes: []
+libro: "ESL §15.2 Definition of Random Forests · §15.3 Details of Random Forests · §15.4 Analysis of Random Forests"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+---
+
+::: {.meta-leccion data-leccion="ml/35-por-que-funciona-random-forest"}
+[[L2]{.nivel .nivel-L2} **ESL 15**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ESL §15.2–15.4]{.item}
+[**Prereqs** [Bagging y bosques](13-bagging-bosques-y-boosting.qmd) · [Sesgo y varianza formal](29-sesgo-varianza-formal.qmd) · [Covarianza](../estadistica/05-covarianza-correlacion.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Demostrar que la varianza del promedio de $B$ predictores igualmente distribuidos y correlacionados vale $\rho\sigma^2+(1-\rho)\sigma^2/B$**, y comprobarlo.
+2. Decir por qué ese primer sumando es un [suelo de la varianza]{.g} que no baja por muchos árboles que se pongan.
+3. Explicar qué hace sortear predictores en cada corte, y medir cómo se mueven $\rho$ y $\sigma^2$ con $m$.
+4. **Medir que el $m$ óptimo depende de cuántos predictores llevan señal**, con los dos extremos en la misma tabla.
+5. **Demostrar que el sesgo de un bosque es el de un solo árbol aleatorizado**, y que por tanto no cambia con $B$.
+6. Decir por qué $B$ no se ajusta por validación cruzada.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 13**: la definición de bagging y de bosque aleatorio, que aquí se analiza.
+- **Machine Learning 29**: la descomposición en sesgo y varianza, que es el marco de todo el capítulo.
+- **Estadística 5**: la covarianza y la correlación, que son las piezas de la fórmula.
+- **Machine Learning 12**: el árbol de regresión, que aquí se programa en veinte líneas.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 32**: el boosting, que ataca el sesgo mientras esto ataca la varianza.
+- **Machine Learning 34**: el clustering espectral, que puede agrupar con la proximidad que define un bosque.
+- **Machine Learning 28**: los criterios de información, que no sirven aquí porque $B$ no es un parámetro que ajustar.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | El número de observaciones |
+| $p$ | pe | El número de predictores |
+| $m$ | eme | Cuántos predictores se sortean en cada corte |
+| $B$ | be mayúscula | El número de árboles |
+| $Z_b$ | zeta sub be | La predicción del árbol $b$ en un punto fijo |
+| $\sigma^2$ | sigma cuadrado | La varianza de un solo árbol en ese punto |
+| $\rho$ | rho | La correlación entre dos árboles del mismo bosque |
+| $\bar Z$ | zeta con barra | El promedio de los $B$ árboles |
+:::
+
+## 1. La fórmula que lo explica todo
+
+::: {.definicion}
+**Definición 35.1 ([bosque aleatorio]{.g}).** Se crecen $B$ árboles, cada uno sobre un remuestreo con reemplazo de las $n$ observaciones, y en **cada corte** se sortean $m\le p$ predictores entre los que buscar la partición. La predicción es el promedio de los $B$ árboles.
+:::
+
+Los $B$ árboles son **igualmente distribuidos**: todos salen del mismo procedimiento aplicado a los mismos datos, así que tienen la misma varianza. Lo que no son es independientes: comparten los datos, de modo que dos árboles cualesquiera se parecen.
+
+::: {.proposicion}
+**Proposición 35.2 (la varianza de un promedio correlacionado).** Sean $Z_1,\dots,Z_B$ con la misma varianza $\sigma^2$ y correlación $\rho$ entre cada par. Entonces
+$$\operatorname{Var}(\bar Z)=\rho\,\sigma^2+\frac{1-\rho}{B}\,\sigma^2 .$$
+El segundo sumando se va a cero al crecer $B$; **el primero no depende de $B$**.
+:::
+
+::: {.demostracion}
+*Demostración.* Por bilinealidad,
+$$\operatorname{Var}\Bigl(\frac1B\sum_b Z_b\Bigr)=\frac{1}{B^2}\Bigl[\sum_b\operatorname{Var}(Z_b)+\sum_{i\neq j}\operatorname{Cov}(Z_i,Z_j)\Bigr]
+=\frac{1}{B^2}\bigl[B\sigma^2+B(B-1)\rho\sigma^2\bigr],$$
+porque hay $B(B-1)$ pares ordenados distintos y cada covarianza vale $\rho\sigma^2$. Dividiendo,
+$$\operatorname{Var}(\bar Z)=\frac{\sigma^2}{B}+\frac{B-1}{B}\rho\sigma^2=\rho\sigma^2+\frac{1-\rho}{B}\sigma^2. \tag*{[∎]{.fin-demo}}$$
+:::
+
+```{pyodide}
+import numpy as np
+
+# B variables con la misma distribucion y correlacion rho entre cada par:
+# una parte comun y una parte propia. Es el modelo de B arboles de un bosque.
+def intercambiables(rng, R, B, rho, s2):
+    comun = rng.normal(0, 1, (R, 1))
+    propia = rng.normal(0, 1, (R, B))
+    return np.sqrt(s2) * (np.sqrt(rho) * comun + np.sqrt(1 - rho) * propia)
+
+rng = np.random.default_rng(35)
+R, s2 = 400000, 2.0
+
+print("varianza del promedio de B variables igualmente distribuidas y")
+print("correlacionadas de a pares, sobre %d repeticiones" % R)
+print("  rho     B     rho*s2 + (1-rho)*s2/B     medido      rho*s2 (el suelo)")
+for rho in (0.1, 0.5):
+    for B in (1, 2, 10, 100):
+        Z = intercambiables(rng, R, B, rho, s2)
+        medido = float(Z.mean(axis=1).var(ddof=1))
+        formula = rho * s2 + (1 - rho) * s2 / B
+        print("  %.1f   %4d          %12.6f     %10.6f      %12.6f"
+              % (rho, B, formula, medido, rho * s2))
+    print()
+
+print("con rho = 0.5 y mil arboles el segundo sumando vale %.6f: nada."
+      % (0.5 * s2 / 1000))
+print("La varianza se queda en %.4f, que es rho*sigma^2, y ahi se acaba lo que" % (0.5 * s2))
+print("puede dar promediar. Bajar rho es lo unico que mueve ese suelo, y eso es")
+print("exactamente lo que hace sortear predictores en cada corte")
+```
+
+Las dos columnas centrales coinciden en las ocho combinaciones, con la tercera cifra decimal como único desacuerdo: $1{,}100000$ contra $1{,}096177$, $0{,}218000$ contra $0{,}218613$. Con cuatrocientas mil repeticiones eso es el error de Monte Carlo y nada más.
+
+Lo que la tabla enseña está en la última columna. **Con $\rho=0{,}5$ la varianza no baja de $1{,}0000$ por muchos árboles que se pongan**: de cien a mil árboles se gana una milésima. El promedio ataca el segundo sumando y no puede tocar el primero. Por eso el [bagging]{.g}, que no sortea nada, llega hasta donde llega, y por eso la única salida es **bajar $\rho$**.
+
+```{=html}
+<div class="viz-suelo">
+  <div class="controles">
+    <label>Correlación ρ <input id="su-r" type="range" min="0.02" max="0.9" step="0.02" value="0.30"> <span id="su-r-v">0.30</span></label>
+    <label>Varianza de un árbol σ² <input id="su-s" type="range" min="0.5" max="3" step="0.1" value="2.00"> <span id="su-s-v">2.00</span></label>
+  </div>
+  <svg id="su-svg" viewBox="0 0 660 260" role="img" aria-label="La varianza del promedio en función del número de árboles, con el suelo rho por sigma cuadrado marcado como una línea horizontal."></svg>
+  <p class="lectura" id="su-lectura"></p>
+</div>
+<style>
+.viz-suelo { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-suelo .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-suelo label { display: flex; align-items: center; gap: .4rem; }
+.viz-suelo input[type=range] { width: 160px; padding: 0; }
+.viz-suelo svg { width: 100%; height: auto; display: block; }
+.viz-suelo .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("su-svg"), lec = document.getElementById("su-lectura");
+  var cr = document.getElementById("su-r"), cs = document.getElementById("su-s");
+  var er = document.getElementById("su-r-v"), es = document.getElementById("su-s-v");
+  var X0 = 52, XW = 568, Y0 = 20, YH = 190, BMAX = 200, TOPE = 3.0;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var rho = +cr.value, s2 = +cs.value;
+    er.textContent = rho.toFixed(2); es.textContent = s2.toFixed(2);
+    // eje horizontal logaritmico en B, para que se vea el aplanamiento
+    var px = function (B) { return X0 + Math.log(B) / Math.log(BMAX) * XW; };
+    var py = function (v) { return Y0 + (TOPE - Math.max(0, Math.min(TOPE, v))) / TOPE * YH; };
+    var f = function (B) { return rho * s2 + (1 - rho) * s2 / B; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    var d = "", B;
+    for (B = 1; B <= BMAX; B++) d += (B > 1 ? " L" : "M") + px(B).toFixed(1) + " " + py(f(B)).toFixed(1);
+    svg.appendChild(el("path", { d: "M" + px(1) + " " + py(rho * s2).toFixed(1) + " L" + px(BMAX) + " " + py(rho * s2).toFixed(1),
+      stroke: C_B, "stroke-width": 1.8, "stroke-dasharray": "5 3" }));
+    svg.appendChild(el("path", { d: d, stroke: C_A, "stroke-width": 2.4, fill: "none" }));
+    [1, 10, 100].forEach(function (b) {
+      svg.appendChild(el("circle", { cx: px(b).toFixed(1), cy: py(f(b)).toFixed(1), r: 3.4, fill: C_A }));
+      svg.appendChild(el("text", { x: px(b).toFixed(1), y: Y0 + YH + 14, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "B=" + b));
+    });
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 14, "font-size": 10.5, fill: C_A }, "varianza del promedio"));
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 27, "font-size": 10.5, fill: C_B }, "el suelo ρσ², que B no toca"));
+
+    var g1 = f(1) - f(10), g2 = f(10) - f(100);
+    lec.innerHTML = "Con ρ = <strong>" + rho.toFixed(2) + "</strong> y σ² = " + s2.toFixed(2) +
+      ", la varianza pasa de <strong>" + f(1).toFixed(4) + "</strong> con un árbol a <strong>" + f(10).toFixed(4) +
+      "</strong> con diez y <strong>" + f(100).toFixed(4) + "</strong> con cien. " +
+      "De uno a diez se gana " + g1.toFixed(4) + "; de diez a cien, solo " + g2.toFixed(4) + ". " +
+      "El suelo está en <strong>" + (rho * s2).toFixed(4) + "</strong> y no se mueve con B: " +
+      (rho < 0.15
+        ? "con esta correlación tan baja casi toda la varianza es reducible, y poner árboles paga hasta el final."
+        : "bajar ρ desplaza esa línea hacia abajo, y es lo único que lo hace.");
+  }
+  cr.addEventListener("input", dibujar);
+  cs.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Sortear predictores, y lo que cuesta
+
+Bajar $\rho$ es fácil: basta con que los árboles no puedan mirar siempre las mismas columnas. Sorteando $m<p$ predictores en cada corte, dos árboles del mismo bosque toman decisiones distintas aunque los datos sean casi los mismos.
+
+El problema es que eso **también empeora a cada árbol**. Un árbol que solo puede mirar una columna al azar en cada nodo encuentra cortes peores, y su varianza $\sigma^2$ sube. La fórmula de la Proposición 35.2 tiene los dos efectos multiplicados en el mismo término, $\rho\sigma^2$, así que el óptimo está donde el producto toca fondo.
+
+Y dónde está ese fondo **depende del problema**, cosa que se puede medir.
+
+```{pyodide}
+import numpy as np
+
+def mejor_corte(X, y, idx, cols):
+    """El corte que menos RSS deja, mirando a la vez las columnas sorteadas.
+    El RSS de un corte vale sum(y^2) menos s1^2/k menos (t1-s1)^2/(n-k), porque
+    los terminos de cuadrados se cancelan; asi que basta MAXIMIZAR los dos
+    ultimos. Escrito con la resta, la cancelacion entre cantidades grandes y
+    parecidas cambiaba el corte elegido de una version de NumPy a otra."""
+    A = X[np.ix_(idx, cols)]
+    o = np.argsort(A, axis=0, kind="stable")
+    xs, ys = np.take_along_axis(A, o, axis=0), y[idx][o]
+    k = np.arange(1, len(idx))[:, None]
+    s1 = np.cumsum(ys, axis=0)[:-1]
+    t1 = ys.sum(axis=0)
+    ganancia = s1 ** 2 / k + (t1 - s1) ** 2 / (len(idx) - k)
+    ganancia = np.where(xs[1:] > xs[:-1], ganancia, -np.inf)
+    if not np.isfinite(ganancia).any():
+        return None
+    # Entre cortes que empatan hasta una milmillonesima se elige el primero por
+    # posicion. Comparar con argmax a secas dejaba la eleccion en manos del
+    # ultimo bit, y ese bit no es el mismo en todas las versiones de NumPy.
+    tope = ganancia.max()
+    j, c = np.argwhere(ganancia >= tope - 1e-9 * max(1.0, abs(tope)))[0]
+    return int(cols[c]), float((xs[j, c] + xs[j + 1, c]) / 2)
+
+def arbol(X, y, m, rng, prof=4):
+    """Arbol de regresion completo de profundidad fija que sortea m columnas en
+    cada nodo. Las columnas se sortean ordenando p uniformes en vez de con
+    rng.choice, porque el sorteo sin reemplazo de choice no da la misma sucesion
+    en todas las versiones de NumPy y el de random si."""
+    regiones, capas = [np.arange(len(y))], []
+    for _ in range(prof):
+        capa, nuevas = [], []
+        for idx in regiones:
+            c = None if len(idx) < 8 else mejor_corte(X, y, idx, np.argsort(rng.random(X.shape[1]))[:m])
+            capa.append(c)
+            if c is None:
+                nuevas += [idx, idx[:0]]
+            else:
+                nuevas += [idx[X[idx, c[0]] <= c[1]], idx[X[idx, c[0]] > c[1]]]
+        capas.append(capa); regiones = nuevas
+    hojas = np.array([y[i].mean() if len(i) else y.mean() for i in regiones])
+    return capas, hojas
+
+def predice(capas, hojas, Xt):
+    j = np.zeros(len(Xt), dtype=int)
+    for capa in capas:
+        nj = np.empty_like(j)
+        for k, c in enumerate(capa):
+            sel = j == k
+            if not sel.any():
+                continue
+            nj[sel] = 2 * k if c is None else np.where(Xt[sel, c[0]] <= c[1], 2 * k, 2 * k + 1)
+        j = nj
+    return hojas[j]
+
+n, p, CORR, R = 150, 12, 0.6, 100
+
+def bosque(rng, X, y, m, B, Xt):
+    P = np.empty((B, len(Xt)))
+    for b in range(B):
+        i = rng.integers(0, len(y), len(y))
+        capas, hojas = arbol(X[i], y[i], m, rng)
+        P[b] = predice(capas, hojas, Xt)
+    return P
+
+def equis(rng, k):
+    """Predictores correlacionados: un factor comun mas ruido propio."""
+    return CORR * rng.normal(0, 1, (k, 1)) + np.sqrt(1 - CORR ** 2) * rng.normal(0, 1, (k, p))
+
+print("el m optimo depende de CUANTOS predictores llevan senal")
+for relevantes in (3, 12):
+    rng = np.random.default_rng(351)
+    coef = np.zeros(p); coef[:relevantes] = 1.0 / np.sqrt(relevantes)
+    f = lambda A: 2 * (np.sin(1.4 * A) @ coef)
+    Xt = equis(rng, 200)
+    yt = f(Xt)
+    print()
+    print("  %d predictores relevantes de %d" % (relevantes, p))
+    # los conjuntos de prueba se sortean una vez y se reutilizan en todos los m,
+    # para que la comparacion sea pareada y no la tape el ruido
+    juegos = []
+    for _ in range(20):
+        Xd = equis(rng, n)
+        juegos.append((Xd, f(Xd) + rng.normal(0, 0.3, n)))
+    print("    m    sigma^2    rho      rho*sigma^2   error de prueba")
+    filas = []
+    for m in (1, 2, 4, 8, 12):
+        par = np.empty((R, 2, len(Xt)))
+        for r in range(R):
+            X = equis(rng, n)
+            par[r] = bosque(rng, X, f(X) + rng.normal(0, 0.3, n), m, 2, Xt)
+        mu = par.reshape(-1, len(Xt)).mean(axis=0)
+        s2 = float((((par - mu) ** 2).reshape(-1, len(Xt))).mean(axis=0).mean())
+        rho = float(((par[:, 0] - mu) * (par[:, 1] - mu)).mean(axis=0).mean()) / s2
+        errs = [float(((bosque(rng, Xd, yd, m, 30, Xt).mean(axis=0) - yt) ** 2).mean())
+                for Xd, yd in juegos]        # los MISMOS datos para todos los m
+        err = float(np.mean(errs))
+        filas.append((m, err))
+        print("   %2d   %8.6f  %.6f    %10.6f      %12.6f" % (m, s2, rho, rho * s2, err))
+    print("    el mejor m es %d" % min(filas, key=lambda x: x[1])[0])
+print()
+print("con pocos relevantes, sortear m predictores desperdicia cortes en columnas")
+print("sin senal, y el mejor m queda cerca de p. Con todos relevantes, perder una")
+print("columna no cuesta casi nada y descorrelacionar si paga: el mejor m baja.")
+print("Entre los extremos rho crece en los dos casos; lo que cambia es cuanto")
+print("castiga a sigma^2 quitarle columnas al arbol")
+```
+
+Las dos mitades de la tabla cuentan historias opuestas, y la diferencia está en una sola columna.
+
+Con **tres predictores relevantes de doce**, bajar $m$ castiga a los árboles: $\sigma^2$ casi se duplica, de $0{,}619405$ con $m=12$ a $1{,}136664$ con $m=1$. Sortear una columna al azar acierta con una informativa solo una de cada cuatro veces, así que muchos cortes se gastan en ruido. El error de prueba baja de forma monótona hasta $m=8$, y el mejor $m$ queda cerca de $p$: aquí el bagging es casi imbatible.
+
+Con **los doce relevantes**, $\sigma^2$ apenas se mueve —$2{,}513107$ con $m=1$ y $2{,}481136$ con $m=12$, un uno por ciento— porque perder una columna no cuesta nada cuando todas sirven. Entonces descorrelacionar sale gratis: $\rho$ sube de $0{,}032093$ a $0{,}106800$ con $m$, y el error de prueba dibuja una U con el mínimo en $m=4$, $1{,}167933$ contra $1{,}241818$ del bagging.
+
+La regla general que se lee de ahí, y que es la de ESL §15.3, es que **$m$ debe bajar cuando la fracción de predictores relevantes es alta**, y subir cuando la señal está concentrada en unos pocos. La recomendación habitual de $m=\sqrt p$ es un punto de partida, no un resultado.
+
+```{=html}
+<div class="viz-emeoptima">
+  <div class="controles">
+    <label>Fracción de predictores con señal <input id="mo-f" type="range" min="0.1" max="1" step="0.05" value="0.30"> <span id="mo-f-v">0.30</span></label>
+    <label>Predictores p <input id="mo-p" type="range" min="6" max="60" step="2" value="24"> <span id="mo-p-v">24</span></label>
+  </div>
+  <svg id="mo-svg" viewBox="0 0 660 270" role="img" aria-label="La varianza de un árbol, la correlación entre árboles y su producto en función de cuántos predictores se sortean, con el mínimo del producto marcado."></svg>
+  <p class="lectura" id="mo-lectura"></p>
+</div>
+<style>
+.viz-emeoptima { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-emeoptima .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-emeoptima label { display: flex; align-items: center; gap: .4rem; }
+.viz-emeoptima input[type=range] { width: 160px; padding: 0; }
+.viz-emeoptima svg { width: 100%; height: auto; display: block; }
+.viz-emeoptima .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("mo-svg"), lec = document.getElementById("mo-lectura");
+  var cf = document.getElementById("mo-f"), cp = document.getElementById("mo-p");
+  var ef = document.getElementById("mo-f-v"), ep = document.getElementById("mo-p-v");
+  var X0 = 52, XW = 568, Y0 = 20, YH = 200, TOPE = 1.05;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // Modelo de juguete, coherente con lo que mide la celda: la correlacion crece
+  // con m porque los arboles miran las mismas columnas; la varianza de un arbol
+  // baja con m, y tanto mas cuanto MENOS predictores llevan senal, porque con
+  // pocos relevantes hay que sortear muchos para dar con uno.
+  function rho(m, p) { return 0.03 + 0.12 * Math.pow(m / p, 0.7); }
+  function sigma2(m, p, frac) {
+    var acierta = 1 - Math.pow(1 - frac, m);      // algun relevante entre los m
+    return 0.45 + 0.75 * (1 - acierta);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var frac = +cf.value, p = +cp.value;
+    ef.textContent = frac.toFixed(2); ep.textContent = p;
+    var px = function (m) { return X0 + (m - 1) / (p - 1) * XW; };
+    var py = function (v) { return Y0 + (TOPE - Math.max(0, Math.min(TOPE, v))) / TOPE * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    var ds = "", dr = "", dp = "", m, mejor = 1, mejorV = Infinity;
+    for (m = 1; m <= p; m++) {
+      var s = sigma2(m, p, frac), r = rho(m, p), q = r * s;
+      if (q < mejorV) { mejorV = q; mejor = m; }
+      ds += (m > 1 ? " L" : "M") + px(m).toFixed(1) + " " + py(s).toFixed(1);
+      dr += (m > 1 ? " L" : "M") + px(m).toFixed(1) + " " + py(r * 4).toFixed(1);
+      dp += (m > 1 ? " L" : "M") + px(m).toFixed(1) + " " + py(q * 4).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: ds, stroke: C_A, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("path", { d: dr, stroke: C_B, "stroke-width": 2, fill: "none" }));
+    svg.appendChild(el("path", { d: dp, stroke: C_T, "stroke-width": 2.6, fill: "none" }));
+    svg.appendChild(el("path", { d: "M" + px(mejor).toFixed(1) + " " + Y0 + " L" + px(mejor).toFixed(1) + " " + (Y0 + YH),
+      stroke: C_T, "stroke-width": 1.2, "stroke-dasharray": "4 3", opacity: .55 }));
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 14, "font-size": 10.5, fill: C_A }, "σ² de un árbol"));
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 27, "font-size": 10.5, fill: C_B }, "ρ (×4 para verla)"));
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 40, "font-size": 10.5, fill: C_T }, "el suelo ρσ² (×4)"));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "predictores sorteados m, de 1 a " + p));
+
+    var raiz = Math.round(Math.sqrt(p));
+    lec.innerHTML = "Con el <strong>" + (100 * frac).toFixed(0) + " %</strong> de los " + p +
+      " predictores llevando señal, el suelo ρσ² toca fondo en m = <strong>" + mejor + "</strong>. " +
+      "La raíz de p, que es la recomendación de manual, vale " + raiz + ". " +
+      (frac > 0.6
+        ? "Con casi todos relevantes, sortear pocos apenas empeora al árbol y descorrelacionar sale casi gratis: el óptimo baja."
+        : "Con la señal concentrada en pocos predictores, sortear pocos hace que muchos cortes caigan en columnas inútiles, σ² se dispara y el óptimo sube.") +
+      " Subir p con la fracción fija mueve el óptimo, y no en proporción a √p.";
+  }
+  cf.addEventListener("input", dibujar);
+  cp.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Por qué $B$ no se ajusta
+
+::: {.proposicion}
+**Proposición 35.3 (el sesgo no depende de $B$).** Como los $B$ árboles son igualmente distribuidos, $\mathbb{E}[\bar Z]=\mathbb{E}[Z_1]$. En consecuencia, **el sesgo de un bosque es el de un solo árbol aleatorizado**, sea cual sea el número de árboles.
+:::
+
+::: {.demostracion}
+*Demostración.* $\mathbb{E}[\bar Z]=\frac1B\sum_b\mathbb{E}[Z_b]=\frac1B\cdot B\,\mathbb{E}[Z_1]=\mathbb{E}[Z_1]$, usando solo la linealidad de la esperanza y que todos los $Z_b$ tienen la misma distribución. Restando el valor verdadero se obtiene la igualdad de los sesgos. [∎]{.fin-demo}
+:::
+
+Juntando las proposiciones 35.2 y 35.3: al crecer $B$ el sesgo se queda quieto y la varianza baja hacia $\rho\sigma^2$. El error total, que es la suma, **solo puede bajar**. De ahí la consecuencia práctica: $B$ no es un parámetro que haya que elegir con validación cruzada, sino uno que se pone tan grande como el presupuesto de cómputo permita.
+
+```{pyodide}
+import numpy as np
+
+def mejor_corte(X, y, idx, cols):
+    """El corte que menos RSS deja, mirando a la vez las columnas sorteadas.
+    Se MAXIMIZA s1^2/k + (t1-s1)^2/(n-k), que es el RSS con el signo cambiado y
+    sin el termino de cuadrados: escrito con la resta, la cancelacion cambiaba
+    el corte elegido de una version de NumPy a otra."""
+    A = X[np.ix_(idx, cols)]
+    o = np.argsort(A, axis=0, kind="stable")
+    xs, ys = np.take_along_axis(A, o, axis=0), y[idx][o]
+    k = np.arange(1, len(idx))[:, None]
+    s1 = np.cumsum(ys, axis=0)[:-1]
+    t1 = ys.sum(axis=0)
+    ganancia = s1 ** 2 / k + (t1 - s1) ** 2 / (len(idx) - k)
+    ganancia = np.where(xs[1:] > xs[:-1], ganancia, -np.inf)
+    if not np.isfinite(ganancia).any():
+        return None
+    tope = ganancia.max()
+    j, c = np.argwhere(ganancia >= tope - 1e-9 * max(1.0, abs(tope)))[0]
+    return int(cols[c]), float((xs[j, c] + xs[j + 1, c]) / 2)
+
+def arbol(X, y, m, rng, prof=4):
+    """Arbol de profundidad fija que sortea m columnas en cada nodo."""
+    regiones, capas = [np.arange(len(y))], []
+    for _ in range(prof):
+        capa, nuevas = [], []
+        for idx in regiones:
+            c = None if len(idx) < 8 else mejor_corte(X, y, idx, np.argsort(rng.random(X.shape[1]))[:m])
+            capa.append(c)
+            if c is None:
+                nuevas += [idx, idx[:0]]
+            else:
+                nuevas += [idx[X[idx, c[0]] <= c[1]], idx[X[idx, c[0]] > c[1]]]
+        capas.append(capa); regiones = nuevas
+    hojas = np.array([y[i].mean() if len(i) else y.mean() for i in regiones])
+    return capas, hojas
+
+def predice(capas, hojas, Xt):
+    j = np.zeros(len(Xt), dtype=int)
+    for capa in capas:
+        nj = np.empty_like(j)
+        for k, c in enumerate(capa):
+            sel = j == k
+            if not sel.any():
+                continue
+            nj[sel] = 2 * k if c is None else np.where(Xt[sel, c[0]] <= c[1], 2 * k, 2 * k + 1)
+        j = nj
+    return hojas[j]
+
+n, p, BMAX, R = 120, 8, 64, 80
+VERDAD = lambda A: np.sin(2 * A[:, 0]) + A[:, 1] ** 2 + 0.5 * A[:, 2]
+
+rng = np.random.default_rng(352)
+Xt = -1.5 + 3.0 * rng.random((25, p))
+yt = VERDAD(Xt)
+
+# para cada conjunto de datos se crecen BMAX arboles y se guardan los promedios
+# acumulados: asi los bosques de distinto tamano salen de los mismos arboles
+Bs = [1, 2, 4, 8, 16, 32, 64]
+prom = {B: np.empty((R, len(Xt))) for B in Bs}
+for r in range(R):
+    X = -1.5 + 3.0 * rng.random((n, p))
+    y = VERDAD(X) + rng.normal(0, 0.3, n)
+    P = np.empty((BMAX, len(Xt)))
+    for b in range(BMAX):
+        i = rng.integers(0, n, n)
+        capas, hojas = arbol(X[i], y[i], 3, rng)
+        P[b] = predice(capas, hojas, Xt)
+    acum = np.cumsum(P, axis=0) / np.arange(1, BMAX + 1)[:, None]
+    for B in Bs:
+        prom[B][r] = acum[B - 1]
+
+print("mas arboles nunca empeoran: B no es un parametro que haya que ajustar")
+print("    B    sesgo^2    varianza    suma      error de prueba")
+for B in Bs:
+    media = prom[B].mean(axis=0)
+    sesgo2 = float(((media - yt) ** 2).mean())
+    var = float(prom[B].var(axis=0, ddof=1).mean())
+    err = float(((prom[B] - yt) ** 2).mean())
+    print("  %3d   %8.6f   %8.6f   %8.6f      %10.6f" % (B, sesgo2, var, sesgo2 + var, err))
+print()
+s1 = float(((prom[1].mean(axis=0) - yt) ** 2).mean())
+sN = float(((prom[BMAX].mean(axis=0) - yt) ** 2).mean())
+print("  sesgo^2 con un arbol       : %.6f" % s1)
+print("  sesgo^2 con %d arboles     : %.6f" % (BMAX, sN))
+print("  el sesgo se mueve menos del 10 por ciento: %s" % bool(abs(sN - s1) / s1 < 0.10))
+print("  la varianza se divide por  : %.2f" % (float(prom[1].var(axis=0, ddof=1).mean())
+                                                / float(prom[BMAX].var(axis=0, ddof=1).mean())))
+print()
+print("promediar ataca la varianza y deja el sesgo donde estaba: el sesgo de un")
+print("bosque es el de UN arbol aleatorizado. Por eso B no se ajusta por")
+print("validacion cruzada, se pone todo lo grande que el presupuesto permita")
+```
+
+La columna del sesgo se queda quieta: $0{,}397403$ con un árbol y $0{,}379543$ con sesenta y cuatro, que es un movimiento menor del diez por ciento y del orden del ruido de la estimación. La de la varianza, en cambio, **se divide por $11{,}72$**, de $0{,}509219$ a $0{,}043446$. El error de prueba baja de $0{,}900257$ a $0{,}422445$ y se va aplanando: de $32$ a $64$ árboles se gana $0{,}006150$, y de ahí en adelante menos.
+
+Eso es exactamente la Proposición 35.3 en la práctica, y tiene una consecuencia que conviene no confundir. **Que más árboles nunca empeoren no significa que un bosque no sobreajuste**: el sesgo que queda es el de un árbol aleatorizado, y si ese árbol es demasiado flexible para los datos, el bosque lo hereda. Lo que $B$ no puede hacer es empeorar las cosas.
+
+## 4. Lo que esta lección no resuelve
+
+- **El $\rho$ de un bosque real no es constante.** La Proposición 35.2 supone la misma correlación entre todos los pares; en un bosque eso es una aproximación razonable pero no una identidad.
+- **La profundidad de los árboles.** Aquí está fija en cuatro niveles. ESL §15.3.4 discute que los árboles de un bosque se crecen sin podar a propósito, y que eso aumenta $\sigma^2$ a cambio de bajar el sesgo.
+- **El error fuera de bolsa**, que permite estimar el error sin separar datos, está en Machine Learning 13 y no se repite.
+- **La clasificación.** Todo está escrito con pérdida cuadrática; con votación por mayoría la descomposición no se traslada, por la misma razón que en la Proposición 29.4.
+- **Los bosques como vecinos adaptativos**, que es §15.4.3 y da una lectura distinta de por qué funcionan, queda fuera.
+
+## Ejercicios
+
+### Ejercicio 1, El suelo de la varianza
+
+Con la Proposición 35.2, calcular cuánta varianza queda por reducir y cuánta no.
+
+```{pyodide}
+#| exercise: ex_suelo
+def varianza(B, rho, s2):
+    return ______
+
+for B in (1, 10, 100, 1000):
+    print(B, round(varianza(B, 0.4, 2.0), 6))
+
+round(varianza(100, 0.4, 2.0), 6)
+```
+
+::: {.hint exercise="ex_suelo"}
+La proposición da $\rho\sigma^2+(1-\rho)\sigma^2/B$.
+:::
+
+::: {.solution exercise="ex_suelo"}
+```{pyodide}
+def varianza(B, rho, s2):
+    return rho * s2 + (1 - rho) * s2 / B
+
+for B in (1, 10, 100, 1000):
+    print(B, round(varianza(B, 0.4, 2.0), 6))
+
+round(varianza(100, 0.4, 2.0), 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_suelo
+#| check: true
+if abs(result - 0.812) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: 0,812 con cien árboles, contra un suelo de 0,8. De uno a diez árboles se gana 1,08; de cien a mil, once milésimas. Casi todo lo que promediar puede dar ya está dado con unas pocas decenas.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.812 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuántos árboles hacen falta
+
+Con la Proposición 35.2, encontrar cuántos árboles hacen falta para quedarse a un uno por ciento del suelo.
+
+```{pyodide}
+#| exercise: ex_cuantos
+from math import ceil
+
+def arboles(rho, tolerancia=0.01):
+    """B tal que (1-rho)/B <= tolerancia * rho."""
+    return ______
+
+for r in (0.1, 0.4, 0.8):
+    print(r, arboles(r))
+
+int(arboles(0.4))
+```
+
+::: {.hint exercise="ex_cuantos"}
+Hay que resolver $(1-\rho)\sigma^2/B\le 0{,}01\,\rho\sigma^2$; el $\sigma^2$ se cancela.
+:::
+
+::: {.solution exercise="ex_cuantos"}
+```{pyodide}
+from math import ceil
+
+def arboles(rho, tolerancia=0.01):
+    """B tal que (1-rho)/B <= tolerancia * rho."""
+    return ceil((1 - rho) / (tolerancia * rho))
+
+for r in (0.1, 0.4, 0.8):
+    print(r, arboles(r))
+
+int(arboles(0.4))
+```
+:::
+
+```{pyodide}
+#| exercise: ex_cuantos
+#| check: true
+if result == 150:
+    feedback = {"correct": True, "message": "Correcto: 150 árboles con ρ = 0,4, contra 900 si ρ fuera 0,1 y 25 si fuera 0,8. Cuanto más parecidos son los árboles, menos hacen falta: el suelo está alto y se llega antes. La cuenta no depende de σ², que se cancela.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 150 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 35**:
+
+1. Medir $\rho$ y $\sigma^2$ de un bosque real variando la **profundidad** de los árboles en vez de $m$, y anotar si el suelo $\rho\sigma^2$ tiene mínimo también ahí o baja siempre.
+2. Repetir la tabla de la sección 2 con la fracción de predictores relevantes variando de forma continua entre esos dos extremos, y dibujar el $m$ óptimo contra esa fracción. Compararlo con $\sqrt p$ y anotar dónde se cruzan.
+3. Comprobar la Proposición 35.3 en clasificación con votación por mayoría y guardar en `50-Errores/` lo que sale: si el error sigue bajando de forma monótona con $B$ y si el sesgo sigue quieto.
+
+## Del libro
+
+**ESL §15.2** define el bosque aleatorio. **§15.3** discute sus detalles, entre ellos que el $m$ recomendado depende de cuántos predictores sean relevantes. **§15.4** hace el análisis: la fórmula de la varianza de un promedio correlacionado, el efecto de descorrelacionar, y que el sesgo de un bosque es el de un árbol aleatorizado.
+
+Esta página mide las tres cosas. La fórmula, sobre cuatrocientas mil repeticiones de un modelo donde $\rho$ y $\sigma^2$ se conocen, con ocho combinaciones que coinciden en la tercera cifra. El efecto de $m$, con los **dos extremos en la misma tabla**: con tres relevantes de doce el mejor $m$ queda cerca de $p$, y con los doce relevantes baja a cuatro, porque $\sigma^2$ deja de castigar. Y el sesgo, que se queda en $0{,}379543$ frente a $0{,}397403$ mientras la varianza se divide por $11{,}72$.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/random-forest.md`, enlazada a [[bagging-bosques-y-boosting]], [[sesgo-varianza-formal]] y [[covarianza-correlacion]]. Conviene rehacer a mano la Proposición 35.2: separar la varianza de la suma en diagonal y pares ocupa dos renglones y deja grabado **de dónde sale el suelo**, que es lo que explica a la vez por qué el bagging se queda corto y por qué sortear predictores no es un truco sino la única salida.
+
+```
+¿Cuánto vale la varianza del promedio de B árboles?::ρσ² + (1−ρ)σ²/B
+¿De dónde sale?::De separar la varianza de la suma en diagonal y B(B−1) pares
+¿Qué sumando se va con B?::El segundo; el primero no depende de B
+¿Qué es entonces ρσ²?::Un suelo: lo que promediar no puede quitar
+¿Cómo se baja ese suelo?::Bajando ρ, o sea sorteando predictores en cada corte
+¿Qué cuesta sortear?::Que cada árbol es peor, así que σ² sube
+¿Dónde está el m óptimo?::Donde el producto ρσ² toca fondo
+¿De qué depende?::De cuántos predictores llevan señal
+¿Y si son pocos?::σ² se dispara al bajar m, y el mejor m queda cerca de p
+¿Y si son todos?::σ² apenas se mueve y descorrelacionar sale casi gratis
+¿Cambia el sesgo con B?::No: es el de un solo árbol aleatorizado
+¿Hay que ajustar B?::No: más árboles nunca empeoran, se pone lo que el presupuesto dé
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 35.2 se demuestra separando la varianza de una suma en la diagonal y los $B(B-1)$ pares; la 35.3, con la linealidad de la esperanza. La primera se comprueba sobre cuatrocientas mil repeticiones en ocho combinaciones de $\rho$ y $B$, con la tercera cifra decimal como único desacuerdo. La segunda se comprueba midiendo el sesgo al cuadrado con uno y con sesenta y cuatro árboles: $0{,}397403$ y $0{,}379543$, mientras la varianza se divide por $11{,}72$. El efecto de $m$ se mide en dos regímenes, con $\sigma^2$ pasando de $0{,}619405$ a $1{,}136664$ cuando hay tres relevantes y quedándose entre $2{,}481136$ y $2{,}513107$ cuando hay doce.
+
+**Lo que viene de los libros.** De **ESL §15.2** viene la definición; de **§15.3**, la dependencia del $m$ recomendado con la fracción de predictores relevantes; de **§15.4**, la fórmula de la varianza y el resultado sobre el sesgo. El texto no se reproduce.
+
+**Lo que se usa de otras lecciones sin repetir.** La definición de bagging y de bosque es de Machine Learning 13. La descomposición en sesgo y varianza es de Machine Learning 29. La correlación es de Estadística 5.
+
+**Lo que se enuncia sin demostrar.** Que la correlación entre dos árboles de un bosque sea la misma para todos los pares es una hipótesis del modelo, no un teorema; la fórmula se aplica con esa aproximación. Y que los árboles sin podar reduzcan el sesgo lo suficiente para compensar su varianza se nombra sin medirlo.
+
+**Lo que es mío, no del libro.** Separar la verificación en dos: la fórmula sobre un modelo donde $\rho$ y $\sigma^2$ se **conocen**, que la comprueba con precisión, y los árboles solo para medir cómo se mueven $\rho$ y $\sigma^2$ de verdad. Y poner los dos regímenes de $m$ en la misma tabla, que convierte «el $m$ óptimo depende del problema» en una columna, $\sigma^2$, que casi se duplica en un caso y no se mueve en el otro.
+
+**Por qué el árbol está escrito a mano.** La primera versión usaba `DecisionTreeRegressor`, y las tres celdas daban números distintos en las dos versiones de Python con las que se comprueba el sitio: el constructor de árboles de `scikit-learn` cambió entre ellas. El árbol de veinte líneas de esta página sí da lo mismo, y para conseguirlo hicieron falta cuatro cuidados que están comentados en el código: sortear las columnas con `rng.random` en vez de `rng.choice`, generar los datos con `rng.random` en vez de `rng.uniform`, escribir la ganancia de un corte sin la resta que cancela, y romper los empates por posición con una tolerancia en vez de dejarlos en manos del último bit.
+:::
