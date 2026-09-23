@@ -1,0 +1,769 @@
+---
+title: "Red densa desde cero en NumPy"
+subtitle: "Machine Learning · Lección 37"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/36-backpropagation, ml/03-regresion-logistica, matematica/16-descenso-de-gradiente]
+siguientes: []
+libro: "ISLP §10.7 Fitting a Neural Network"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - scipy
+---
+
+::: {.meta-leccion data-leccion="ml/37-red-densa-desde-cero"}
+[[L3]{.nivel .nivel-L3} **ISLP 10**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ISLP §10.7]{.item}
+[**Prereqs** [Backpropagation](36-backpropagation.qmd) · [Regresión logística](03-regresion-logistica.qmd) · [Descenso de gradiente](../matematica/16-descenso-de-gradiente.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Demostrar que el gradiente de la [entropía cruzada]{.g data-t="entropía cruzada"} respecto de los logits vale $p-y$**, sin derivar el [softmax]{.g} por separado.
+2. **Demostrar que restar el máximo no cambia el softmax**, y medir dónde revienta la versión ingenua.
+3. Programar una red densa completa —ida, vuelta y entrenamiento— en unas cuarenta líneas.
+4. Medir qué consigue sobre un problema que ninguna frontera lineal resuelve.
+5. **Demostrar que el gradiente de un lote es insesgado** y que su desviación típica va como $1/\sqrt{\text{lote}}$, y medirlo.
+6. Entregarle el gradiente a `scipy` y dejar que optimice, que es la comprobación más dura que admite.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 36**: las tres fórmulas del paso hacia atrás, que aquí se usan tal cual.
+- **Machine Learning 3**: la regresión logística, que es esta red sin capas ocultas.
+- **Matemática 16**: el descenso de gradiente, que es el bucle de entrenamiento.
+- **Estadística 8**: la verosimilitud, de la que la entropía cruzada es el negativo.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 38**: la inicialización y las activaciones, que deciden si este bucle arranca.
+- **Machine Learning 39**: los optimizadores, que sustituyen al descenso simple de aquí.
+- **Machine Learning 40**: la regularización, que se añade a esta misma pérdida.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | El número de observaciones |
+| $K$ | ka mayúscula | El número de clases |
+| $z$ | zeta | Los logits: la salida de la última capa, sin activación |
+| $p$ | pe | Las probabilidades que devuelve el softmax |
+| $y$ | y | La clase verdadera, y también su vector de ceros y un uno |
+| $L$ | ele | La pérdida media sobre el lote |
+| $\mathbb{1}$ | indicadora | El vector de unos, o la función que vale uno si se cumple algo |
+| $c$ | ce | Una constante que se resta a todos los logits |
+| $\nu$ | nu | La tasa de aprendizaje |
+| $\delta$ | delta | Lo que llega por detrás a una capa: $\partial L/\partial z$ |
+:::
+
+## 1. La salida: softmax y entropía cruzada
+
+::: {.definicion}
+**Definición 37.1 (softmax y entropía cruzada).** Dados $K$ logits $z_1,\dots,z_K$,
+$$p_k=\frac{e^{z_k}}{\sum_{j}e^{z_j}},\qquad
+L=-\log p_{y}=-z_{y}+\log\sum_j e^{z_j},$$
+donde $y$ es el índice de la clase verdadera. La segunda igualdad es la que se programa: **no hace falta calcular $p$ para evaluar la pérdida**.
+:::
+
+::: {.proposicion}
+**Proposición 37.2 (el gradiente es $p-y$).** Con $y$ escrita como vector de ceros con un uno en su clase,
+$$\frac{\partial L}{\partial z}=p-y .$$
+:::
+
+::: {.demostracion}
+*Demostración.* Derivando $L=-z_{c}+\log\sum_je^{z_j}$ respecto de $z_k$, el primer término aporta $-\mathbb{1}\{k=c\}$ y el segundo
+$$\frac{\partial}{\partial z_k}\log\sum_je^{z_j}=\frac{e^{z_k}}{\sum_je^{z_j}}=p_k .$$
+Sumando, $\partial L/\partial z_k=p_k-\mathbb{1}\{k=c\}=p_k-y_k$. [∎]{.fin-demo}
+:::
+
+Esa fórmula es la razón de que softmax y entropía cruzada vayan siempre juntas. Por separado, derivar el softmax da una matriz jacobiana $K\times K$ con la forma $\operatorname{diag}(p)-pp^{\top}$; al componerla con la derivada del logaritmo, **todo se cancela** y queda una resta. Programarlas por separado es correcto, más lento y mucho más frágil.
+
+::: {.proposicion}
+**Proposición 37.3 (el softmax no ve los desplazamientos).** Para cualquier constante $c$, $\operatorname{softmax}(z+c\mathbb{1})=\operatorname{softmax}(z)$. En consecuencia se puede restar $c=\max_k z_k$ antes de exponenciar, con lo que el mayor exponente pasa a ser cero y ninguno desborda.
+:::
+
+::: {.demostracion}
+*Demostración.* $\dfrac{e^{z_k+c}}{\sum_j e^{z_j+c}}=\dfrac{e^{c}e^{z_k}}{e^{c}\sum_j e^{z_j}}=\dfrac{e^{z_k}}{\sum_j e^{z_j}}$, porque $e^c$ es un factor común que se cancela. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def softmax_ingenuo(Z):
+    """A proposito sin restar el maximo. Se silencia el aviso de desbordamiento
+    porque desbordar es justamente lo que esta celda quiere ensenar."""
+    with np.errstate(over="ignore", invalid="ignore"):
+        E = np.exp(Z)
+        return E / E.sum(axis=1, keepdims=True)
+
+def softmax(Z):
+    """Restando el maximo de cada fila: el resultado es el mismo y no desborda."""
+    M = Z.max(axis=1, keepdims=True)
+    E = np.exp(Z - M)
+    return E / E.sum(axis=1, keepdims=True)
+
+def perdida(Z, y):
+    """Entropia cruzada, escrita con log-sum-exp para no calcular el softmax."""
+    M = Z.max(axis=1, keepdims=True)
+    lse = M[:, 0] + np.log(np.exp(Z - M).sum(axis=1))
+    return float((lse - Z[np.arange(len(y)), y]).mean())
+
+rng = np.random.default_rng(37)
+n, K = 6, 4
+Z = rng.normal(0, 1.5, (n, K))
+y = rng.integers(0, K, n)
+
+# --- la identidad: el gradiente de la entropia cruzada respecto de z es p - y ---
+P = softmax(Z)
+Y = np.zeros((n, K)); Y[np.arange(n), y] = 1.0
+analitico = (P - Y) / n
+
+h, peor = 1e-6, 0.0
+for i in range(n):
+    for k in range(K):
+        viejo = Z[i, k]
+        Z[i, k] = viejo + h; mas = perdida(Z, y)
+        Z[i, k] = viejo - h; menos = perdida(Z, y)
+        Z[i, k] = viejo
+        peor = max(peor, abs((mas - menos) / (2 * h) - analitico[i, k]))
+
+print("el gradiente de la entropia cruzada respecto de la entrada del softmax")
+print("  dL/dz = (p - y) / n, y no hace falta derivar el softmax por separado")
+print("  mayor diferencia con diferencias centradas: menor que 1e-8: %s" % bool(peor < 1e-8))
+print()
+
+print("lo que pasa si el softmax se escribe sin restar el maximo")
+print("   magnitud de z    ingenuo suma uno   estable suma uno   ingenuo es finito")
+for escala in (1, 10, 100, 500, 1000):
+    Zg = np.array([[escala, escala / 2, 0.0, -escala / 3]])
+    a = softmax_ingenuo(Zg)
+    b = softmax(Zg)
+    print("     %6d          %s              %s                %s"
+          % (escala, "si" if abs(float(a.sum()) - 1) < 1e-9 else "NO",
+             "si" if abs(float(b.sum()) - 1) < 1e-9 else "NO",
+             "si" if np.isfinite(a).all() else "NO"))
+print()
+print("exp(1000) no cabe en un flotante y el softmax ingenuo devuelve nan a")
+print("partir de ahi. Restar el maximo de cada fila no cambia el resultado")
+print("—se cancela arriba y abajo— y hace que el mayor exponente sea cero")
+```
+
+La identidad se comprueba a $10^{-8}$, y la tabla enseña dónde importa la Proposición 37.3: con logits de magnitud $500$ la versión ingenua todavía aguanta, y con $1000$ **devuelve `nan`**. El límite está donde $e^{z}$ deja de caber en un flotante de doble precisión, alrededor de $709$.
+
+Mil no es una cifra absurda. Los logits de una red sin regularizar crecen durante el entrenamiento, y una red que se ajusta bien a sus datos los empuja lejos a propósito. La versión estable no es una precaución opcional: **es la única que sobrevive al entrenamiento**.
+
+```{=html}
+<div class="viz-softmax">
+  <div class="controles">
+    <label>Escala de los logits <input id="sf-e" type="range" min="0.1" max="6" step="0.1" value="1.0"> <span id="sf-e-v">1.0</span></label>
+    <label>Logit del primero <input id="sf-p" type="range" min="-3" max="3" step="0.1" value="1.2"> <span id="sf-p-v">1.2</span></label>
+  </div>
+  <svg id="sf-svg" viewBox="0 0 660 250" role="img" aria-label="Los logits y las probabilidades que devuelve el softmax, como barras que cambian al variar la escala."></svg>
+  <p class="lectura" id="sf-lectura"></p>
+</div>
+<style>
+.viz-softmax { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-softmax .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-softmax label { display: flex; align-items: center; gap: .4rem; }
+.viz-softmax input[type=range] { width: 160px; padding: 0; }
+.viz-softmax svg { width: 100%; height: auto; display: block; }
+.viz-softmax .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("sf-svg"), lec = document.getElementById("sf-lectura");
+  var ce = document.getElementById("sf-e"), cp = document.getElementById("sf-p");
+  var ee = document.getElementById("sf-e-v"), ep = document.getElementById("sf-p-v");
+  var BASE = [0, 0.4, -0.9, 0.1, -0.5];      // los otros cuatro logits, fijos
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var esc = +ce.value, primero = +cp.value;
+    ee.textContent = esc.toFixed(1); ep.textContent = primero.toFixed(1);
+    var z = BASE.slice(); z[0] = primero;
+    var i, K = z.length;
+    for (i = 0; i < K; i++) z[i] *= esc;
+    var m = Math.max.apply(null, z), s = 0, p = [];
+    for (i = 0; i < K; i++) { p.push(Math.exp(z[i] - m)); s += p[i]; }
+    for (i = 0; i < K; i++) p[i] /= s;
+
+    var X0 = 60, ANCHO = 44, HUECO = 22, Y0 = 20, YH = 90;
+    for (i = 0; i < K; i++) {
+      var x = X0 + i * (ANCHO + HUECO);
+      // arriba los logits, centrados en una linea de cero
+      var cero = Y0 + YH / 2, alto = Math.max(-YH / 2, Math.min(YH / 2, z[i] / 20 * YH));
+      svg.appendChild(el("rect", { x: x, y: (alto >= 0 ? cero - alto : cero).toFixed(1),
+        width: ANCHO, height: Math.abs(alto).toFixed(1), fill: C_T, opacity: .35 }));
+      // abajo las probabilidades
+      var pb = Y0 + YH + 30, ph = p[i] * 100;
+      svg.appendChild(el("rect", { x: x, y: (pb + 100 - ph).toFixed(1), width: ANCHO, height: ph.toFixed(1),
+        fill: i === 0 ? C_B : C_A, opacity: .6 }));
+      svg.appendChild(el("text", { x: x + ANCHO / 2, y: pb + 116, "text-anchor": "middle", "font-size": 10.5, fill: C_T },
+        p[i].toFixed(3)));
+    }
+    svg.appendChild(el("path", { d: "M" + (X0 - 10) + " " + (Y0 + YH / 2) + " L" + (X0 + K * (ANCHO + HUECO)) + " " + (Y0 + YH / 2),
+      stroke: C_L, "stroke-width": 1.4 }));
+    svg.appendChild(el("text", { x: X0 - 16, y: Y0 + YH / 2 + 4, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "z = 0"));
+    svg.appendChild(el("text", { x: X0 - 16, y: Y0 + YH + 130, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "p"));
+
+    var maxp = Math.max.apply(null, p), ent = 0;
+    for (i = 0; i < K; i++) if (p[i] > 0) ent -= p[i] * Math.log(p[i]);
+    lec.innerHTML = "Con escala <strong>" + esc.toFixed(1) + "</strong>, la mayor probabilidad vale <strong>" + maxp.toFixed(4) +
+      "</strong> y la entropía <strong>" + ent.toFixed(4) + "</strong>. " +
+      "Multiplicar todos los logits por un número mayor que uno <strong>concentra</strong> la probabilidad sin cambiar cuál es la mayor; " +
+      "dividirlos la aplana hacia " + (1 / K).toFixed(3) + " para cada clase. " +
+      "Sumar la misma constante a todos, en cambio, <strong>no cambia nada</strong>: eso es la Proposición 37.3, y es lo que permite restar el máximo.";
+  }
+  ce.addEventListener("input", dibujar);
+  cp.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. La red entera
+
+Con la Proposición 36.2 para las capas y la 37.2 para la salida, el algoritmo completo cabe en una pantalla: ida guardando entradas, $\delta=p-y$ en el final, y vuelta multiplicando por $W^{\top}$ y por la derivada de la ReLU.
+
+```{pyodide}
+import numpy as np
+
+def espiral(n_por_clase, K, rng):
+    """Tres brazos de espiral: ninguna frontera lineal los separa."""
+    X, y = [], []
+    for k in range(K):
+        t = np.linspace(0.0, 1.0, n_por_clase)
+        r = 4 * t
+        ang = k * 2 * np.pi / K + 4 * t + 0.25 * rng.standard_normal(n_por_clase)
+        X.append(np.c_[r * np.sin(ang), r * np.cos(ang)])
+        y.append(np.full(n_por_clase, k))
+    return np.vstack(X), np.concatenate(y)
+
+def inicia(tam, rng):
+    return [[rng.standard_normal((tam[i], tam[i + 1])) * np.sqrt(2.0 / tam[i]),
+             np.zeros(tam[i + 1])] for i in range(len(tam) - 1)]
+
+def adelante(par, X):
+    a, cache = X, []
+    for i, (W, b) in enumerate(par):
+        z = a @ W + b
+        cache.append(a)
+        a = z if i == len(par) - 1 else np.maximum(0.0, z)
+    return a, cache            # la ultima a son los logits
+
+def perdida(Z, y):
+    M = Z.max(axis=1, keepdims=True)
+    lse = M[:, 0] + np.log(np.exp(Z - M).sum(axis=1))
+    return float((lse - Z[np.arange(len(y)), y]).mean())
+
+def gradiente(par, X, y):
+    Z, cache = adelante(par, X)
+    n = len(y)
+    M = Z.max(axis=1, keepdims=True)
+    E = np.exp(Z - M)
+    P = E / E.sum(axis=1, keepdims=True)
+    d = P.copy(); d[np.arange(n), y] -= 1.0; d /= n      # la identidad de la celda anterior
+    g = [None] * len(par)
+    for i in range(len(par) - 1, -1, -1):
+        a = cache[i]
+        g[i] = [a.T @ d, d.sum(axis=0)]
+        if i > 0:
+            d = (d @ par[i][0].T) * (cache[i] > 0)        # derivada de la ReLU
+    return g
+
+def entrena(par, X, y, pasos, tasa, lote, rng):
+    hist = []
+    n = len(y)
+    for t in range(pasos):
+        idx = rng.integers(0, n, lote)
+        g = gradiente(par, X[idx], y[idx])
+        for (W, b), (gW, gb) in zip(par, g):
+            W -= tasa * gW
+            b -= tasa * gb
+        if t % 500 == 0 or t == pasos - 1:
+            Z, _ = adelante(par, X)
+            hist.append((t, perdida(Z, y), float((Z.argmax(axis=1) == y).mean())))
+    return hist
+
+rng = np.random.default_rng(371)
+K = 3
+X, y = espiral(120, K, rng)
+par = inicia([2, 32, 32, K], np.random.default_rng(5))
+hist = entrena(par, X, y, 3001, 0.5, 64, np.random.default_rng(9))
+
+print("una red densa de dos capas ocultas sobre tres brazos de espiral")
+print("  paso    perdida    acierto")
+for t, L, acc in hist:
+    print("  %4d   %.6f   %.6f" % (t, L, acc))
+print()
+
+# --- que consigue lo mejor que puede hacer una frontera lineal ---
+Wlin = np.zeros((2, K)); blin = np.zeros(K)
+for _ in range(4000):
+    Z = X @ Wlin + blin
+    M = Z.max(axis=1, keepdims=True)
+    E = np.exp(Z - M); P = E / E.sum(axis=1, keepdims=True)
+    d = P.copy(); d[np.arange(len(y)), y] -= 1.0; d /= len(y)
+    Wlin -= 0.5 * (X.T @ d); blin -= 0.5 * d.sum(axis=0)
+lineal = float(((X @ Wlin + blin).argmax(axis=1) == y).mean())
+
+Z, _ = adelante(par, X)
+print("  acierto de la red                    : %.6f" % float((Z.argmax(axis=1) == y).mean()))
+print("  acierto de la regresion multinomial  : %.6f" % lineal)
+print("  acierto de decir siempre la clase 0  : %.6f" % float((y == 0).mean()))
+print()
+print("los brazos se enroscan, asi que ninguna recta separa tres regiones. La")
+print("regresion multinomial acierta poco mas de la mitad; la red, con dos capas")
+print("de treinta y dos unidades, se queda a dos puntos de acertarlo todo")
+```
+
+La pérdida cae de $5{,}584735$ a $0{,}012395$ y el acierto sube a $0{,}994444$. La comparación que hace falta para leer ese número está debajo: **la regresión multinomial se queda en $0{,}527778$** y decir siempre la misma clase da $0{,}333333$. Los tres brazos se enroscan unos sobre otros, de modo que ninguna terna de semiplanos los separa, y la red lo resuelve con dos capas de treinta y dos unidades.
+
+Conviene mirar la primera fila: con los pesos recién inicializados la pérdida vale $5{,}584735$, muy por encima de $\log 3=1{,}0986$, que es lo que daría predecir un tercio para cada clase. Una red al azar **no es neutral**: sus logits son grandes y arbitrarios, así que empieza peor que no saber nada. Eso es lo que la lección 38 tendrá que arreglar con la inicialización.
+
+## 3. Por qué funcionan los lotes
+
+::: {.proposicion}
+**Proposición 37.4 (el gradiente de un lote).** Si el lote se sortea con reemplazo y de forma uniforme entre las $n$ observaciones, el gradiente del lote es un estimador **insesgado** del gradiente completo, y su desviación típica es proporcional a $1/\sqrt{\text{lote}}$.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $g_i$ el gradiente del término $i$. Al sortear un índice $I$ uniforme, $\mathbb{E}[g_I]=\frac1n\sum_i g_i$, que es el gradiente completo. El gradiente del lote es el promedio de $\text{lote}$ copias independientes de $g_I$, así que su esperanza es la misma y su varianza es $\operatorname{Var}(g_I)/\text{lote}$; la desviación típica es la raíz de eso. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def espiral(n_por_clase, K, rng):
+    X, y = [], []
+    for k in range(K):
+        t = np.linspace(0.0, 1.0, n_por_clase)
+        r = 4 * t
+        ang = k * 2 * np.pi / K + 4 * t + 0.25 * rng.standard_normal(n_por_clase)
+        X.append(np.c_[r * np.sin(ang), r * np.cos(ang)])
+        y.append(np.full(n_por_clase, k))
+    return np.vstack(X), np.concatenate(y)
+
+def inicia(tam, rng):
+    return [[rng.standard_normal((tam[i], tam[i + 1])) * np.sqrt(2.0 / tam[i]),
+             np.zeros(tam[i + 1])] for i in range(len(tam) - 1)]
+
+def adelante(par, X):
+    a, cache = X, []
+    for i, (W, b) in enumerate(par):
+        z = a @ W + b
+        cache.append(a)
+        a = z if i == len(par) - 1 else np.maximum(0.0, z)
+    return a, cache
+
+def gradiente_plano(par, X, y):
+    """El gradiente completo, devuelto como un vector, para poder promediarlo."""
+    Z, cache = adelante(par, X)
+    n = len(y)
+    M = Z.max(axis=1, keepdims=True)
+    E = np.exp(Z - M)
+    P = E / E.sum(axis=1, keepdims=True)
+    d = P.copy(); d[np.arange(n), y] -= 1.0; d /= n
+    trozos = [None] * len(par)
+    for i in range(len(par) - 1, -1, -1):
+        a = cache[i]
+        trozos[i] = np.r_[(a.T @ d).ravel(), d.sum(axis=0)]
+        if i > 0:
+            d = (d @ par[i][0].T) * (cache[i] > 0)
+    return np.concatenate(trozos)
+
+rng = np.random.default_rng(372)
+K = 3
+X, y = espiral(120, K, rng)
+par = inicia([2, 16, K], np.random.default_rng(5))
+n = len(y)
+
+completo = gradiente_plano(par, X, y)
+print("el gradiente de un lote es un estimador INSESGADO del gradiente completo")
+print("   lote    coseno con el completo   desviacion tipica   dt * raiz(lote)")
+R = 3000
+for lote in (8, 32, 128, 512):
+    r2 = np.random.default_rng(100 + lote)
+    G = np.empty((R, completo.size))
+    for t in range(R):
+        idx = r2.integers(0, n, lote)
+        G[t] = gradiente_plano(par, X[idx], y[idx])
+    medio = G.mean(axis=0)
+    cos = float(medio @ completo / (np.linalg.norm(medio) * np.linalg.norm(completo)))
+    dt = float(np.sqrt(G.var(axis=0, ddof=1).sum()))
+    print("   %4d           %.6f            %10.6f        %10.6f"
+          % (lote, cos, dt, dt * np.sqrt(lote)))
+print()
+print("el coseno entre el promedio de %d lotes y el gradiente completo pasa de" % R)
+print("0.999 en los cuatro tamanos: promediar lotes reconstruye el gradiente.")
+print("Y la ultima columna se queda casi fija, que es decir que la desviacion")
+print("tipica del lote va como uno partido por la raiz del tamano: cuadruplicar")
+print("el lote reduce el ruido a la mitad, no a la cuarta parte")
+```
+
+La última columna es la proposición medida: al pasar de lotes de $8$ a lotes de $512$ —un factor de $64$— el producto $\text{dt}\cdot\sqrt{\text{lote}}$ se queda entre $3{,}799166$ y $3{,}860870$. La desviación típica cae de $1{,}348681$ a $0{,}167901$, que es casi exactamente un factor de $8=\sqrt{64}$.
+
+De ahí sale la regla práctica que gobierna el entrenamiento: **cuadruplicar el lote cuesta cuatro veces más cómputo y reduce el ruido solo a la mitad**. Por eso los lotes pequeños son la norma: el ruido del muestreo sale barato comparado con lo que costaría quitarlo.
+
+```{=html}
+<div class="viz-lote">
+  <div class="controles">
+    <label>Tamaño del lote <input id="lo-t" type="range" min="1" max="9" step="1" value="4"> <span id="lo-t-v">16</span></label>
+    <label>Ruido de un término <input id="lo-r" type="range" min="0.5" max="4" step="0.1" value="2.0"> <span id="lo-r-v">2.0</span></label>
+  </div>
+  <svg id="lo-svg" viewBox="0 0 660 270" role="img" aria-label="El gradiente completo como una flecha y una nube de gradientes de lote a su alrededor, que se encoge al crecer el tamaño del lote."></svg>
+  <p class="lectura" id="lo-lectura"></p>
+</div>
+<style>
+.viz-lote { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-lote .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-lote label { display: flex; align-items: center; gap: .4rem; }
+.viz-lote input[type=range] { width: 160px; padding: 0; }
+.viz-lote svg { width: 100%; height: auto; display: block; }
+.viz-lote .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("lo-svg"), lec = document.getElementById("lo-lectura");
+  var ct = document.getElementById("lo-t"), cr = document.getElementById("lo-r");
+  var et = document.getElementById("lo-t-v"), er = document.getElementById("lo-r-v");
+  var CX = 170, CY = 145, ESC = 46, N = 160;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // normales fijas y reproducibles, por Box-Muller sobre una sucesion determinista
+  function ru(i) { var s = Math.sin(i * 12.9898 + 4.1414) * 43758.5453; return s - Math.floor(s); }
+  function nor(i) {
+    var u = Math.max(1e-9, ru(i)), v = ru(i + 7777);
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var lote = Math.pow(2, +ct.value), sd = +cr.value;
+    et.textContent = lote; er.textContent = sd.toFixed(1);
+    var GX = 2.0, GY = 1.1;                       // el gradiente completo, fijo
+    var s = sd / Math.sqrt(lote);
+    var px = function (u) { return CX + u * ESC; }, py = function (v) { return CY - v * ESC; };
+    var i, maxr = 0;
+    for (i = 0; i < N; i++) {
+      var x = GX + s * nor(2 * i + 1), yy = GY + s * nor(2 * i + 2);
+      maxr = Math.max(maxr, Math.sqrt((x - GX) * (x - GX) + (yy - GY) * (yy - GY)));
+      svg.appendChild(el("circle", { cx: px(x).toFixed(1), cy: py(yy).toFixed(1), r: 2.2, fill: C_A, opacity: .4 }));
+    }
+    svg.appendChild(el("path", { d: "M" + px(0) + " " + py(0) + " L" + px(GX) + " " + py(GY),
+      stroke: C_B, "stroke-width": 2.6 }));
+    svg.appendChild(el("circle", { cx: px(GX).toFixed(1), cy: py(GY).toFixed(1), r: 5, fill: C_B }));
+    svg.appendChild(el("circle", { cx: px(0), cy: py(0), r: 3.4, fill: "none", stroke: C_T, "stroke-width": 1.6 }));
+    svg.appendChild(el("text", { x: px(GX) + 10, y: py(GY) - 6, "font-size": 10.5, fill: C_B }, "gradiente completo"));
+    svg.appendChild(el("text", { x: 640, y: 26, "text-anchor": "end", "font-size": 10.5, fill: C_A }, "160 gradientes de lote"));
+
+    // la barra de la desviacion tipica, a la derecha
+    var BX = 520, BY = 40, BW = 30, BH = 180, TOPE = 4.0;
+    svg.appendChild(el("rect", { x: BX, y: BY, width: BW, height: BH, fill: "none", stroke: C_L, "stroke-width": 1 }));
+    var alto = Math.min(BH, s / TOPE * BH);
+    svg.appendChild(el("rect", { x: BX, y: (BY + BH - alto).toFixed(1), width: BW, height: alto.toFixed(1), fill: C_A, opacity: .5 }));
+    svg.appendChild(el("text", { x: BX + BW / 2, y: BY + BH + 16, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .75 },
+      "dt " + s.toFixed(3)));
+
+    lec.innerHTML = "Con lotes de <strong>" + lote + "</strong> y ruido " + sd.toFixed(1) +
+      " por término, la desviación típica del gradiente del lote vale <strong>" + s.toFixed(4) +
+      "</strong>, y el producto con la raíz del lote es <strong>" + (s * Math.sqrt(lote)).toFixed(4) +
+      "</strong>, que no se mueve al cambiar el lote. " +
+      "La nube está <strong>centrada</strong> en la punta de la flecha —eso es el insesgamiento— y se encoge como 1/√lote, " +
+      "no como 1/lote: doblar el lote cuesta el doble y quita solo un 29 % del ruido.";
+  }
+  ct.addEventListener("input", dibujar);
+  cr.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Contraste con la librería
+
+Esta lección es de nivel **L3**, y ese nivel promete implementar el resultado en NumPy puro y **empatar con la librería**. Aquí el contraste toma la forma más exigente posible: se le entrega el gradiente a un optimizador de `scipy` y se le deja trabajar. Si la derivada estuviera mal, L-BFGS —que construye una aproximación de la curvatura a partir de las diferencias entre gradientes sucesivos— no avanzaría.
+
+```{pyodide}
+import numpy as np
+from scipy.optimize import minimize
+
+TAM = [2, 16, 16, 3]
+
+def espiral(n_por_clase, K, rng):
+    X, y = [], []
+    for k in range(K):
+        t = np.linspace(0.0, 1.0, n_por_clase)
+        r = 4 * t
+        ang = k * 2 * np.pi / K + 4 * t + 0.25 * rng.standard_normal(n_por_clase)
+        X.append(np.c_[r * np.sin(ang), r * np.cos(ang)])
+        y.append(np.full(n_por_clase, k))
+    return np.vstack(X), np.concatenate(y)
+
+def desempaqueta(v):
+    par, k = [], 0
+    for i in range(len(TAM) - 1):
+        nW = TAM[i] * TAM[i + 1]
+        par.append([v[k:k + nW].reshape(TAM[i], TAM[i + 1]), v[k + nW:k + nW + TAM[i + 1]]])
+        k += nW + TAM[i + 1]
+    return par
+
+def adelante(par, X):
+    a, cache = X, []
+    for i, (W, b) in enumerate(par):
+        z = a @ W + b
+        cache.append(a)
+        a = z if i == len(par) - 1 else np.maximum(0.0, z)
+    return a, cache
+
+def perdida_y_grad(v, X, y):
+    """Lo que la libreria necesita: el valor y el gradiente en un solo vector."""
+    par = desempaqueta(v)
+    Z, cache = adelante(par, X)
+    n = len(y)
+    M = Z.max(axis=1, keepdims=True)
+    E = np.exp(Z - M)
+    lse = M[:, 0] + np.log(E.sum(axis=1))
+    L = float((lse - Z[np.arange(n), y]).mean())
+    P = E / E.sum(axis=1, keepdims=True)
+    d = P.copy(); d[np.arange(n), y] -= 1.0; d /= n
+    trozos = [None] * len(par)
+    for i in range(len(par) - 1, -1, -1):
+        a = cache[i]
+        trozos[i] = np.r_[(a.T @ d).ravel(), d.sum(axis=0)]
+        if i > 0:
+            d = (d @ par[i][0].T) * (cache[i] > 0)
+    return L, np.concatenate(trozos)
+
+rng = np.random.default_rng(373)
+X, y = espiral(120, 3, rng)
+P = sum(TAM[i] * TAM[i + 1] + TAM[i + 1] for i in range(len(TAM) - 1))
+r0 = np.random.default_rng(5)
+v0 = np.concatenate([np.r_[(r0.standard_normal((TAM[i], TAM[i + 1])) * np.sqrt(2.0 / TAM[i])).ravel(),
+                           np.zeros(TAM[i + 1])] for i in range(len(TAM) - 1)])
+
+# --- la libreria optimiza; el gradiente lo pone esta pagina ---
+res = minimize(perdida_y_grad, v0.copy(), args=(X, y), jac=True,
+               method="L-BFGS-B", options={"maxiter": 400})
+Zl, _ = adelante(desempaqueta(res.x), X)
+acc_lbfgs = float((Zl.argmax(axis=1) == y).mean())
+
+# --- descenso a mano, con el mismo arranque y el mismo gradiente ---
+v = v0.copy()
+for _ in range(4000):
+    L, g = perdida_y_grad(v, X, y)
+    v -= 0.5 * g
+Zg, _ = adelante(desempaqueta(v), X)
+acc_sgd = float((Zg.argmax(axis=1) == y).mean())
+Lg = perdida_y_grad(v, X, y)[0]
+
+print("la libreria optimiza y esta pagina pone el gradiente")
+print("  parametros                     : %d" % P)
+print("  L-BFGS de scipy, perdida final : %.6f" % float(res.fun))
+print("  L-BFGS, acierto                : %.6f" % acc_lbfgs)
+print("  L-BFGS, evaluaciones           : %d" % int(res.nfev))
+print()
+print("  descenso a mano, perdida final : %.6f" % Lg)
+print("  descenso a mano, acierto       : %.6f" % acc_sgd)
+print("  descenso a mano, evaluaciones  : 4000")
+print()
+print("  los dos bajan de 0.05 de perdida: %s" % bool(res.fun < 0.05 and Lg < 0.05))
+print("  los dos aciertan mas del 99 %%   : %s" % bool(acc_lbfgs > 0.99 and acc_sgd > 0.99))
+print()
+print("que un optimizador de la libreria llegue al minimo usando este gradiente")
+print("es la comprobacion mas dura que se le puede hacer: L-BFGS construye una")
+print("aproximacion de la curvatura con las diferencias de gradientes, y con un")
+print("gradiente mal calculado no converge, se atasca o retrocede")
+```
+
+L-BFGS llega a una pérdida de $0{,}009155$ con **$77$ evaluaciones**; el descenso simple, con el mismo arranque y el mismo gradiente, llega a $0{,}010623$ con $4000$. Los dos aciertan $0{,}994444$.
+
+Dos lecturas. La primera es la comprobación: un optimizador de segundo orden **no llega a ninguna parte con un gradiente mal calculado**, porque su aproximación de la curvatura se construye con las diferencias entre gradientes sucesivos; que converja en setenta y siete pasos es una garantía más fuerte que cualquier comparación de dígitos.
+
+La segunda es una advertencia sobre lo que se está comparando. L-BFGS usa **el lote completo** en cada evaluación y aprovecha la curvatura; el descenso de la sección 2 usa lotes de sesenta y cuatro y solo la pendiente. Sobre trescientos sesenta puntos gana el primero con holgura, y sobre millones de puntos no se podría ni intentar: cada evaluación recorrería todos los datos. **La comparación mide el algoritmo, no decide cuál conviene**, y esa decisión es de la lección 39.
+
+## 5. Lo que esta lección no resuelve
+
+- **La inicialización.** El $\sqrt{2/d_{\text{ent}}}$ de la celda aparece sin justificación; de dónde sale y qué pasa si se elige mal es la lección 38.
+- **La tasa de aprendizaje.** Aquí vale $0{,}5$ porque funciona. Elegirla, moverla durante el entrenamiento y sustituirla por algo mejor es la lección 39.
+- **La regularización.** La red de la sección 2 se ajusta a sus propios datos sin ninguna cortapisa y no se mide nada fuera de ellos. Eso es la lección 40.
+- **La derivada de la ReLU en cero.** La celda usa `cache[i] > 0`, que la fija en cero. Es una elección, no una derivada, y las librerías hacen lo mismo.
+- **La eficiencia.** Todo está escrito para leerse. Un entrenamiento real reutiliza memoria, evita copias y trabaja en precisión simple.
+
+## Ejercicios
+
+### Ejercicio 1, El gradiente de la salida
+
+Con la Proposición 37.2, calcular el gradiente de la entropía cruzada respecto de los logits de una observación.
+
+```{pyodide}
+#| exercise: ex_grad
+import numpy as np
+
+z = np.array([2.0, 1.0, -1.0])
+clase = 0
+
+def softmax(z):
+    e = np.exp(z - z.max())
+    return e / e.sum()
+
+p = softmax(z)
+y = ______
+g = ______
+
+print(np.round(p, 6), np.round(g, 6))
+round(float(g.sum()), 6)
+```
+
+::: {.hint exercise="ex_grad"}
+$y$ es el vector de ceros con un uno en la clase verdadera, y el gradiente es $p-y$.
+:::
+
+::: {.solution exercise="ex_grad"}
+```{pyodide}
+import numpy as np
+
+z = np.array([2.0, 1.0, -1.0])
+clase = 0
+
+def softmax(z):
+    e = np.exp(z - z.max())
+    return e / e.sum()
+
+p = softmax(z)
+y = np.eye(len(z))[clase]
+g = p - y
+
+print(np.round(p, 6), np.round(g, 6))
+round(float(g.sum()), 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_grad
+#| check: true
+if abs(result) < 1e-9:
+    feedback = {"correct": True, "message": "Correcto: el gradiente suma cero, siempre. Las probabilidades suman uno y el vector de la clase también, así que su diferencia suma cero. Eso significa que mover todos los logits por igual no cambia la pérdida, que es la Proposición 37.3 vista desde el gradiente.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.0 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuánto quita agrandar el lote
+
+Con la Proposición 37.4, calcular cuánto baja el ruido al multiplicar el tamaño del lote.
+
+```{pyodide}
+#| exercise: ex_lote
+from math import sqrt
+
+def factor(multiplicador):
+    """Cuanto queda del ruido al multiplicar el lote por ese numero."""
+    return ______
+
+for m in (2, 4, 16, 100):
+    print(m, round(factor(m), 6))
+
+round(factor(4), 6)
+```
+
+::: {.hint exercise="ex_lote"}
+La desviación típica va como $1/\sqrt{\text{lote}}$, así que multiplicar el lote por $m$ la divide por $\sqrt m$.
+:::
+
+::: {.solution exercise="ex_lote"}
+```{pyodide}
+from math import sqrt
+
+def factor(multiplicador):
+    """Cuanto queda del ruido al multiplicar el lote por ese numero."""
+    return 1.0 / sqrt(multiplicador)
+
+for m in (2, 4, 16, 100):
+    print(m, round(factor(m), 6))
+
+round(factor(4), 6)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_lote
+#| check: true
+if abs(result - 0.5) < 1e-6:
+    feedback = {"correct": True, "message": "Correcto: cuadruplicar el lote deja la mitad del ruido, a cambio de cuatro veces el cómputo. Para quitar el 99 % del ruido haría falta multiplicar el lote por diez mil, y ahí está la razón de que nadie lo haga.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 0.5 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 37**:
+
+1. Separar la espiral en entrenamiento y prueba y repetir la sección 2, anotando en qué paso el acierto de prueba deja de subir mientras el de entrenamiento sigue. Comparar con la pérdida, que suele avisar antes.
+2. Programar el softmax y la entropía cruzada **por separado**, con la matriz jacobiana $\operatorname{diag}(p)-pp^{\top}$, y comprobar que da lo mismo que $p-y$. Medir cuánto más tarda y anotar en qué escala de logits empieza a perder precisión.
+3. Repetir la tabla de la sección 3 con lotes **sin reemplazo** —barajando y recorriendo— y guardar en `50-Errores/` la comparación. Anotar si el gradiente sigue siendo insesgado y qué pasa con la desviación típica al acercarse el lote a $n$.
+
+## Del libro
+
+**ISLP §10.7** describe cómo se ajusta una red: la pérdida, el descenso por gradiente con lotes, la tasa de aprendizaje y las dificultades del problema, que no es convexo.
+
+Esta página escribe el código entero y añade tres mediciones. La primera es la identidad $\partial L/\partial z=p-y$ comprobada a $10^{-8}$, que es lo que hace que softmax y entropía cruzada se programen juntas. La segunda es **dónde revienta el softmax ingenuo**: con logits de magnitud mil devuelve `nan`, y esa magnitud la alcanza una red entrenada. La tercera es la ley $1/\sqrt{\text{lote}}$, con el producto $\text{dt}\cdot\sqrt{\text{lote}}$ quedándose entre $3{,}799166$ y $3{,}860870$ mientras el lote se multiplica por sesenta y cuatro.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/red-densa-desde-cero.md`, enlazada a [[backpropagation]], [[regresion-logistica]] y [[descenso-de-gradiente]]. Conviene rehacer a mano la Proposición 37.2: derivar $-z_c+\log\sum_je^{z_j}$ ocupa dos renglones y deja grabado **por qué el jacobiano del softmax nunca aparece en el código**, que es la duda que siempre vuelve al leer una implementación.
+
+```
+¿Cuánto vale dL/dz con softmax y entropía cruzada?::p − y, la resta sin más
+¿Por qué no aparece el jacobiano del softmax?::Porque se cancela con la derivada del logaritmo
+¿Cómo se evalúa la pérdida sin calcular p?::Con log-sum-exp: lse(z) − z de la clase verdadera
+¿Cambia el softmax si se suma una constante a todos los logits?::No: el factor común se cancela
+¿Para qué sirve eso?::Para restar el máximo y que ningún exponente desborde
+¿Dónde revienta el softmax ingenuo?::Con logits de magnitud mil ya devuelve nan
+¿Es insesgado el gradiente de un lote?::Sí, si el lote se sortea uniformemente
+¿Cómo baja su ruido con el tamaño?::Como 1/raíz del lote
+¿Cuánto quita cuadruplicar el lote?::La mitad del ruido, a cambio de cuatro veces el cómputo
+¿Qué acertó la red en la espiral?::0,994444, contra 0,527778 de la regresión multinomial
+¿Cuánto vale la pérdida al arrancar?::5,584735, muy por encima de log 3: la red al azar no es neutral
+¿Qué comprueba entregarle el gradiente a L-BFGS?::Que es correcto: con uno malo no convergería
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 37.2 se demuestra derivando $-z_c+\log\sum_je^{z_j}$; la 37.3, cancelando $e^c$ arriba y abajo; la 37.4, con la esperanza y la varianza de un promedio de copias independientes. Todo se comprueba: el gradiente coincide con diferencias centradas a $10^{-8}$; el softmax ingenuo devuelve `nan` con logits de magnitud mil y el estable no; la red llega a $0{,}994444$ de acierto contra $0{,}527778$ de la regresión multinomial; y el producto $\text{dt}\cdot\sqrt{\text{lote}}$ se queda entre $3{,}799166$ y $3{,}860870$ mientras el lote pasa de $8$ a $512$.
+
+**Lo que viene de los libros.** De **ISLP §10.7** vienen el planteamiento del ajuste, el descenso con lotes y la advertencia de que el problema no es convexo. El texto no se reproduce.
+
+**Lo que se usa de otras lecciones sin repetir.** Las tres fórmulas del paso hacia atrás son de Machine Learning 36. El softmax como generalización de la logística es de Machine Learning 3. El descenso de gradiente es de Matemática 16.
+
+**Lo que se enuncia sin demostrar.** Que el problema no sea convexo se menciona y no se estudia. Que la derivada de la ReLU en cero se pueda fijar en cero sin consecuencias se usa como convención. Y la comparación entre L-BFGS y el descenso simple **no se generaliza**: mide dos algoritmos sobre trescientos sesenta puntos, no decide cuál conviene con datos grandes.
+
+**Lo que es mío, no del libro.** Medir dónde revienta el softmax ingenuo en vez de recomendar la versión estable, que convierte un consejo en un umbral. Poner la pérdida inicial, $5{,}584735$, al lado de $\log 3=1{,}0986$ para enseñar que **una red recién inicializada empieza peor que no saber nada**, que es lo que motiva la lección 38. Y usar `scipy.optimize.minimize` como comprobación del gradiente en vez de como competidor: que L-BFGS converja en setenta y siete evaluaciones con una derivada ajena es una garantía más fuerte que comparar dígitos.
+:::

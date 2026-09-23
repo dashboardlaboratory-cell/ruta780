@@ -125,6 +125,7 @@ MIGRADAS = {
     "ml/34-clustering-avanzado.qmd",
     "ml/35-por-que-funciona-random-forest.qmd",
     "ml/36-backpropagation.qmd",
+    "ml/37-red-densa-desde-cero.qmd",
     "series/01-descomposicion.qmd",
     "series/02-estacionariedad.qmd",
     "series/03-autocorrelacion.qmd",
