@@ -31,6 +31,10 @@ MODULOS = {
     "Matemática": ("Matemática",),
     "Est": ("Estadística",),
     "Estadística": ("Estadística",),
+    # SIN el alias "Lección": F0-retos.ipynb tiene «## Lección 1 — Tipos y
+    # estructuras», que es python/01 y no fundamentos/01. Con el alias puesto
+    # el gate daba VERDE sobre una sección que existe pero es de otra cosa.
+    "Fundamentos": ("Fundamentos",),
     "Py": ("Python", "Lección"),
     "Python": ("Python", "Lección"),
     "ML": ("ML",),

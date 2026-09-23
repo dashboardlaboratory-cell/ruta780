@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
-MODULOS = ["python", "matematica", "estadistica", "ml", "causal"]
+MODULOS = ["fundamentos", "python", "matematica", "estadistica", "ml", "causal"]
 VAULT = RAIZ / "brain"
 SALIDA = Path(__file__).resolve().parent / "grafo.json"
 

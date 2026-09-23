@@ -17,7 +17,7 @@ Es idempotente: las secciones que ya existen no se vuelven a anadir."""
 import json, pathlib, re, sys
 RAIZ = pathlib.Path(__file__).resolve().parent.parent
 MOD = {"estadistica": "Estadística", "matematica": "Matemática",
-       "python": "Python", "ml": "ML"}
+       "python": "Python", "ml": "ML", "fundamentos": "Fundamentos"}
 
 def secciones_existentes():
     hay = set()
@@ -26,7 +26,7 @@ def secciones_existentes():
         for c in d["cells"]:
             if c["cell_type"] != "markdown": continue
             for l in c["source"]:
-                m = re.match(r"##\s+(Matemática|Estadística|Python|ML|Series)\s+(\d+)", l.strip())
+                m = re.match(r"##\s+(Matemática|Estadística|Python|ML|Series|Fundamentos)\s+(\d+)", l.strip())
                 if m: hay.add((m.group(1), int(m.group(2))))
                 m = re.match(r"##\s+Lección\s+(\d+)", l.strip())
                 if m: hay.add(("Python", int(m.group(1))))
@@ -99,7 +99,7 @@ pendientes = {}
 for p in sorted(RAIZ.glob("*/[0-9]*.qmd")):
     nb, etiqueta, puntos = retos_de(p)
     if not nb: continue
-    mm = re.match(r"(Est|Mat|Py|Python|ML|Series|Estadística|Matemática)\s*(\d+)", etiqueta)
+    mm = re.match(r"(Fundamentos|Est|Mat|Py|Python|ML|Series|Estadística|Matemática)\s*(\d+)", etiqueta)
     if not mm: continue
     mod = {"Est":"Estadística","Mat":"Matemática","Py":"Python"}.get(mm.group(1), mm.group(1))
     num = int(mm.group(2))

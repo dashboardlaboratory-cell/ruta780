@@ -156,6 +156,7 @@ MIGRADAS = {
     "python/17-clases-y-protocolos.qmd",
     "python/18-decoradores.qmd",
     "python/19-tipado-gradual.qmd",
+    "fundamentos/01-valores-nombres-y-tipos.qmd",
     "matematica/01-vectores-y-espacios.qmd",
     "matematica/02-matriz-como-transformacion.qmd",
     "matematica/03-espacio-columna.qmd",

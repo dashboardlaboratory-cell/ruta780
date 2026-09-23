@@ -3346,6 +3346,57 @@ primer bloque `## Reto` nombró `F1-retos.ipynb` cuando a Python 19 le toca
 `F2-retos.ipynb`; el generador ya había escrito la sección en el cuaderno
 equivocado y hubo que quitarla a mano.
 
+### 3.58 Nace Fundamentos, porque el curso no tenía piso de abajo (22-09-2026)
+
+Luis precisó la crítica del punto 3.54: lo que echaba en falta no eran temas
+avanzados sino **las bases**, «metodos arrays while for truplas». La primera
+medición había buscado lo contrario y por eso no lo vio.
+
+**Cómo se midió bien.** Contar apariciones sobre el `.qmd` entero da basura: los
+visuales llevan `while (svg.firstChild)` y `svg.appendChild`, así que `while`
+salía en 19 de 19 lecciones y `.append` también. Midiendo **solo dentro de las
+celdas `{pyodide}`**, que es lo que se enseña:
+
+| | aparece en |
+|---|---|
+| `while` | 4 de 19 |
+| `enumerate` | 1 de 19 |
+| métodos de cadena | 4 de 19 |
+| conjuntos | 5 de 19 |
+| recursión | 0 |
+| `break` / `continue` | 0 |
+
+**Pero el conteo no era lo importante.** Lo decisivo es dónde arranca la lección
+1: su primer objetivo es «enunciar qué es un objeto (identidad, tipo y valor)» y
+el cuarto «demostrar que un tipo mutable con igualdad por contenido no puede ser
+hashable». La 3 empieza por el protocolo de iteración. Eso no es el capítulo 1
+de un curso: los bucles y las listas **se usan** en todas partes y no **se
+enseñan** en ninguna.
+
+**Decisión.** Un módulo nuevo `fundamentos/`, 12 lecciones L1–L2, antes de
+Python en el índice, con la vía de lógica y algoritmos como cierre (lección 12).
+Las 30 de Python no se tocan y no hay que renumerar nada. Sigue el mismo molde
+—definición, proposición, demostración, celdas que corren, dos visuales— pero al
+nivel que le toca: se demuestra que `0.1 + 0.2 != 0.3`, no la asimetría de `+=`.
+
+**Un módulo nuevo toca seis sitios**: `grafo/build_graph.py` (`MODULOS`),
+`verificar/retos.py` (`MODULOS`, sin copiar alias ajenos), `proyectos/genera_retos.py`
+(dos alternancias escritas a mano, más `MOD`), `_quarto.yml`, `index.qmd` (la fila
+del módulo con su `data-ids`) y el `index.qmd` propio. `estructura.py` y
+`formato.py` lo descubren solos por glob.
+
+**Fundamentos 1, «Valores, nombres y tipos».** 3 def / 7 prop / 7 dem. Se apoya
+en tres exhibiciones: `2 ** 100` exacto terminando en 6; `0.1` impreso con veinte
+decimales dando `0.10000000000000000555`; y `a = 5 ; b = a ; a = 7` dejando `b`
+en 5. La identidad `a == (a // b) * b + (a % b)` se comprueba en los cuatro pares
+de signos. El visual de los bits dibuja las marcas que el binario puede
+representar entre 0 y 1 y enseña que 0,1 cae entre dos, con el mismo mecanismo
+que el `float` real a 52 bits.
+
+Se eligió exhibir `'ab' * 3 == 'ababab'` aquí a propósito: es la misma
+exhibición sobre la que se apoya Python 19 para demostrar que una anotación no
+comprueba nada, ochenta semanas más adelante.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
@@ -3649,6 +3700,32 @@ bloque abierto y no avisa. De ahí `estructura.py`.
 falla el build. Codificar el SVG en base64.
 
 ---
+
+**Un alias de módulo puede hacer que un gate dé verde sobre la sección
+equivocada (22-09-2026).** Al crear el módulo Fundamentos se copió la entrada de
+Python en la tabla `MODULOS` de `verificar/retos.py`, alias incluido:
+`"Fundamentos": ("Fundamentos", "Lección")`. Pero `F0-retos.ipynb` tiene
+secciones antiguas tituladas «## Lección 1 — Tipos y estructuras», que son
+`python/01`. El gate casó `Fundamentos 1` contra `Lección 1`, **dio verde, y la
+sección no existía**. Se quitó el alias: `"Fundamentos": ("Fundamentos",)`.
+La regla general: un alias solo vale para el módulo que ya lo usaba, y añadir un
+módulo a una tabla no es copiar la fila de al lado.
+
+`proyectos/genera_retos.py` tenía el problema complementario y silencioso: dos
+alternancias con los módulos escritos a mano, ninguna con `Fundamentos`, así que
+la lección **se descartaba con un `continue`** y el generador informaba «no falta
+ninguna sección». Un módulo nuevo obliga a tocar las dos, más `MOD` y
+`grafo/build_graph.py`.
+
+**Leer el código de salida de la tarea equivocada (22-09-2026).** `visuales.py`
+se lanzó en segundo plano dentro de una línea `gate > archivo; echo exit=$?;
+grep ...`. La notificación de la tarea informó `exit code 0`, que era el del
+`grep` final, no el del gate; el gate había escrito `exit=1` dentro de su propio
+archivo. Con esa lectura se comitió y publicó `bd27712`, y el CI lo rechazó por
+dos controles de Python 19 que no movían el dibujo (regla 19b): `rl-q` y `pu-c`
+cambiaban el texto de la lectura y nada más. **Un gate en segundo plano se
+comprueba abriendo su archivo de salida, no por el código de salida de la
+tubería que lo envuelve.**
 
 ## 6. Decisiones pendientes
 
