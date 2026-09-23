@@ -106,15 +106,15 @@ hay que empezar a hacer:
 | Álgebra | 18 | 18 | **18 de 18** | — |
 | Python | 16 | 16 | **16 de 16** | — |
 | Series de tiempo | 11 | 11 | **11 de 11** | — |
-| Machine Learning | 35 | 90 | **35 de 35** | deep learning y lo que quede de ESL |
+| Machine Learning | 36 | 90 | **36 de 36** | deep learning, de la 37 en adelante |
 | Inferencia causal | 0 | 14 | — | todas |
 
 Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **105 lecciones** publicadas, **105** cumplen el molde nuevo: cero pendientes
-  de reescritura. Pendientes de **escribir** quedan 69 según el plan.
+- **106 lecciones** publicadas, **106** cumplen el molde nuevo: cero pendientes
+  de reescritura. Pendientes de **escribir** quedan 68 según el plan.
 - **Cuatro módulos cerrados**: Estadística 25/25, Álgebra 18/18, Python 16/16 y
   **Series de tiempo 11/11**, cerrado el 21-09-2026.
 - **El capítulo 4 de ISLP quedó desglosado en tres lecciones** el 15-09-2026, con
@@ -162,7 +162,7 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   numpy 1.24 y en Python 3.14 con numpy 2.5.3. **Al rehacerlo faltaba
   `scikit-learn`**, y el gate lo dijo en vez de callarse: las celdas que lo
   importan salieron como REVENTÓ, no como aprobadas.
-- Glosario: **445 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **446 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -3122,6 +3122,57 @@ Los cuatro primeros se encontraron a ciegas y el quinto por eliminación,
 comparando hashes de cada paso intermedio hasta ver que **X ya difería antes de
 tocar el árbol**. Esa técnica —hashear los intermedios en vez de mirar la salida
 final— es lo que conviene recordar del episodio.
+
+---
+
+### 3.53 ML 36: la regla de la cadena, contada en pasadas (22-09-2026)
+
+Empieza la parte de aprendizaje profundo. ML 16 decía **qué** calcula una red;
+esta dice cómo se le saca el gradiente y qué cuesta.
+
+> **36.2**: para una capa $z=aW+b$,
+> $\partial L/\partial W=a^{\top}\delta$, $\partial L/\partial b=\sum_i\delta_i$
+> y $\partial L/\partial a=\delta W^{\top}$.
+
+Escritas en forma matricial, que es como se programan, y no por índices como en
+el libro. Comprobadas contra diferencias centradas con error relativo **menor
+que $10^{-8}$** sobre los $71$ parámetros.
+
+> **36.3**: el gradiente cuesta una pasada de ida y una de vuelta; por
+> diferencias centradas cuesta $2P$.
+
+Medido en pasadas, no en segundos —los segundos dependen de la máquina—:
+**$142$ contra $2$** en una red de $71$ parámetros, con el cociente creciendo
+como $P$. Con un millón de parámetros el cociente es un millón, y ahí está la
+razón de que el aprendizaje profundo sea posible.
+
+#### La cota 1/4, convertida en medición
+
+> **36.4**: $\sigma'=\sigma(1-\sigma)\le\tfrac14$.
+
+Nueve capas con sigmoide: la primera recibe $2{,}161\cdot10^{-6}$ y la última
+$5{,}393\cdot10^{-2}$, una razón de $4{,}006\cdot10^{-5}$ contra la cota
+$0{,}25^8=1{,}526\cdot10^{-5}$. Y el número que cierra la proposición: **la
+mediana del cociente entre capas consecutivas vale $0{,}2445$**. Con ReLU todas
+las capas se quedan en el mismo orden de magnitud.
+
+La lectura, que es la que justifica las lecciones 37 a 41: la primera capa de
+una red profunda con sigmoide **no aprende**, y no por falta de datos ni de
+tiempo, sino porque no le llega nada que aprender.
+
+#### Un contraste L3 con los papeles al revés
+
+`scipy.optimize.check_grad` es la librería adecuada aquí, y el contraste tiene
+una particularidad que conviene anotar para las lecciones que vengan: **la
+referencia exacta es la implementación propia**, no la de la librería.
+Backpropagation da la derivada sin error de aproximación; `check_grad` la
+compara con diferencias hacia adelante, que sí truncan. Lo que sobra viene de
+ella.
+
+Por eso la celda imprime **órdenes de magnitud y no dígitos**: los dígitos
+serían los de la aproximación y no los del resultado. Es la regla 7 aplicada al
+revés de lo habitual — no porque el cálculo propio sea inestable, sino porque lo
+es el de la referencia.
 
 ---
 

@@ -1,0 +1,659 @@
+---
+title: "Backpropagation derivada a mano"
+subtitle: "Machine Learning · Lección 36"
+nivel: L3
+modulo: ml
+fase: F2
+prereqs: [ml/16-redes-neuronales, matematica/16-descenso-de-gradiente, matematica/14-derivada-y-gradiente]
+siguientes: []
+libro: "ESL §11.4 Fitting Neural Networks · §11.5 Some Issues in Training Neural Networks"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - scipy
+---
+
+::: {.meta-leccion data-leccion="ml/36-backpropagation"}
+[[L3]{.nivel .nivel-L3} **ESL 11**]{.item}
+[**Fase** F2]{.item}
+[**Libro** ESL §11.4–11.5]{.item}
+[**Prereqs** [Redes neuronales](16-redes-neuronales.qmd) · [Descenso de gradiente](../matematica/16-descenso-de-gradiente.qmd) · [Derivada y gradiente](../matematica/14-derivada-y-gradiente.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Derivar las tres fórmulas del paso hacia atrás** de una capa densa, entrada a entrada.
+2. Programar [backpropagation]{.g} en quince líneas y comprobar que da la derivada exacta.
+3. **Demostrar que cuesta una pasada**, mientras que las diferencias finitas cuestan dos por parámetro, y medir el cociente.
+4. **Demostrar que la derivada de la sigmoide no pasa de $1/4$**, y medir cómo eso apaga el gradiente en una red profunda.
+5. Decir por qué la ReLU no tiene ese problema.
+6. Contrastar el gradiente con `scipy.optimize.check_grad` y explicar qué mide exactamente esa comprobación.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 16**: qué calcula una red densa y qué compra la profundidad.
+- **Matemática 16**: el descenso de gradiente, que es lo que consume este gradiente.
+- **Matemática 14**: la regla de la cadena, que es todo lo que hay aquí.
+- **Matemática 6**: el producto de matrices y su transpuesta, que aparece en cada capa.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 37**: la red densa desde cero, que usa estas fórmulas para entrenar de verdad.
+- **Machine Learning 38**: la inicialización y las activaciones, que existen por lo que esta lección mide.
+- **Machine Learning 39**: los optimizadores, que deciden qué hacer con el gradiente una vez calculado.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | El número de observaciones del lote |
+| $L$ | ele | La pérdida, un número |
+| $P$ | pe mayúscula | El número total de parámetros |
+| $a$ | a | La entrada de una capa, de tamaño $n\times d_{\text{ent}}$ |
+| $W,b$ | doble ve, be | Los pesos y el sesgo de una capa |
+| $z$ | zeta | La salida lineal de la capa, $z=aW+b$ |
+| $\delta$ | delta | $\partial L/\partial z$, lo que llega por detrás |
+| $\sigma$ | sigma | Aquí, la función logística $1/(1+e^{-z})$ |
+| $\ell$ | ele minúscula | El índice de una capa |
+| $\theta_k$ | theta sub ka | Un parámetro cualquiera de los $P$, visto como una coordenada |
+:::
+
+## 1. Una capa, y sus tres derivadas
+
+::: {.definicion}
+**Definición 36.1 (capa densa).** Con un lote de $n$ observaciones puestas por filas, una capa toma $a$ de tamaño $n\times d_{\text{ent}}$ y devuelve
+$$z=aW+b,\qquad a^{\text{sal}}=g(z),$$
+con $W$ de tamaño $d_{\text{ent}}\times d_{\text{sal}}$, $b$ de tamaño $d_{\text{sal}}$ sumado a cada fila, y $g$ aplicada entrada a entrada.
+:::
+
+::: {.proposicion}
+**Proposición 36.2 (el paso hacia atrás).** Sea $\delta=\partial L/\partial z$, de tamaño $n\times d_{\text{sal}}$. Entonces
+$$\frac{\partial L}{\partial W}=a^{\top}\delta,\qquad
+\frac{\partial L}{\partial b}=\sum_{i=1}^{n}\delta_{i\cdot},\qquad
+\frac{\partial L}{\partial a}=\delta\,W^{\top}.$$
+:::
+
+::: {.demostracion}
+*Demostración.* Entrada a entrada, $z_{ij}=\sum_k a_{ik}W_{kj}+b_j$. Por la regla de la cadena, sumando sobre todos los sitios donde aparece cada parámetro:
+$$\frac{\partial L}{\partial W_{kj}}=\sum_{i}\frac{\partial L}{\partial z_{ij}}\frac{\partial z_{ij}}{\partial W_{kj}}=\sum_i\delta_{ij}a_{ik}=(a^{\top}\delta)_{kj},$$
+$$\frac{\partial L}{\partial b_j}=\sum_i\delta_{ij}\frac{\partial z_{ij}}{\partial b_j}=\sum_i\delta_{ij},\qquad
+\frac{\partial L}{\partial a_{ik}}=\sum_j\delta_{ij}\frac{\partial z_{ij}}{\partial a_{ik}}=\sum_j\delta_{ij}W_{kj}=(\delta W^{\top})_{ik}.$$
+Las tres son la misma regla de la cadena leída con distintos índices fijos. [∎]{.fin-demo}
+:::
+
+La tercera es la que hace que el algoritmo sea un algoritmo: convierte lo que llega por detrás en lo que hay que pasar a la capa anterior. Antes de entregarlo hay que multiplicar por la derivada de la activación de esa capa, entrada a entrada, y con eso el bucle está cerrado.
+
+Conviene notar que **$a$ y $z$ de cada capa se guardan en la ida**. Ese es todo el coste en memoria de backpropagation, y la razón de que un lote grande ocupe tanto.
+
+## 2. Exacta, y barata
+
+::: {.proposicion}
+**Proposición 36.3 (el coste).** Calcular el gradiente por diferencias centradas cuesta $2P$ pasadas hacia adelante. Backpropagation cuesta **una** pasada hacia adelante y una hacia atrás, y la de vuelta hace los mismos productos de matrices que la de ida, transpuestos. El cociente entre los dos costes es del orden de $P$.
+:::
+
+::: {.demostracion}
+*Demostración.* La aproximación centrada de $\partial L/\partial\theta_k$ necesita evaluar $L$ en $\theta_k\pm h$, es decir dos pasadas, y hay $P$ parámetros. En cambio, la Proposición 36.2 calcula **todas** las derivadas de una capa con tres productos de matrices cuyas dimensiones son las mismas que las del paso hacia adelante; recorriendo las capas una vez se obtienen las $P$ derivadas. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def inicia(tam, rng):
+    """Pesos y sesgos de una red densa con las capas dadas."""
+    return [(rng.normal(0, np.sqrt(2.0 / tam[i]), (tam[i], tam[i + 1])),
+             np.zeros(tam[i + 1])) for i in range(len(tam) - 1)]
+
+def adelante(par, X):
+    """Guarda lo que hace falta para volver: la entrada de cada capa y su z."""
+    a, cache = X, []
+    for i, (W, b) in enumerate(par):
+        z = a @ W + b
+        cache.append((a, z))
+        a = z if i == len(par) - 1 else np.tanh(z)   # la ultima capa es lineal
+    return a, cache
+
+def perdida(par, X, y):
+    pred, _ = adelante(par, X)
+    return float(((pred[:, 0] - y) ** 2).mean())
+
+def atras(par, X, y):
+    """Backpropagation: la regla de la cadena recorrida de la salida a la entrada."""
+    pred, cache = adelante(par, X)
+    n = len(y)
+    d = 2.0 * (pred - y[:, None]) / n          # dL/dz de la ultima capa
+    grad = [None] * len(par)
+    for i in range(len(par) - 1, -1, -1):
+        a, z = cache[i]
+        grad[i] = (a.T @ d, d.sum(axis=0))     # dL/dW = a^T d ; dL/db = suma de d
+        if i > 0:
+            # la entrada de la capa i ES tanh(z) de la capa anterior, asi que
+            # la derivada de tanh sale de ella sin recalcular nada
+            d = (d @ par[i][0].T) * (1 - cache[i][0] ** 2)
+    return grad
+
+rng = np.random.default_rng(36)
+tam = [4, 6, 5, 1]
+par = inicia(tam, rng)
+X = rng.normal(0, 1, (40, 4))
+y = np.sin(X[:, 0]) + X[:, 1] * X[:, 2] + rng.normal(0, 0.1, 40)
+
+g = atras(par, X, y)
+P = sum(W.size + b.size for W, b in par)
+
+# --- el oraculo: diferencias centradas, parametro a parametro ---
+h, peor = 1e-5, 0.0
+pasadas = 0
+for i, (W, b) in enumerate(par):
+    for M, G in ((W, g[i][0]), (b, g[i][1])):
+        it = np.nditer(M, flags=["multi_index"])
+        while not it.finished:
+            k = it.multi_index
+            viejo = M[k]
+            M[k] = viejo + h; mas = perdida(par, X, y)
+            M[k] = viejo - h; menos = perdida(par, X, y)
+            M[k] = viejo
+            pasadas += 2
+            num = (mas - menos) / (2 * h)
+            peor = max(peor, abs(num - G[k]) / max(1.0, abs(G[k])))
+            it.iternext()
+
+print("backpropagation frente a diferencias centradas")
+print("  arquitectura            : %s" % tam)
+print("  parametros              : %d" % P)
+print("  mayor error relativo    : menor que 1e-6: %s" % bool(peor < 1e-6))
+print("                            menor que 1e-8: %s" % bool(peor < 1e-8))
+print()
+print("  pasadas hacia adelante que gastan las diferencias: %d" % pasadas)
+print("  pasadas que gasta backpropagation                : 1 adelante y 1 atras")
+print("  cociente                                         : %d a 2" % pasadas)
+print()
+print("las dos cuentas dan lo mismo. Lo que no es lo mismo es lo que cuestan:")
+print("las diferencias piden dos pasadas por PARAMETRO y backpropagation una")
+print("sola, sea cual sea el numero de parametros")
+```
+
+Las dos rutas coinciden: el mayor error relativo sobre los $71$ parámetros está **por debajo de $10^{-8}$**, y lo poco que queda es la truncación de la diferencia finita, no un fallo del gradiente.
+
+La segunda mitad es la que importa. Para una red de juguete con $71$ parámetros, las diferencias gastan **$142$ pasadas** y backpropagation dos. Con una red de un millón de parámetros el cociente es un millón, y ahí está la razón de que el aprendizaje profundo sea posible: sin este algoritmo, un solo paso de descenso costaría lo que cuestan dos millones de evaluaciones de la red.
+
+```{=html}
+<div class="viz-coste">
+  <div class="controles">
+    <label>Anchura de las capas <input id="co-a" type="range" min="4" max="512" step="4" value="64"> <span id="co-a-v">64</span></label>
+    <label>Capas ocultas <input id="co-c" type="range" min="1" max="12" step="1" value="3"> <span id="co-c-v">3</span></label>
+  </div>
+  <svg id="co-svg" viewBox="0 0 660 250" role="img" aria-label="El número de pasadas hacia adelante que necesita cada método en escala logarítmica, con backpropagation constante y las diferencias finitas creciendo con los parámetros."></svg>
+  <p class="lectura" id="co-lectura"></p>
+</div>
+<style>
+.viz-coste { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-coste .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-coste label { display: flex; align-items: center; gap: .4rem; }
+.viz-coste input[type=range] { width: 160px; padding: 0; }
+.viz-coste svg { width: 100%; height: auto; display: block; }
+.viz-coste .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("co-svg"), lec = document.getElementById("co-lectura");
+  var ca = document.getElementById("co-a"), cc = document.getElementById("co-c");
+  var ea = document.getElementById("co-a-v"), ec = document.getElementById("co-c-v");
+  var X0 = 58, XW = 560, Y0 = 20, YH = 190, LOGMAX = 8;   // hasta 10^8 pasadas
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function params(ancho, capas) {
+    var p = 8 * ancho + ancho;                       // entrada de 8 a la primera
+    for (var i = 1; i < capas; i++) p += ancho * ancho + ancho;
+    return p + ancho + 1;                            // ultima capa a un numero
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var ancho = +ca.value, capas = +cc.value;
+    ea.textContent = ancho; ec.textContent = capas;
+    var px = function (c) { return X0 + (c - 1) / 11 * XW; };
+    var py = function (v) { return Y0 + (LOGMAX - Math.max(0, Math.min(LOGMAX, Math.log(v) / Math.LN10))) / LOGMAX * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    var i;
+    for (i = 0; i <= LOGMAX; i += 2) {
+      var yy = Y0 + (LOGMAX - i) / LOGMAX * YH;
+      svg.appendChild(el("path", { d: "M" + X0 + " " + yy.toFixed(1) + " L" + (X0 + XW) + " " + yy.toFixed(1),
+        stroke: C_L, "stroke-width": 1, opacity: .35 }));
+      svg.appendChild(el("text", { x: X0 - 6, y: yy + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .65 }, "10^" + i));
+    }
+    var dd = "", db = "";
+    for (i = 1; i <= 12; i++) {
+      dd += (i > 1 ? " L" : "M") + px(i).toFixed(1) + " " + py(2 * params(ancho, i)).toFixed(1);
+      db += (i > 1 ? " L" : "M") + px(i).toFixed(1) + " " + py(2).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: db, stroke: C_A, "stroke-width": 2.4, fill: "none" }));
+    svg.appendChild(el("path", { d: dd, stroke: C_B, "stroke-width": 2.4, fill: "none" }));
+    var P = params(ancho, capas);
+    svg.appendChild(el("path", { d: "M" + px(capas).toFixed(1) + " " + Y0 + " L" + px(capas).toFixed(1) + " " + (Y0 + YH),
+      stroke: C_T, "stroke-width": 1.2, "stroke-dasharray": "4 3", opacity: .5 }));
+    svg.appendChild(el("circle", { cx: px(capas).toFixed(1), cy: py(2 * P).toFixed(1), r: 4, fill: C_B }));
+    svg.appendChild(el("circle", { cx: px(capas).toFixed(1), cy: py(2).toFixed(1), r: 4, fill: C_A }));
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 14, "font-size": 10.5, fill: C_B }, "diferencias centradas: 2P pasadas"));
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 27, "font-size": 10.5, fill: C_A }, "backpropagation: 2 pasadas"));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "capas ocultas, de 1 a 12"));
+
+    lec.innerHTML = "Con capas de <strong>" + ancho + "</strong> y <strong>" + capas +
+      "</strong> ocultas, la red tiene <strong>" + P.toLocaleString("es") + "</strong> parámetros. " +
+      "Las diferencias centradas gastan <strong>" + (2 * P).toLocaleString("es") +
+      "</strong> pasadas para un solo gradiente; backpropagation gasta <strong>dos</strong>. " +
+      "El cociente es <strong>" + P.toLocaleString("es") + " a 1</strong>, y crece con el tamaño de la red: " +
+      "la línea verde es horizontal y la roja no.";
+  }
+  ca.addEventListener("input", dibujar);
+  cc.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Por qué la sigmoide no escala
+
+::: {.proposicion}
+**Proposición 36.4 (la derivada de la sigmoide no pasa de un cuarto).** Con $\sigma(z)=1/(1+e^{-z})$ se tiene $\sigma'(z)=\sigma(z)\bigl(1-\sigma(z)\bigr)$, y por tanto $0<\sigma'(z)\le\tfrac14$, con igualdad solo en $z=0$. En consecuencia, al atravesar $k$ capas con esta activación el gradiente queda multiplicado por un factor acotado por $\prod_{\ell}\lVert W_\ell\rVert/4^{\,k}$.
+:::
+
+::: {.demostracion}
+*Demostración.* Derivando, $\sigma'=e^{-z}/(1+e^{-z})^2=\sigma(1-\sigma)$. Escribiendo $u=\sigma(z)\in(0,1)$, la función $u(1-u)$ es una parábola con máximo en $u=\tfrac12$, donde vale $\tfrac14$; y $u=\tfrac12$ corresponde a $z=0$. Para la cota, la Proposición 36.2 dice que pasar de una capa a la anterior multiplica por $W^{\top}$ y por la derivada de la activación entrada a entrada; acotando cada factor y componiendo $k$ veces se obtiene el enunciado. [∎]{.fin-demo}
+:::
+
+```{pyodide}
+import numpy as np
+
+def inicia(tam, rng, escala):
+    return [(rng.normal(0, escala / np.sqrt(tam[i]), (tam[i], tam[i + 1])),
+             np.zeros(tam[i + 1])) for i in range(len(tam) - 1)]
+
+sigmoide = lambda z: 1.0 / (1.0 + np.exp(-z))
+
+def adelante(par, X, activacion):
+    a, cache = X, []
+    for i, (W, b) in enumerate(par):
+        z = a @ W + b
+        cache.append((a, z))
+        if i == len(par) - 1:
+            a = z
+        elif activacion == "sigmoide":
+            a = sigmoide(z)
+        else:
+            a = np.maximum(0.0, z)
+    return a, cache
+
+def atras(par, X, y, activacion):
+    """Devuelve la norma del gradiente de W en cada capa."""
+    pred, cache = adelante(par, X, activacion)
+    d = 2.0 * (pred - y[:, None]) / len(y)
+    normas = [0.0] * len(par)
+    for i in range(len(par) - 1, -1, -1):
+        a, z = cache[i]
+        normas[i] = float(np.sqrt(((a.T @ d) ** 2).sum()))
+        if i > 0:
+            ap = cache[i][0]
+            derivada = ap * (1 - ap) if activacion == "sigmoide" else (cache[i - 1][1] > 0).astype(float)
+            d = (d @ par[i][0].T) * derivada
+    return normas
+
+rng = np.random.default_rng(361)
+CAPAS = 9
+tam = [12] + [12] * (CAPAS - 1) + [1]
+X = rng.normal(0, 1, (64, 12))
+y = np.sin(X[:, 0]) + X[:, 1] * X[:, 2]
+
+print("norma del gradiente capa a capa, en una red de %d capas" % CAPAS)
+print("  capa    sigmoide      ReLU       cociente sigmoide/ReLU")
+par_s = inicia(tam, np.random.default_rng(7), 1.0)
+par_r = inicia(tam, np.random.default_rng(7), np.sqrt(2.0))
+ns = atras(par_s, X, y, "sigmoide")
+nr = atras(par_r, X, y, "relu")
+for i in range(CAPAS):
+    print("   %2d    %.3e   %.3e        %.3e" % (i, ns[i], nr[i], ns[i] / nr[i]))
+print()
+razones = [ns[i] / ns[i + 1] for i in range(CAPAS - 1) if ns[i + 1] > 0]
+print("  cociente entre capas consecutivas con sigmoide")
+print("    mediana: %.4f" % float(np.median(razones)))
+print("    la primera capa tiene %.3e y la ultima %.3e" % (ns[0], ns[-1]))
+print("    razon entre las dos puntas: %.3e" % (ns[0] / ns[-1]))
+print()
+print("cada capa multiplica el gradiente por la derivada de la activacion, y la")
+print("de la sigmoide no pasa de 0.25. Nueve capas dan 0.25^8 = %.3e como mucho,"
+      % (0.25 ** 8))
+print("y por eso las primeras capas de una red profunda con sigmoide casi no")
+print("reciben senal. La ReLU tiene derivada uno donde esta activa, y no encoge")
+```
+
+La columna de la sigmoide baja de forma limpia: $5{,}393\cdot10^{-2}$ en la última capa y $2{,}161\cdot10^{-6}$ en la primera, una razón de $4{,}006\cdot10^{-5}$ entre las dos puntas. Y el número que cierra la proposición: **la mediana del cociente entre capas consecutivas vale $0{,}2445$**, que es la cota $1/4$ dentro del error de una muestra pequeña.
+
+La columna de la ReLU se queda toda en el mismo orden de magnitud, entre $4{,}388\cdot10^{-2}$ y $1{,}728\cdot10^{-1}$. Su derivada vale uno donde la unidad está activa y cero donde no, de modo que no encoge: apaga unidades, que es otro problema, pero no apaga el gradiente.
+
+El cociente entre las dos columnas es lo que hay que retener: en la última capa las dos activaciones van parejas, $0{,}6385$, y en la primera la sigmoide entrega $1{,}250\cdot10^{-5}$ de lo que entrega la ReLU. **La primera capa de una red profunda con sigmoide no aprende**, y no por falta de datos ni de tiempo, sino porque no le llega nada que aprender. Eso es lo que la lección 38 tendrá que resolver.
+
+```{=html}
+<div class="viz-desvanece">
+  <div class="controles">
+    <label>Capas <input id="dv-c" type="range" min="2" max="16" step="1" value="9"> <span id="dv-c-v">9</span></label>
+    <label>Escala de los pesos <input id="dv-e" type="range" min="0.5" max="3" step="0.1" value="1.00"> <span id="dv-e-v">1.00</span></label>
+  </div>
+  <svg id="dv-svg" viewBox="0 0 660 260" role="img" aria-label="La magnitud del gradiente capa a capa en escala logarítmica, con la sigmoide decayendo y la ReLU manteniéndose."></svg>
+  <p class="lectura" id="dv-lectura"></p>
+</div>
+<style>
+.viz-desvanece { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-desvanece .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-desvanece label { display: flex; align-items: center; gap: .4rem; }
+.viz-desvanece input[type=range] { width: 160px; padding: 0; }
+.viz-desvanece svg { width: 100%; height: auto; display: block; }
+.viz-desvanece .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("dv-svg"), lec = document.getElementById("dv-lectura");
+  var cc = document.getElementById("dv-c"), ce = document.getElementById("dv-e");
+  var ec = document.getElementById("dv-c-v"), ee = document.getElementById("dv-e-v");
+  var X0 = 58, XW = 560, Y0 = 20, YH = 190, LO = -12;    // de 10^0 a 10^-12
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var K = +cc.value, esc = +ce.value;
+    ec.textContent = K; ee.textContent = esc.toFixed(2);
+    // factor por capa: la escala de los pesos por la derivada tipica de la
+    // activacion. Para la sigmoide se toma 0.25, su cota; para la ReLU, 0.5,
+    // que es la fraccion de unidades activas con entradas centradas.
+    var fs = esc * 0.25, fr = esc * 0.5;
+    var px = function (i) { return X0 + i / Math.max(1, K - 1) * XW; };
+    var py = function (v) { return Y0 + (0 - Math.max(LO, Math.min(0, Math.log(v) / Math.LN10))) / (-LO) * YH; };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    var i;
+    for (i = 0; i >= LO; i -= 3) {
+      var yy = Y0 + (-i) / (-LO) * YH;
+      svg.appendChild(el("path", { d: "M" + X0 + " " + yy.toFixed(1) + " L" + (X0 + XW) + " " + yy.toFixed(1),
+        stroke: C_L, "stroke-width": 1, opacity: .35 }));
+      svg.appendChild(el("text", { x: X0 - 6, y: yy + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .65 }, "10^" + i));
+    }
+    var ds = "", dr = "";
+    for (i = 0; i < K; i++) {
+      var k = K - 1 - i;                       // capas desde la salida hacia atras
+      ds += (i ? " L" : "M") + px(i).toFixed(1) + " " + py(Math.pow(fs, k)).toFixed(1);
+      dr += (i ? " L" : "M") + px(i).toFixed(1) + " " + py(Math.pow(fr, k)).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: ds, stroke: C_B, "stroke-width": 2.4, fill: "none" }));
+    svg.appendChild(el("path", { d: dr, stroke: C_A, "stroke-width": 2.4, fill: "none" }));
+    for (i = 0; i < K; i++) {
+      var k = K - 1 - i;
+      svg.appendChild(el("circle", { cx: px(i).toFixed(1), cy: py(Math.pow(fs, k)).toFixed(1), r: 3, fill: C_B }));
+      svg.appendChild(el("circle", { cx: px(i).toFixed(1), cy: py(Math.pow(fr, k)).toFixed(1), r: 3, fill: C_A }));
+    }
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 14, "font-size": 10.5, fill: C_B }, "sigmoide: factor " + fs.toFixed(3) + " por capa"));
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 27, "font-size": 10.5, fill: C_A }, "ReLU: factor " + fr.toFixed(3) + " por capa"));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "de la primera capa a la última"));
+
+    var razS = Math.pow(fs, K - 1), razR = Math.pow(fr, K - 1);
+    lec.innerHTML = "Con <strong>" + K + "</strong> capas y pesos de escala " + esc.toFixed(2) +
+      ", la primera capa recibe <strong>" + razS.toExponential(2) + "</strong> de lo que recibe la última con sigmoide, y <strong>" +
+      razR.toExponential(2) + "</strong> con ReLU. " +
+      (esc * 0.25 >= 1
+        ? "Con pesos así de grandes el factor de la sigmoide pasa de uno y el gradiente <strong>explota</strong> en vez de desvanecerse: el problema es simétrico."
+        : "Cada capa multiplica por un número menor que uno, así que el efecto es <strong>geométrico</strong> en la profundidad: sumar capas no lo empeora un poco, lo empeora exponencialmente.");
+  }
+  cc.addEventListener("input", dibujar);
+  ce.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Contraste con la librería
+
+Esta lección es de nivel **L3**, y ese nivel promete implementar el resultado en NumPy puro y **empatar con la librería**. Aquí la librería adecuada no es una que entrene redes sino una que **compruebe gradientes**: `scipy.optimize.check_grad` existe exactamente para esto, y se usa envolviendo la pérdida y el gradiente sobre un vector plano de parámetros.
+
+```{pyodide}
+import numpy as np
+from scipy.optimize import check_grad, approx_fprime
+
+TAM = [4, 6, 5, 1]
+
+def desempaqueta(v):
+    """Del vector plano a la lista de (W, b) de cada capa."""
+    par, k = [], 0
+    for i in range(len(TAM) - 1):
+        nW = TAM[i] * TAM[i + 1]
+        W = v[k:k + nW].reshape(TAM[i], TAM[i + 1]); k += nW
+        b = v[k:k + TAM[i + 1]]; k += TAM[i + 1]
+        par.append((W, b))
+    return par
+
+def adelante(par, X):
+    a, cache = X, []
+    for i, (W, b) in enumerate(par):
+        z = a @ W + b
+        cache.append((a, z))
+        a = z if i == len(par) - 1 else np.tanh(z)
+    return a, cache
+
+def perdida(v, X, y):
+    pred, _ = adelante(desempaqueta(v), X)
+    return float(((pred[:, 0] - y) ** 2).mean())
+
+def gradiente(v, X, y):
+    """Backpropagation, devuelto como un vector plano del mismo orden."""
+    par = desempaqueta(v)
+    pred, cache = adelante(par, X)
+    d = 2.0 * (pred - y[:, None]) / len(y)
+    trozos = [None] * len(par)
+    for i in range(len(par) - 1, -1, -1):
+        a, z = cache[i]
+        trozos[i] = np.r_[(a.T @ d).ravel(), d.sum(axis=0)]
+        if i > 0:
+            d = (d @ par[i][0].T) * (1 - cache[i][0] ** 2)
+    return np.concatenate(trozos)
+
+rng = np.random.default_rng(36)
+P = sum(TAM[i] * TAM[i + 1] + TAM[i + 1] for i in range(len(TAM) - 1))
+v = rng.normal(0, 0.5, P)
+X = rng.normal(0, 1, (40, 4))
+y = np.sin(X[:, 0]) + X[:, 1] * X[:, 2] + rng.normal(0, 0.1, 40)
+
+err = float(check_grad(perdida, gradiente, v, X, y))
+print("contraste con scipy.optimize.check_grad")
+print("  parametros                    : %d" % P)
+print("  norma de la diferencia        : menor que 1e-5: %s" % bool(err < 1e-5))
+print("                                  menor que 1e-6: %s" % bool(err < 1e-6))
+print()
+
+# el mismo contraste, pero mirando donde esta el error: es el de la aproximacion
+aprox = approx_fprime(v, perdida, 1.5e-8, X, y)
+mio = gradiente(v, X, y)
+print("  mayor diferencia por parametro: menor que 1e-6: %s"
+      % bool(np.abs(aprox - mio).max() < 1e-6))
+print("  norma del gradiente           : %.6f" % float(np.linalg.norm(mio)))
+print("  los dos apuntan al mismo sitio: coseno mayor que 0.999999: %s"
+      % bool(float(aprox @ mio / (np.linalg.norm(aprox) * np.linalg.norm(mio))) > 0.999999))
+print()
+print("check_grad compara el gradiente que se le da con diferencias hacia")
+print("adelante. Lo que sobra no es error de backpropagation sino de la")
+print("aproximacion: backpropagation da la derivada EXACTA, salvo redondeo")
+```
+
+`check_grad` devuelve una norma por debajo de $10^{-6}$ sobre los $71$ parámetros, y el coseno entre el gradiente analítico y el aproximado pasa de $0{,}999999$: apuntan al mismo sitio.
+
+Conviene entender qué se está comparando, porque aquí el papel de cada parte es el contrario del habitual. **La referencia exacta es la implementación propia**, no la de la librería: backpropagation calcula la derivada sin error de aproximación, y `check_grad` la contrasta contra diferencias hacia adelante, que sí tienen truncación. Lo poco que sobra viene de ella. Por eso la celda no imprime dígitos de esa diferencia, sino el orden de magnitud: los dígitos serían los de la aproximación y no los del resultado.
+
+## 5. Lo que esta lección no resuelve
+
+- **La estabilidad numérica de la pérdida.** Con salidas de clasificación hay que combinar la sigmoide con la entropía cruzada en una sola expresión para no perder precisión, cosa que esta página no hace.
+- **La memoria.** Guardar $a$ y $z$ de cada capa cuesta, y existen técnicas de recomputación que la cambian por tiempo. Se nombran y no se miden.
+- **La explosión del gradiente**, que es el mismo fenómeno con el factor mayor que uno. El visual la enseña; la lección 38 tendrá que tratarla con la inicialización.
+- **La diferenciación automática.** Esta página deriva a mano una arquitectura concreta; las librerías construyen el grafo y aplican la misma regla de la cadena sobre cualquier programa.
+- **Los lotes.** Todo está escrito con un lote completo. Lo que cambia con lotes pequeños es materia de la lección 39.
+
+## Ejercicios
+
+### Ejercicio 1, Las formas de las tres derivadas
+
+Con la Proposición 36.2, decir qué tamaño tiene cada derivada de una capa.
+
+```{pyodide}
+#| exercise: ex_formas
+import numpy as np
+
+n, d_ent, d_sal = 32, 10, 7
+a = np.zeros((n, d_ent))
+W = np.zeros((d_ent, d_sal))
+delta = np.zeros((n, d_sal))
+
+dW = ______
+db = ______
+da = ______
+
+print(dW.shape, db.shape, da.shape)
+dW.shape == W.shape and da.shape == a.shape
+```
+
+::: {.hint exercise="ex_formas"}
+La proposición da $a^{\top}\delta$, la suma de las filas de $\delta$, y $\delta W^{\top}$.
+:::
+
+::: {.solution exercise="ex_formas"}
+```{pyodide}
+import numpy as np
+
+n, d_ent, d_sal = 32, 10, 7
+a = np.zeros((n, d_ent))
+W = np.zeros((d_ent, d_sal))
+delta = np.zeros((n, d_sal))
+
+dW = a.T @ delta
+db = delta.sum(axis=0)
+da = delta @ W.T
+
+print(dW.shape, db.shape, da.shape)
+dW.shape == W.shape and da.shape == a.shape
+```
+:::
+
+```{pyodide}
+#| exercise: ex_formas
+#| check: true
+if result is True:
+    feedback = {"correct": True, "message": "Correcto: la derivada respecto de un parámetro tiene siempre la forma de ese parámetro, y la derivada respecto de la entrada tiene la forma de la entrada. Comprobar las formas es la manera más barata de encontrar un error en un paso hacia atrás.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba True y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuánto encoge la sigmoide
+
+Con la Proposición 36.4, calcular cuánto queda del gradiente tras atravesar varias capas, en el mejor caso.
+
+```{pyodide}
+#| exercise: ex_encoge
+def queda(capas):
+    """Fraccion que sobrevive en el mejor caso: la derivada maxima es 1/4."""
+    return ______
+
+for k in (1, 4, 8, 16):
+    print(k, queda(k))
+
+queda(8)
+```
+
+::: {.hint exercise="ex_encoge"}
+Cada capa multiplica por $1/4$ como mucho, así que tras $k$ capas queda $4^{-k}$.
+:::
+
+::: {.solution exercise="ex_encoge"}
+```{pyodide}
+def queda(capas):
+    """Fraccion que sobrevive en el mejor caso: la derivada maxima es 1/4."""
+    return 0.25 ** capas
+
+for k in (1, 4, 8, 16):
+    print(k, queda(k))
+
+queda(8)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_encoge
+#| check: true
+if abs(result - 1.52587890625e-05) < 1e-15:
+    feedback = {"correct": True, "message": "Correcto: con ocho capas queda una cienmilésima, y con dieciséis una diezmilmillonésima. Y eso es el MEJOR caso, porque un cuarto es la cota y solo se alcanza donde la entrada de la sigmoide vale cero exactamente.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 1.52587890625e-05 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **ML 36**:
+
+1. Añadir una capa con activación ReLU al código de la sección 2 y comprobar el gradiente contra diferencias centradas **en los puntos donde la entrada es casi cero**, donde la ReLU no es derivable. Anotar qué pasa y cómo lo resuelven las librerías.
+2. Medir cuánto tarda el paso hacia atrás comparado con el de ida, para redes de tamaño creciente, y comprobar si el cociente se queda cerca de uno como predice la Proposición 36.3.
+3. Repetir la tabla de la sección 3 con la tangente hiperbólica, cuya derivada llega a uno, y guardar en `50-Errores/` las tres curvas juntas. Anotar por qué la tanh se desvanece menos que la sigmoide y aun así menos que la ReLU.
+
+## Del libro
+
+**ESL §11.4** deriva backpropagation para una red de una capa oculta, con las ecuaciones de ida y de vuelta escritas por índices, y comenta que el paso hacia atrás reutiliza lo guardado en el de ida. **§11.5** recoge los problemas de entrenar redes: mínimos locales, escala de las entradas, número de unidades ocultas y el papel de la inicialización.
+
+Esta página escribe las derivadas en forma matricial en vez de por índices, que es como se programan, y añade dos mediciones que el libro no hace. La primera es el **coste**: $142$ pasadas contra dos en una red de $71$ parámetros, con el cociente creciendo como $P$. La segunda es el **desvanecimiento**: la mediana del cociente entre capas consecutivas vale $0{,}2445$ contra la cota $1/4$ de la Proposición 36.4, y la primera capa recibe $1{,}250\cdot10^{-5}$ de lo que recibe con ReLU.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/backpropagation.md`, enlazada a [[redes-neuronales]], [[descenso-de-gradiente]] y [[derivada-y-gradiente]]. Conviene rehacer a mano la Proposición 36.2: escribir $z_{ij}=\sum_k a_{ik}W_{kj}+b_j$ y derivar respecto de cada cosa ocupa tres renglones y deja grabado que **backpropagation no es un algoritmo nuevo sino la regla de la cadena con las sumas puestas en el orden que conviene**.
+
+```
+¿Qué es backpropagation?::La regla de la cadena recorrida de la salida a la entrada
+¿Cuánto vale dL/dW en una capa?::a traspuesta por delta
+¿Y dL/db?::La suma de las filas de delta
+¿Y dL/da?::delta por W traspuesta
+¿Qué hay que guardar en la ida?::La entrada a y la salida lineal z de cada capa
+¿Cuántas pasadas cuesta el gradiente?::Una de ida y una de vuelta, sea cual sea P
+¿Y por diferencias centradas?::Dos por parámetro, o sea 2P
+¿Cuál fue el cociente medido?::142 a 2 en una red de 71 parámetros
+¿Cuánto vale la derivada de la sigmoide?::sigma(1−sigma), que no pasa de 1/4
+¿Dónde se alcanza ese máximo?::En z = 0, donde sigma vale un medio
+¿Qué le pasa al gradiente con nueve capas sigmoides?::Se divide por 4,006e+04 entre las dos puntas
+¿Y con ReLU?::Se queda en el mismo orden: su derivada vale uno donde está activa
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** La Proposición 36.2 se demuestra derivando $z_{ij}=\sum_k a_{ik}W_{kj}+b_j$ respecto de cada cosa; la 36.3, contando evaluaciones; la 36.4, viendo que $u(1-u)$ tiene máximo $\tfrac14$. Todo se comprueba: el gradiente coincide con diferencias centradas con error relativo menor que $10^{-8}$ sobre los $71$ parámetros; las diferencias gastan $142$ pasadas y backpropagation dos; y la mediana del cociente entre capas consecutivas con sigmoide vale $0{,}2445$, con la primera capa recibiendo $2{,}161\cdot10^{-6}$ frente a $5{,}393\cdot10^{-2}$ de la última.
+
+**Lo que viene de los libros.** De **ESL §11.4** vienen la derivación de backpropagation y la observación de que el paso de vuelta reutiliza lo guardado en el de ida; de **§11.5**, los problemas de entrenamiento. El texto no se reproduce.
+
+**Lo que se usa de otras lecciones sin repetir.** Qué calcula una red densa es de Machine Learning 16. La regla de la cadena es de Matemática 14. El descenso de gradiente es de Matemática 16. El producto de matrices y su transpuesta son de Matemática 6.
+
+**Lo que se enuncia sin demostrar.** Que el paso hacia atrás cueste lo mismo que el de ida se argumenta contando productos de matrices, no midiendo tiempos: los tiempos dependen de la máquina y el Reto los deja para quien quiera medirlos. Y la cota de la Proposición 36.4 usa $\lVert W\rVert$ sin precisar qué norma, porque lo que se mide es el cociente empírico y no la cota.
+
+**Lo que es mío, no del libro.** Contar las pasadas en vez de hablar de eficiencia, que convierte «backpropagation es más rápido» en $142$ a $2$. Medir el desvanecimiento capa a capa y enfrentarlo a la cota $1/4$, que la convierte en una predicción comprobada. Y la lectura del contraste con `check_grad`: aquí **la referencia exacta es la implementación propia** y la librería aporta la aproximación, que es el papel contrario al de las demás lecciones L3; por eso la celda imprime órdenes de magnitud y no dígitos, que serían los de la aproximación.
+:::
