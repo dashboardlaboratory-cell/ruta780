@@ -1,0 +1,642 @@
+---
+title: "Tipado gradual: qué comprueba y qué no"
+subtitle: "Python · Lección 19"
+nivel: L4
+modulo: python
+fase: F2
+prereqs: [python/18-decoradores, python/17-clases-y-protocolos, python/01-tipos-y-estructuras]
+siguientes: []
+libro: "—"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="python/19-tipado-gradual"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F2]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Decoradores](18-decoradores.qmd) · [Clases y protocolos](17-clases-y-protocolos.qmd) · [Objetos y nombres](01-tipos-y-estructuras.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Demostrar que una [anotación]{.g} no comprueba nada** en ejecución, exhibiendo una función anotada `float` que devuelve una cadena.
+2. **Medir qué se pierde al decorar sin `functools.wraps`**: las anotaciones, además del nombre y la firma.
+3. Distinguir **el momento en que la anotación se guarda del momento en que se resuelve**, y decir cuál de los dos puede fallar.
+4. Usar `typing.get_type_hints` para resolver una [referencia adelantada]{.g} y explicar por qué leer `__annotations__` a mano no basta.
+5. **Escribir un decorador que convierta la anotación en una comprobación real**, y medir su coste en comprobaciones por llamada.
+6. Nombrar el límite de esa comprobación: `List[float]` se verifica como `list`, y el contenido se paga aparte.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 18**: los decoradores, que son el mecanismo con el que una anotación se vuelve comprobación, y los que la pierden cuando se escriben mal.
+- **Python 17**: los protocolos, que describen por forma lo que una anotación nombra por tipo.
+- **Python 1**: que el tipo viva en el objeto y no en el nombre, que es la razón de que la anotación sea decorativa.
+- **Python 2**: el ámbito en el que se resuelven los nombres de una referencia adelantada.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 24**: las pruebas, donde la firma anotada dice qué casos hay que cubrir.
+- **Python 21**: el acceso a SQL, donde las filas llegan sin tipo declarado y hay que imponerlo en la frontera.
+- **Python 22**: las respuestas HTTP, que entran como JSON sin tipo y son el sitio natural de esta comprobación.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| `x: T` | equis de tipo te | La anotación que declara que `x` se espera de tipo `T` |
+| `-> T` | flecha te | La anotación del valor de vuelta |
+| `__annotations__` | dunder annotations | El diccionario donde se guardan las anotaciones, sin resolver |
+| `get_type_hints` | get type hints | La función que resuelve esas anotaciones a objetos |
+| `Optional[T]` | optional de te | La unión de `T` con el tipo de `None` |
+| `get_origin` | get origin | El tipo base de una anotación genérica: `list` para `List[float]` |
+| `n` | ene | El número de elementos de un contenedor |
+:::
+
+## 1. La anotación es un dato, no una comprobación
+
+:::: {.definicion}
+**Definición 19.1 (anotación).** Una **anotación** es una expresión asociada a un parámetro, a un valor de vuelta o a una variable, que Python guarda junto a la función y no interpreta. Se escribe `x: T` para un parámetro y `-> T` para el valor de vuelta.
+::::
+
+:::: {.proposicion}
+**Proposición 19.2.** Anotar un parámetro no restringe los valores que admite. Una función anotada `float` acepta argumentos de cualquier tipo y devuelve lo que su cuerpo produzca con ellos.
+::::
+
+:::: {.demostracion}
+*Demostración.* La anotación se evalúa y se guarda en `__annotations__`; el intérprete no genera ninguna instrucción de comprobación a partir de ella. El cuerpo se ejecuta con los objetos recibidos, y `base * altura` significa lo que signifique para esos objetos: producto si son números, repetición si el primero es una secuencia. La celda exhibe una llamada con una cadena y otra con una lista, ambas aceptadas. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 19.3.** Un decorador escrito sin `functools.wraps` deja el envoltorio con `__annotations__` vacío, y con él desaparece toda la información de tipos de la función decorada.
+::::
+
+:::: {.demostracion}
+*Demostración.* Por la Proposición 18.3, el envoltorio es una función distinta, con sus propios atributos; sus anotaciones son las que se escribieron en su propia cabecera, que en el caso habitual `(*args, **kwargs)` son ninguna. `functools.wraps` copia `__annotations__` entre los atributos que transfiere, de modo que el envoltorio pasa a declarar lo que declaraba la función envuelta. ∎
+::::
+
+Este segundo resultado es el que explica una avería frecuente: una función correctamente anotada deja de estarlo al recibir un decorador, y las herramientas que leen tipos dejan de ver nada sin que ningún error lo anuncie.
+
+```{pyodide}
+import functools
+
+def area(base: float, altura: float = 1.0) -> float:
+    """Anota lo que espera y lo que devuelve. Nadie lo comprueba."""
+    return base * altura
+
+print("una anotacion es un dato, no una comprobacion")
+print("  area.__annotations__ = %s" % area.__annotations__)
+print()
+print("  llamada                          devuelve            tipo")
+for args, etiqueta in (((3.0, 2.0), "area(3.0, 2.0)"),
+                       ((3, 2), "area(3, 2)"),
+                       (("ab", 3), "area('ab', 3)"),
+                       (([1, 2], 2), "area([1, 2], 2)")):
+    v = area(*args)
+    print("  %-30s   %-18s  %s" % (etiqueta, repr(v)[:18], type(v).__name__))
+print()
+print("las cuatro funcionan. La anotacion dice float y llegan enteros, una")
+print("cadena y una lista, y Python no mira: guarda la anotacion en un")
+print("diccionario y sigue. Comprobar es trabajo de una herramienta aparte o de")
+print("codigo que lo haga a proposito, como el de la seccion 3")
+print()
+
+# --- lo que un decorador sin wraps le hace a las anotaciones ---
+def envuelve_mal(f):
+    def envoltorio(*a, **k):
+        return f(*a, **k)
+    return envoltorio
+
+def envuelve_bien(f):
+    @functools.wraps(f)
+    def envoltorio(*a, **k):
+        return f(*a, **k)
+    return envoltorio
+
+mal, bien = envuelve_mal(area), envuelve_bien(area)
+print("un decorador sin wraps se lleva tambien las anotaciones")
+print("  original      : %s" % area.__annotations__)
+print("  sin wraps     : %s" % mal.__annotations__)
+print("  con wraps     : %s" % bien.__annotations__)
+print("  con wraps coincide con el original: %s"
+      % (bien.__annotations__ == area.__annotations__))
+print()
+print("es la Proposicion 18.3 con una victima mas: el envoltorio no solo tapa el")
+print("nombre y la firma, tambien deja sin anotaciones a la funcion. Cualquier")
+print("comprobador de tipos que mire el objeto decorado no encuentra nada que")
+print("comprobar, y por eso deja de avisar justo donde mas capas hay")
+```
+
+La cuarta llamada devuelve una lista y la tercera una cadena, con la anotación `-> float` intacta en las dos. La anotación describe una intención; el intérprete ejecuta el cuerpo.
+
+```{=html}
+<div class="viz-reloj">
+  <div class="controles">
+    <label>Momento: <input id="rl-m" type="range" min="0" max="3" step="1" value="0"><span id="rl-m-v" class="mono">se escribe</span></label>
+    <label>Anotación entre comillas:
+      <select id="rl-q"><option value="si" selected>sí</option><option value="no">no</option></select>
+    </label>
+  </div>
+  <svg id="rl-svg" viewBox="0 0 660 250" role="img" aria-label="Línea del tiempo de una anotación"></svg>
+  <div id="rl-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-reloj { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-reloj .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-reloj label { display: flex; align-items: center; gap: .4rem; }
+.viz-reloj input[type=range] { width: 160px; padding: 0; }
+.viz-reloj select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-reloj .mono { font-family: var(--bs-font-monospace, monospace); font-size: .8rem; }
+.viz-reloj svg { width: 100%; height: auto; display: block; }
+.viz-reloj .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("rl-svg"), lec = document.getElementById("rl-lectura");
+  var cm = document.getElementById("rl-m"), cq = document.getElementById("rl-q"), em = document.getElementById("rl-m-v");
+  var ETAPAS = ["se escribe", "se define", "se llama", "get_type_hints"];
+  var X = [70, 250, 430, 600];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var m = +cm.value, cita = cq.value === "si", i;
+    em.textContent = ETAPAS[m];
+    var Y = 108;
+    // el eje se ancla a las cuatro etapas, que son constantes: el marcador es
+    // lo unico que se mueve con el control (regla 19b)
+    svg.appendChild(el("path", { d: "M40 " + Y + " L630 " + Y, stroke: C_L, "stroke-width": 2 }));
+    for (i = 0; i < 4; i++) {
+      var pasada = i <= m;
+      svg.appendChild(el("circle", { cx: X[i], cy: Y, r: 6,
+        fill: pasada ? C_A : "none", stroke: pasada ? C_A : C_L, "stroke-width": 2 }));
+      svg.appendChild(el("text", { x: X[i], y: Y - 20, "text-anchor": "middle", "font-size": 10.5,
+        fill: C_T, opacity: pasada ? .95 : .45 }, ETAPAS[i]));
+    }
+    // el marcador viaja por el eje: recorre 530 px de extremo a extremo
+    var xm = X[m];
+    svg.appendChild(el("path", { d: "M" + (xm - 9) + " " + (Y + 26) + " L" + (xm + 9) + " " + (Y + 26) +
+      " L" + xm + " " + (Y + 11) + " Z", fill: C_B }));
+
+    // que contiene __annotations__ en ese momento
+    var texto, color, nota;
+    if (m === 0) { texto = "(no existe todavía)"; color = C_L; nota = "el archivo es texto"; }
+    else if (cita) { texto = "{'otro': 'Nodo'}"; color = C_B; nota = "una cadena, sin resolver"; }
+    else { texto = "{'otro': <class 'Nodo'>}"; color = C_A; nota = "ya es el objeto"; }
+    if (m === 3) { texto = "{'otro': <class 'Nodo'>}"; color = C_A; nota = "resuelto a objetos"; }
+    var BY = 168;
+    svg.appendChild(el("rect", { x: 40, y: BY, width: 590, height: 56, rx: 6, fill: "none", stroke: C_L, "stroke-width": 1.2 }));
+    svg.appendChild(el("text", { x: 54, y: BY + 20, "font-size": 10.5, fill: C_T, opacity: .7 }, "__annotations__ en este momento"));
+    svg.appendChild(el("text", { x: 54, y: BY + 41, "font-size": 12, fill: color }, texto + "    " + nota));
+
+    // la caja de la etapa activa, desplazada con el marcador
+    svg.appendChild(el("rect", { x: (xm - 62), y: 30, width: 124, height: 44, rx: 6,
+      fill: C_A, opacity: .14, stroke: C_A, "stroke-width": 1.6 }));
+    svg.appendChild(el("text", { x: xm, y: 57, "text-anchor": "middle", "font-size": 11, fill: C_T },
+      ETAPAS[m]));
+
+    var cuerpo;
+    if (m === 0) cuerpo = "Antes de ejecutar el módulo la anotación es texto en un archivo: no hay diccionario que consultar.";
+    else if (m === 1) cuerpo = cita
+      ? "Al definir la función, la anotación entre comillas se guarda <strong>tal cual, como cadena</strong>. El nombre <code>Nodo</code> no hace falta que exista todavía, y por eso la clase puede referirse a sí misma."
+      : "Al definir la función, una anotación sin comillas <strong>se evalúa</strong>. El nombre tiene que existir ya en ese instante.";
+    else if (m === 2) cuerpo = "En la llamada no ocurre nada con las anotaciones: el diccionario sigue igual y el cuerpo se ejecuta sin consultarlo. Ese es el contenido de la Proposición 19.2.";
+    else cuerpo = "<code>typing.get_type_hints</code> busca cada cadena en el módulo donde se definió la función y devuelve <strong>objetos</strong>. Es aquí, y solo aquí, donde una anotación mal escrita produce un <code>NameError</code>.";
+    lec.innerHTML = cuerpo + " El marcador rojo señala el momento; la caja de arriba recorre la línea con él.";
+  }
+  cm.addEventListener("input", dibujar);
+  cq.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Cuándo se guarda y cuándo se resuelve
+
+:::: {.definicion}
+**Definición 19.4 (referencia adelantada).** Una **referencia adelantada** es una anotación escrita entre comillas para nombrar una clase que todavía no existe en el instante en que la función se define. El caso canónico es un método de la clase `C` que declara recibir o devolver un `C`.
+::::
+
+:::: {.proposicion}
+**Proposición 19.5.** Guardar una anotación no puede fallar; resolverla sí. Una anotación entre comillas se almacena como cadena sea cual sea su contenido, y solo produce un error cuando alguien intenta convertirla en un objeto.
+::::
+
+:::: {.demostracion}
+*Demostración.* El valor guardado en `__annotations__` para una anotación entre comillas es la cadena misma, y construir una cadena no requiere que los nombres que menciona existan. `typing.get_type_hints`, en cambio, evalúa esa cadena en el espacio de nombres del módulo donde la función se definió; si el nombre no está allí, la evaluación levanta `NameError`. La celda define una función anotada con un nombre inexistente: se define sin protestar, y falla al resolver. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 19.6.** `Optional[T]` es exactamente `Union[T, None]`: una anotación con dos ramas, no una anotación de `T` con un permiso añadido.
+::::
+
+:::: {.demostracion}
+*Demostración.* `typing.Optional[T]` está definido como abreviatura de `typing.Union[T, type(None)]`, y las dos expresiones construyen el mismo objeto, de modo que `typing.Optional[int] == typing.Union[int, None]`. `typing.get_args` sobre ese objeto devuelve las dos ramas. La consecuencia práctica es que una función que a veces devuelve `None` y se anota `-> T` declara algo falso, y quien use su resultado sin mirar el caso ausente encontrará el error más adelante. ∎
+::::
+
+Existe una diferencia entre versiones que conviene conocer y que esta página no imprime, porque su salida sería distinta en cada una. Hasta Python 3.9 una referencia adelantada **sin** comillas levanta `NameError` en el instante de la definición. Desde Python 3.14, con la evaluación diferida de anotaciones que introdujo la PEP 649, la función se define sin error y el nombre se busca solo al resolver. La práctica que funciona igual en todas las versiones es la que la celda demuestra: entrecomillar la referencia adelantada y resolverla con `typing.get_type_hints`.
+
+```{pyodide}
+import typing
+
+class Nodo:
+    """Un nodo que apunta a otro Nodo: la anotacion nombra una clase que
+    todavia no existe cuando se escribe."""
+    def __init__(self, valor: int, siguiente: "Nodo" = None):
+        self.valor, self.siguiente = valor, siguiente
+    def encadena(self, otro: "Nodo") -> "Nodo":
+        self.siguiente = otro
+        return otro
+
+print("una anotacion entre comillas se guarda como CADENA")
+print("  crudas   : %s" % Nodo.encadena.__annotations__)
+print("  resueltas: %s" % typing.get_type_hints(Nodo.encadena))
+print()
+print("  la anotacion cruda de 'otro' es una cadena: %s"
+      % isinstance(Nodo.encadena.__annotations__["otro"], str))
+print("  la resuelta es la clase Nodo                : %s"
+      % (typing.get_type_hints(Nodo.encadena)["otro"] is Nodo))
+print()
+print("get_type_hints es lo que usan las herramientas: busca los nombres en el")
+print("modulo donde se definio la funcion y devuelve objetos, no cadenas. Es la")
+print("diferencia entre leer __annotations__ a mano y leerlo bien")
+print()
+
+# --- lo que pasa si el nombre no existe en ninguna parte ---
+def rota(x: "NoExisteEnNingunSitio") -> int:
+    return 1
+
+print("si el nombre no existe, la cadena se guarda igual y falla al resolver")
+print("  cruda    : %s" % rota.__annotations__)
+try:
+    typing.get_type_hints(rota)
+    print("  resolver : funciono")
+except NameError:
+    print("  resolver : NameError")
+print()
+print("guardar la anotacion NUNCA falla; resolverla si. Por eso una anotacion")
+print("mal escrita puede vivir meses en el codigo sin que nada se queje, hasta")
+print("que alguien pasa un comprobador o llama a get_type_hints")
+print()
+
+# --- Optional: el caso que mas se equivoca ---
+def busca(clave: str, tabla: dict) -> typing.Optional[int]:
+    """Devuelve None cuando no encuentra, y eso hay que decirlo."""
+    return tabla.get(clave)
+
+pistas = typing.get_type_hints(busca)
+partes = typing.get_args(pistas["return"])
+print("Optional[int] es exactamente Union[int, None]: dos ramas, no una")
+print("  cuantas ramas tiene la anotacion de vuelta : %d" % len(partes))
+print("  una de ellas es int                        : %s" % (int in partes))
+print("  la otra es el tipo de None                 : %s" % (type(None) in partes))
+print("  Optional[int] e Union[int, None] coinciden : %s"
+      % (typing.Optional[int] == typing.Union[int, None]))
+print()
+print("anotar -> int una funcion que a veces devuelve None es el error de tipado")
+print("mas comun, y el unico que un comprobador encuentra siempre: obliga a")
+print("mirar el caso que falta antes de usar el resultado")
+```
+
+## 3. Convertir la anotación en comprobación
+
+:::: {.definicion}
+**Definición 19.7 (comprobación en ejecución).** Una **comprobación en ejecución** es la verificación, en el momento de la llamada, de que cada argumento pertenece al tipo que su anotación declara. A diferencia de lo que hace un [comprobador estático]{.g}, ocurre mientras el programa corre y solo ve los valores que de hecho llegan.
+::::
+
+:::: {.proposicion}
+**Proposición 19.8.** Un decorador puede imponer las anotaciones de una función, y el coste que añade por llamada es proporcional al número de parámetros anotados, no al tamaño de los datos.
+::::
+
+:::: {.demostracion}
+*Demostración.* El decorador resuelve `get_type_hints` y `inspect.signature` **una vez**, al definir, por la Proposición 18.4. En cada llamada empareja los argumentos con los parámetros mediante `signature.bind` y ejecuta un `isinstance` por parámetro anotado, lo que da un número de comprobaciones igual al número de parámetros y constante respecto a `n`. La celda mide 2000 comprobaciones en 1000 llamadas de una función de dos parámetros, es decir 2,0 por llamada. ∎
+::::
+
+:::: {.proposicion}
+**Proposición 19.9.** Esa comprobación alcanza el tipo base del contenedor y no su contenido. Una anotación `List[float]` verificada con `isinstance` acepta cualquier lista, incluidas las que contienen valores de otros tipos.
+::::
+
+:::: {.demostracion}
+*Demostración.* `isinstance(x, typing.List[float])` no está permitido, de modo que la comprobación ha de hacerse contra `typing.get_origin(typing.List[float])`, que es `list`. La pertenencia a `list` no dice nada de los elementos. Verificar el contenido exigiría recorrerlo, con un coste proporcional a `n` por argumento, y la celda exhibe la consecuencia de no hacerlo: una lista con una cadena dentro atraviesa la comprobación y el error aparece dentro del cuerpo. ∎
+::::
+
+```{pyodide}
+import functools, inspect, typing
+
+class TipoInvalido(TypeError):
+    """Error propio del comprobador. Tener su propia clase permite distinguir
+    'lo rechazo la puerta' de 'reviento dentro de la funcion', que es la
+    diferencia que esta leccion quiere medir."""
+
+def comprueba(f):
+    """Un decorador que hace en ejecucion lo que la anotacion solo declara.
+    Resuelve las pistas una vez, al definir; en cada llamada empareja los
+    argumentos con los parametros y mira el tipo."""
+    pistas = typing.get_type_hints(f)
+    firma = inspect.signature(f)
+
+    def base(t):
+        """typing.List[int] no sirve para isinstance; su origen, list, si."""
+        return typing.get_origin(t) or t
+
+    @functools.wraps(f)
+    def envoltorio(*a, **k):
+        atados = firma.bind(*a, **k)
+        atados.apply_defaults()
+        for nombre, valor in atados.arguments.items():
+            if nombre in pistas:
+                esperado = base(pistas[nombre])
+                if isinstance(esperado, type) and not isinstance(valor, esperado):
+                    raise TipoInvalido("%s esperaba %s y recibio %s"
+                                       % (nombre, esperado.__name__, type(valor).__name__))
+        envoltorio.comprobados += len(atados.arguments)
+        return f(*a, **k)
+
+    envoltorio.comprobados = 0
+    return envoltorio
+
+@comprueba
+def promedia(valores: typing.List[float], peso: float = 1.0) -> float:
+    return peso * sum(valores) / len(valores)
+
+print("el decorador convierte la anotacion en una comprobacion de verdad")
+casos = [(([1.0, 2.0, 3.0],), {}, "promedia([1.0, 2.0, 3.0])"),
+         (([1.0, 2.0], ), {"peso": 2.0}, "promedia([1.0, 2.0], peso=2.0)"),
+         ((3.0,), {}, "promedia(3.0)"),
+         (([1.0, 2.0],), {"peso": "x"}, "promedia([1.0, 2.0], peso='x')")]
+for a, k, etiqueta in casos:
+    try:
+        v = promedia(*a, **k)
+        print("  %-34s  ->  %s" % (etiqueta, v))
+    except TipoInvalido as e:
+        print("  %-34s  ->  TipoInvalido: %s" % (etiqueta, e))
+print()
+
+# --- el limite: lo que el decorador NO puede ver ---
+print("y aqui esta su limite: List[float] se comprueba como list, y nada mas")
+mentira = [1.0, "dos", None]
+print("  promedia(%s)" % (mentira,))
+try:
+    promedia(mentira)
+    print("    la comprobacion la dejo pasar y la funcion devolvio un numero")
+except TipoInvalido as e:
+    print("    la rechazo la puerta: %s" % e)
+except Exception as e:
+    print("    la puerta la dejo pasar; revento DENTRO, con %s" % type(e).__name__)
+print()
+print("la lista es una lista, asi que el decorador la deja pasar; el error")
+print("aparece despues, dentro de la funcion, que es justo lo que se queria")
+print("evitar. Comprobar el contenido cuesta recorrerlo: O(n) por argumento")
+print()
+
+# --- que cuesta, medido en comprobaciones, no en segundos ---
+@comprueba
+def suma_c(a: int, b: int) -> int:
+    return a + b
+
+def suma_s(a, b):
+    return a + b
+
+for i in range(1000):
+    suma_c(i, i)
+    suma_s(i, i)
+print("coste, contado en comprobaciones (no en segundos, que dependen de la maquina)")
+print("  llamadas a la version decorada   : 1000")
+print("  argumentos comprobados en total  : %d" % suma_c.comprobados)
+print("  comprobaciones por llamada       : %.1f" % (suma_c.comprobados / 1000))
+print("  argumentos comprobados sin decorar: 0")
+print()
+print("la firma se resuelve una vez al definir; lo que se paga en cada llamada")
+print("es atar los argumentos y un isinstance por parametro anotado")
+print()
+print("wraps mantuvo la identidad y las anotaciones a traves del decorador")
+print("  nombre visible      : %s" % promedia.__name__)
+print("  conserva anotaciones: %s" % (list(promedia.__annotations__) == ["valores", "peso", "return"]))
+```
+
+La última línea reúne las tres lecciones del bloque: la clase de la 17 aporta la excepción propia, el decorador de la 18 conserva la identidad con `wraps`, y la anotación de la 19 es lo que el decorador lee para saber qué comprobar.
+
+```{=html}
+<div class="viz-puerta">
+  <div class="controles">
+    <label>Argumento:
+      <select id="pu-a">
+        <option value="ok" selected>[1.0, 2.0, 3.0]</option>
+        <option value="mix">[1.0, 'dos', None]</option>
+        <option value="esc">3.0</option>
+        <option value="str">'hola'</option>
+      </select>
+    </label>
+    <label>Comprobar también el contenido:
+      <select id="pu-c"><option value="no" selected>no</option><option value="si">sí</option></select>
+    </label>
+  </div>
+  <svg id="pu-svg" viewBox="0 0 660 230" role="img" aria-label="La puerta del comprobador"></svg>
+  <div id="pu-lectura" class="lectura"></div>
+</div>
+<style>
+.viz-puerta { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-puerta .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-puerta label { display: flex; align-items: center; gap: .4rem; }
+.viz-puerta select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-puerta svg { width: 100%; height: auto; display: block; }
+.viz-puerta .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("pu-svg"), lec = document.getElementById("pu-lectura");
+  var ca = document.getElementById("pu-a"), cc = document.getElementById("pu-c");
+  var ARG = {
+    ok:  { txt: "[1.0, 2.0, 3.0]", lista: true, limpia: true, n: 3 },
+    mix: { txt: "[1.0, 'dos', None]", lista: true, limpia: false, n: 3 },
+    esc: { txt: "3.0", lista: false, limpia: false, n: 1 },
+    str: { txt: "'hola'", lista: false, limpia: false, n: 1 }
+  };
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var a = ARG[ca.value], hondo = cc.value === "si";
+    var pasa = a.lista && (!hondo || a.limpia);
+    var revienta = a.lista && !hondo && !a.limpia;
+    var Y = 104, XP = 300, XF = 540;
+
+    // la puerta y el cuerpo estan anclados al dibujo, no al argumento (regla 19b)
+    svg.appendChild(el("path", { d: "M" + XP + " 40 L" + XP + " 168", stroke: C_T, "stroke-width": 2.4, opacity: .8 }));
+    svg.appendChild(el("text", { x: XP, y: 30, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .75 },
+      hondo ? "puerta (tipo y contenido)" : "puerta (solo el tipo base)"));
+    svg.appendChild(el("rect", { x: XF - 62, y: Y - 32, width: 108, height: 64, rx: 6,
+      fill: revienta ? C_B : C_A, opacity: revienta ? .18 : .16,
+      stroke: revienta ? C_B : C_A, "stroke-width": 1.8 }));
+    svg.appendChild(el("text", { x: XF - 8, y: Y + 4, "text-anchor": "middle", "font-size": 11, fill: C_T }, "promedia"));
+
+    // el valor viaja: se queda en la puerta si la rechaza, entra si pasa
+    // el valor se detiene en la puerta si la rechaza y llega a la funcion si pasa
+    var xv = pasa ? (XF - 8) : (XP - 52);
+    svg.appendChild(el("rect", { x: (xv - 74), y: Y - 16, width: 148, height: 32, rx: 5,
+      fill: pasa ? C_A : C_B, opacity: .22, stroke: pasa ? C_A : C_B, "stroke-width": 1.6 }));
+    svg.appendChild(el("text", { x: xv, y: Y + 5, "text-anchor": "middle", "font-size": 11, fill: C_T }, a.txt));
+    svg.appendChild(el("path", { d: "M56 " + Y + " L" + (xv - 80) + " " + Y, stroke: C_T, "stroke-width": 1.4, opacity: .45 }));
+
+    var comp = hondo ? (1 + (a.lista ? a.n : 0)) : 1;
+    svg.appendChild(el("text", { x: 56, y: 200, "font-size": 10.5, fill: C_T, opacity: .7 },
+      "comprobaciones para este argumento: " + comp));
+    svg.appendChild(el("text", { x: 56, y: Y - 34, "font-size": 10.5, fill: C_T, opacity: .7 }, "llega"));
+
+    var cuerpo;
+    if (!a.lista) cuerpo = "El argumento no es una lista, así que <code>isinstance(valor, list)</code> falla y la puerta lo rechaza con <code>TipoInvalido</code>. El cuerpo no llega a ejecutarse.";
+    else if (a.limpia) cuerpo = "El argumento es una lista de números: pasa la puerta y el cuerpo devuelve un promedio.";
+    else if (hondo) cuerpo = "Comprobando el contenido, la cadena de dentro se ve y la puerta rechaza la lista <strong>antes</strong> de ejecutar el cuerpo. El precio está abajo: una comprobación por elemento.";
+    else cuerpo = "Este es el caso de la Proposición 19.9: la lista <strong>es</strong> una lista, la puerta la deja pasar, y el error aparece dentro del cuerpo al sumar un número con una cadena. La caja llega hasta la función y se pone roja allí.";
+    lec.innerHTML = cuerpo + " El coste de mirar el contenido crece con <code>n</code>; el de mirar el tipo base no.";
+  }
+  ca.addEventListener("change", dibujar);
+  cc.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Lo que esta lección no resuelve
+
+La comprobación construida aquí ocurre en ejecución y solo ve las llamadas que de hecho suceden. Un comprobador estático recorre el código sin ejecutarlo y encuentra errores en ramas que nunca se han probado, a cambio de no saber nada de los valores que llegan de fuera del programa. Los dos alcances son complementarios y ninguno sustituye al otro.
+
+Tampoco se ha tratado la anotación de tipos genéricos propios, ni las variables de tipo, ni el protocolo estructural de `typing.Protocol`, que traduce al lenguaje de las anotaciones lo que la Lección 17 describió por forma. La comprobación del contenido de un contenedor queda planteada y medida en su coste, pero no implementada: la Lección 22 la retoma en la frontera donde de verdad hace falta, que es la entrada de datos externos.
+
+## Ejercicios
+
+### Ejercicio 1, La anotación que miente
+
+Con la Proposición 19.2, escribir una función anotada `-> int` que devuelva un `float`, y dejar el valor en `resultado` y el nombre de su tipo en `tipo`.
+
+```{pyodide}
+#| exercise: ex_miente
+def mitad(x: int) -> int:
+    return ______
+
+resultado = ______
+tipo = ______
+
+print(resultado, tipo)
+```
+
+::: {.hint exercise="ex_miente"}
+La división `/` devuelve siempre un `float`, aunque los dos operandos sean enteros. El nombre del tipo de un objeto está en `type(objeto).__name__`.
+:::
+
+::: {.solution exercise="ex_miente"}
+```{pyodide}
+def mitad(x: int) -> int:
+    return x / 2
+
+resultado = mitad(7)
+tipo = type(resultado).__name__
+
+print(resultado, tipo)
+```
+
+La anotación declara `int` y el valor es `3.5`, un `float`. Nada comprueba la anotación, de modo que la contradicción vive en el código hasta que alguien pase un comprobador estático sobre él.
+:::
+
+```{pyodide}
+#| exercise: ex_miente
+#| check: true
+if resultado == 3.5 and tipo == "float":
+    feedback = {"correct": True, "message": "Correcto: la anotacion dice int y el valor es float."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba resultado 3.5 y tipo 'float'."}
+feedback
+```
+
+### Ejercicio 2, Cuántas comprobaciones cuesta mirar dentro
+
+Con la Proposición 19.9, una función recibe `k` argumentos anotados, cada uno una lista de `n` elementos. Calcular cuántos `isinstance` se ejecutan por llamada comprobando solo el tipo base, y cuántos comprobando además el contenido.
+
+```{pyodide}
+#| exercise: ex_coste
+k, n = 3, 50
+
+base = ______
+hondo = ______
+
+print(base, hondo)
+```
+
+::: {.hint exercise="ex_coste"}
+El tipo base cuesta una comprobación por argumento. Mirar dentro añade una por cada elemento de cada lista.
+:::
+
+::: {.solution exercise="ex_coste"}
+```{pyodide}
+k, n = 3, 50
+
+base = k
+hondo = k + k * n
+
+print(base, hondo)
+```
+
+Comprobar el tipo base cuesta un `isinstance` por argumento: 3. Comprobar el contenido añade uno por elemento de cada lista: 3 + 150 = 153, cincuenta y una veces más. Ese factor es la razón de que la comprobación profunda se reserve para la frontera del programa, donde entran los datos externos, y no para cada llamada interna.
+:::
+
+```{pyodide}
+#| exercise: ex_coste
+#| check: true
+if base == 3 and hondo == 153:
+    feedback = {"correct": True, "message": "Correcto: 3 contra 153, un factor de 51."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba base = 3 y hondo = 153."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Python 19**:
+
+1. Anotar por completo una función de limpieza ya escrita, aplicarle el decorador `comprueba` de esta lección y encontrar un argumento que la función acepta y no debería. Anotar si el error aparece en la puerta o dentro del cuerpo.
+2. Extender `comprueba` para que verifique también el contenido de un `List[T]`, medir en comprobaciones lo que cuesta sobre listas de 10, 100 y 1000 elementos, y confirmar que el crecimiento es lineal en `n`.
+3. Tomar una función decorada sin `functools.wraps`, comprobar que `typing.get_type_hints` devuelve un diccionario vacío sobre ella, y guardar en `50-Errores/` el caso con la línea exacta que lo arregla.
+
+## Del libro
+
+Esta lección no se apoya en ninguno de los libros del plan. El material de referencia es la documentación del lenguaje, en particular la PEP 484 que introdujo las anotaciones de tipo y la PEP 649 que cambió el momento en que se evalúan.
+
+## Para el Cerebro
+
+- Una anotación se guarda; no se comprueba. `area('ab', 3)` devuelve `'ababab'` con `-> float` escrito encima.
+- Decorar sin `functools.wraps` vacía `__annotations__`, y con él se pierde toda la información de tipos.
+- Guardar una anotación nunca falla; resolverla sí. El `NameError` aparece en `get_type_hints`, no en la definición.
+- `Optional[int]` es `Union[int, None]`: dos ramas. Anotar `-> int` una función que a veces devuelve `None` declara algo falso.
+- Un decorador convierte la anotación en comprobación por un coste de un `isinstance` por parámetro anotado: 2,0 por llamada en el caso medido.
+- Esa comprobación ve `list` y no ve lo que hay dentro. Mirar el contenido cuesta `n` por argumento.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico: que una función anotada `-> float` devuelve `'ababab'` y `[1, 2, 1, 2]`; que un envoltorio sin `wraps` tiene `__annotations__` vacío y con `wraps` coincide con el original; que una anotación entrecomillada se guarda como cadena y `get_type_hints` la resuelve a la clase; que un nombre inexistente se guarda sin error y levanta `NameError` al resolver; que `Optional[int]` tiene dos ramas y coincide con `Union[int, None]`; que el decorador `comprueba` rechaza un `float` donde se espera `list` y acepta una lista de tipos mezclados, que revienta dentro del cuerpo; y las 2000 comprobaciones en 1000 llamadas.
+
+**Lo que viene de los libros.** Nada. Ninguno de los libros verificados del plan trata las anotaciones de tipo.
+
+**Lo que es mío, no del libro.** La organización en tres momentos —guardar, llamar, resolver—, el decorador `comprueba` con su excepción propia, la elección de contar el coste en comprobaciones en lugar de segundos, y la lectura de la Proposición 19.9 como el límite que separa esta técnica de la validación de datos externos. La atribución de la evaluación diferida a la PEP 649 y de las anotaciones a la PEP 484 remite a la documentación del lenguaje, no a los libros del plan.
+:::

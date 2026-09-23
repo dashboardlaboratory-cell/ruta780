@@ -3299,6 +3299,53 @@ mejor lo que pasa.
 
 ---
 
+### 3.57 Python 19: la anotación que no comprueba nada (22-09-2026)
+
+Cierra el bloque 17–19. La lección se sostiene sobre una sola exhibición: una
+función anotada `(base: float, altura: float) -> float` a la que se le pasa
+`('ab', 3)` y devuelve `'ababab'`, una cadena. La anotación se guarda y no se
+mira. De ahí salen las seis proposiciones, incluida la que mide el coste de
+convertirla en comprobación de verdad: **2000 comprobaciones en 1000 llamadas**
+de una función de dos parámetros, es decir 2,0 por llamada, constante respecto
+al tamaño de los datos.
+
+**Lo que encontró el trabajo.** Dos diferencias entre versiones, las dos
+invisibles hasta que se imprimen:
+
+· `typing.Optional[int]` se muestra como `typing.Union[int, NoneType]` en 3.8 y
+como `int | None` en 3.14. La celda no imprime el repr: imprime el número de
+ramas, si `int` está entre ellas y si `Optional[int] == Union[int, None]`. Tres
+hechos estables que dicen lo mismo.
+
+· Una referencia adelantada **sin comillas** levanta `NameError` al definir en
+3.8 y no levanta nada en 3.14, por la evaluación diferida de la PEP 649. Eso no
+se puede imprimir sin romper el gate de las dos versiones, así que **se enseña
+en prosa, citando la PEP y la versión**, y la celda demuestra solo la práctica
+que funciona igual en las dos: entrecomillar y resolver con `get_type_hints`.
+
+Es la primera vez que una diferencia entre versiones entra en una lección como
+**contenido** en vez de como problema que esquivar.
+
+**Un error propio para poder medir.** El comprobador levanta `TipoInvalido`, una
+subclase de `TypeError`, y no `TypeError` a secas. Con `TypeError` el `except`
+de la celda atrapaba también el error que revienta **dentro** del cuerpo y lo
+etiquetaba como si lo hubiera rechazado la puerta, que es justo la distinción
+que la Proposición 19.9 quiere enseñar: `[1.0, 'dos', None]` **es** una lista,
+pasa la comprobación, y falla después al sumar. Tener clase propia separó los
+dos casos.
+
+**El molde, otra vez por debajo al primer borrador.** Tercera vez seguida
+(17, 18, 19). Salió con 3 def / 5 prop / 4 dem y subió a **3 / 6 / 6**. Conviene
+contar antes de dar la lección por escrita.
+
+**Dos deslices de plomería del molde**, los dos del gate y no del navegador: el
+marcador de celda plantilla son **seis** guiones bajos `______` y no cuatro —con
+cuatro, `salidas.py` intenta ejecutar el hueco y revienta con `NameError`—, y el
+bloque de respuesta es `::: {.solution}` en inglés, no `.solucion`. Además el
+primer bloque `## Reto` nombró `F1-retos.ipynb` cuando a Python 19 le toca
+`F2-retos.ipynb`; el generador ya había escrito la sección en el cuaderno
+equivocado y hubo que quitarla a mano.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
