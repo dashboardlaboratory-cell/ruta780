@@ -1,0 +1,707 @@
+---
+title: "Decoradores y funciones que envuelven"
+subtitle: "Python · Lección 18"
+nivel: L4
+modulo: python
+fase: F2
+prereqs: [python/02-funciones-y-scope, python/17-clases-y-protocolos, python/01-tipos-y-estructuras]
+siguientes: []
+libro: "—"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="python/18-decoradores"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F2]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Ámbito y cierres](02-funciones-y-scope.qmd) · [Clases y protocolos](17-clases-y-protocolos.qmd) · [Objetos y nombres](01-tipos-y-estructuras.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Demostrar que `@d` es exactamente `f = d(f)`**, y escribir las dos formas.
+2. **Demostrar que el envoltorio tapa la identidad de la función**, y medir qué devuelve `functools.wraps` y qué no.
+3. **Demostrar que el decorador se ejecuta al definir** y el envoltorio en cada llamada.
+4. Escribir un [decorador]{.g} con argumentos, y decir por qué hace falta un nivel más.
+5. **Medir lo que compra memorizar**: llamadas al cuerpo con caché y sin ella.
+6. Reconocer que una caché hereda el contrato del hash de la lección anterior.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Python 2**: los cierres, que son el mecanismo con el que el envoltorio recuerda la función.
+- **Python 17**: el contrato del hash, que aquí limita qué funciones se pueden memorizar.
+- **Python 1**: que una función sea un objeto que se puede pasar y devolver.
+- **Python 15**: el coste de repetir trabajo, que la caché elimina.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Python 19**: el tipado gradual, que anota decoradores y sufre con los que pierden la firma.
+- **Python 24**: las pruebas, donde los decoradores marcan y parametrizan casos.
+- **Python 26**: el perfilado, que se implementa con esta misma técnica.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| `@d` | arroba de | La sintaxis que aplica el decorador `d` |
+| `f` | efe | La función que se decora |
+| `envoltorio` | envoltorio | La función que el decorador devuelve en lugar de `f` |
+| `*args, **kwargs` | args y kwargs | Los argumentos posicionales y por nombre, recogidos sin mirarlos |
+| `__name__` | dunder name | El nombre con el que una función se presenta |
+| `__wrapped__` | dunder wrapped | El enlace que `wraps` deja hacia la función original |
+| `__doc__` | dunder doc | La cadena de documentación |
+:::
+
+## 1. La arroba no hace nada nuevo
+
+::: {.definicion}
+**Definición 18.1 (decorador).** Un **decorador** es una función que recibe una función y devuelve otra, normalmente un **envoltorio** que llama a la primera y añade algo alrededor.
+:::
+
+::: {.proposicion}
+**Proposición 18.2 (`@` es azúcar sintáctico).** Escribir
+```
+@d
+def f(...): ...
+```
+es exactamente equivalente a definir `f` y después ejecutar `f = d(f)`. La arroba no introduce ningún mecanismo nuevo: es una forma de escribir esa asignación encima de la definición en vez de debajo.
+:::
+
+::: {.demostracion}
+*Demostración.* Es la definición de la sintaxis en el lenguaje. La consecuencia observable es que el nombre `f` queda ligado a lo que devuelva `d`, y no a la función escrita; si `d` devolviera el número siete, `f` valdría siete. [∎]{.fin-demo}
+:::
+
+::: {.proposicion}
+**Proposición 18.3 (el envoltorio tapa la identidad).** El objeto que queda ligado al nombre es el envoltorio, así que su `__name__`, su `__doc__` y su **firma** son los del envoltorio y no los de la función original. `functools.wraps` copia el nombre y la documentación, y además deja `__wrapped__` apuntando al original, que es de donde `inspect.signature` recupera la firma verdadera.
+:::
+
+::: {.demostracion}
+*Demostración.* Tras `f = d(f)`, el nombre `f` apunta al objeto que `d` devolvió, y los atributos `__name__` y `__doc__` de ese objeto son los que se le pusieron al definirlo dentro de `d`. `inspect.signature` inspecciona el objeto que recibe, así que ve los parámetros del envoltorio, que suelen ser `(*args, **kwargs)` precisamente para aceptar cualquier llamada. `wraps` copia los atributos y añade `__wrapped__`; `signature` comprueba ese atributo antes de mirar los parámetros, y por eso la firma recuperada es la de la función de dentro. [∎]{.fin-demo}
+:::
+
+**Modo de falla.** Una capa de código donde todas las funciones se llaman `envoltorio` y aceptan `(*args, **kwargs)`. La ayuda en línea deja de servir, los mensajes de error señalan siempre al mismo sitio, y cualquier herramienta que lea firmas —un validador, un generador de documentación, el editor— cree que todas las funciones aceptan cualquier cosa. El programa funciona; lo que se rompe es todo lo que lo rodea.
+
+```{pyodide}
+import functools, inspect
+
+def cuenta_llamadas(f):
+    """Un decorador: toma una funcion y devuelve otra que la envuelve."""
+    def envoltorio(*args, **kwargs):
+        envoltorio.veces += 1
+        return f(*args, **kwargs)
+    envoltorio.veces = 0
+    return envoltorio
+
+def cuenta_con_wraps(f):
+    """El mismo, pero copiando la identidad de la funcion envuelta."""
+    @functools.wraps(f)
+    def envoltorio(*args, **kwargs):
+        envoltorio.veces += 1
+        return f(*args, **kwargs)
+    envoltorio.veces = 0
+    return envoltorio
+
+def area(base, altura=1.0):
+    """Area de un rectangulo."""
+    return base * altura
+
+# --- la arroba es azucar: las dos lineas hacen lo mismo ---
+@cuenta_llamadas
+def area_decorada(base, altura=1.0):
+    """Area de un rectangulo."""
+    return base * altura
+
+area_a_mano = cuenta_llamadas(area)
+
+print("la arroba es azucar sintactico")
+print("  @cuenta_llamadas sobre f  equivale a  f = cuenta_llamadas(f)")
+print("  area_decorada(3, 2) = %s   area_a_mano(3, 2) = %s"
+      % (area_decorada(3, 2), area_a_mano(3, 2)))
+print("  los dos contaron una llamada: %s y %s"
+      % (area_decorada.veces, area_a_mano.veces))
+print()
+
+# --- lo que se pierde y lo que wraps devuelve ---
+sin = cuenta_llamadas(area)
+con = cuenta_con_wraps(area)
+print("lo que el envoltorio tapa, y lo que functools.wraps devuelve")
+print("  atributo       original              sin wraps             con wraps")
+corta = lambda v: (str(v)[:20] if v is not None else "None")
+for attr in ("__name__", "__qualname__", "__doc__"):
+    print("  %-13s  %-20s  %-20s  %s"
+          % (attr, corta(getattr(area, attr)), corta(getattr(sin, attr)),
+             corta(getattr(con, attr))))
+print("  %-13s  %-20s  %-20s  %s"
+      % ("firma", corta(inspect.signature(area)), corta(inspect.signature(sin)),
+         corta(inspect.signature(con))))
+print()
+print("sin wraps, el envoltorio se presenta con SU nombre y SU firma: la ayuda,")
+print("los mensajes de error y cualquier herramienta que lea la firma pasan a")
+print("hablar de una funcion que acepta cualquier cosa. wraps copia el nombre,")
+print("la documentacion y deja __wrapped__ apuntando al original, que es de donde")
+print("inspect saca la firma de verdad")
+print()
+print("  con wraps, con.__wrapped__ es area: %s" % (con.__wrapped__ is area))
+print("  sin wraps, sin tiene __wrapped__ : %s" % hasattr(sin, "__wrapped__"))
+```
+
+Las dos primeras líneas comprueban la Proposición 18.2: la función escrita con arroba y la asignada a mano devuelven lo mismo y cuentan lo mismo.
+
+La tabla es la Proposición 18.3. Sin `wraps`, la función se llama `envoltorio`, no tiene documentación y su firma es `(*args, **kwargs)`. Con `wraps`, las cuatro filas coinciden con el original, **incluida la firma**, y eso último merece atención: `wraps` no copia la firma, copia `__wrapped__`, y es `inspect.signature` quien sigue ese enlace hasta la función de verdad.
+
+```{=html}
+<div class="viz-envoltorio">
+  <div class="controles">
+    <label>Capas de decoradores <input id="en-n" type="range" min="0" max="4" step="1" value="2"> <span id="en-n-v">2</span></label>
+    <label>Usan functools.wraps
+      <select id="en-w">
+        <option value="si" selected>sí</option>
+        <option value="no">no</option>
+      </select>
+    </label>
+  </div>
+  <svg id="en-svg" viewBox="0 0 660 250" role="img" aria-label="Las capas de envoltorios alrededor de una función y el nombre con el que se presenta el objeto resultante."></svg>
+  <p class="lectura" id="en-lectura"></p>
+</div>
+<style>
+.viz-envoltorio { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-envoltorio .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-envoltorio label { display: flex; align-items: center; gap: .4rem; }
+.viz-envoltorio input[type=range] { width: 150px; padding: 0; }
+.viz-envoltorio select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-envoltorio svg { width: 100%; height: auto; display: block; }
+.viz-envoltorio .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("en-svg"), lec = document.getElementById("en-lectura");
+  var cn = document.getElementById("en-n"), cw = document.getElementById("en-w");
+  var en = document.getElementById("en-n-v");
+  var NOMBRES = ["registra", "cachea", "reintenta", "mide"];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var N = +cn.value, usa = cw.value === "si";
+    en.textContent = N;
+    // la llamada entra por la izquierda y atraviesa una caja por capa hasta
+    // llegar a la funcion, que se desplaza a la derecha al anadir capas
+    var X0 = 34, ANCHO = 74, HUECO = 10, Y = 96, ALTO = 48, i;
+    svg.appendChild(el("text", { x: X0, y: Y - 14, "font-size": 10.5, fill: C_T, opacity: .7 }, "area(3, 2)"));
+    for (i = 0; i < N; i++) {
+      var x = X0 + i * (ANCHO + HUECO);
+      svg.appendChild(el("rect", { x: x.toFixed(1), y: Y, width: ANCHO, height: ALTO, rx: 6,
+        fill: C_B, opacity: .16, stroke: C_B, "stroke-width": 1.6 }));
+      svg.appendChild(el("text", { x: (x + ANCHO / 2).toFixed(1), y: Y + 29, "text-anchor": "middle",
+        "font-size": 10.5, fill: C_T }, "@" + NOMBRES[i]));
+      svg.appendChild(el("path", { d: "M" + (x + ANCHO).toFixed(1) + " " + (Y + ALTO / 2) +
+        " L" + (x + ANCHO + HUECO).toFixed(1) + " " + (Y + ALTO / 2), stroke: C_T, "stroke-width": 1.4, opacity: .55 }));
+    }
+    var xf = X0 + N * (ANCHO + HUECO);
+    svg.appendChild(el("rect", { x: xf.toFixed(1), y: Y, width: ANCHO, height: ALTO, rx: 6,
+      fill: C_A, opacity: .3, stroke: C_A, "stroke-width": 2 }));
+    svg.appendChild(el("text", { x: (xf + ANCHO / 2).toFixed(1), y: Y + 29, "text-anchor": "middle",
+      "font-size": 12, fill: C_T }, "area"));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + (Y + ALTO + 26) + " L" + (xf + ANCHO).toFixed(1) + " " + (Y + ALTO + 26),
+      stroke: C_T, "stroke-width": 1.2, opacity: .4 }));
+    svg.appendChild(el("text", { x: ((X0 + xf + ANCHO) / 2).toFixed(1), y: Y + ALTO + 42, "text-anchor": "middle",
+      "font-size": 10.5, fill: C_T, opacity: .65 }, N === 0 ? "la llamada llega directa" : "la llamada atraviesa " + N + (N === 1 ? " capa" : " capas")));
+
+    // lo que se ve desde fuera
+    var nombre = (N === 0 || usa) ? "area" : "envoltorio";
+    var firma = (N === 0 || usa) ? "(base, altura=1.0)" : "(*args, **kwargs)";
+    var hayDoc = (N === 0 || usa);
+    var BY = 16;
+    svg.appendChild(el("rect", { x: 420, y: BY, width: 218, height: 62, fill: "none", stroke: C_L, "stroke-width": 1.2 }));
+    svg.appendChild(el("text", { x: 430, y: BY + 18, "font-size": 10.5, fill: C_T, opacity: .7 }, "lo que se ve desde fuera"));
+    svg.appendChild(el("text", { x: 430, y: BY + 36, "font-size": 11, fill: nombre === "area" ? C_A : C_B },
+      "__name__  " + nombre));
+    svg.appendChild(el("text", { x: 430, y: BY + 53, "font-size": 10, fill: nombre === "area" ? C_A : C_B },
+      "firma  " + firma));
+
+    lec.innerHTML = "Con <strong>" + N + "</strong> " + (N === 1 ? "capa" : "capas") + " y " +
+      (usa ? "<code>functools.wraps</code>" : "<strong>sin</strong> <code>wraps</code>") + ", la llamada atraviesa " +
+      N + " " + (N === 1 ? "envoltorio" : "envoltorios") + " antes de llegar a <code>area</code>, y el objeto se presenta como <strong>" +
+      nombre + "</strong> con firma <strong>" + firma + "</strong>" + (hayDoc ? " y con documentación." : " y sin documentación.") + " " +
+      (N === 0
+        ? "Sin decoradores no hay nada que tapar ni por dónde pasar."
+        : (usa
+          ? "Cada capa copia la identidad de la de dentro, así que el nombre y la firma llegan hasta fuera por muchas capas que haya."
+          : "Basta <strong>una</strong> capa sin <code>wraps</code> para perder el nombre y la firma; añadir más no empeora nada, porque ya no queda nada que perder.")) +
+      " La función de dentro sigue ejecutándose igual: lo que cambia es lo que el objeto dice de sí mismo.";
+  }
+  cn.addEventListener("input", dibujar);
+  cw.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Cuándo corre cada cosa
+
+::: {.proposicion}
+**Proposición 18.4 (definir y llamar).** El decorador se ejecuta **una sola vez**, en el momento en que se define la función. Lo que se ejecuta en cada llamada es el envoltorio que devolvió. En consecuencia, todo lo que el decorador haga fuera del envoltorio ocurre **al importar el módulo**, no al usar la función.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Proposición 18.2, `@d` es la asignación `f = d(f)`, que forma parte de la ejecución del módulo y ocurre una vez. El cuerpo del envoltorio, en cambio, solo corre cuando alguien llama a `f`. [∎]{.fin-demo}
+:::
+
+Es la misma regla que el cuerpo de una clase en la Proposición 17.8 y que los valores por defecto de la lección 2. Las tres dicen lo mismo con distinta ropa: **lo que está en el sitio de definir se evalúa al definir**.
+
+::: {.definicion}
+**Definición 18.5 (fábrica de decoradores).** Una **fábrica de decoradores** es una función que recibe la configuración y devuelve un decorador. Se reconoce porque en la arroba lleva paréntesis: `@d(x)` usa una fábrica y `@d` usa un decorador.
+:::
+
+::: {.proposicion}
+**Proposición 18.6 (decoradores con argumentos).** `@d(x)` equivale a `f = d(x)(f)`. Por tanto `d` es una función que **devuelve** un decorador, y no el decorador mismo; hacen falta tres funciones anidadas en vez de dos.
+:::
+
+**Modo de falla.** Escribir un decorador con argumentos con solo dos niveles y usarlo sin paréntesis. `@repite` en lugar de `@repite(3)` pasa la función como si fuera el número de repeticiones, y el error aparece mucho después, en la primera llamada, con un mensaje que no menciona el decorador. El caso inverso —usar paréntesis en uno que no los acepta— falla antes y es más fácil de ver.
+
+```{pyodide}
+import functools
+
+registro = []
+
+def anuncia(f):
+    """Se ejecuta UNA vez, al decorar. Lo que corre en cada llamada es el
+    envoltorio que devuelve."""
+    registro.append("decorando %s" % f.__name__)
+    @functools.wraps(f)
+    def envoltorio(*a, **k):
+        registro.append("llamando %s" % f.__name__)
+        return f(*a, **k)
+    return envoltorio
+
+print("el decorador corre al DEFINIR; el envoltorio, en cada llamada")
+print("  antes de definir nada, el registro tiene %d entradas" % len(registro))
+
+@anuncia
+def uno():
+    return 1
+
+@anuncia
+def dos():
+    return 2
+
+print("  tras definir las dos funciones, sin llamarlas: %s" % registro)
+uno(); uno(); dos()
+print("  tras llamar uno(), uno() y dos():")
+for r in registro:
+    print("      %s" % r)
+print()
+print("  decoraciones: %d    llamadas: %d"
+      % (sum(1 for r in registro if r.startswith("decorando")),
+         sum(1 for r in registro if r.startswith("llamando"))))
+print()
+print("es la misma regla que el cuerpo de una clase de la leccion 17 y que los")
+print("valores por defecto de la leccion 2: lo que esta en el sitio de definir")
+print("se evalua una vez. Poner ahi algo caro —abrir una conexion, leer un")
+print("fichero— lo hace al importar el modulo, no al usar la funcion")
+print()
+
+# --- un decorador con argumentos es una funcion que devuelve un decorador ---
+def repite(veces):
+    """Tres niveles: repite(3) devuelve un decorador, que devuelve el envoltorio."""
+    def decorador(f):
+        @functools.wraps(f)
+        def envoltorio(*a, **k):
+            for _ in range(veces):
+                ultimo = f(*a, **k)
+            return ultimo
+        return envoltorio
+    return decorador
+
+pasos = []
+
+@repite(3)
+def paso():
+    pasos.append(1)
+    return len(pasos)
+
+print("un decorador con argumentos tiene un nivel mas")
+print("  @repite(3) sobre f  equivale a  f = repite(3)(f)")
+print("  paso() devuelve %d y la lista tiene %d elementos" % (paso(), len(pasos)))
+print("  tipo de repite(3): %s" % type(repite(3)).__name__)
+print()
+
+def otro_paso():
+    pasos.append(1)
+    return len(pasos)
+
+a_mano = repite(2)(otro_paso)          # el mismo efecto que escribir @repite(2)
+a_mano()
+print("  a mano, repite(2)(otro_paso)() deja la lista en %d" % len(pasos))
+print()
+print("el numero de parentesis es la pista: sin argumentos el decorador recibe la")
+print("funcion; con argumentos, primero recibe los argumentos y DESPUES la")
+print("funcion, asi que hacen falta tres funciones anidadas en vez de dos")
+```
+
+El registro después de definir las dos funciones **sin llamarlas** ya tiene dos entradas. Ese es el resultado: definir es ejecutar. Tras las tres llamadas, el recuento queda en **dos decoraciones y tres llamadas**, y los dos números cuentan cosas distintas.
+
+La segunda mitad enseña el nivel extra. `repite(3)` es una función —lo dice la salida—, y hay que llamarla con la función decorada para obtener el envoltorio. De ahí la regla que evita el error más común: **los paréntesis en la arroba significan que hay tres niveles**, y si no los hay, el decorador recibirá la función donde esperaba un argumento.
+
+## 3. Lo que compra memorizar
+
+La caché es el decorador que más se usa, y el que mejor enseña por qué esta técnica vale la pena: el cambio que introduce no se mide en líneas sino en órdenes de magnitud.
+
+::: {.definicion}
+**Definición 18.7 (memorizar).** **Memorizar** una función es guardar cada resultado en un diccionario indexado por los argumentos con que se obtuvo, y devolver el guardado cuando los argumentos se repiten. Solo tiene sentido si la función es **pura**: si su resultado depende de algo más que de sus argumentos, la caché devuelve respuestas viejas.
+:::
+
+::: {.proposicion}
+**Proposición 18.8 (una caché es un diccionario).** Memorizar guarda los argumentos como clave, así que la función solo se puede memorizar si sus argumentos **se pueden hashear**. Es la Proposición 17.3 aplicada: una lista o un diccionario como argumento hacen fallar la caché con `TypeError`.
+:::
+
+::: {.demostracion}
+*Demostración.* La caché busca los argumentos entre las claves de un diccionario, y esa búsqueda calcula su hash. Un objeto cuyo `__hash__` valga `None` no puede ser clave, y las listas y los diccionarios no lo tienen precisamente porque son mutables: si lo tuvieran, cambiarlos después de guardarlos rompería el contrato de la Proposición 17.3. [∎]{.fin-demo}
+:::
+
+**Modo de falla.** Una caché sobre una función que recibe un `DataFrame` o una lista, que falla en la primera llamada con un `TypeError` que habla de hash y no de caché. El caso peor es convertir el argumento a algo hashable de forma descuidada —por ejemplo, usar su `repr`— porque entonces dos objetos distintos con la misma representación comparten resultado, que es la Proposición 17.3 rota por el otro lado.
+
+```{pyodide}
+import functools
+
+def cachea(f):
+    """Una cache propia: un diccionario de argumentos a resultados. Necesita que
+    los argumentos se puedan hashear, por la Proposicion 17.3 de la leccion
+    anterior: son claves de un diccionario."""
+    memoria = {}
+    @functools.wraps(f)
+    def envoltorio(*args):
+        if args in memoria:
+            envoltorio.aciertos += 1
+            return memoria[args]
+        envoltorio.fallos += 1
+        memoria[args] = f(*args)
+        return memoria[args]
+    envoltorio.aciertos = envoltorio.fallos = 0
+    envoltorio.memoria = memoria
+    return envoltorio
+
+N = 25
+llamadas = {"sin": 0, "mia": 0, "lru": 0}
+
+def fib_sin(n):
+    llamadas["sin"] += 1
+    return n if n < 2 else fib_sin(n - 1) + fib_sin(n - 2)
+
+@cachea
+def fib_mia(n):
+    llamadas["mia"] += 1
+    return n if n < 2 else fib_mia(n - 1) + fib_mia(n - 2)
+
+@functools.lru_cache(maxsize=None)
+def fib_lru(n):
+    llamadas["lru"] += 1
+    return n if n < 2 else fib_lru(n - 1) + fib_lru(n - 2)
+
+r0, r1, r2 = fib_sin(N), fib_mia(N), fib_lru(N)
+print("memorizar, contado en llamadas al cuerpo de la funcion")
+print("  fib(%d) = %d en los tres casos: %s" % (N, r0, r0 == r1 == r2))
+print()
+print("  version        llamadas al cuerpo")
+print("  sin cache      %18d" % llamadas["sin"])
+print("  cache propia   %18d" % llamadas["mia"])
+print("  lru_cache      %18d" % llamadas["lru"])
+print("  cociente       %18.1f a 1" % (llamadas["sin"] / llamadas["mia"]))
+print()
+print("  la cache propia y la de la libreria coinciden: %s"
+      % (llamadas["mia"] == llamadas["lru"]))
+print("  mis contadores : %d aciertos y %d fallos" % (fib_mia.aciertos, fib_mia.fallos))
+print("  los de lru     : %s" % str(fib_lru.cache_info()))
+print()
+print("no es que la cache sea mas rapida por casualidad: el arbol de llamadas de")
+print("la version sin memoria tiene tantas ramas como el numero de Fibonacci")
+print("siguiente, y memorizar lo convierte en una cadena de %d eslabones" % (N + 1))
+print()
+
+# --- lo que la cache exige de sus argumentos ---
+@cachea
+def suma(xs):
+    return sum(xs)
+
+print("una cache es un diccionario, asi que hereda el contrato del hash")
+try:
+    suma([1, 2, 3])
+    print("  suma([1, 2, 3]) funciono")
+except TypeError:
+    print("  suma([1, 2, 3]) levanta TypeError: una lista no se puede hashear")
+print("  suma((1, 2, 3)) devuelve %d, porque una tupla si" % suma((1, 2, 3)))
+print()
+print("es la Proposicion 17.3 otra vez, ahora como limitacion practica: una")
+print("funcion que reciba listas o diccionarios no se puede memorizar tal cual,")
+print("y hay que convertir los argumentos en algo hashable antes de la clave")
+```
+
+El coste se mide en **llamadas al cuerpo**, no en segundos, porque los segundos dependen de la máquina y las llamadas no. Sin caché, `fib(25)` ejecuta el cuerpo $242\,785$ veces; con caché, $26$. El cociente es **$9337{,}9$ a $1$**, y crece exponencialmente con $N$ porque el árbol de llamadas sin memoria tiene tantas ramas como el número de Fibonacci siguiente.
+
+La caché escrita a mano y `functools.lru_cache` hacen exactamente el mismo número de llamadas, y los contadores coinciden: $23$ aciertos y $26$ fallos en las dos. Esa coincidencia es el contraste con la librería de esta lección, y es más fuerte que comparar tiempos: **cuenta el mismo trabajo, no el mismo reloj**.
+
+La última parte cierra el círculo con la lección anterior. Una caché es un diccionario, así que hereda su contrato: `suma([1, 2, 3])` levanta `TypeError` y `suma((1, 2, 3))` funciona.
+
+```{=html}
+<div class="viz-memoria">
+  <div class="controles">
+    <label>n de Fibonacci <input id="me-n" type="range" min="5" max="30" step="1" value="20"> <span id="me-n-v">20</span></label>
+    <label>Escala
+      <select id="me-e">
+        <option value="log" selected>logarítmica</option>
+        <option value="lin">lineal</option>
+      </select>
+    </label>
+  </div>
+  <svg id="me-svg" viewBox="0 0 660 250" role="img" aria-label="Las llamadas al cuerpo de la función con y sin memoria, en función de n."></svg>
+  <p class="lectura" id="me-lectura"></p>
+</div>
+<style>
+.viz-memoria { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-memoria .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-memoria label { display: flex; align-items: center; gap: .4rem; }
+.viz-memoria input[type=range] { width: 160px; padding: 0; }
+.viz-memoria select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-memoria svg { width: 100%; height: auto; display: block; }
+.viz-memoria .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("me-svg"), lec = document.getElementById("me-lectura");
+  var cn = document.getElementById("me-n"), ce = document.getElementById("me-e");
+  var en = document.getElementById("me-n-v");
+  var X0 = 58, XW = 560, Y0 = 20, YH = 180, NMAX = 30;
+  // llamadas sin memoria: 2*F(n+1) - 1 ; con memoria: n + 1
+  var F = [0, 1]; for (var k = 2; k <= NMAX + 2; k++) F.push(F[k - 1] + F[k - 2]);
+  function sinMem(n) { return 2 * F[n + 1] - 1; }
+  function conMem(n) { return n + 1; }
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var N = +cn.value, log = ce.value === "log";
+    en.textContent = N;
+    var tope = sinMem(NMAX);
+    var px = function (n) { return X0 + (n - 5) / (NMAX - 5) * XW; };
+    var py = function (v) {
+      var u = log ? Math.log(Math.max(1, v)) / Math.log(tope) : v / tope;
+      return Y0 + (1 - Math.max(0, Math.min(1, u))) * YH;
+    };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
+    var ds = "", dc = "", n;
+    for (n = 5; n <= NMAX; n++) {
+      ds += (n > 5 ? " L" : "M") + px(n).toFixed(1) + " " + py(sinMem(n)).toFixed(1);
+      dc += (n > 5 ? " L" : "M") + px(n).toFixed(1) + " " + py(conMem(n)).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: ds, stroke: C_B, "stroke-width": 2.4, fill: "none" }));
+    svg.appendChild(el("path", { d: dc, stroke: C_A, "stroke-width": 2.4, fill: "none" }));
+    svg.appendChild(el("path", { d: "M" + px(N).toFixed(1) + " " + Y0 + " L" + px(N).toFixed(1) + " " + (Y0 + YH),
+      stroke: C_T, "stroke-width": 1.2, "stroke-dasharray": "4 3", opacity: .5 }));
+    svg.appendChild(el("circle", { cx: px(N).toFixed(1), cy: py(sinMem(N)).toFixed(1), r: 4, fill: C_B }));
+    svg.appendChild(el("circle", { cx: px(N).toFixed(1), cy: py(conMem(N)).toFixed(1), r: 4, fill: C_A }));
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 14, "font-size": 10.5, fill: C_B }, "sin memoria: 2·F(n+1) − 1"));
+    svg.appendChild(el("text", { x: X0 + 8, y: Y0 + 27, "font-size": 10.5, fill: C_A }, "con memoria: n + 1"));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "n, de 5 a " + NMAX));
+
+    lec.innerHTML = "Con n = <strong>" + N + "</strong>, el cuerpo se ejecuta <strong>" + sinMem(N).toLocaleString("es") +
+      "</strong> veces sin memoria y <strong>" + conMem(N) + "</strong> con ella: un cociente de <strong>" +
+      (sinMem(N) / conMem(N)).toFixed(1) + " a 1</strong>. " +
+      (log
+        ? "En escala logarítmica la roja es una <strong>recta</strong>, que es como se ve un crecimiento exponencial, y la verde es casi horizontal."
+        : "En escala lineal la verde se pega al eje y no se distingue de cero: la diferencia es tan grande que la escala lineal no sirve para verla.") +
+      " El cociente no es una constante: se multiplica por φ ≈ 1,618 cada vez que n sube en uno.";
+  }
+  cn.addEventListener("input", dibujar);
+  ce.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Lo que esta lección no resuelve
+
+- **Los decoradores de clase y sobre métodos.** `@property`, `@staticmethod` y `@classmethod` son decoradores, pero devuelven descriptores y eso es materia de otra lección.
+- **El desalojo de la caché.** `lru_cache` con `maxsize` finito descarta las entradas menos usadas; aquí se usa `None`, que no descarta nunca y puede crecer sin límite.
+- **La caché como fuga de memoria.** Una caché sin límite sobre argumentos que no se repiten guarda todo y no acierta nunca, que es el peor de los dos mundos.
+- **`contextlib` y los decoradores que también son gestores de contexto**, que se nombran y no se tratan.
+- **Los decoradores en bibliotecas de terceros**, donde a veces se usan para registrar funciones en un catálogo global; el mecanismo es el de la Proposición 18.4 y las consecuencias sobre el orden de importación quedan fuera.
+
+## Ejercicios
+
+### Ejercicio 1, La arroba, escrita a mano
+
+Con la Proposición 18.2, aplicar un decorador sin usar la sintaxis de la arroba.
+
+```{pyodide}
+#| exercise: ex_azucar
+def dobla(f):
+    def envoltorio(x):
+        return 2 * f(x)
+    return envoltorio
+
+def cuadrado(x):
+    return x * x
+
+cuadrado_doblado = ______
+
+print(cuadrado(5), cuadrado_doblado(5))
+cuadrado_doblado(5)
+```
+
+::: {.hint exercise="ex_azucar"}
+`@dobla` encima de la definición es lo mismo que `f = dobla(f)` debajo.
+:::
+
+::: {.solution exercise="ex_azucar"}
+```{pyodide}
+def dobla(f):
+    def envoltorio(x):
+        return 2 * f(x)
+    return envoltorio
+
+def cuadrado(x):
+    return x * x
+
+cuadrado_doblado = dobla(cuadrado)
+
+print(cuadrado(5), cuadrado_doblado(5))
+cuadrado_doblado(5)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_azucar
+#| check: true
+if result == 50:
+    feedback = {"correct": True, "message": "Correcto: 50. Y conviene notar que `cuadrado` sigue intacto valiendo 25: el decorador no modifica la función, devuelve otra. Con la arroba el nombre original quedaría ligado al envoltorio y la función de dentro solo sería alcanzable a través de él.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 50 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 2, Cuántas llamadas ahorra memorizar
+
+Con la Proposición 18.8, contar las llamadas al cuerpo con y sin caché.
+
+```{pyodide}
+#| exercise: ex_cache
+def llamadas_sin(n, F=None):
+    """El arbol sin memoria tiene 2*F(n+1) - 1 nodos."""
+    fib = [0, 1]
+    for k in range(2, n + 2):
+        fib.append(fib[k - 1] + fib[k - 2])
+    return ______
+
+def llamadas_con(n):
+    """Con memoria, cada valor de 0 a n se calcula una vez."""
+    return ______
+
+for n in (10, 20, 30):
+    print(n, llamadas_sin(n), llamadas_con(n))
+
+llamadas_sin(20)
+```
+
+::: {.hint exercise="ex_cache"}
+Sin memoria son $2F(n+1)-1$ llamadas; con memoria, $n+1$.
+:::
+
+::: {.solution exercise="ex_cache"}
+```{pyodide}
+def llamadas_sin(n, F=None):
+    """El arbol sin memoria tiene 2*F(n+1) - 1 nodos."""
+    fib = [0, 1]
+    for k in range(2, n + 2):
+        fib.append(fib[k - 1] + fib[k - 2])
+    return 2 * fib[n + 1] - 1
+
+def llamadas_con(n):
+    """Con memoria, cada valor de 0 a n se calcula una vez."""
+    return n + 1
+
+for n in (10, 20, 30):
+    print(n, llamadas_sin(n), llamadas_con(n))
+
+llamadas_sin(20)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_cache
+#| check: true
+if result == 21891:
+    feedback = {"correct": True, "message": "Correcto: 21 891 llamadas para fib(20) sin memoria, contra 21 con ella. Con n = 30 son 2 692 537 contra 31, y el cociente se multiplica por φ ≈ 1,618 cada vez que n sube en uno: no es que memorizar ayude, es que sin memoria el problema cambia de clase.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 21891 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Python 18**:
+
+1. Escribir un decorador `reintenta(veces, excepciones)` que vuelva a llamar a la función cuando levante una de esas excepciones, y comprobar con un contador que el número de intentos es el prometido. Anotar qué pasa si la función tiene efectos secundarios.
+2. Medir qué se rompe sin `functools.wraps` en una cadena de tres decoradores: el nombre, la firma, la documentación y `help()`. Anotar cuál de los cuatro se pierde ya con una sola capa.
+3. Escribir una caché que acepte argumentos no hashables convirtiéndolos a una clave, guardar en `50-Errores/` dos formas de hacer esa conversión y anotar cuál rompe el contrato del hash y cómo se nota.
+
+## Del libro
+
+Esta lección no cita ningún libro. McKinney trata las funciones como objetos y los cierres en su capítulo 3, pero no los decoradores ni `functools`, y ningún otro texto del plan con índice verificado los cubre.
+
+Todo lo que se afirma sale del comportamiento del lenguaje y se mide: las dos formas de aplicar un decorador dan el mismo resultado, la tabla de cuatro atributos con y sin `wraps`, las dos decoraciones frente a tres llamadas, y las $242\,785$ ejecuciones del cuerpo frente a $26$.
+
+## Para el Cerebro
+
+Nota nueva en `10-Conceptos/decoradores.md`, enlazada a [[funciones-y-scope]], [[clases-y-protocolos]] y [[tipos-y-estructuras]]. Conviene rehacer a mano la Proposición 18.6: escribir `@d(x)` como `f = d(x)(f)` ocupa un renglón y deja grabado **por qué los decoradores con argumentos tienen tres niveles**, que es la duda que vuelve cada vez que hay que escribir uno.
+
+```
+¿Qué es un decorador?::Una función que recibe una función y devuelve otra
+¿Qué hace la arroba?::Nada nuevo: @d sobre f es f = d(f)
+¿Qué tapa el envoltorio?::El nombre, la documentación y la firma de la función
+¿Qué devuelve functools.wraps?::El nombre y la documentación, y deja __wrapped__
+¿De dónde saca inspect la firma entonces?::De __wrapped__, siguiendo el enlace
+¿Cuándo corre el decorador?::Una vez, al definir la función
+¿Y el envoltorio?::En cada llamada
+¿A qué otras reglas se parece eso?::Al cuerpo de la clase y a los valores por defecto
+¿Cuánto es @d(x)?::f = d(x)(f): tres niveles en vez de dos
+¿Qué exige una caché de los argumentos?::Que se puedan hashear: son claves de un dict
+¿Cuántas llamadas ahorró en fib(25)?::De 242 785 a 26, un cociente de 9337,9 a 1
+¿Por qué se mide en llamadas y no en segundos?::Porque los segundos dependen de la máquina
+```
+
+::: {#fuentes .fuentes}
+### Fuentes
+
+**Lo que esta página demuestra sola.** Todo. La Proposición 18.2 es la definición de la sintaxis, y se comprueba aplicando el decorador de las dos formas. La 18.3 se comprueba con una tabla de cuatro atributos en tres columnas, donde sin `wraps` la función se llama `envoltorio` y su firma es `(*args, **kwargs)`. La 18.4 se comprueba con un registro que ya tiene dos entradas **antes** de llamar a ninguna función, y acaba con dos decoraciones y tres llamadas. La 18.6, aplicando `repite(2)(f)` a mano. La 18.8, con $242\,785$ ejecuciones del cuerpo frente a $26$, y con la caché propia coincidiendo con `lru_cache` en $23$ aciertos y $26$ fallos.
+
+**Lo que viene de los libros.** Nada. McKinney cubre las funciones como objetos y los cierres, que son el prerrequisito, pero no los decoradores ni `functools`.
+
+**Lo que se usa de otras lecciones sin repetir.** Los cierres son de Python 2, y también de ahí viene la regla de que lo escrito en el sitio de definir se evalúa una vez. El contrato del hash es de Python 17. Que una función sea un objeto es de Python 1.
+
+**Lo que se enuncia sin demostrar.** Que `inspect.signature` siga `__wrapped__` se comprueba pero no se justifica: es una decisión de la biblioteca estándar. Y la política de desalojo de `lru_cache` se nombra sin examinarla.
+
+**Lo que es mío, no del libro.** Medir el coste de la caché en **llamadas al cuerpo** en lugar de en segundos, que lo hace comparable entre máquinas y entre versiones, y convierte «memorizar acelera» en $9337{,}9$ a $1$. Enfrentar la caché propia con `lru_cache` contando aciertos y fallos, que es un contraste sobre el mismo trabajo y no sobre el mismo reloj. Y poner la Proposición 18.4 al lado de las dos reglas gemelas de las lecciones 2 y 17, para que las tres se recuerden como una sola.
+:::

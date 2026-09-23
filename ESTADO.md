@@ -104,7 +104,7 @@ hay que empezar a hacer:
 |---|---|---|---|---|
 | Estadística | 25 | 25 | **25 de 25** | — |
 | Álgebra | 18 | 18 | **18 de 18** | — |
-| Python | 17 | 30 | **17 de 17** | 13 de ingeniería de datos |
+| Python | 18 | 30 | **18 de 18** | 12 de ingeniería de datos |
 | Series de tiempo | 11 | 11 | **11 de 11** | — |
 | Machine Learning | 36 | 90 | **36 de 36** | deep learning, de la 37 en adelante |
 | Inferencia causal | 0 | 14 | — | todas |
@@ -113,8 +113,8 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
 `data-ids`; el descuadre entre ambos es lo que mide la barra de progreso, así que
 **no es un error**.
 
-- **108 lecciones** publicadas, **108** cumplen el molde nuevo: cero pendientes
-  de reescritura. Pendientes de **escribir** quedan 80 según el plan, que son
+- **109 lecciones** publicadas, **109** cumplen el molde nuevo: cero pendientes
+  de reescritura. Pendientes de **escribir** quedan 79 según el plan, que son
   más que antes porque el plan de Python creció en catorce.
 - **Tres módulos cerrados**: Estadística 25/25, Álgebra 18/18 y **Series de
   tiempo 11/11**. Python dejó de estarlo el 22-09-2026: pasó de 16 a 30 (punto 3.54).
@@ -155,15 +155,15 @@ Los totales planeados salen de `data-total` en `index.qmd`, y las publicadas de
   —Est 03, Est 22 y Mat 10— y uno que conviene mirar, `ml/03` visual 1,
   control `sp-i`: sus marcadores se mueven 0,3 px, que es justo el síntoma que
   la regla 19b persigue. Los visuales de esta tanda no añaden ninguno.
-- **2378 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
-  sobre **587 celdas** que el gate ejecuta en cada build, y comprobadas **con las
+- **2399 afirmaciones numéricas** declaradas en `verificar/afirmaciones.json`,
+  sobre **592 celdas** que el gate ejecuta en cada build, y comprobadas **con las
   dos parejas de versiones** (ver el punto 5). El 22-09-2026 se rehízo el
   entorno de contraste —la limpieza de `/tmp` de macOS se había llevado su
   `pyvenv.cfg` y casi todo numpy— y todas vuelven a cuadrar en Python 3.8 con
   numpy 1.24 y en Python 3.14 con numpy 2.5.3. **Al rehacerlo faltaba
   `scikit-learn`**, y el gate lo dijo en vez de callarse: las celdas que lo
   importan salieron como REVENTÓ, no como aprobadas.
-- Glosario: **449 términos + 40 símbolos**. Los símbolos bajaron de 43 el
+- Glosario: **450 términos + 40 símbolos**. Los símbolos bajaron de 43 el
   18-09-2026 al sacar `T`, `Q` y `B`, cuyos tooltips mentían fuera de su lección
   de origen; la regla está en `CLAUDE.md` como **21b** y el detalle en el punto 6.
   **Las lecciones nuevas no añaden símbolos globales**: los suyos se declaran en
@@ -3250,6 +3250,52 @@ La lección **no cita ningún libro**: McKinney no trata el modelo de objetos y
 ningún texto con índice verificado lo hace. Queda como decisión abierta traer la
 documentación oficial de Python como fuente verificada, que dejaría a las
 catorce nuevas citando capítulo y sección.
+
+---
+
+### 3.56 Python 18: el coste, contado en llamadas (22-09-2026)
+
+Segunda de la tanda nueva, y la que cierra el bloque de lenguaje que empezó la
+17.
+
+> **18.2**: `@d` es exactamente `f = d(f)`.
+> **18.3**: el envoltorio tapa el nombre, la documentación y **la firma**.
+> **18.4**: el decorador corre al definir; el envoltorio, en cada llamada.
+> **18.6**: `@d(x)` es `f = d(x)(f)`, de ahí el tercer nivel.
+> **18.8**: una caché es un diccionario, así que hereda el contrato del hash.
+
+Dos cosas del método merecen quedarse.
+
+#### El coste se mide en llamadas, no en segundos
+
+Sin caché, `fib(25)` ejecuta el cuerpo **$242\,785$ veces**; con caché, **$26$**.
+El cociente es $9337{,}9$ a $1$ y es un número **citable**, porque las llamadas
+no dependen de la máquina y los segundos sí. Es la misma decisión que en ML 36,
+donde el coste de backpropagation se contó en pasadas.
+
+Y el contraste con la librería sigue la misma idea: la caché propia y
+`functools.lru_cache` coinciden en **$23$ aciertos y $26$ fallos**. Comparar
+contadores es más fuerte que comparar relojes.
+
+#### Tres reglas que son una
+
+La Proposición 18.4 dice lo mismo que la 17.8 —el cuerpo de una clase se
+ejecuta una vez— y que los valores por defecto de Python 2: **lo que está en el
+sitio de definir se evalúa al definir**. La lección las pone juntas a propósito,
+para que se recuerden como una sola.
+
+#### Lo que los gates corrigieron, por segunda vez seguida
+
+La lección salió con **una definición y dos demostraciones**, que es el nivel
+flojo que se acababa de criticar en el punto 3.54. Subió a **3 y 4** añadiendo
+la fábrica de decoradores, la memorización y las dos demostraciones que
+faltaban. Conviene anotarlo como patrón: **una lección nueva tiende a salir por
+debajo del molde**, y el recuento de `formato.py` es lo que lo detecta.
+
+Y el visual de las capas cambiaba de tamaño **sin mover ningún marcador**, como
+el retículo de ML 33. Rehecho como el recorrido de la llamada atravesando una
+caja por capa: ahora la función se desplaza al añadir capas, y el dibujo enseña
+mejor lo que pasa.
 
 ---
 
