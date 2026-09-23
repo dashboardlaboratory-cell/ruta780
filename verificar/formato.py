@@ -130,6 +130,7 @@ MIGRADAS = {
     "ml/39-optimizadores.qmd",
     "ml/40-regularizacion-y-dropout.qmd",
     "ml/41-convolucion-y-vision.qmd",
+    "causal/01-resultados-potenciales.qmd",
     "series/01-descomposicion.qmd",
     "series/02-estacionariedad.qmd",
     "series/03-autocorrelacion.qmd",

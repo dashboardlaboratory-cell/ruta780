@@ -39,6 +39,7 @@ MODULOS = {
     "Python": ("Python", "Lección"),
     "ML": ("ML",),
     "Series": ("Series",),
+    "Causal": ("Causal",),
 }
 
 REF = re.compile(

@@ -4173,6 +4173,59 @@ claves desde el punto de inserción. Conviene listar las celdas con su marca
 —enseña, plantilla, comprobación— **antes** de tocar nada, que es lo que se hizo
 a partir de la segunda.
 
+### 3.77 ML 38–41: el bloque de aprendizaje profundo, cerrado (23-09-2026)
+
+Cuatro lecciones seguidas, el módulo de ML en **41 de 90** publicadas.
+
+**ML 38, Inicialización y funciones de activación (L2, ESL §11.5).** Separa dos
+problemas que suelen contarse juntos: **romper la simetría** y **elegir la
+escala**. Arrancar con todos los pesos iguales deja 1 valor distinto de 6 tras
+200 pasos; arrancar en cero deja el gradiente de la primera capa **exactamente
+en cero**. La escala sale de que la varianza se multiplica por $n\cdot s^2$ por
+capa: con $n=100$ y doce capas, $s$ igual a 0,05, 0,10 y 0,15 dejan la señal en
+0,0002, 0,96 y 124. Con una activación que anula la mitad hace falta
+$\sqrt{2/n}$: 0,008986 contra 0,575105. Y 148 unidades de 200 nacen muertas con
+sesgos de media −4.
+
+El primer borrador afirmaba que el gradiente medido en la primera capa quedaba
+por debajo de la cota $0{,}25^{L}$. **La comprobación devolvió falso**, porque
+esa cota acota solo el producto de las derivadas y la vuelta incluye además las
+matrices de pesos. Se sustituyó por el factor de decaimiento medido, que sale
+0,2512, 0,2305 y 0,2365 con 4, 8 y 12 capas, y la lección dice por qué las dos
+cantidades no son comparables.
+
+**ML 39, Optimizadores (L3, MML §7.1).** Todo medido sobre cuadráticas de
+espectro conocido, para **comprobar cada cota contra una fórmula** en lugar de
+ilustrarla: el error del paso fijo es exactamente $(I-\eta A)^k$; el paso óptimo
+da 404 pasos y el impulso, resuelto con su matriz compañera de 2×2, 79. El salto
+de lote 80 a 320 midió 16,84 donde yo esperaba 4, y resultó que lo predice la
+corrección por población finita $(N-m)/(N-1)$: 16,00. Y la corrección de sesgo
+de Adam **reduce** el primer paso en 3,1623, que es lo contrario de lo que yo
+había escrito antes de medirlo.
+
+**ML 40, Regularización y dropout (L3, ESL §3.4 · §7.6).** El hallazgo que
+ordena la lección es que penalizar por la norma **desplaza todo el espectro** en
+$\alpha$: con $\alpha=10$, $\kappa$ baja de 40 a 2,86 y el descenso pasa de 383
+pasos a 23. El arreglo del sobreajuste y el del condicionamiento son el mismo
+hecho. El dropout se promedia **enumerando las 4096 máscaras** de una capa de 12
+en lugar de simularlas, y sobre un modelo lineal resulta ser exactamente una
+ridge con penalización por columna: con columnas ortogonales encoge todo por
+$1-p$, y por eso sus predicciones no cambian al reescalar una columna (< 1e-12)
+mientras las de la ridge corriente cambian en 0,2497.
+
+**ML 41, Convolución y visión (L3, ISLP §10.3).** El índice prometía **fast.ai**,
+que no está en `indices.json` y por tanto no es citable (regla 3); se cita ISLP
+§10.3 y sus cuatro subsecciones y la columna del índice pasa a ISLP 10. La
+lección escribe la **matriz equivalente** de una convolución —340 entradas, 4
+números libres— y mide el campo receptivo **contando entradas no nulas del
+producto de matrices**, no aplicando la fórmula. El pooling se mide enumerando
+todos los desplazamientos: 4 de 16 con celda 2×2, que es exactamente el área que
+se tira.
+
+**Lo que costó esta tanda:** ML 39 pasó los siete gates con las dos versiones y
+el CI la rechazó. La causa está en el §5: el runner es un tercer entorno.
+
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
@@ -4502,6 +4555,42 @@ dos controles de Python 19 que no movían el dibujo (regla 19b): `rl-q` y `pu-c`
 cambiaban el texto de la lectura y nada más. **Un gate en segundo plano se
 comprueba abriendo su archivo de salida, no por el código de salida de la
 tubería que lo envuelve.**
+
+**El CI es un tercer entorno, no una de las dos versiones que se comparan
+(23-09-2026).** La disciplina de la plataforma es correr cada celda con el
+Python de la máquina (3.8.8, numpy 1.24.4) y con el de `/tmp/ci-venv` (3.14.4,
+numpy 2.5.3) y exigir que las salidas sean idénticas. ML 39 pasó las dos y el
+CI la rechazó en `salidas.py`.
+
+`.github/workflows/publish.yml` usa `actions/setup-python` con **3.12** sobre
+**ubuntu-latest**: otra versión y, sobre todo, **otra BLAS**. Las dos versiones
+que se comparan corren las dos sobre macOS y comparten Accelerate, así que un
+número que dependa del orden de las sumas de un `dot` pasa las dos y falla en
+el runner.
+
+Lo que fallaba eran dos líneas que imprimían una diferencia del orden de 1e-15
+entre dos formas de calcular lo mismo, declaradas en `afirmaciones.json`. Es la
+regla 7, y las otras 34 afirmaciones de ese tipo en la plataforma ya la
+cumplían: imprimen `por debajo de 1e-12 : True` en lugar del número.
+
+**La regla:** una diferencia entre dos cuentas que deberían coincidir **no se
+imprime nunca**; se imprime si cae por debajo de una cota. Para auditar lo que
+ya está declarado:
+
+```python
+import json, re
+d = json.load(open("verificar/afirmaciones.json"))
+pat = re.compile(r"\d\.?\d*e-(1[2-9]|[2-9]\d)")
+for lec, celdas in d.items():
+    for c, v in celdas.items():
+        for s in v.get("contiene", []):
+            if pat.search(s):
+                print(lec, c, s.strip()[:78])
+```
+
+Cuando el CI falla, `https://api.github.com/repos/<owner>/<repo>/actions/runs/<id>/jobs`
+dice **qué paso** cayó sin necesidad de token; los logs completos devuelven 403.
+
 
 ## 6. Decisiones pendientes
 
