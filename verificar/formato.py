@@ -136,6 +136,7 @@ MIGRADAS = {
     "causal/17-double-machine-learning.qmd",
     "causal/18-r-learner-y-r-score.qmd",
     "causal/19-arboles-causales.qmd",
+    "causal/21-evaluacion-de-politicas.qmd",
     "series/01-descomposicion.qmd",
     "series/02-estacionariedad.qmd",
     "series/03-autocorrelacion.qmd",

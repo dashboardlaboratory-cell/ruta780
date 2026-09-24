@@ -4620,6 +4620,36 @@ el estimador no existe, que es la forma más corta de explicar por qué hace
 falta cross-fitting.
 
 
+**El gate de salidas ya tarda más de diez minutos (24-09-2026).** Las lecciones
+causales traen celdas caras —vecinos más cercanos sobre miles de unidades,
+bosques honestos repetidos sobre docenas de muestras— y `salidas.py` ejecuta
+**cada celda en cada build**, local y en el CI.
+
+Medido con las 21 celdas del bloque causal 16 a 21:
+
+```
+c21_2   181,7 s   antes de reducir
+c16_1    48,3 s
+c18_3    38,1 s
+c17_2    28,5 s
+total    415 s -> 270 s
+```
+
+**Lo que NO funcionó:** cachear el orden de vecinos. El orden no depende de `k`,
+así que parecía gratis calcularlo una vez, pero (1) la clave con `id()` **no es
+segura**, porque Python reutiliza identificadores al liberar un array, y la
+salida cambió en tres líneas, y (2) no aceleraba, porque el coste dominante son
+los `argsort` de los bucles, cada uno sobre arrays distintos.
+
+**Lo que sí:** bajar `n`. El coste de un k-NN va como $n^2\log n$, así que pasar
+de 5000 a 2500 lo divide por más de cuatro: 181,7 s a 34,2 s. Cambia los números
+de la celda, y hay que corregir la prosa y las afirmaciones, que en Causal 21
+fueron cinco sitios.
+
+**La regla para las celdas nuevas:** ninguna por encima de **30 s**. Si una lo
+pasa, el primer sitio donde mirar es el tamaño de muestra, no el algoritmo.
+
+
 ## 6. Decisiones pendientes
 
 - ~~**Qué trata Estadística 25.**~~ **Resuelto el 13-09-2026.** Estaba planeada

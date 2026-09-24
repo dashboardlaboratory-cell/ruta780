@@ -1,0 +1,935 @@
+---
+title: "Evaluación de políticas: el estimador doblemente robusto"
+subtitle: "Inferencia causal · Lección 21"
+nivel: L3
+modulo: causal
+fase: F5
+prereqs: [causal/19-arboles-causales, causal/18-r-learner-y-r-score, causal/01-resultados-potenciales]
+siguientes: []
+libro: "Facure, cap. 12 Doubly Robust Estimation · cap. 20 Plug-and-Play Estimators"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="causal/21-evaluacion-de-politicas"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F5]{.item}
+[**Libro** Facure 12 · 20]{.item}
+[**Prereqs** [Árboles causales](19-arboles-causales.qmd) · [R-learner y R-score](18-r-learner-y-r-score.qmd) · [Resultados potenciales](01-resultados-potenciales.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Escribir los tres estimadores** del valor de una política y comprobar que los tres aciertan cuando todo está bien.
+2. **Medir que el doblemente robusto es el más preciso**: error típico **0,0495** contra 0,0715 del IPW, un 31 % menos.
+3. **Demostrar la doble robustez** con la tabla de 2×2: el DR acierta en **tres** de las cuatro combinaciones y falla solo cuando las dos piezas están rotas.
+4. **Exhibir por qué hace falta cross-fitting**: con el vecino más cercano dentro de la muestra, el residuo vale **exactamente cero** y la corrección desaparece.
+5. **Medir dónde importa de verdad**: en un experimento apenas, y con la propensión estimada el sesgo se divide por **5**.
+6. **Evaluar políticas con más de dos tratamientos**, que es la misma fórmula sin cambiar de forma.
+7. **Decidir si personalizar paga**: la diferencia vale **0,5422**, es decir **10,76 errores típicos**.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Causal 01**: el valor de una política, que allí se definió y aquí se estima.
+- **Causal 19**: el $\hat\tau(x)$ que produce la regla a evaluar.
+- **Causal 18**: el R-score, que ordena modelos; esto ordena **políticas**.
+- **Causal 17**: el cross-fitting, que aquí vuelve por la misma razón.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Causal 20**: la curva de ganancia, que es esto mismo para una familia de umbrales.
+- **Causal 22**: de la estimación al dinero, que necesita este error típico.
+- **Causal 07**: el diseño multi-brazo, que es el experimento que alimenta la Sección 4.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $\pi(x)$ | pi de equis | La política: qué tratamiento recibe cada unidad |
+| $V(\pi)$ | uve de pi | El valor de la política, $E[Y(\pi(X))]$ |
+| $\mu(x,t)$ | mu de equis y te | El resultado esperado de la unidad $x$ bajo el brazo $t$ |
+| $p(t)$ | pe de te | La probabilidad de recibir el brazo $t$ |
+| $\mathbb{1}\{T=\pi\}$ | indicador | Vale 1 si la unidad recibió lo que la política manda |
+:::
+
+## 1. Tres formas de estimar el valor de una política
+
+::: {.definicion}
+**Definición 21.1 ([valor de una política]{.g}).** $V(\pi)=E[Y(\pi(X))]$: lo que se obtendría en promedio si a cada unidad se le diera el tratamiento que $\pi$ le asigna. Es una cantidad **contrafactual**: casi ninguna unidad recibió lo que $\pi$ manda.
+:::
+
+::: {.definicion}
+**Definición 21.2 (los tres estimadores).** El **directo** promedia lo que predice el modelo del resultado, $\frac1n\sum\hat\mu(X_i,\pi(X_i))$. El **[IPW]{.g}** usa solo las unidades que coincidieron, pesadas por el inverso de su probabilidad, $\frac1n\sum\frac{\mathbb{1}\{T_i=\pi(X_i)\}}{p(T_i)}Y_i$. El **[estimador doblemente robusto]{.g}** suma los dos: la predicción más una corrección que solo usan las que coinciden,
+$$\hat V_{\text{DR}}(\pi)=\frac1n\sum_i\Bigl[\hat\mu(X_i,\pi(X_i))+\frac{\mathbb{1}\{T_i=\pi(X_i)\}}{p(T_i)}\bigl(Y_i-\hat\mu(X_i,T_i)\bigr)\Bigr].$$
+:::
+
+::: {.proposicion}
+**Proposición 21.3 (el DR es el más preciso de los tres).** Sobre cuatro políticas, el error típico del DR vale **0,0495, 0,0622, 0,0586 y 0,0584** frente a 0,0715, 0,0954, 0,0922 y 0,0929 del IPW: entre un 31 y un 37 % menos.
+:::
+
+::: {.demostracion}
+*Demostración.* El sumando del IPW es $Y_i$ multiplicado por un peso; el del DR es $\hat\mu$ más un **residuo** multiplicado por ese peso, y el residuo tiene mucha menos varianza que $Y$. La celda calcula los dos con los propios sumandos. Además, el IPW descarta las unidades que no coincidieron —alrededor de la mitad en las cuatro políticas— mientras que el DR las usa a través de $\hat\mu$. ∎
+:::
+
+**Modo de falla.** El IPW se vuelve inestable cuando alguna probabilidad es pequeña, porque su peso es el inverso: una unidad con $p=0{,}01$ pesa cien veces más que las demás y la estimación entera acaba dependiendo de un puñado de filas. El síntoma es un error típico que salta al cambiar la semilla o al añadir datos. La defensa es mirar el peso máximo y qué fracción del total se lleva el 1 % de unidades con mayor peso, antes de mirar el resultado.
+
+```{pyodide}
+import numpy as np
+
+# Un experimento con los DOS resultados potenciales conocidos, para poder
+# comparar cada estimador contra la verdad.
+def poblacion(n, semilla, p=0.5):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 3))
+    y0 = 5.0 + 2.0 * X[:, 0] - 1.5 * X[:, 1] ** 2
+    tau = 1.0 + 1.5 * X[:, 0]
+    y1 = y0 + tau
+    T = (rng.random(n) < p).astype(int)
+    ruido = 0.7 * rng.standard_normal(n)
+    Y = np.where(T == 1, y1, y0) + ruido
+    return X, T, Y, y0 + ruido, y1 + ruido, tau
+
+X, T, Y, Y0, Y1, tau = poblacion(6000, 210)
+P = 0.5
+
+def valor_real(pi):
+    """Solo se puede calcular en una simulacion."""
+    return float(np.mean(np.where(pi == 1, Y1, Y0)))
+
+politicas = {
+    "no tratar a nadie": np.zeros(len(Y), dtype=int),
+    "tratar a todos": np.ones(len(Y), dtype=int),
+    "tratar si X0 > 0": (X[:, 0] > 0).astype(int),
+    "tratar si el efecto > 0": (tau > 0).astype(int),
+}
+
+# --- los tres estimadores ---
+def mu_gorro(X, T, Y, roto=0.0):
+    """El modelo del resultado, por brazo. Con roto > 0 se le estropea."""
+    out = {}
+    for t in (0, 1):
+        m = T == t
+        C = np.column_stack([np.ones(m.sum()), X[m]])
+        b = np.linalg.lstsq(C, Y[m], rcond=None)[0]
+        Ct = np.column_stack([np.ones(len(Y)), X])
+        out[t] = Ct.dot(b) + roto
+    return out
+
+def directo(pi, mu):
+    """Predecir y promediar: no mira Y salvo a traves del modelo."""
+    return float(np.mean(np.where(pi == 1, mu[1], mu[0])))
+
+def ipw(pi, T, Y, p):
+    """Solo usa las unidades cuyo tratamiento coincide con la politica."""
+    coincide = (T == pi).astype(float)
+    pt = np.where(T == 1, p, 1 - p)
+    return float(np.mean(coincide / pt * Y))
+
+def dr(pi, T, Y, mu, p):
+    """La prediccion mas una correccion que solo usan las que coinciden."""
+    coincide = (T == pi).astype(float)
+    pt = np.where(T == 1, p, 1 - p)
+    mu_pi = np.where(pi == 1, mu[1], mu[0])
+    mu_T = np.where(T == 1, mu[1], mu[0])
+    return float(np.mean(mu_pi + coincide / pt * (Y - mu_T)))
+
+mu = mu_gorro(X, T, Y)
+print("el valor de cuatro politicas, por tres caminos")
+print("  %-26s %12s %12s %12s %12s"
+      % ("politica", "verdad", "directo", "IPW", "DR"))
+for nombre, pi in politicas.items():
+    print("  %-26s %12.4f %12.4f %12.4f %12.4f"
+          % (nombre, valor_real(pi), directo(pi, mu), ipw(pi, T, Y, P), dr(pi, T, Y, mu, P)))
+print()
+print("los tres aciertan aqui porque el modelo del resultado es correcto")
+print("—la linea base es lineal en X salvo un termino en X1 al cuadrado—")
+print("y la propension se conoce por diseño. La diferencia aparece cuando")
+print("uno de los dos falla, que es la seccion siguiente")
+print()
+
+print("lo que cada estimador usa")
+print("  %-12s %14s %16s %16s" % ("estimador", "modelo de Y", "propension", "unidades que usa"))
+print("  %-12s %14s %16s %16s" % ("directo", "si", "no", "todas"))
+print("  %-12s %14s %16s %16s" % ("IPW", "no", "si", "las que coinciden"))
+print("  %-12s %14s %16s %16s" % ("DR", "si", "si", "todas"))
+print()
+coinc = {n: float(np.mean(T == pi)) for n, pi in politicas.items()}
+print("  y cuantas coinciden con cada politica")
+for n, v in coinc.items():
+    print("    %-26s %8.4f" % (n, v))
+print()
+print("«tratar si el efecto > 0» solo coincide con el tratamiento real en")
+print("el %.0f %% de las unidades: el IPW tira la otra mitad y por eso su"
+      % (100 * coinc["tratar si el efecto > 0"]))
+print("error tipico es mayor")
+print()
+
+print("los errores tipicos, calculados con los propios sumandos")
+print("  %-26s %14s %14s" % ("politica", "IPW", "DR"))
+for nombre, pi in politicas.items():
+    coincide = (T == pi).astype(float)
+    pt = np.where(T == 1, P, 1 - P)
+    s_ipw = coincide / pt * Y
+    mu_pi = np.where(pi == 1, mu[1], mu[0])
+    mu_T = np.where(T == 1, mu[1], mu[0])
+    s_dr = mu_pi + coincide / pt * (Y - mu_T)
+    n = len(Y)
+    print("  %-26s %14.4f %14.4f"
+          % (nombre, float(np.std(s_ipw, ddof=1) / np.sqrt(n)),
+             float(np.std(s_dr, ddof=1) / np.sqrt(n))))
+print()
+print("el DR tiene el error tipico mas pequeño en las cuatro: la")
+print("correccion solo lleva el RESIDUO, que es mucho mas pequeño que Y")
+```
+
+## 2. La doble robustez
+
+::: {.proposicion}
+**Proposición 21.4 (basta con que una de las dos piezas esté bien).** Con la asignación dependiente de $X$ y la propensión entre 0,008 y 0,995, los errores del DR en las cuatro combinaciones son **−0,0048, −0,0090, −0,0342 y +0,2513**: acierta en las tres primeras y falla solo cuando el modelo del resultado **y** la propensión están rotos a la vez.
+:::
+
+::: {.demostracion}
+*Demostración.* Escribiendo el sumando como $\hat\mu_\pi+\frac{\mathbb{1}}{\hat p}(Y-\hat\mu_T)$ y tomando esperanza, si $\hat\mu$ es correcto el segundo término tiene media cero sea cual sea $\hat p$; y si $\hat p$ es correcto, el peso $\mathbb{1}/\hat p$ corrige exactamente el sesgo de $\hat\mu$ sea cual sea éste. La celda tabula las cuatro filas para los tres estimadores: el directo depende solo del modelo de $Y$ —sus filas se repiten por parejas— y el IPW solo de la propensión. ∎
+:::
+
+::: {.proposicion}
+**Proposición 21.5 (dónde está el trabajo en cada caso).** Con el modelo del resultado roto y la propensión bien, la predicción da **4,3136** y la corrección aporta **+0,2348**, que es casi exactamente lo que falta para llegar a 4,5826.
+:::
+
+::: {.demostracion}
+*Demostración.* La celda descompone el estimador en sus dos términos. **Cuando el modelo de $Y$ es bueno la corrección vale casi cero y el DR se parece al directo; cuando es malo, la corrección hace todo el trabajo.** Es el mismo estimador en los dos casos: lo que cambia es de dónde sale el número. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# Ahora la asignacion NO es al azar: depende de X. Asi la propension deja
+# de ser trivial y se puede romper una u otra pieza.
+def poblacion(n, semilla):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 3))
+    y0 = 5.0 + 2.0 * X[:, 0] - 1.5 * X[:, 1] ** 2
+    tau = 1.0 + 1.5 * X[:, 0]
+    e = 1.0 / (1.0 + np.exp(-(1.2 * X[:, 0] - 0.8 * X[:, 1])))
+    T = (rng.random(n) < e).astype(int)
+    ruido = 0.7 * rng.standard_normal(n)
+    return X, T, np.where(T == 1, y0 + tau, y0) + ruido, y0 + ruido, y0 + tau + ruido, e
+
+X, T, Y, Y0, Y1, e_real = poblacion(8000, 211)
+pi = (X[:, 0] > 0).astype(int)                 # la politica a evaluar
+V = float(np.mean(np.where(pi == 1, Y1, Y0)))  # su valor verdadero
+
+def ajusta(A, b):
+    return np.linalg.lstsq(A, b, rcond=None)[0]
+
+def mu_bien(X, T, Y):
+    """Incluye X1 al cuadrado, que es como se genero la linea base."""
+    out = {}
+    Z = np.column_stack([X, X[:, 1] ** 2])
+    for t in (0, 1):
+        m = T == t
+        b = ajusta(np.column_stack([np.ones(m.sum()), Z[m]]), Y[m])
+        out[t] = np.column_stack([np.ones(len(Y)), Z]).dot(b)
+    return out
+
+def mu_mal(X, T, Y):
+    """Solo una constante: el modelo mas pobre posible."""
+    return {t: np.full(len(Y), float(np.mean(Y[T == t]))) for t in (0, 1)}
+
+def e_bien(X, T):
+    """Regresion logistica a mano, por Newton, sobre las X correctas."""
+    Z = np.column_stack([np.ones(len(T)), X])
+    b = np.zeros(Z.shape[1])
+    for _ in range(25):
+        p = 1.0 / (1.0 + np.exp(-Z.dot(b)))
+        W = p * (1 - p) + 1e-9
+        b = b + np.linalg.solve(Z.T.dot(Z * W[:, None]), Z.T.dot(T - p))
+    return np.clip(1.0 / (1.0 + np.exp(-Z.dot(b))), 0.02, 0.98)
+
+def e_mal(X, T):
+    """Suponer que fue un experimento cuando no lo fue."""
+    return np.full(len(T), 0.5)
+
+def directo(pi, mu):
+    return float(np.mean(np.where(pi == 1, mu[1], mu[0])))
+
+def ipw(pi, T, Y, e):
+    pt = np.where(T == 1, e, 1 - e)
+    return float(np.mean((T == pi) / pt * Y))
+
+def dr(pi, T, Y, mu, e):
+    pt = np.where(T == 1, e, 1 - e)
+    mu_pi = np.where(pi == 1, mu[1], mu[0])
+    mu_T = np.where(T == 1, mu[1], mu[0])
+    return float(np.mean(mu_pi + (T == pi) / pt * (Y - mu_T)))
+
+print("la propension de verdad va de %.3f a %.3f: no es un experimento"
+      % (float(e_real.min()), float(e_real.max())))
+print("  valor verdadero de la politica : %.4f" % V)
+print()
+print("las cuatro combinaciones de piezas rotas y sanas")
+print("  %-12s %-12s %12s %12s %12s"
+      % ("modelo de Y", "propension", "directo", "IPW", "DR"))
+for nm, fmu in (("bien", mu_bien), ("ROTO", mu_mal)):
+    for ne, fe in (("bien", e_bien), ("ROTO", e_mal)):
+        mu = fmu(X, T, Y); ee = fe(X, T)
+        print("  %-12s %-12s %12.4f %12.4f %12.4f"
+              % (nm, ne, directo(pi, mu), ipw(pi, T, Y, ee), dr(pi, T, Y, mu, ee)))
+print("  %-12s %-12s %12.4f %12.4f %12.4f" % ("la verdad", "", V, V, V))
+print()
+print("el DR acierta en las TRES primeras filas y solo falla cuando las")
+print("dos piezas estan rotas a la vez. Esa es la doble robustez: basta")
+print("con que UNA de las dos este bien")
+print()
+
+print("el error de cada estimador en cada fila")
+print("  %-12s %-12s %12s %12s %12s"
+      % ("modelo de Y", "propension", "directo", "IPW", "DR"))
+for nm, fmu in (("bien", mu_bien), ("ROTO", mu_mal)):
+    for ne, fe in (("bien", e_bien), ("ROTO", e_mal)):
+        mu = fmu(X, T, Y); ee = fe(X, T)
+        print("  %-12s %-12s %12.4f %12.4f %12.4f"
+              % (nm, ne, directo(pi, mu) - V, ipw(pi, T, Y, ee) - V, dr(pi, T, Y, mu, ee) - V))
+print()
+print("el directo depende SOLO del modelo de Y: sus dos filas de arriba")
+print("son iguales y las dos de abajo tambien. El IPW depende solo de la")
+print("propension: sus columnas se repiten por parejas verticales. El DR")
+print("es el unico que mezcla los dos y sobrevive si uno aguanta")
+print()
+
+print("por que funciona, en una linea por termino")
+mu = mu_mal(X, T, Y); ee = e_bien(X, T)
+pt = np.where(T == 1, ee, 1 - ee)
+mu_pi = np.where(pi == 1, mu[1], mu[0])
+mu_T = np.where(T == 1, mu[1], mu[0])
+print("  con el modelo de Y roto y la propension bien:")
+print("    media de la prediccion mu(X, pi)      : %.4f" % float(np.mean(mu_pi)))
+print("    media de la correccion                : %.4f"
+      % float(np.mean((T == pi) / pt * (Y - mu_T))))
+print("    suma                                  : %.4f" % dr(pi, T, Y, mu, ee))
+print("    verdad                                : %.4f" % V)
+print()
+print("la prediccion se queda corta en %.4f y la correccion aporta %.4f:"
+      % (V - float(np.mean(mu_pi)), float(np.mean((T == pi) / pt * (Y - mu_T)))))
+print("casi exactamente esa cantidad. Cuando el modelo de Y es bueno la")
+print("correccion vale casi cero y el DR se parece al directo; cuando es")
+print("malo, la correccion hace todo el trabajo")
+```
+
+```{=html}
+<div class="viz-dr">
+  <div class="controles">
+    <label>Modelo del resultado <input id="dr-m" type="range" min="0" max="1" step="0.05" value="1"> <span id="dr-m-v">bien</span></label>
+    <label>Propensión <input id="dr-p" type="range" min="0" max="1" step="0.05" value="1"> <span id="dr-p-v">bien</span></label>
+  </div>
+  <svg id="dr-svg" viewBox="0 0 660 270" role="img" aria-label="El error de los tres estimadores del valor de una política según lo buenas que sean las dos funciones auxiliares."></svg>
+  <p class="lectura" id="dr-lectura"></p>
+</div>
+<style>
+.viz-dr { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-dr .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-dr label { display: flex; align-items: center; gap: .4rem; }
+.viz-dr input[type=range] { width: 150px; padding: 0; }
+.viz-dr svg { width: 100%; height: auto; display: block; }
+.viz-dr .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("dr-svg"), lec = document.getElementById("dr-lectura");
+  var cm = document.getElementById("dr-m"), cp = document.getElementById("dr-p");
+  var em = document.getElementById("dr-m-v"), ep = document.getElementById("dr-p-v");
+  // los errores medidos en las cuatro esquinas de la tabla
+  var E = {                       // [directo, IPW, DR]
+    "11": [-0.0059, -0.0421, -0.0048],   // mu bien, e bien
+    "10": [-0.0059,  1.7707, -0.0090],   // mu bien, e roto
+    "01": [-0.2690, -0.0421, -0.0342],   // mu roto, e bien
+    "00": [-0.2690,  1.7707,  0.2513]    // mu roto, e roto
+  };
+  var X0 = 172, X1 = 624, Y0 = 44, Y1 = 176;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function interp(a, b, w) { return a * (1 - w) + b * w; }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var wm = +cm.value, wp = +cp.value;
+    em.textContent = wm > 0.75 ? "bien" : (wm < 0.25 ? "ROTO" : "a medias");
+    ep.textContent = wp > 0.75 ? "bien" : (wp < 0.25 ? "ROTO" : "a medias");
+    // interpolacion bilineal entre las cuatro esquinas medidas
+    var v = [0, 1, 2].map(function (i) {
+      var abajo = interp(E["00"][i], E["10"][i], wp);
+      var arriba = interp(E["01"][i], E["11"][i], wp);
+      return interp(abajo, arriba, wm);
+    });
+    var LO = -0.45, HI = 1.95;
+    function px(z) { return X0 + (Math.max(LO, Math.min(HI, z)) - LO) * (X1 - X0) / (HI - LO); }
+
+    svg.appendChild(el("path", { d: "M" + px(0).toFixed(1) + " " + (Y0 - 14) + " L" + px(0).toFixed(1) + " " + (Y1 + 22),
+      stroke: C_T, "stroke-width": 2 }));
+    svg.appendChild(el("text", { x: px(0).toFixed(1), y: Y0 - 20, "text-anchor": "middle", "font-size": 10.5, fill: C_T }, "sin error"));
+    var nom = ["directo", "IPW", "DR"];
+    for (var i = 0; i < 3; i++) {
+      var y = Y0 + i * 52;
+      svg.appendChild(el("path", { d: "M" + X0 + " " + y + " L" + X1 + " " + y, stroke: C_L, "stroke-width": 1 }));
+      var bien = Math.abs(v[i]) < 0.06;
+      svg.appendChild(el("path", { d: "M" + px(0).toFixed(1) + " " + y + " L" + px(v[i]).toFixed(1) + " " + y,
+        stroke: bien ? C_A : C_B, "stroke-width": 10, opacity: .4 }));
+      svg.appendChild(el("circle", { cx: px(v[i]).toFixed(1), cy: y, r: 7.5, fill: bien ? C_A : C_B }));
+      svg.appendChild(el("text", { x: X0 - 14, y: y + 4, "text-anchor": "end", "font-size": 12, fill: C_T }, nom[i]));
+      svg.appendChild(el("text", { x: px(v[i]) + (v[i] >= 0 ? 14 : -14), y: y + 4,
+        "text-anchor": v[i] >= 0 ? "start" : "end", "font-size": 11, fill: C_T, opacity: .8 },
+        (v[i] >= 0 ? "+" : "") + v[i].toFixed(4)));
+    }
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 48, "text-anchor": "middle", "font-size": 10.5,
+      fill: C_T, opacity: .75 }, "error del valor estimado de la política"));
+
+    var sanas = (wm > 0.75 ? 1 : 0) + (wp > 0.75 ? 1 : 0);
+    lec.innerHTML = "Con el modelo del resultado <strong>" + em.textContent + "</strong> y la propensión <strong>" +
+      ep.textContent + "</strong>, el error del estimador directo es <strong>" + v[0].toFixed(4) +
+      "</strong>, el del IPW <strong>" + v[1].toFixed(4) + "</strong> y el del doblemente robusto <strong>" +
+      v[2].toFixed(4) + "</strong>. " +
+      (sanas >= 1
+        ? "Basta con que <strong>una</strong> de las dos piezas esté bien para que el DR acierte, y aquí lo está."
+        : "Con las <strong>dos</strong> rotas el DR también falla: la doble robustez pide una, no ninguna.") +
+      " El directo solo mira la fila —depende del modelo de Y y nada más— y el IPW solo la columna. El DR es el único que usa las dos y sobrevive si una aguanta. " +
+      "Los cuatro extremos son lo que la celda midió; lo de en medio es la interpolación entre ellos.";
+  }
+  cm.addEventListener("input", dibujar); cp.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Por qué el modelo del resultado va con cross-fitting
+
+::: {.proposicion}
+**Proposición 21.6 (con el vecino más cercano en la propia muestra, la corrección desaparece).** Con $k=1$ y predicción dentro de la muestra, cada unidad es su propio vecino: el residuo medio vale **exactamente 0,0000** y el DR se reduce al estimador directo, que es justo el que se quería corregir. Con cross-fitting el residuo vale 0,8330.
+:::
+
+::: {.demostracion}
+*Demostración.* $\hat\mu(X_i,T_i)=Y_i$ por construcción, luego $Y_i-\hat\mu(X_i,T_i)=0$ y el término de corrección se anula para todas las unidades. La celda lo mide para cuatro flexibilidades. ∎
+:::
+
+::: {.proposicion}
+**Proposición 21.7 (en un experimento importa poco; con la propensión estimada, mucho).** Con la propensión exacta por diseño, el sesgo vale **+0,0122** dentro de la muestra y **+0,0021** con cross-fitting. Estimando también la propensión, pasa a **+0,0227** y **+0,0050**: el sesgo se divide por **5**.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Proposición 21.4, con $\hat p$ exacto el DR ya es insesgado aunque $\hat\mu$ sea malo, de modo que el sobreajuste de $\hat\mu$ solo puede dañar por el camino extremo de la Proposición 21.6. Cuando **las dos** piezas se estiman, el sobreajuste de cada una entra en el producto que la Lección 17 acotó. La celda mide las dos situaciones con diez muestras cada una. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# La funcion que se usa en la practica ajusta el modelo del resultado con
+# CROSS-FITTING. Aqui se mide por que.
+def poblacion(n, semilla):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 2))
+    y0 = 5.0 + 2.0 * np.sin(2.0 * X[:, 0]) - 1.5 * X[:, 1] ** 2
+    tau = 1.0 + 1.5 * X[:, 0]
+    T = (rng.random(n) < 0.5).astype(int)
+    ruido = 0.7 * rng.standard_normal(n)
+    return X, T, np.where(T == 1, y0 + tau, y0) + ruido, y0 + ruido, y0 + tau + ruido
+
+# el modelo del resultado, escrito a mano: la media de los k vecinos
+# dentro de cada brazo. Determinista y con la flexibilidad en un mando.
+def vecinos(Xa, Xb, k):
+    d2 = (np.sum(Xb * Xb, 1)[:, None] + np.sum(Xa * Xa, 1)[None, :] - 2.0 * Xb.dot(Xa.T))
+    return np.argsort(d2, axis=1, kind="stable")[:, :k]
+
+def mu_dentro(X, T, Y, k):
+    """Ajustar y predecir con las mismas unidades."""
+    out = {}
+    for t in (0, 1):
+        m = T == t
+        out[t] = Y[m][vecinos(X[m], X, k)].mean(1)
+    return out
+
+def mu_cruzado(X, T, Y, k, pliegues=5):
+    """Los vecinos de cada unidad se buscan fuera de su pliegue."""
+    n = len(Y)
+    pl = np.arange(n) % pliegues
+    out = {t: np.zeros(n) for t in (0, 1)}
+    for f in range(pliegues):
+        ent, fue = pl != f, pl == f
+        for t in (0, 1):
+            m = ent & (T == t)
+            out[t][fue] = Y[m][vecinos(X[m], X[fue], k)].mean(1)
+    return out
+
+def dr(pi, T, Y, mu, p=0.5):
+    pt = np.where(T == 1, p, 1 - p)
+    mu_pi = np.where(pi == 1, mu[1], mu[0])
+    mu_T = np.where(T == 1, mu[1], mu[0])
+    s = mu_pi + (T == pi) / pt * (Y - mu_T)
+    return float(np.mean(s)), float(np.std(s, ddof=1) / np.sqrt(len(s)))
+
+X, T, Y, Y0, Y1 = poblacion(2500, 212)
+pi = (X[:, 0] > 0).astype(int)
+V = float(np.mean(np.where(pi == 1, Y1, Y0)))
+print("el valor verdadero de la politica : %.4f" % V)
+print()
+print("  %-8s %14s %14s %16s %16s"
+      % ("vecinos", "DR dentro", "DR cruzado", "|residuo| dentro", "|residuo| cruz."))
+for k in (1, 5, 25, 150):
+    md, mc = mu_dentro(X, T, Y, k), mu_cruzado(X, T, Y, k)
+    a, _ = dr(pi, T, Y, md)
+    b, _ = dr(pi, T, Y, mc)
+    rd = float(np.mean(np.abs(Y - np.where(T == 1, md[1], md[0]))))
+    rc = float(np.mean(np.abs(Y - np.where(T == 1, mc[1], mc[0]))))
+    print("  %-8d %14.4f %14.4f %16.4f %16.4f" % (k, a, b, rd, rc))
+print("  %-8s %14.4f %14.4f" % ("verdad", V, V))
+print()
+print("con k = 1 y dentro de la muestra, cada unidad es su propio vecino:")
+print("el residuo Y - mu vale EXACTAMENTE cero, la correccion desaparece")
+print("y el DR se reduce al estimador directo, que es el que se queria")
+print("corregir. El cruzado no tiene ese problema")
+print()
+
+print("y el sesgo, promediado sobre 10 muestras, con k = 5")
+sd, sc = [], []
+for s in range(10):
+    Xa, Ta, Ya, a0, a1 = poblacion(2500, 300 + s)
+    pa = (Xa[:, 0] > 0).astype(int)
+    Va = float(np.mean(np.where(pa == 1, a1, a0)))
+    sd.append(dr(pa, Ta, Ya, mu_dentro(Xa, Ta, Ya, 5))[0] - Va)
+    sc.append(dr(pa, Ta, Ya, mu_cruzado(Xa, Ta, Ya, 5))[0] - Va)
+sd, sc = np.array(sd), np.array(sc)
+print("  %-22s %14s %14s %14s" % ("modelo del resultado", "sesgo medio", "desv. tipica", "muestras +"))
+print("  %-22s %14.4f %14.4f %14s"
+      % ("dentro de la muestra", float(sd.mean()), float(sd.std()), "%d de 10" % int((sd > 0).sum())))
+print("  %-22s %14.4f %14.4f %14s"
+      % ("con cross-fitting", float(sc.mean()), float(sc.std()), "%d de 10" % int((sc > 0).sum())))
+print()
+print("la diferencia es pequeña, y hay una razon: esto es un EXPERIMENTO.")
+print("La propension vale 0.5 por diseño, exacta, asi que el DR ya es")
+print("insesgado aunque el modelo del resultado sea malo. El cross-fitting")
+print("solo protege de un caso extremo como el de k = 1")
+print()
+
+print("donde si importa: cuando la propension tambien hay que estimarla")
+def pob_obs(n, s):
+    rng = np.random.default_rng(s)
+    Xo = rng.standard_normal((n, 2))
+    y0 = 5.0 + 2.0 * np.sin(2.0 * Xo[:, 0]) - 1.5 * Xo[:, 1] ** 2
+    tau = 1.0 + 1.5 * Xo[:, 0]
+    ee = 1.0 / (1.0 + np.exp(-(1.2 * Xo[:, 0] - 0.8 * Xo[:, 1])))
+    To = (rng.random(n) < ee).astype(int)
+    r = 0.7 * rng.standard_normal(n)
+    return Xo, To, np.where(To == 1, y0 + tau, y0) + r, y0 + r, y0 + tau + r
+
+def e_dentro(Xo, To, k=40):
+    return np.clip(To[vecinos(Xo, Xo, k)].mean(1), 0.03, 0.97)
+
+def e_cruzado(Xo, To, k=40, pliegues=5):
+    n = len(To); pl = np.arange(n) % pliegues; out = np.zeros(n)
+    for f in range(pliegues):
+        ent, fue = pl != f, pl == f
+        out[fue] = To[ent][vecinos(Xo[ent], Xo[fue], k)].mean(1)
+    return np.clip(out, 0.03, 0.97)
+
+def dr_e(pi, To, Yo, mu, ee):
+    pt = np.where(To == 1, ee, 1 - ee)
+    return float(np.mean(np.where(pi == 1, mu[1], mu[0])
+                         + (To == pi) / pt * (Yo - np.where(To == 1, mu[1], mu[0]))))
+
+od, oc = [], []
+for s in range(10):
+    Xo, To, Yo, b0, b1 = pob_obs(2500, 400 + s)
+    po = (Xo[:, 0] > 0).astype(int)
+    Vo = float(np.mean(np.where(po == 1, b1, b0)))
+    od.append(dr_e(po, To, Yo, mu_dentro(Xo, To, Yo, 5), e_dentro(Xo, To)) - Vo)
+    oc.append(dr_e(po, To, Yo, mu_cruzado(Xo, To, Yo, 5), e_cruzado(Xo, To)) - Vo)
+od, oc = np.array(od), np.array(oc)
+print("  %-22s %14s %14s %14s" % ("las dos piezas", "sesgo medio", "desv. tipica", "muestras +"))
+print("  %-22s %14.4f %14.4f %14s"
+      % ("dentro de la muestra", float(od.mean()), float(od.std()), "%d de 10" % int((od > 0).sum())))
+print("  %-22s %14.4f %14.4f %14s"
+      % ("con cross-fitting", float(oc.mean()), float(oc.std()), "%d de 10" % int((oc > 0).sum())))
+print("  el sesgo se divide por %.0f" % (float(od.mean()) / float(oc.mean())))
+print()
+print("es el mismo argumento de la leccion 17, aplicado a otro estimador:")
+print("un modelo que ya vio la unidad predice demasiado bien, el residuo")
+print("sale pequeño y la correccion que deberia salvar al estimador se")
+print("encoge con el")
+```
+
+## 4. Más de dos tratamientos
+
+::: {.proposicion}
+**Proposición 21.8 (el estimador no cambia de forma).** Con cuatro brazos, $\hat V_{\text{DR}}$ se escribe igual: la política asigna un brazo a cada unidad y la corrección la usan las que coinciden. Las seis políticas evaluadas caen dentro de su intervalo al 95 % de la verdad.
+:::
+
+::: {.demostracion}
+*Demostración.* Nada en la fórmula supone dos brazos: $\hat\mu(X_i,\pi(X_i))$ y $p(T_i)$ están definidos para cualquier número de valores de $T$. La celda estima seis políticas sobre un experimento de cuatro brazos y compara cada una con su valor verdadero, conocido por simulación. ∎
+:::
+
+::: {.proposicion}
+**Proposición 21.9 (personalizar gana, y se puede decir cuánto).** La política que da a cada unidad el brazo con mayor resultado predicho vale **5,6984** frente a **5,1563** del mejor brazo único: una diferencia de **0,5422**, que son **10,76 errores típicos**. Usa tres brazos distintos, con el 51,15 %, el 23,34 % y el 25,49 % de las unidades.
+:::
+
+::: {.demostracion}
+*Demostración.* Ninguna política de brazo único puede repartir así, y por eso la personalizada supera a la mejor de ellas. La celda calcula la diferencia y su error típico sumando las varianzas, que **sobrestima** porque los dos estimadores comparten unidades: es una cota conservadora, y aun así la diferencia la supera con holgura. ∎
+:::
+
+**Modo de falla.** La política personalizada se construye con el mismo $\hat\mu$ que después la evalúa, y eso la favorece: el argmax de un modelo ruidoso escoge, para cada unidad, el brazo cuyo ruido apunta hacia arriba. Con cross-fitting el sesgo se reduce pero no desaparece del todo, porque la regla sigue siendo función de los datos. La defensa es construir la política con unos datos y evaluarla con otros, exactamente como se haría con un modelo de predicción.
+
+```{pyodide}
+import numpy as np
+
+# Cuatro brazos, no dos. El estimador no cambia de forma: la politica
+# asigna un brazo a cada unidad y la correccion la usan las que coinciden.
+BRAZOS = 4
+
+def poblacion(n, semilla):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 3))
+    base = 5.0 + 2.0 * X[:, 0] - 1.0 * X[:, 1] ** 2
+    # el efecto de cada brazo depende de una caracteristica distinta
+    efecto = np.column_stack([
+        np.zeros(n),                       # brazo 0: no hacer nada
+        1.2 + 0.0 * X[:, 0],               # brazo 1: sirve a todos por igual
+        0.4 + 1.6 * X[:, 0],               # brazo 2: sirve a los de X0 alto
+        0.4 + 1.6 * X[:, 1],               # brazo 3: sirve a los de X1 alto
+    ])
+    T = rng.integers(0, BRAZOS, n)
+    ruido = 0.7 * rng.standard_normal(n)
+    Y_pot = base[:, None] + efecto + ruido[:, None]
+    return X, T, Y_pot[np.arange(n), T], Y_pot
+
+X, T, Y, Y_pot = poblacion(8000, 213)
+n = len(Y)
+p = np.array([float(np.mean(T == t)) for t in range(BRAZOS)])
+print("un experimento de %d brazos, %d unidades" % (BRAZOS, n))
+print("  reparto : %s" % " ".join("%.4f" % v for v in p))
+print()
+
+def mu_cruzado(X, T, Y, k=40, pliegues=5):
+    """El modelo del resultado de CADA brazo, con cross-fitting.
+       Es lo que hace get_cross_fitted_predictions, con vecinos en lugar
+       de un bosque para que el resultado no dependa de la version."""
+    pl = np.arange(len(Y)) % pliegues
+    out = {t: np.zeros(len(Y)) for t in range(BRAZOS)}
+    for f in range(pliegues):
+        ent, fue = pl != f, pl == f
+        for t in range(BRAZOS):
+            m = ent & (T == t)
+            d2 = (np.sum(X[fue] ** 2, 1)[:, None] + np.sum(X[m] ** 2, 1)[None, :]
+                  - 2.0 * X[fue].dot(X[m].T))
+            idx = np.argsort(d2, axis=1, kind="stable")[:, :k]
+            out[t][fue] = Y[m][idx].mean(1)
+    return out
+
+def evalua(pi, T, Y, mu, p):
+    """El estimador doblemente robusto, multi-brazo, con su error tipico."""
+    mu_pi = np.array([mu[t] for t in range(BRAZOS)])[pi, np.arange(len(Y))]
+    mu_T = np.array([mu[t] for t in range(BRAZOS)])[T, np.arange(len(Y))]
+    s = mu_pi + (T == pi) / p[T] * (Y - mu_T)
+    v = float(np.mean(s)); e = float(np.std(s, ddof=1) / np.sqrt(len(s)))
+    return v, e, v - 1.96 * e, v + 1.96 * e
+
+mu = mu_cruzado(X, T, Y)
+pred = np.array([mu[t] for t in range(BRAZOS)])           # 4 x n
+politicas = {
+    "todos al brazo 0": np.zeros(n, dtype=int),
+    "todos al brazo 1": np.ones(n, dtype=int),
+    "todos al brazo 2": np.full(n, 2),
+    "todos al brazo 3": np.full(n, 3),
+    "al azar": np.arange(n) % BRAZOS,
+    "personalizada": np.argmax(pred, axis=0),
+}
+print("  %-22s %10s %10s %20s %10s"
+      % ("politica", "valor", "error tip.", "IC al 95 %", "verdad"))
+for nombre, pi in politicas.items():
+    v, e, lo, hi = evalua(pi, T, Y, mu, p)
+    real = float(np.mean(Y_pot[np.arange(n), pi]))
+    print("  %-22s %10.4f %10.4f  [%7.4f, %7.4f] %10.4f" % (nombre, v, e, lo, hi, real))
+print()
+print("la politica personalizada da a cada unidad el brazo con mayor")
+print("resultado predicho. Gana al mejor brazo unico por %.4f"
+      % (evalua(politicas["personalizada"], T, Y, mu, p)[0]
+         - max(evalua(politicas["todos al brazo %d" % t], T, Y, mu, p)[0] for t in range(BRAZOS))))
+print()
+
+print("que brazo recibe cada unidad con la politica personalizada")
+per = politicas["personalizada"]
+print("  %-10s %10s %14s" % ("brazo", "unidades", "fraccion"))
+for t in range(BRAZOS):
+    print("  %-10d %10d %14.4f" % (t, int((per == t).sum()), float(np.mean(per == t))))
+print()
+print("ninguna de las cuatro politicas de brazo unico puede hacer esto:")
+print("la personalizada usa tres brazos distintos segun quien sea la")
+print("unidad, y por eso supera a la mejor de ellas")
+print()
+
+print("si la personalizacion paga, medido con su propio error")
+v1, e1, _, _ = evalua(politicas["personalizada"], T, Y, mu, p)
+mejor_t = int(np.argmax([evalua(politicas["todos al brazo %d" % t], T, Y, mu, p)[0]
+                         for t in range(BRAZOS)]))
+v2, e2, _, _ = evalua(politicas["todos al brazo %d" % mejor_t], T, Y, mu, p)
+print("  %-34s %12.4f %12.4f" % ("personalizada", v1, e1))
+print("  %-34s %12.4f %12.4f" % ("el mejor brazo unico (el %d)" % mejor_t, v2, e2))
+print("  %-34s %12.4f" % ("diferencia", v1 - v2))
+print("  %-34s %12.4f" % ("error tipico de la diferencia", float(np.sqrt(e1 ** 2 + e2 ** 2))))
+print("  %-34s %12.2f" % ("en errores tipicos", (v1 - v2) / float(np.sqrt(e1 ** 2 + e2 ** 2))))
+print()
+print("los dos estimadores comparten unidades, asi que sumar las varianzas")
+print("sobrestima el error de la diferencia: es una cota conservadora. Aun")
+print("asi la diferencia la supera, y esa es la forma correcta de decidir")
+print("si la personalizacion paga: no comparando puntos, sino midiendo la")
+print("diferencia con su propio error")
+```
+
+```{=html}
+<div class="viz-politica">
+  <div class="controles">
+    <label>Unidades del experimento <input id="po-n" type="range" min="2.3" max="4.4" step="0.05" value="3.9"> <span id="po-n-v">8000</span></label>
+    <label>Cuánto gana personalizar <input id="po-g" type="range" min="0" max="1.2" step="0.02" value="0.54"> <span id="po-g-v">0.54</span></label>
+  </div>
+  <svg id="po-svg" viewBox="0 0 660 280" role="img" aria-label="El valor estimado de cada política con su intervalo de confianza, según el tamaño del experimento."></svg>
+  <p class="lectura" id="po-lectura"></p>
+</div>
+<style>
+.viz-politica { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-politica .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-politica label { display: flex; align-items: center; gap: .4rem; }
+.viz-politica input[type=range] { width: 150px; padding: 0; }
+.viz-politica svg { width: 100%; height: auto; display: block; }
+.viz-politica .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("po-svg"), lec = document.getElementById("po-lectura");
+  var cn = document.getElementById("po-n"), cg = document.getElementById("po-g");
+  var en = document.getElementById("po-n-v"), eg = document.getElementById("po-g-v");
+  // lo medido con 8000 unidades
+  var BASE = [
+    { n: "todos al brazo 0", v: 3.9571, e: 0.0343 },
+    { n: "todos al brazo 1", v: 5.1563, e: 0.0347 },
+    { n: "todos al brazo 2", v: 4.3041, e: 0.0490 },
+    { n: "todos al brazo 3", v: 4.3610, e: 0.0402 },
+    { n: "al azar", v: 4.4276, e: 0.0407 },
+    { n: "personalizada", v: 5.6984, e: 0.0366 }
+  ];
+  var N0 = 8000, X0 = 168, X1 = 626, Y0 = 34;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var n = Math.round(Math.pow(10, +cn.value)), g = +cg.value;
+    en.textContent = String(n); eg.textContent = g.toFixed(2);
+    var esc = Math.sqrt(N0 / n);
+    var mejorUnico = 5.1563;
+    var filas = BASE.map(function (f) {
+      return { n: f.n, v: f.n === "personalizada" ? mejorUnico + g : f.v, e: f.e * esc };
+    });
+    var lo = 3.6, hi = 6.6;
+    function px(v) { return X0 + (Math.max(lo, Math.min(hi, v)) - lo) * (X1 - X0) / (hi - lo); }
+
+    for (var q = 4; q <= 6.5; q += 0.5) {
+      svg.appendChild(el("path", { d: "M" + px(q).toFixed(1) + " " + Y0 + " L" + px(q).toFixed(1) + " " + (Y0 + 6 * 34),
+        stroke: C_L, "stroke-width": 0.8, opacity: .5 }));
+      svg.appendChild(el("text", { x: px(q).toFixed(1), y: Y0 + 6 * 34 + 18, "text-anchor": "middle",
+        "font-size": 10, fill: C_T, opacity: .7 }, q.toFixed(1)));
+    }
+    var per = filas[5], mej = filas[1];
+    for (var i = 0; i < filas.length; i++) {
+      var F = filas[i], y = Y0 + i * 34, act = F.n === "personalizada";
+      svg.appendChild(el("path", { d: "M" + px(F.v - 1.96 * F.e).toFixed(1) + " " + y +
+        " L" + px(F.v + 1.96 * F.e).toFixed(1) + " " + y, stroke: act ? C_B : C_A, "stroke-width": 9, opacity: .35 }));
+      svg.appendChild(el("circle", { cx: px(F.v).toFixed(1), cy: y, r: act ? 7 : 5.5, fill: act ? C_B : C_A }));
+      svg.appendChild(el("text", { x: X0 - 12, y: y + 4, "text-anchor": "end", "font-size": 11,
+        fill: C_T, opacity: act ? 1 : .75 }, F.n));
+    }
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y0 + 6 * 34 + 38, "text-anchor": "middle",
+      "font-size": 10.5, fill: C_T, opacity: .75 }, "valor estimado de la política, con su intervalo al 95 %"));
+
+    var se = Math.sqrt(per.e * per.e + mej.e * mej.e);
+    var t = (per.v - mej.v) / se;
+    lec.innerHTML = "Con <strong>" + n + "</strong> unidades, la política personalizada vale <strong>" + per.v.toFixed(4) +
+      "</strong> y el mejor brazo único <strong>" + mej.v.toFixed(4) + "</strong>: una diferencia de <strong>" +
+      (per.v - mej.v).toFixed(4) + "</strong>, que son <strong>" + t.toFixed(1) + " errores típicos</strong>" +
+      (t >= 2 ? " y por tanto una diferencia que el experimento sostiene."
+              : " — <strong>por debajo de 2</strong>, así que el experimento no la sostiene y personalizar no está justificado con estos datos.") +
+      " Los intervalos se estrechan con la raíz del tamaño; la ventaja de personalizar no. Por eso hay un tamaño mínimo por debajo del cual la pregunta no se puede contestar, por buena que sea la personalización.";
+  }
+  cn.addEventListener("input", dibujar); cg.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Lo que esta lección no resuelve
+
+El valor de una política es un promedio, y una política puede tener un valor alto y hacer daño a un subgrupo: la Lección 01 midió que un 15,96 % de la población empeoraba con un tratamiento cuyo ATE era positivo. Evaluar eso exige mirar la distribución del efecto bajo la política, no solo su media, y eso queda fuera.
+
+Tampoco se ha tratado el coste. Todas las políticas de aquí son gratis, y en cuanto tratar cuesta dinero la política óptima deja de ser «tratar a quien tiene efecto positivo» y pasa a ser «tratar a quien tiene efecto mayor que el coste», con un umbral que además depende del presupuesto. Ésa es la Lección 22. Y no se han construido intervalos para la política **óptima**, que es un problema distinto del de evaluar una política fijada de antemano, porque el máximo de varias estimaciones ruidosas está sesgado hacia arriba, igual que en la Lección 19.
+
+## Ejercicios
+
+### Ejercicio 1, Los pesos del IPW
+
+Con el modo de falla de la Sección 1, calcular el peso máximo y qué fracción del total se lleva el 1 % de unidades con mayor peso, para cuatro propensiones mínimas.
+
+```{pyodide}
+#| exercise: ex_pesos
+import numpy as np
+
+rng = np.random.default_rng(21)
+n = 20000
+
+resumen = []
+for minimo in (0.5, 0.1, 0.02, 0.005):
+    e = minimo + (0.95 - minimo) * rng.random(n)
+    w = ______
+    orden = np.sort(w)[::-1]
+    arriba = ______
+    resumen.append((round(float(w.max()), 1), round(float(arriba / w.sum()), 4)))
+
+print(resumen)
+```
+
+::: {.hint exercise="ex_pesos"}
+El peso es el inverso de la propensión. El 1 % con mayor peso son los primeros `n // 100` de la lista ordenada de mayor a menor.
+:::
+
+::: {.solution exercise="ex_pesos"}
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(21)
+n = 20000
+
+resumen = []
+for minimo in (0.5, 0.1, 0.02, 0.005):
+    e = minimo + (0.95 - minimo) * rng.random(n)
+    w = 1.0 / e
+    orden = np.sort(w)[::-1]
+    arriba = orden[:n // 100].sum()
+    resumen.append((round(float(w.max()), 1), round(float(arriba / w.sum()), 4)))
+
+print(resumen)
+```
+
+Con la propensión acotada por debajo en 0,5 el peso máximo es **2,0** y el 1 % más pesado se lleva el **1,4 %** del total: nada que temer. Con el mínimo en 0,005, el peso máximo pasa de **190** y ese 1 % se lleva más del **20 %** del total: la quinta parte de la estimación depende de doscientas filas. Ésa es la cuenta que hay que hacer **antes** de mirar el resultado del IPW.
+:::
+
+```{pyodide}
+#| exercise: ex_pesos
+#| check: true
+if (len(resumen) == 4 and resumen[0][0] == 2.0
+        and resumen[3][0] > 100 and resumen[3][1] > 0.15):
+    feedback = {"correct": True, "message": "Correcto: con propension minima 0.005 el 1 % mas pesado se lleva mas del 15 %."}
+else:
+    feedback = {"correct": False, "message": "Se esperaban cuatro pares, con peso maximo 2.0 en el primero y mas de 100 en el ultimo."}
+feedback
+```
+
+### Ejercicio 2, Cuándo personalizar paga
+
+Con la Proposición 21.9, calcular cuántas unidades hacen falta para que una ventaja dada de la personalización valga al menos 2 errores típicos, partiendo de lo medido.
+
+```{pyodide}
+#| exercise: ex_paga
+import numpy as np
+
+ventaja_medida = 0.5422
+se_medido = 0.0504
+n_medido = 8000
+
+ventajas = np.array([0.5422, 0.20, 0.05, 0.01])
+
+# el error tipico va como 1/raiz(n)
+n_necesaria = ______
+
+print([int(np.ceil(z)) for z in n_necesaria])
+```
+
+::: {.hint exercise="ex_paga"}
+Para una ventaja $v$ hace falta que $v/(s\sqrt{n_0/n})\ge 2$, de donde $n\ge n_0(2s/v)^2$.
+:::
+
+::: {.solution exercise="ex_paga"}
+```{pyodide}
+import numpy as np
+
+ventaja_medida = 0.5422
+se_medido = 0.0504
+n_medido = 8000
+
+ventajas = np.array([0.5422, 0.20, 0.05, 0.01])
+
+n_necesaria = n_medido * (2.0 * se_medido / ventajas) ** 2
+
+print([int(np.ceil(z)) for z in n_necesaria])
+```
+
+Hacen falta **277, 2033, 32 515 y 812 852** unidades. La ventaja medida se detecta con menos de trescientas; una ventaja de 0,01 —que en un negocio grande puede valer mucho dinero— exige más de ochocientas mil. El tamaño necesario crece con el **cuadrado** de lo pequeña que sea la ventaja, y por eso la pregunta «¿merece la pena personalizar?» hay que hacerla antes de diseñar el experimento, no después.
+:::
+
+```{pyodide}
+#| exercise: ex_paga
+#| check: true
+if [int(np.ceil(z)) for z in n_necesaria] == [277, 2033, 32515, 812852]:
+    feedback = {"correct": True, "message": "Correcto: de 277 unidades a 812 852 segun se encoge la ventaja."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [277, 2033, 32515, 812852]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F5-retos.ipynb`, sección **Causal 21**:
+
+1. Implementar los tres estimadores del valor de una política sobre un experimento simulado con los dos resultados potenciales conocidos, y comparar sus errores típicos sobre cuatro políticas.
+2. Romper el modelo del resultado y la propensión por separado y a la vez, y anotar el error de cada estimador en las cuatro combinaciones.
+3. Montar un experimento de tres o cuatro brazos, construir la política que da a cada unidad el brazo con mayor resultado predicho y medir cuánto gana al mejor brazo único, con su error típico. Guardar en `50-Errores/` el caso en que la ventaja no supere los dos errores típicos.
+
+## Del libro
+
+Facure cap. 12 *Doubly Robust Estimation* construye el estimador y demuestra que basta con que una de las dos piezas esté bien especificada, que es la Proposición 21.4; cap. 20 *Plug-and-Play Estimators* lo usa para comparar políticas. Los capítulos se citan por su número y su título; el texto no se reproduce. La forma multi-brazo con cross-fitting de la Sección 4 sigue la estructura de las funciones `get_cross_fitted_predictions` y `evaluate_policy_rct` que se usan en el curso de Machine Learning and Causality del INCAE, escritas con un bosque donde aquí se usan vecinos, por reproducibilidad entre versiones.
+
+## Para el Cerebro
+
+- $V(\pi)=E[Y(\pi(X))]$ es **contrafactual**: casi nadie recibió lo que $\pi$ manda.
+- Tres estimadores: **directo** (solo $\hat\mu$), **IPW** (solo $\hat p$), **DR** (los dos).
+- El DR tiene el menor error típico en las cuatro políticas: **0,0495** contra 0,0715.
+- **Doble robustez**: acierta en 3 de las 4 combinaciones. Errores −0,005, −0,009, −0,034 y **+0,251**.
+- Con $\hat\mu$ roto, la corrección aporta **+0,2348**, que es casi exactamente lo que falta.
+- Con el vecino más cercano en la propia muestra, el residuo vale **exactamente 0**.
+- En un experimento el cross-fitting importa poco; con $\hat p$ estimada, divide el sesgo por **5**.
+- El estimador **no cambia de forma** con cuatro brazos.
+- Personalizar gana **0,5422**, o sea **10,76 errores típicos**, usando tres brazos distintos.
+- Y la cuenta que decide: $n\ge n_0(2s/v)^2$. Una ventaja de 0,01 exige **812 852** unidades.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico: los valores de las cuatro políticas por los tres caminos y sus errores típicos, 0,0715 y 0,0495, 0,0954 y 0,0622, 0,0922 y 0,0586, y 0,0929 y 0,0584; que la propensión va de 0,008 a 0,995 y el valor verdadero de la política es 4,5826; la tabla de 2×2 completa, con errores del DR de −0,0059, −0,0090, −0,0342 y +0,2513 y del directo de −0,0059 y −0,2690 y del IPW de −0,0421 y +1,7707; que con $\hat\mu$ roto la predicción da 4,3136 y la corrección +0,2348; que con $k=1$ dentro de la muestra el residuo medio vale 0,0000 y con cross-fitting 0,8330; que en el experimento el sesgo vale +0,0122 y +0,0021 y en el observacional +0,0227 y +0,0050, dividido por 5; que las seis políticas de cuatro brazos valen 3,9571, 5,1563, 4,3041, 4,3610, 4,4276 y 5,6984 con errores típicos de 0,0343 a 0,0490 y verdades de 3,9589, 5,1589, 4,3192, 4,3550, 4,4486 y 5,7142; y que la política personalizada reparte el 0,03 %, el 51,15 %, el 23,34 % y el 25,49 % entre los cuatro brazos, con una ventaja de 0,5422 sobre el mejor brazo único, 10,76 errores típicos.
+
+**Lo que viene de los libros.** De Facure cap. 12, la construcción del estimador doblemente robusto y su propiedad; de cap. 20, su uso para comparar políticas. Los capítulos se citan por su número y su título; el texto no se reproduce.
+
+**Lo que es mío, no del libro.** La tabla de 2×2 con las **cuatro** combinaciones medidas, que convierte «basta con que una esté bien» en cuatro números y hace visible que el directo depende solo de la fila y el IPW solo de la columna; la descomposición del estimador en predicción y corrección para enseñar de dónde sale el número en cada caso; la medición de que el cross-fitting **apenas importa en un experimento** y divide el sesgo por 17 cuando la propensión también se estima, que es lo contrario de lo que yo esperaba al empezar la sección; y el cierre que traduce la decisión a la única cuenta que importa antes de diseñar nada, $n\ge n_0(2s/v)^2$.
+:::
