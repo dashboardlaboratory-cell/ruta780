@@ -83,6 +83,61 @@ def revisa_progreso():
     return fallos
 
 
+
+def revisa_clases():
+    """El listado de cada modulo tiene que envolverse en <div class="ruta">.
+
+    fundamentos/index.qmd uso `indice-lecciones`, que no existe en
+    custom.scss, y sus doce filas salieron sin estilo ninguno: numero,
+    nivel, titulo y libro pegados. Lo encontro Luis mirando el sitio, no
+    el gate, porque ningun gate miraba las clases.
+    """
+    fallos = []
+    hoja = (RAIZ / "custom.scss").read_text(encoding="utf-8")
+    for idx in sorted(RAIZ.glob("*/index.qmd")):
+        t = idx.read_text(encoding="utf-8")
+        if 'class="fila"' not in t and 'class="fila pendiente"' not in t:
+            continue
+        rel = f"{idx.parent.name}/{idx.name}"
+        envoltorios = set(re.findall(r'<div class="([a-z-]+)">\s*\n<(?:h3|div class="fila)', t))
+        for c in envoltorios:
+            if ("." + c) not in hoja:
+                fallos.append(
+                    f"{rel}: las filas van dentro de <div class=\"{c}\">, que no "
+                    f"aparece en custom.scss; el listado saldria sin estilo")
+    return fallos
+
+
+def revisa_sidebar():
+    """Cada leccion del sidebar tiene que colgar del `contents:` de su modulo.
+
+    En YAML, `      - ml/38.qmd` con seis espacios es hermano de
+    `      - section:` y no hijo de `        contents:`, asi que la leccion
+    se dibuja FUERA de su grupo. Paso con ML 38 a 41 porque el script de
+    registro buscaba la linea anterior con seis espacios y la encontro
+    como subcadena de la de diez.
+    """
+    fallos = []
+    ruta = RAIZ / "_quarto.yml"
+    seccion, sangria_contents = None, None
+    for i, l in enumerate(ruta.read_text(encoding="utf-8").split("\n"), 1):
+        s = len(l) - len(l.lstrip())
+        d = l.strip()
+        if d.startswith("- section:"):
+            seccion, sangria_contents = d[len("- section:"):].strip().strip('"'), None
+            continue
+        if d == "contents:" and seccion:
+            sangria_contents = s + 2
+            continue
+        m = re.match(r"- ([a-z]+)/[0-9][^\s]*\.qmd$", d)
+        if m and seccion and sangria_contents is not None and s != sangria_contents:
+            fallos.append(
+                f"_quarto.yml:{i}: «{d[2:]}» esta a {s} espacios y el "
+                f"contents: de «{seccion}» pide {sangria_contents}; "
+                f"se dibujaria fuera de su grupo")
+    return fallos
+
+
 def main():
     fallos = []
     archivos = sorted(
@@ -115,6 +170,8 @@ def main():
             fallos.append(f"{rel}: falta `engine: markdown` en el frontmatter")
 
     fallos += revisa_progreso()
+    fallos += revisa_clases()
+    fallos += revisa_sidebar()
 
     print(f"archivos revisados: {len(archivos)}")
     if fallos:
