@@ -1,0 +1,897 @@
+---
+title: "Árboles causales honestos y el bosque causal"
+subtitle: "Inferencia causal · Lección 19"
+nivel: L3
+modulo: causal
+fase: F5
+prereqs: [causal/18-r-learner-y-r-score, ml/12-arboles-de-decision, ml/35-por-que-funciona-random-forest]
+siguientes: []
+libro: "ESL, cap. 15 Random Forests"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="causal/19-arboles-causales"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F5]{.item}
+[**Libro** ESL 15]{.item}
+[**Prereqs** [R-learner y R-score](18-r-learner-y-r-score.qmd) · [Árboles de decisión](../ml/12-arboles-de-decision.qmd) · [Por qué funciona random forest](../ml/35-por-que-funciona-random-forest.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Exhibir que un árbol corriente parte por donde no es**: le da a la única variable que mueve el efecto una importancia de **0,000000**.
+2. **Escribir el criterio de corte causal** y comprobar que elige la variable correcta, con $R^2$ sobre $\tau$ de **0,687** contra **0,0007** del árbol corriente.
+3. **Demostrar que estimar donde se cortó infla el resultado**: con el efecto **constante**, el árbol adaptativo le atribuye una dispersión de 0,19 y el honesto de 0,11.
+4. **Medir la tasa de falso hallazgo**: **25 de 48** hojas declaran un efecto distinto del promedio donde no lo hay; con honestidad, 4.
+5. Comprobar que **más cortes candidatos inflan más** al adaptativo y nada al honesto.
+6. **Construir el bosque** y medir que el ECM baja de 0,4496 a **0,1875** y los valores distintos suben de 8 a **449**.
+7. **Medir que el intervalo ingenuo no cubre**: **42,75 %** en lugar del 95 %, y explicar qué le falta.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Causal 18**: el criterio para juzgar modelos de efecto, que aquí se usa al cortar.
+- **ML 12**: el árbol de decisión y su criterio de corte corriente.
+- **ML 35**: por qué promediar árboles baja la varianza.
+- **Causal 16**: la heterogeneidad del efecto, que es lo que estos árboles buscan.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Causal 20**: la curva de ganancia, que se dibuja con un $\hat\tau(x)$ como éste.
+- **Causal 21**: la evaluación de políticas, donde este $\hat\tau$ produce la regla a evaluar.
+- **Causal 22**: de la estimación al dinero, que necesita intervalos que cubran.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $\hat\tau_h$ | tau gorro sub hache | El efecto estimado en la hoja $h$ |
+| $n_h$ | ene sub hache | Las unidades de la hoja $h$ |
+| **adaptativo** | | Elegir los cortes y estimar los efectos con las mismas unidades |
+| **honesto** | | Elegir los cortes con unas unidades y estimar con otras |
+| $B$ | be | El número de árboles del bosque |
+:::
+
+## 1. Un árbol corriente parte por donde no es
+
+::: {.proposicion}
+**Proposición 19.1 (busca donde cambia $Y$, no donde cambia $\tau$).** En una población donde el resultado lo mueven $X_0$ y $X_1$ y el efecto solo $X_2$, un árbol de regresión ajustado a $Y$ reparte su importancia **0,763687 y 0,236313** entre las dos primeras y le da **0,000000** a $X_2$.
+:::
+
+::: {.demostracion}
+*Demostración.* El criterio de CART elige en cada nodo el corte que más reduce la suma de cuadrados de $Y$; la varianza de $Y$ la produce la línea base, no el efecto, que además solo se manifiesta en la mitad tratada. La celda mide las cuatro importancias y, cortando cada variable por su mediana, la diferencia de medias de $Y$ frente a la diferencia de efectos: **9,6517 contra 0,0165** para $X_0$ y **0,9890 contra 2,0000** para $X_2$. ∎
+:::
+
+::: {.proposicion}
+**Proposición 19.2 (y por eso sus hojas no separan efectos).** Los efectos reales de las seis hojas van de **0,9324 a 1,0480** cuando el efecto de verdad toma los valores 0 y 2.
+:::
+
+::: {.demostracion}
+*Demostración.* Si ningún corte usa $X_2$, cada hoja contiene aproximadamente la misma mezcla de unidades con efecto 0 y con efecto 2, de modo que el efecto medio de todas ronda el ATE. La celda lo tabula. **Un árbol que busca dónde cambia $Y$ encuentra dónde cambia $Y$**, y eso no sirve para personalizar. ∎
+:::
+
+```{pyodide}
+import numpy as np
+from sklearn.tree import DecisionTreeRegressor
+
+# Una poblacion donde lo que mueve el RESULTADO y lo que mueve el EFECTO
+# son variables distintas. Ese es el caso que separa a los dos arboles.
+def poblacion(n, semilla):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 4))
+    base = 6.0 * X[:, 0] - 4.0 * X[:, 1]          # el resultado lo mueven X0 y X1
+    tau = 2.0 * (X[:, 2] > 0)                     # el efecto lo mueve X2, y nada mas
+    T = (rng.random(n) < 0.5).astype(int)         # asignacion al azar
+    Y = base + tau * T + 0.5 * rng.standard_normal(n)
+    return X, T, Y, tau
+
+X, T, Y, tau = poblacion(4000, 190)
+print("una poblacion con dos mundos separados")
+print("  el resultado lo mueven X0 y X1; el efecto, solo X2")
+print("  desviacion tipica del resultado : %.4f" % float(np.std(Y)))
+print("  desviacion tipica del efecto    : %.4f" % float(np.std(tau)))
+print("  ATE                             : %.4f" % float(np.mean(tau)))
+print()
+
+# min_samples_leaf >= 5: con hojas menores el arbol de sklearn no da los
+# mismos bits en 0.24 y en 1.9
+arbol = DecisionTreeRegressor(max_depth=3, min_samples_leaf=50, random_state=0)
+arbol.fit(X, Y)
+print("un arbol corriente, ajustado al resultado")
+print("  %-14s %14s" % ("variable", "importancia"))
+for i, imp in enumerate(arbol.feature_importances_):
+    print("  %-14s %14.6f" % ("X%d" % i, imp))
+print()
+print("gasta todos sus cortes en X0 y X1, que son las que mueven Y. A X2,")
+print("que es la unica que mueve el efecto, le da %.6f"
+      % float(arbol.feature_importances_[2]))
+print()
+
+print("y por eso sus hojas no separan efectos")
+hoja = arbol.apply(X)
+print("  %-8s %8s %12s %12s %12s" % ("hoja", "unidades", "media de Y", "efecto real", "efecto est."))
+for h in np.unique(hoja)[:6]:
+    m = hoja == h
+    ef = float(np.mean(Y[m & (T == 1)]) - np.mean(Y[m & (T == 0)]))
+    print("  %-8d %8d %12.4f %12.4f %12.4f"
+          % (h, int(m.sum()), float(np.mean(Y[m])), float(np.mean(tau[m])), ef))
+efs = [float(np.mean(tau[hoja == h])) for h in np.unique(hoja)]
+print("  los efectos reales de las hojas van de %.4f a %.4f" % (min(efs), max(efs)))
+print("  el efecto de verdad va de %.1f a %.1f" % (float(tau.min()), float(tau.max())))
+print()
+print("las medias de Y cambian mucho de hoja en hoja y los efectos casi")
+print("nada: el arbol ha partido el espacio por donde no era. Un arbol")
+print("que busca donde cambia Y encuentra donde cambia Y")
+print()
+
+print("cuanto separa cada variable, por si sola")
+print("  %-10s %16s %16s" % ("cortar por", "dif. de medias Y", "dif. de efectos"))
+for j in range(4):
+    izq, der = X[:, j] <= 0, X[:, j] > 0
+    dy = abs(float(np.mean(Y[izq]) - np.mean(Y[der])))
+    di = abs(float(np.mean(tau[izq]) - np.mean(tau[der])))
+    print("  %-10s %16.4f %16.4f" % ("X%d" % j, dy, di))
+print()
+print("X0 es la que mas mueve el resultado y X2 la unica que mueve el")
+print("efecto. Un arbol causal tiene que mirar la segunda columna, y para")
+print("eso hace falta otro criterio de corte")
+```
+
+## 2. El criterio de corte causal
+
+::: {.definicion}
+**Definición 19.3 (criterio del [árbol causal]{.g}).** Para un corte que parte un nodo en izquierda y derecha, puntuar $n_L\hat\tau_L^2+n_R\hat\tau_R^2$: la suma de cuadrados **explicada por el corte en la escala del efecto**. Es la misma forma que usa un árbol corriente, con $\hat\tau$ en el lugar de $\bar Y$.
+:::
+
+::: {.proposicion}
+**Proposición 19.4 (elige la variable correcta).** Sobre la raíz, el criterio causal puntúa **8399,0** a $X_2$ frente a 2600,4, 4480,2 y 5207,5 de las otras tres, mientras que el criterio del resultado puntúa **93 749,4** a $X_0$ y solo 941,3 a $X_2$.
+:::
+
+::: {.demostracion}
+*Demostración.* La celda evalúa los dos criterios sobre el corte por la mediana de cada variable. El árbol resultante, de profundidad 2, da hojas con efectos reales de **0,2850 a 2,0000**, que es el rango verdadero, frente a los 0,93–1,05 del árbol corriente. Medido como $R^2$ sobre $\tau$: **0,687298** contra **0,000709**, con la misma profundidad y los mismos datos. ∎
+:::
+
+**Modo de falla.** El criterio causal es ruidoso: en la celda, $X_3$ —que no afecta a nada— puntúa 5207,5, por encima de $X_0$ y $X_1$. Con pocos datos por hoja, o con muchas variables candidatas, el criterio encuentra estructura donde no la hay, y el árbol la presenta con la misma seguridad con la que presentaría una real. Ése es exactamente el problema de la sección siguiente, y es la razón de que un árbol causal sin honestidad sea peligroso de un modo que un árbol de predicción no lo es: aquí no hay error de prueba que delate el sobreajuste.
+
+```{pyodide}
+import numpy as np
+
+def poblacion(n, semilla):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 4))
+    base = 6.0 * X[:, 0] - 4.0 * X[:, 1]
+    tau = 2.0 * (X[:, 2] > 0)
+    T = (rng.random(n) < 0.5).astype(int)
+    return X, T, base + tau * T + 0.5 * rng.standard_normal(n), tau
+
+def efecto(T, Y, m):
+    """La diferencia de medias dentro de un grupo, o nan si falta un brazo."""
+    a, b = m & (T == 1), m & (T == 0)
+    if a.sum() < 5 or b.sum() < 5:
+        return np.nan
+    return float(np.mean(Y[a]) - np.mean(Y[b]))
+
+def mejor_corte(X, T, Y, m, minimo=60):
+    """El corte que mas SEPARA los efectos de los dos lados.
+
+    El criterio es n_izq*tau_izq^2 + n_der*tau_der^2, que es la suma de
+    cuadrados EXPLICADA por el corte en la escala del efecto. Un arbol
+    corriente usa la misma forma pero con Y en lugar de tau."""
+    mejor = (-np.inf, None, None)
+    for j in range(X.shape[1]):
+        v = X[m, j]
+        for c in np.quantile(v, [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]):
+            izq, der = m & (X[:, j] <= c), m & (X[:, j] > c)
+            if izq.sum() < minimo or der.sum() < minimo:
+                continue
+            ti, td = efecto(T, Y, izq), efecto(T, Y, der)
+            if np.isnan(ti) or np.isnan(td):
+                continue
+            puntua = izq.sum() * ti * ti + der.sum() * td * td
+            if puntua > mejor[0]:
+                mejor = (puntua, j, float(c))
+    return mejor
+
+X, T, Y, tau = poblacion(4000, 190)
+todos = np.ones(len(Y), dtype=bool)
+print("el mejor corte segun cada criterio, sobre la raiz")
+print("  %-10s %18s %18s" % ("variable", "criterio causal", "criterio de Y"))
+for j in range(4):
+    c = float(np.median(X[:, j]))
+    izq, der = X[:, j] <= c, X[:, j] > c
+    ti, td = efecto(T, Y, izq), efecto(T, Y, der)
+    causal = izq.sum() * ti * ti + der.sum() * td * td
+    my, mi, md = float(np.mean(Y)), float(np.mean(Y[izq])), float(np.mean(Y[der]))
+    deY = izq.sum() * (mi - my) ** 2 + der.sum() * (md - my) ** 2
+    print("  %-10s %18.1f %18.1f" % ("X%d" % j, causal, deY))
+print()
+p, j, c = mejor_corte(X, T, Y, todos)
+print("  el criterio causal elige X%d en %.4f" % (j, c))
+print("  y la variable que de verdad mueve el efecto es X2")
+print()
+
+def arbol_causal(X, T, Y, m, prof, minimo=60):
+    """Devuelve una lista de hojas: (mascara, efecto estimado)."""
+    if prof == 0:
+        return [(m, efecto(T, Y, m))]
+    p, j, c = mejor_corte(X, T, Y, m, minimo)
+    if j is None:
+        return [(m, efecto(T, Y, m))]
+    izq, der = m & (X[:, j] <= c), m & (X[:, j] > c)
+    return (arbol_causal(X, T, Y, izq, prof - 1, minimo)
+            + arbol_causal(X, T, Y, der, prof - 1, minimo))
+
+hojas = arbol_causal(X, T, Y, todos, 2)
+print("las hojas del arbol causal de profundidad 2")
+print("  %-8s %10s %14s %14s %12s" % ("hoja", "unidades", "efecto real", "efecto est.", "error"))
+for k, (m, e) in enumerate(hojas):
+    real = float(np.mean(tau[m]))
+    print("  %-8d %10d %14.4f %14.4f %12.4f" % (k, int(m.sum()), real, e, e - real))
+reales = [float(np.mean(tau[m])) for m, _ in hojas]
+print("  los efectos reales de las hojas van de %.4f a %.4f" % (min(reales), max(reales)))
+print()
+print("el arbol corriente daba hojas con efectos entre 0.93 y 1.05; este")
+print("las da entre %.2f y %.2f, que es el rango verdadero. La diferencia"
+      % (min(reales), max(reales)))
+print("esta entera en el criterio de corte")
+print()
+
+print("cuanto de la variacion del efecto captura cada arbol")
+def capturado(mascaras):
+    pred = np.zeros(len(tau))
+    for m in mascaras:
+        pred[m] = float(np.mean(tau[m]))
+    return 1 - float(np.var(tau - pred)) / float(np.var(tau))
+from sklearn.tree import DecisionTreeRegressor
+ar = DecisionTreeRegressor(max_depth=2, min_samples_leaf=60, random_state=0)
+ar.fit(X, Y)
+h2 = ar.apply(X)
+print("  %-26s %16s" % ("arbol", "R2 sobre tau"))
+print("  %-26s %16.6f" % ("corriente, ajustado a Y", capturado([h2 == v for v in np.unique(h2)])))
+print("  %-26s %16.6f" % ("causal", capturado([m for m, _ in hojas])))
+print()
+print("el arbol corriente explica practicamente nada del efecto y el")
+print("causal casi todo, con la misma profundidad y los mismos datos")
+```
+
+```{=html}
+<div class="viz-corte">
+  <div class="controles">
+    <label>Dónde cortar <input id="ct-c" type="range" min="-1.6" max="1.6" step="0.05" value="0"> <span id="ct-c-v">0.00</span></label>
+    <label>Variable <input id="ct-j" type="range" min="0" max="1" step="1" value="0"> <span id="ct-j-v">X₂, mueve el efecto</span></label>
+  </div>
+  <svg id="ct-svg" viewBox="0 0 660 300" role="img" aria-label="Los dos criterios de corte, el del resultado y el del efecto, evaluados a lo largo de la variable elegida."></svg>
+  <p class="lectura" id="ct-lectura"></p>
+</div>
+<style>
+.viz-corte { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-corte .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-corte label { display: flex; align-items: center; gap: .4rem; }
+.viz-corte input[type=range] { width: 150px; padding: 0; }
+.viz-corte svg { width: 100%; height: auto; display: block; }
+.viz-corte .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("ct-svg"), lec = document.getElementById("ct-lectura");
+  var cc = document.getElementById("ct-c"), cj = document.getElementById("ct-j");
+  var ec = document.getElementById("ct-c-v"), ej = document.getElementById("ct-j-v");
+  var NOM = ["X₂, mueve el efecto", "X₀, mueve el resultado"];
+
+  function gen(s) { var x = s; return function () { x = (x * 1103515245 + 12345) % 2147483648; return x / 2147483648; }; }
+  function normales(n, s) {
+    var r = gen(s), o = [], i;
+    for (i = 0; i < n; i++) { var u = Math.max(1e-9, r()), v = r(); o.push(Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v)); }
+    return o;
+  }
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var N = 1200, e0 = normales(N, 13), e2 = normales(N, 31), er = normales(N, 47), eu = gen(59);
+  var X0 = [], X2 = [], T = [], Y = [], i;
+  for (i = 0; i < N; i++) {
+    X0.push(e0[i]); X2.push(e2[i]);
+    T.push(eu() < 0.5 ? 1 : 0);
+    Y.push(6 * X0[i] + 2 * (X2[i] > 0 ? 1 : 0) * T[i] + 0.5 * er[i]);
+  }
+
+  function puntuar(j, c) {
+    var v = j === 0 ? X2 : X0, sy = 0, n1 = 0, n0 = 0, y1 = 0, y0 = 0, k;
+    var a1 = 0, a0 = 0, na1 = 0, na0 = 0, b1 = 0, b0 = 0, nb1 = 0, nb0 = 0, ni = 0, nd = 0, si = 0, sd = 0;
+    for (k = 0; k < N; k++) {
+      sy += Y[k];
+      if (v[k] <= c) { ni++; si += Y[k]; if (T[k]) { a1 += Y[k]; na1++; } else { a0 += Y[k]; na0++; } }
+      else { nd++; sd += Y[k]; if (T[k]) { b1 += Y[k]; nb1++; } else { b0 += Y[k]; nb0++; } }
+    }
+    if (ni < 60 || nd < 60 || na1 < 20 || na0 < 20 || nb1 < 20 || nb0 < 20) return null;
+    var ti = a1 / na1 - a0 / na0, td = b1 / nb1 - b0 / nb0;
+    var my = sy / N;
+    return { causal: (ni * ti * ti + nd * td * td) / N,
+             deY: (ni * Math.pow(si / ni - my, 2) + nd * Math.pow(sd / nd - my, 2)) / N,
+             ti: ti, td: td };
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var c = +cc.value, j = Math.round(+cj.value);
+    ec.textContent = c.toFixed(2); ej.textContent = NOM[j];
+    var A0 = 62, A1 = 628, B0 = 28, B1 = 216;
+    var cur = [], maxc = 0, maxy = 0, k;
+    for (k = 0; k <= 64; k++) {
+      var cc2 = -1.6 + k * 3.2 / 64, p = puntuar(j, cc2);
+      cur.push({ c: cc2, p: p });
+      if (p) { maxc = Math.max(maxc, p.causal); maxy = Math.max(maxy, p.deY); }
+    }
+    function px(v) { return A0 + (v + 1.6) * (A1 - A0) / 3.2; }
+    function pyc(v) { return B1 - v * (B1 - B0) / Math.max(maxc, 1e-9); }
+    function pyy(v) { return B1 - v * (B1 - B0) / Math.max(maxy, 1e-9); }
+    svg.appendChild(el("path", { d: "M" + A0 + " " + B1 + " L" + A1 + " " + B1, stroke: C_L, "stroke-width": 1.2 }));
+    var dc = "", dy = "", pri = true;
+    for (k = 0; k < cur.length; k++) {
+      if (!cur[k].p) continue;
+      dc += (pri ? "M" : " L") + px(cur[k].c).toFixed(1) + " " + pyc(cur[k].p.causal).toFixed(1);
+      dy += (pri ? "M" : " L") + px(cur[k].c).toFixed(1) + " " + pyy(cur[k].p.deY).toFixed(1);
+      pri = false;
+    }
+    svg.appendChild(el("path", { d: dy, fill: "none", stroke: C_T, "stroke-width": 2, opacity: .45, "stroke-dasharray": "6 4" }));
+    svg.appendChild(el("path", { d: dc, fill: "none", stroke: C_A, "stroke-width": 2.6 }));
+    svg.appendChild(el("text", { x: A1 - 4, y: B0 + 12, "text-anchor": "end", "font-size": 11, fill: C_A }, "criterio causal"));
+    svg.appendChild(el("text", { x: A1 - 4, y: B0 + 28, "text-anchor": "end", "font-size": 11, fill: C_T, opacity: .6 }, "criterio del resultado (reescalado)"));
+    svg.appendChild(el("text", { x: (A0 + A1) / 2, y: B1 + 22, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .75 },
+      "el corte, sobre " + NOM[j]));
+
+    var p = puntuar(j, c);
+    svg.appendChild(el("path", { d: "M" + px(c).toFixed(1) + " " + B0 + " L" + px(c).toFixed(1) + " " + B1,
+      stroke: C_B, "stroke-width": 1.4, "stroke-dasharray": "4 4" }));
+    if (p) {
+      svg.appendChild(el("circle", { cx: px(c).toFixed(1), cy: pyc(p.causal).toFixed(1), r: 7, fill: C_A }));
+      svg.appendChild(el("circle", { cx: px(c).toFixed(1), cy: pyy(p.deY).toFixed(1), r: 6, fill: C_T, opacity: .55 }));
+      svg.appendChild(el("text", { x: 20, y: 258, "font-size": 11.5, fill: C_T },
+        "efecto a la izquierda: " + p.ti.toFixed(3) + "     a la derecha: " + p.td.toFixed(3)));
+    }
+
+    lec.innerHTML = "Cortando <strong>" + NOM[j] + "</strong> en <strong>" + c.toFixed(2) + "</strong>" +
+      (p ? ", el efecto vale <strong>" + p.ti.toFixed(3) + "</strong> a un lado y <strong>" + p.td.toFixed(3) +
+           "</strong> al otro." : ", uno de los lados se queda sin datos suficientes.") +
+      " La curva verde es el criterio causal y la gris el del resultado, reescalada para que quepan juntas. " +
+      (j === 0
+        ? "Sobre X₂ el criterio causal tiene un pico marcado en 0, que es donde el efecto salta; el del resultado es casi plano, porque X₂ no mueve Y."
+        : "Sobre X₀ ocurre lo contrario: el criterio del resultado crece sin parar hacia los extremos y el causal no encuentra nada. Un árbol corriente cortaría aquí y no separaría ningún efecto.");
+  }
+  cc.addEventListener("input", dibujar); cj.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Honestidad: no estimar donde se cortó
+
+::: {.definicion}
+**Definición 19.5 (árbol honesto, y la [honestidad]{.g}).** Partir la muestra en dos: con una mitad se **eligen los cortes** y con la otra se **estiman los efectos** de las hojas. Ninguna unidad participa en las dos cosas.
+:::
+
+::: {.proposicion}
+**Proposición 19.6 (el adaptativo inventa heterogeneidad).** Con un efecto **constante e igual a 1**, la dispersión verdadera de los efectos por hoja es cero. El árbol adaptativo la estima en **0,1813** y el honesto en **0,1164**, que es su propio ruido de estimación.
+:::
+
+::: {.demostracion}
+*Demostración.* El corte se elige maximizando $n_L\hat\tau_L^2+n_R\hat\tau_R^2$ sobre todos los candidatos; el máximo de varias cantidades ruidosas está por encima de su valor esperado, y esa inflación se hereda al volver a medir la diferencia **en las mismas unidades que la motivaron**. La celda lo mide sobre 12 muestras. ∎
+:::
+
+::: {.proposicion}
+**Proposición 19.7 (y lo declara significativo).** De 48 hojas, el árbol adaptativo declara **25** con un intervalo al 95 % que excluye el efecto promedio; el honesto, entre 4 y 8. Con el efecto constante, lo que cabe esperar es el 5 % de 48, es decir **unas dos**.
+:::
+
+::: {.demostracion}
+*Demostración.* El intervalo se construye con el error típico de la diferencia de medias dentro de la hoja, que es correcto **si la hoja se hubiera fijado de antemano**; al haberse elegido para maximizar esa diferencia, deja de serlo. La celda cuenta los rechazos. **Más de la mitad de las hojas del árbol adaptativo anuncian un efecto diferencial que no existe.** ∎
+:::
+
+::: {.proposicion}
+**Proposición 19.8 (más candidatos, más inflación, y solo para uno).** Subiendo los cortes candidatos de 9 a 25, la dispersión del adaptativo sube de 0,1813 a **0,1920** y la del honesto baja de 0,1164 a 0,1117. Y en error total el honesto gana en las tres heterogeneidades probadas: 0,0790 contra 0,1428, 0,0854 contra 0,1256 y 0,0853 contra 0,1048.
+:::
+
+::: {.demostracion}
+*Demostración.* La inflación del máximo crece con el número de candidatos sobre los que se maximiza; el ruido de estimación del honesto no depende de cuántos cortes se probaron, porque sus unidades no participaron en la elección. La celda mide las dos filas para los dos números de candidatos, y el error absoluto medio y la desviación típica para tres heterogeneidades. **El honesto estima con la mitad de las unidades y aun así gana en las tres**: lo que paga por partir la muestra se lo devuelve con creces lo que se ahorra de sesgo. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# Una poblacion SIN heterogeneidad: el efecto vale 1 para todo el mundo.
+# Cualquier estructura que un arbol encuentre aqui es ruido.
+def poblacion(n, semilla, het=0.0):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 6))
+    tau = 1.0 + het * (X[:, 2] > 0)
+    T = (rng.random(n) < 0.5).astype(int)
+    return X, T, tau * T + 1.0 * rng.standard_normal(n), tau
+
+def efecto(T, Y, m):
+    a, b = m & (T == 1), m & (T == 0)
+    if a.sum() < 5 or b.sum() < 5:
+        return np.nan, np.nan
+    d = float(np.mean(Y[a]) - np.mean(Y[b]))
+    se = float(np.sqrt(np.var(Y[a], ddof=1) / a.sum() + np.var(Y[b], ddof=1) / b.sum()))
+    return d, se
+
+def mejor_corte(X, T, Y, m, minimo, ncand):
+    mejor = (-np.inf, None, None)
+    for j in range(X.shape[1]):
+        for c in np.quantile(X[m, j], np.linspace(0.1, 0.9, ncand)):
+            izq, der = m & (X[:, j] <= c), m & (X[:, j] > c)
+            if izq.sum() < minimo or der.sum() < minimo:
+                continue
+            ti, _ = efecto(T, Y, izq); td, _ = efecto(T, Y, der)
+            if np.isnan(ti) or np.isnan(td):
+                continue
+            p = izq.sum() * ti * ti + der.sum() * td * td
+            if p > mejor[0]:
+                mejor = (p, j, float(c))
+    return mejor
+
+def hojas_adaptativo(X, T, Y, m, prof, minimo, ncand):
+    if prof == 0:
+        return [m]
+    _, j, c = mejor_corte(X, T, Y, m, minimo, ncand)
+    if j is None:
+        return [m]
+    return (hojas_adaptativo(X, T, Y, m & (X[:, j] <= c), prof - 1, minimo, ncand)
+            + hojas_adaptativo(X, T, Y, m & (X[:, j] > c), prof - 1, minimo, ncand))
+
+def reglas(X, T, Y, m, prof, minimo, ncand):
+    if prof == 0:
+        return None
+    _, j, c = mejor_corte(X, T, Y, m, minimo, ncand)
+    if j is None:
+        return None
+    return (j, c, reglas(X, T, Y, m & (X[:, j] <= c), prof - 1, minimo, ncand),
+            reglas(X, T, Y, m & (X[:, j] > c), prof - 1, minimo, ncand))
+
+def aplica(r, X, m):
+    if r is None:
+        return [m]
+    j, c, izq, der = r
+    return aplica(izq, X, m & (X[:, j] <= c)) + aplica(der, X, m & (X[:, j] > c))
+
+print("el efecto vale 1 para TODO el mundo: no hay nada que encontrar")
+print("  %-14s %8s %16s %16s %18s"
+      % ("metodo", "cortes", "dispersion", "|efecto - 1|", "hojas con IC que"))
+print("  %-14s %8s %16s %16s %18s" % ("", "candid.", "de los efectos", "medio", "excluye el 1"))
+for ncand in (9, 25):
+    da, dh, ea_, eh_, fa, fh = [], [], [], [], 0, 0
+    na, nh = 0, 0
+    for s in range(12):
+        X, T, Y, tau = poblacion(4000, 600 + s)
+        n = len(Y); mi = np.arange(n) % 2 == 0
+        ad = [efecto(T, Y, m) for m in hojas_adaptativo(X, T, Y, np.ones(n, dtype=bool), 2, 200, ncand)]
+        r = reglas(X[mi], T[mi], Y[mi], np.ones(int(mi.sum()), dtype=bool), 2, 100, ncand)
+        ho = [efecto(T, Y, m) for m in aplica(r, X, ~mi)]
+        va = [d for d, _ in ad if not np.isnan(d)]
+        vh = [d for d, _ in ho if not np.isnan(d)]
+        da.append(np.std(va)); dh.append(np.std(vh))
+        ea_ += [abs(z - 1.0) for z in va]; eh_ += [abs(z - 1.0) for z in vh]
+        fa += sum(1 for d, se in ad if not np.isnan(d) and abs(d - 1.0) > 1.96 * se); na += len(va)
+        fh += sum(1 for d, se in ho if not np.isnan(d) and abs(d - 1.0) > 1.96 * se); nh += len(vh)
+    print("  %-14s %8d %16.4f %16.4f %18s"
+          % ("adaptativo", ncand, float(np.mean(da)), float(np.mean(ea_)), "%d de %d" % (fa, na)))
+    print("  %-14s %8d %16.4f %16.4f %18s"
+          % ("honesto", ncand, float(np.mean(dh)), float(np.mean(eh_)), "%d de %d" % (fh, nh)))
+print("  %-14s %8s %16.4f %16.4f %18s"
+      % ("la verdad", "-", 0.0, 0.0, "unas 2 de 48"))
+print()
+print("la dispersion verdadera de los efectos por hoja es CERO, porque el")
+print("efecto es constante. El adaptativo la estima en 0.19 y el honesto")
+print("en 0.11, que es su propio ruido de estimacion. Y al subir los")
+print("cortes candidatos de 9 a 25 el adaptativo dispersa MAS y el")
+print("honesto no: cuantas mas opciones haya, mas infla el maximo")
+print()
+print("la ultima columna es lo que importa en la practica: cuantas hojas")
+print("declararian un efecto distinto del promedio con un intervalo al")
+print("95 %. Con el efecto constante, lo que cabe esperar es el 5 % de 48,")
+print("o sea unas dos. El adaptativo declara 25, mas de la mitad; el")
+print("honesto, entre 4 y 8")
+print()
+
+print("el arbol adaptativo se sobreajusta de un modo que no se ve")
+print("  no es que prediga Y peor: es que el corte se eligio PARA")
+print("  maximizar la diferencia entre los dos lados, y esa diferencia se")
+print("  vuelve a medir en las mismas unidades que la motivaron")
+print()
+
+print("y el error total, con y sin heterogeneidad")
+print("  %-14s %12s %12s %12s %12s"
+      % ("heterogeneidad", "|err| ad.", "|err| hon.", "desv. ad.", "desv. hon."))
+for het in (0.0, 1.0, 2.0):
+    sa, sh = [], []
+    for s in range(12):
+        X, T, Y, tau = poblacion(4000, 700 + s, het)
+        n = len(Y); mi = np.arange(n) % 2 == 0
+        for m in hojas_adaptativo(X, T, Y, np.ones(n, dtype=bool), 2, 200, 9):
+            d, _ = efecto(T, Y, m)
+            if not np.isnan(d): sa.append(d - float(np.mean(tau[m])))
+        r = reglas(X[mi], T[mi], Y[mi], np.ones(int(mi.sum()), dtype=bool), 2, 100, 9)
+        for m in aplica(r, X, ~mi):
+            d, _ = efecto(T, Y, m)
+            if not np.isnan(d): sh.append(d - float(np.mean(tau[m])))
+    sa, sh = np.array(sa), np.array(sh)
+    print("  %-14.1f %12.4f %12.4f %12.4f %12.4f"
+          % (het, float(np.mean(np.abs(sa))), float(np.mean(np.abs(sh))),
+             float(sa.std()), float(sh.std())))
+print()
+print("el honesto gana en las tres filas, aunque estime con la mitad de")
+print("las unidades. Lo que paga por partir la muestra se lo devuelve con")
+print("creces lo que se ahorra de sesgo, y ese sesgo es de los que no se")
+print("pueden medir dentro de los propios datos")
+```
+
+```{=html}
+<div class="viz-honesto">
+  <div class="controles">
+    <label>Cortes candidatos <input id="ho-k" type="range" min="1" max="40" step="1" value="9"> <span id="ho-k-v">9</span></label>
+    <label>Unidades por hoja <input id="ho-n" type="range" min="100" max="2000" step="50" value="500"> <span id="ho-n-v">500</span></label>
+  </div>
+  <svg id="ho-svg" viewBox="0 0 660 270" role="img" aria-label="La dispersión que cada método atribuye a los efectos por hoja cuando el efecto verdadero es constante."></svg>
+  <p class="lectura" id="ho-lectura"></p>
+</div>
+<style>
+.viz-honesto { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-honesto .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-honesto label { display: flex; align-items: center; gap: .4rem; }
+.viz-honesto input[type=range] { width: 150px; padding: 0; }
+.viz-honesto svg { width: 100%; height: auto; display: block; }
+.viz-honesto .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("ho-svg"), lec = document.getElementById("ho-lectura");
+  var ck = document.getElementById("ho-k"), cn = document.getElementById("ho-n");
+  var ek = document.getElementById("ho-k-v"), en = document.getElementById("ho-n-v");
+  var X0 = 150, X1 = 620, Y0 = 44, Y1 = 186;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // la esperanza del maximo de k normales tipificadas, aproximacion clasica
+  function espMax(k) {
+    if (k < 2) return 0;
+    var l = Math.log(k);
+    return Math.sqrt(2 * l) - (Math.log(l) + Math.log(4 * Math.PI)) / (2 * Math.sqrt(2 * l));
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var k = Math.round(+ck.value), n = Math.round(+cn.value);
+    ek.textContent = String(k); en.textContent = String(n);
+    // el efecto de una hoja tiene error tipico 2*sigma/raiz(n) con sigma = 1
+    var se = 2.0 / Math.sqrt(n);
+    var honesto = se;                       // solo ruido de estimacion
+    var adaptativo = se * Math.sqrt(1 + espMax(k) * espMax(k));
+    var hi = Math.max(adaptativo, 0.35) * 1.15;
+    function px(v) { return X0 + (v / hi) * (X1 - X0); }
+
+    var filas = [
+      { y: Y0, v: 0.0, n: "la verdad", c: C_T },
+      { y: Y0 + 52, v: honesto, n: "árbol honesto", c: C_A },
+      { y: Y0 + 104, v: adaptativo, n: "árbol adaptativo", c: C_B }
+    ];
+    for (var i = 0; i < filas.length; i++) {
+      var F = filas[i];
+      svg.appendChild(el("path", { d: "M" + X0 + " " + F.y + " L" + X1 + " " + F.y, stroke: C_L, "stroke-width": 1 }));
+      svg.appendChild(el("path", { d: "M" + X0 + " " + F.y + " L" + px(F.v).toFixed(1) + " " + F.y,
+        stroke: F.c, "stroke-width": 11, opacity: .45 }));
+      svg.appendChild(el("circle", { cx: px(F.v).toFixed(1), cy: F.y, r: 7, fill: F.c }));
+      svg.appendChild(el("text", { x: X0 - 12, y: F.y + 4, "text-anchor": "end", "font-size": 11.5, fill: C_T }, F.n));
+      svg.appendChild(el("text", { x: px(F.v) + 14, y: F.y + 4, "font-size": 11, fill: C_T, opacity: .8 }, F.v.toFixed(4)));
+    }
+    svg.appendChild(el("path", { d: "M" + X0 + " " + (Y1 + 18) + " L" + X1 + " " + (Y1 + 18), stroke: C_L, "stroke-width": 1.2 }));
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 40, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .75 },
+      "dispersión atribuida a los efectos por hoja, con el efecto verdadero constante"));
+
+    lec.innerHTML = "Con <strong>" + n + "</strong> unidades por hoja y <strong>" + k +
+      "</strong> cortes candidatos, el árbol honesto atribuye a los efectos una dispersión de <strong>" +
+      honesto.toFixed(4) + "</strong> —su propio ruido de estimación— y el adaptativo, <strong>" + adaptativo.toFixed(4) +
+      "</strong>, un <strong>" + (100 * (adaptativo / honesto - 1)).toFixed(0) + " %</strong> más. La verdad es cero. " +
+      "Subiendo los cortes candidatos, el adaptativo crece y el honesto no: escoger el máximo de más opciones infla lo escogido. " +
+      "Subiendo las unidades por hoja los dos bajan, porque el ruido de estimación baja con la raíz del tamaño, pero el cociente entre ellos no cambia.";
+  }
+  ck.addEventListener("input", dibujar); cn.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Del árbol al [bosque causal]{.g}
+
+::: {.proposicion}
+**Proposición 19.9 (promediar suaviza y mejora).** Promediando 24 árboles honestos sobre submuestras distintas, el ECM contra $\tau$ baja de **0,449642 a 0,187489** y los valores distintos que devuelve el estimador suben de **8 a 449**.
+:::
+
+::: {.demostracion}
+*Demostración.* Un árbol devuelve un valor por hoja, de modo que su $\hat\tau$ es una función escalonada con tantos escalones como hojas; cada árbol corta en sitios distintos y el promedio interpola entre ellos. La reducción de varianza es la de ML 35 aplicada al efecto. La celda mide con 1, 3, 8 y 24 árboles: la correlación con $\tau$ sube de 0,906920 a **0,964229**. ∎
+:::
+
+::: {.proposicion}
+**Proposición 19.10 (la dispersión entre árboles no basta para un intervalo).** El error típico medio entre árboles vale **0,095244** y el error real medio **0,309976**: un factor **3,25**. El intervalo al 95 % construido así cubre el **42,75 %**.
+:::
+
+::: {.demostracion}
+*Demostración.* La dispersión entre árboles mide cuánto se mueve el promedio al cambiar de submuestra, que es una parte de la varianza y **nada** del sesgo: un árbol de profundidad 3 no puede representar un efecto continuo, y ese error no desaparece al promediar. La celda lo mide. **Un intervalo que ignora el sesgo no cubre**, y el 42,75 % es lo que se paga por olvidarlo. ∎
+:::
+
+**Modo de falla.** Este bosque produce un $\hat\tau(x)$ razonable y un intervalo que parece razonable, y el intervalo miente por más del doble. En producción eso se traduce en decidir a quién tratar con una confianza que no se tiene, y el error no aparece en ninguna métrica de ajuste. La defensa mientras no haya intervalos con garantía es no usarlos: ordenar por $\hat\tau$ y evaluar la **política** con la Lección 21, que sí tiene un error típico honesto.
+
+```{pyodide}
+import numpy as np
+
+# De un arbol a un bosque: promediar muchos arboles honestos, cada uno
+# sobre una submuestra distinta.
+def poblacion(n, semilla):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 5))
+    tau = 1.0 + 1.5 * X[:, 0] - 1.0 * (X[:, 1] > 0)
+    T = (rng.random(n) < 0.5).astype(int)
+    return X, T, tau * T + 0.8 * X[:, 2] + 1.0 * rng.standard_normal(n), tau
+
+def efecto(T, Y, m):
+    a, b = m & (T == 1), m & (T == 0)
+    if a.sum() < 5 or b.sum() < 5:
+        return np.nan
+    return float(np.mean(Y[a]) - np.mean(Y[b]))
+
+def corte(X, T, Y, m, minimo):
+    mejor = (-np.inf, None, None)
+    for j in range(X.shape[1]):
+        for c in np.quantile(X[m, j], (0.25, 0.5, 0.75)):
+            i_, d_ = m & (X[:, j] <= c), m & (X[:, j] > c)
+            if i_.sum() < minimo or d_.sum() < minimo:
+                continue
+            ti, td = efecto(T, Y, i_), efecto(T, Y, d_)
+            if np.isnan(ti) or np.isnan(td):
+                continue
+            p = i_.sum() * ti * ti + d_.sum() * td * td
+            if p > mejor[0]:
+                mejor = (p, j, float(c))
+    return mejor
+
+def reglas(X, T, Y, m, prof, minimo):
+    if prof == 0:
+        return None
+    _, j, c = corte(X, T, Y, m, minimo)
+    if j is None:
+        return None
+    return (j, c, reglas(X, T, Y, m & (X[:, j] <= c), prof - 1, minimo),
+            reglas(X, T, Y, m & (X[:, j] > c), prof - 1, minimo))
+
+def predice(r, X, T, Y, est, Xn):
+    """Estima el efecto de cada hoja con las unidades de `est` y lo aplica
+       a las filas de Xn."""
+    out = np.zeros(len(Xn))
+    def baja(r, m_est, m_new):
+        if r is None:
+            e = efecto(T, Y, m_est)
+            out[m_new] = 0.0 if np.isnan(e) else e
+            return
+        j, c, iz, de = r
+        baja(iz, m_est & (X[:, j] <= c), m_new & (Xn[:, j] <= c))
+        baja(de, m_est & (X[:, j] > c), m_new & (Xn[:, j] > c))
+    baja(r, est, np.ones(len(Xn), dtype=bool))
+    return out
+
+def arbol_honesto(X, T, Y, Xn, rng, prof=3):
+    """Submuestra, mitad para cortar y mitad para estimar."""
+    n = len(Y)
+    idx = np.argsort(rng.random(n))[: int(0.8 * n)]
+    sub = np.zeros(n, dtype=bool); sub[idx] = True
+    mitad = np.zeros(n, dtype=bool)
+    mitad[idx[: len(idx) // 2]] = True
+    r = reglas(X, T, Y, mitad, prof, 40)
+    return predice(r, X, T, Y, sub & ~mitad, Xn)
+
+X, T, Y, tau = poblacion(3000, 191)
+Xp, _, _, taup = poblacion(2000, 1911)
+rng = np.random.default_rng(0)
+arboles = np.array([arbol_honesto(X, T, Y, Xp, rng) for _ in range(24)])
+
+print("de un arbol a un bosque")
+print("  %-16s %14s %14s %14s" % ("arboles", "ECM contra tau", "correlacion", "valores dist."))
+for b in (1, 3, 8, 24):
+    z = arboles[:b].mean(0)
+    print("  %-16d %14.6f %14.6f %14d"
+          % (b, float(np.mean((z - taup) ** 2)), float(np.corrcoef(z, taup)[0, 1]),
+             len(np.unique(np.round(z, 6)))))
+print("  %-16s %14s %14.6f %14d" % ("la verdad", "-", 1.0, len(np.unique(np.round(taup, 6)))))
+print()
+print("un arbol solo devuelve %d valores distintos, uno por hoja; con 24"
+      % len(np.unique(np.round(arboles[0], 6))))
+print("devuelve %d, porque cada arbol corta en otro sitio y el promedio"
+      % len(np.unique(np.round(arboles.mean(0), 6))))
+print("interpola entre ellos. El ECM baja de %.4f a %.4f"
+      % (float(np.mean((arboles[0] - taup) ** 2)),
+         float(np.mean((arboles.mean(0) - taup) ** 2))))
+print()
+
+print("y el bosque trae algo que un arbol no: una medida de su propia")
+print("incertidumbre, la dispersion entre arboles")
+z = arboles.mean(0)
+se = arboles.std(0, ddof=1) / np.sqrt(len(arboles))
+print("  %-30s %14.6f" % ("error tipico medio entre arboles", float(np.mean(se))))
+print("  %-30s %14.6f" % ("error real medio |tau_hat - tau|", float(np.mean(np.abs(z - taup)))))
+print("  %-30s %14.4f" % ("cociente", float(np.mean(np.abs(z - taup)) / np.mean(se))))
+print()
+cub = float(np.mean(np.abs(z - taup) <= 1.96 * se))
+print("  cobertura de un intervalo al 95 %% asi construido : %.4f" % cub)
+print()
+print("la dispersion entre arboles mide cuanto se mueve el promedio al")
+print("cambiar de submuestra, y eso es SOLO una parte del error: no")
+print("incluye el sesgo de que un arbol de profundidad 3 no puede")
+print("representar un efecto continuo. Por eso el intervalo cubre el")
+print("%.0f %% y no el 95 %%" % (100 * cub))
+print()
+
+print("lo que le falta a este bosque para ser un bosque causal de verdad")
+print("  %-42s %14s" % ("pieza", "esta aqui"))
+print("  %-42s %14s" % ("criterio de corte sobre el efecto", "si"))
+print("  %-42s %14s" % ("honestidad: cortar y estimar aparte", "si"))
+print("  %-42s %14s" % ("promediar sobre submuestras", "si"))
+print("  %-42s %14s" % ("pesos locales en vez de hojas duras", "NO"))
+print("  %-42s %14s" % ("residualizar antes de cortar", "NO"))
+print("  %-42s %14s" % ("intervalo con garantia asintotica", "NO"))
+print()
+print("las tres que faltan son las que convierten esto en el estimador")
+print("con teoria de Wager y Athey. Las dos primeras estan en la leccion")
+print("17 y la 18: residualizar primero y cortar sobre el residuo")
+```
+
+## 5. Lo que esta lección no resuelve
+
+El bosque construido aquí tiene tres de las seis piezas de un bosque causal con teoría. Le faltan los **pesos locales** —tratar las hojas como una medida de vecindad en lugar de como cajas duras—, **residualizar antes de cortar**, que es lo de las Lecciones 17 y 18 llevado al criterio, y un **intervalo con garantía asintótica**, que exige que los árboles sean suficientemente aleatorios y suficientemente pequeños. La Proposición 19.10 midió lo que cuesta no tener la tercera.
+
+Tampoco se ha tratado el caso de tratamiento continuo, donde el criterio de corte deja de ser una diferencia de medias; ni cómo elegir la profundidad, que aquí se fijó a mano; ni la relación entre este criterio y el R-score de la Lección 18, que son el mismo objetivo escrito de dos maneras cuando el tratamiento es binario y está aleatorizado.
+
+## Ejercicios
+
+### Ejercicio 1, El criterio de corte
+
+Con la Definición 19.3, calcular la puntuación causal de tres cortes candidatos sobre un nodo de 1000 unidades, y decir cuál gana.
+
+```{pyodide}
+#| exercise: ex_criterio
+import numpy as np
+
+# (n_izquierda, tau_izquierda, n_derecha, tau_derecha)
+cortes = [(500, 0.10, 500, 0.90),
+          (200, -0.50, 800, 0.70),
+          (500, 0.50, 500, 0.50)]
+
+puntuaciones = ______
+gana = ______
+
+print([round(float(z), 1) for z in puntuaciones], gana)
+```
+
+::: {.hint exercise="ex_criterio"}
+La puntuación es $n_L\tau_L^2+n_R\tau_R^2$. El que gana es el índice del máximo.
+:::
+
+::: {.solution exercise="ex_criterio"}
+```{pyodide}
+import numpy as np
+
+cortes = [(500, 0.10, 500, 0.90),
+          (200, -0.50, 800, 0.70),
+          (500, 0.50, 500, 0.50)]
+
+puntuaciones = [nl * tl ** 2 + nr * tr ** 2 for nl, tl, nr, tr in cortes]
+gana = int(np.argmax(puntuaciones))
+
+print([round(float(z), 1) for z in puntuaciones], gana)
+```
+
+Las puntuaciones son **410,0, 442,0 y 250,0**, y gana el **segundo**. Es instructivo: el segundo corte deja un lado con solo 200 unidades y un efecto negativo, y aun así puntúa más alto que el primero, que parte por la mitad. El criterio premia la **separación**, no el equilibrio, y por eso hace falta el mínimo de unidades por hoja. El tercero, con los dos lados iguales, es el que menos puntúa aunque su efecto medio sea el mismo: un corte que no separa efectos no aporta nada.
+:::
+
+```{pyodide}
+#| exercise: ex_criterio
+#| check: true
+if [round(float(z), 1) for z in puntuaciones] == [410.0, 442.0, 250.0] and gana == 1:
+    feedback = {"correct": True, "message": "Correcto: 410.0, 442.0 y 250.0, y gana el segundo."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [410.0, 442.0, 250.0] y 1."}
+feedback
+```
+
+### Ejercicio 2, Cuánto infla el máximo
+
+Con la Proposición 19.8, calcular cuánto se espera que valga el máximo de $k$ ruidos normales tipificados, para cuatro valores de $k$, usando la aproximación $\sqrt{2\ln k}-\frac{\ln\ln k+\ln 4\pi}{2\sqrt{2\ln k}}$.
+
+```{pyodide}
+#| exercise: ex_maximo
+import numpy as np
+
+ks = np.array([2, 9, 25, 100])
+
+l = ______
+esperado = ______
+
+print([round(float(z), 4) for z in esperado])
+```
+
+::: {.hint exercise="ex_maximo"}
+Conviene calcular primero $\ln k$ y guardarlo, porque aparece tres veces.
+:::
+
+::: {.solution exercise="ex_maximo"}
+```{pyodide}
+import numpy as np
+
+ks = np.array([2, 9, 25, 100])
+
+l = np.log(ks)
+esperado = np.sqrt(2 * l) - (np.log(l) + np.log(4 * np.pi)) / (2 * np.sqrt(2 * l))
+
+print([round(float(z), 4) for z in esperado])
+```
+
+Sale **0,2582, 1,3048, 1,8081 y 2,3663**. Con 9 candidatos el máximo del ruido está 1,30 desviaciones típicas por encima de cero, y con 100 candidatos, 2,37. Eso es lo que el árbol adaptativo se cree haber encontrado, y es la cantidad que la celda midió como dispersión sobrante. La aproximación falla para $k$ pequeño —con $k=2$ el valor exacto es $1/\sqrt{\pi}=0{,}5642$ y ésta da 0,2582—, así que sirve para ver la forma del crecimiento, no para corregir nada.
+:::
+
+```{pyodide}
+#| exercise: ex_maximo
+#| check: true
+if [round(float(z), 4) for z in esperado] == [0.2582, 1.3048, 1.8081, 2.3663]:
+    feedback = {"correct": True, "message": "Correcto: con 100 candidatos el maximo del ruido vale 2.37 desviaciones."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [0.2582, 1.3048, 1.8081, 2.3663]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F5-retos.ipynb`, sección **Causal 19**:
+
+1. Construir una población donde el resultado y el efecto los muevan variables distintas, ajustar un árbol de regresión corriente y anotar la importancia que le da a la variable del efecto.
+2. Escribir el criterio de corte causal y comparar, sobre la raíz, su puntuación con la del criterio del resultado para cada variable. Anotar cuál elige cada uno.
+3. Con un efecto **constante**, medir la dispersión que cada árbol atribuye a los efectos por hoja y cuántas hojas declaran un efecto distinto con un intervalo al 95 %. Guardar en `50-Errores/` la tasa de falso hallazgo del árbol adaptativo.
+
+## Del libro
+
+ESL cap. 15 *Random Forests* explica por qué promediar árboles sobre submuestras distintas reduce la varianza sin aumentar el sesgo, que es la Proposición 19.9 aplicada al efecto en lugar de al resultado. El capítulo se cita por su número y su título; el texto no se reproduce. El criterio de corte causal y la honestidad se deben a Athey e Imbens, y el bosque causal con intervalos a Wager y Athey; aquí se implementan las tres primeras piezas y se mide lo que falta.
+
+## Para el Cerebro
+
+- Un árbol corriente le da a la variable del efecto una importancia de **0,000000**.
+- Sus hojas dan efectos entre 0,93 y 1,05 cuando el efecto real es 0 o 2.
+- El criterio causal es $n_L\hat\tau_L^2+n_R\hat\tau_R^2$: la misma forma, con $\hat\tau$ en lugar de $\bar Y$.
+- $R^2$ sobre $\tau$: **0,687** el causal contra **0,0007** el corriente.
+- Con efecto **constante**, el adaptativo atribuye dispersión **0,19** y el honesto **0,11**.
+- Y declara **25 de 48** hojas significativas donde caben unas dos.
+- Más candidatos inflan más al adaptativo (0,181 → 0,192) y nada al honesto.
+- El honesto gana en error total en las tres heterogeneidades, con la mitad de unidades.
+- El bosque baja el ECM de **0,4496 a 0,1875** y pasa de 8 a **449** valores distintos.
+- Su intervalo ingenuo cubre el **42,75 %**: mide la varianza y olvida el sesgo.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico: que las importancias del árbol corriente valen 0,763687, 0,236313, 0,000000 y 0,000000; que sus hojas dan efectos reales entre 0,9324 y 1,0480; que cortando por la mediana las diferencias de medias de $Y$ y de efectos valen 9,6517 y 0,0165 para $X_0$ y 0,9890 y 2,0000 para $X_2$; que el criterio causal puntúa 2600,4, 4480,2, 8399,0 y 5207,5 y el del resultado 93 749,4, 39 348,0, 941,3 y 54,4; que el árbol causal de profundidad 2 da hojas con efectos reales de 0,2850 a 2,0000 y $R^2$ sobre $\tau$ de 0,687298 contra 0,000709 del corriente; que con efecto constante la dispersión vale 0,1813 y 0,1164 con 9 candidatos y 0,1920 y 0,1117 con 25, con error medio |efecto − 1| de 0,1686 y 0,1205; que las hojas que excluyen el 1 son 25 de 48 en el adaptativo y 8 y 4 de 48 en el honesto; que el error absoluto medio vale 0,1428 y 0,0790, 0,1256 y 0,0854, y 0,1048 y 0,0853 para las tres heterogeneidades, con desviaciones 0,1811 y 0,1060, 0,1618 y 0,1165, y 0,1389 y 0,1088; que el ECM del bosque vale 0,449642, 0,295426, 0,231917 y 0,187489 con 1, 3, 8 y 24 árboles, con correlaciones de 0,906920 a 0,964229 y valores distintos de 8 a 449; y que el error típico entre árboles vale 0,095244 frente a un error real de 0,309976, con cobertura del 42,75 %.
+
+**Lo que viene de los libros.** De ESL cap. 15, por qué promediar árboles sobre submuestras reduce la varianza sin aumentar el sesgo. El capítulo se cita por su número y su título; el texto no se reproduce. El criterio causal y la honestidad son de Athey e Imbens y el bosque con intervalos de Wager y Athey; aquí se implementan y se mide lo que falta.
+
+**Lo que es mío, no del libro.** La población con dos mundos separados —una variable que mueve el resultado y otra que mueve el efecto—, que es lo que convierte «un árbol corriente no sirve» en una importancia de 0,000000; la demostración de la honestidad sobre un efecto **constante**, que apareció después de que la versión con heterogeneidad real diera una diferencia demasiado pequeña para verse, y que permite decir que la dispersión verdadera es cero; la columna de **hojas que declaran significativo lo que no existe**, que traduce el sesgo a la única unidad que importa al decidir; el barrido de cortes candidatos, que muestra que la inflación es del máximo y no del método; y la medición de la cobertura del intervalo ingenuo, que salió 42,75 % y es la razón por la que esta lección termina mandando a la 21.
+:::
