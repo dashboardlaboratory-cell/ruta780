@@ -1,0 +1,1005 @@
+---
+title: "Metalearners: S, T y X desde cero"
+subtitle: "Inferencia causal · Lección 16"
+nivel: L3
+modulo: causal
+fase: F5
+prereqs: [causal/01-resultados-potenciales, causal/02-dags-y-puerta-trasera, ml/13-bagging-bosques-y-boosting]
+siguientes: []
+libro: "Facure, cap. 21 Meta Learners"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="causal/16-metalearners"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F5]{.item}
+[**Libro** Facure 21]{.item}
+[**Prereqs** [Resultados potenciales](01-resultados-potenciales.qmd) · [DAGs y puerta trasera](02-dags-y-puerta-trasera.qmd) · [Bagging, bosques y boosting](../ml/13-bagging-bosques-y-boosting.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Distinguir el ATE de $\tau(x)$** y medir lo que se gana al saber a quién tratar: **un 24 % más de efecto con el 48 % de los envíos**.
+2. **Escribir el S-learner** y demostrar que encoge hacia cero: la importancia del tratamiento cae a **0,001483** y la media estimada a **0,162742** frente a un ATE de 0,654.
+3. **Escribir el T-learner** y medir que recupera la escala pero hereda el ruido del brazo pequeño: su error se multiplica por **10** al pasar del 50 % al 5 % de tratados.
+4. **Exhibir que el error cuadrático y la decisión ordenan distinto**: el S-learner gana en error en las cuatro filas y pierde al decidir en tres.
+5. **Escribir el X-learner** con su imputación y su mezcla por la propensión, y medir que **gana en las ocho comparaciones**.
+6. **Separar los dos modos de fallo**: perder superposición —el **61 %** de las unidades fuera de $[0{,}05,\,0{,}95]$— y tener un confusor no observado, que multiplica el error por **39**.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Causal 01**: la ignorabilidad, que es lo que los tres dan por supuesto.
+- **Causal 02**: el criterio de puerta trasera, que dice qué va en $X$.
+- **ML 13**: el bosque aleatorio, que aquí es el modelo base de los tres.
+- **ML 29**: la descomposición sesgo-varianza, que es lo que separa al S del T.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Causal 17**: el doble machine learning, que ataca el mismo problema por ortogonalización.
+- **Causal 18**: el R-score, que permite elegir entre estos tres sin conocer el efecto.
+- **Causal 21**: la evaluación de políticas, que es lo único de esta lección que sí se puede calcular con datos reales.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $\tau(x)$ | tau de equis | El efecto esperado sobre las unidades con característica $x$ |
+| $\mu_t(x)$ | mu sub te de equis | El resultado esperado bajo el tratamiento $t$ |
+| $e(x)$ | e de equis | La [propensión]{.g}: la probabilidad de ser tratado dado $x$ |
+| $D_i$ | de sub i | El efecto **imputado** a la unidad $i$ con el modelo del otro brazo |
+| $\pi(x)$ | pi de equis | La política: a quién se trata |
+| ECM | e ce eme | El error cuadrático medio contra el efecto verdadero |
+:::
+
+## 1. El ATE no basta para decidir
+
+::: {.definicion}
+**Definición 16.1 ([efecto condicionado (CATE)]{.g}).** $\tau(x)=E[Y(1)-Y(0)\mid X=x]$. El ATE de la Lección 01 es su promedio, $E[\tau(X)]$.
+:::
+
+::: {.proposicion}
+**Proposición 16.2 (el promedio puede no describir a nadie).** En la población de la celda el ATE vale **0,66** y el efecto individual toma cuatro valores: **−1,0 para el 15,96 %**, 0,0 para el 35,56 %, 1,0 para el 14,92 % y 2,0 para el 33,56 %. Ninguna unidad tiene un efecto de 0,66.
+:::
+
+::: {.demostracion}
+*Demostración.* El efecto se construye como $2\cdot\mathbb{1}\{x_0>0\}-\mathbb{1}\{x_1>0{,}5\}$, que toma cuatro valores; la celda cuenta cuántas unidades hay en cada uno. **Un sexto de la población empeora con el tratamiento y el promedio no lo dice.** ∎
+:::
+
+::: {.proposicion}
+**Proposición 16.3 (lo que vale saber a quién tratar).** Tratar a todos deja **0,6608** por unidad sobre no tratar a nadie; tratar solo a quien tiene efecto positivo deja **0,8204**, un **24 % más con el 48 % de los envíos**.
+:::
+
+::: {.demostracion}
+*Demostración.* El valor de una política $\pi$ es $E[Y(0)+\tau(X)\pi(X)]$, que se maximiza tratando exactamente a quien tiene $\tau(x)>0$. La celda evalúa cuatro políticas sobre la población simulada, donde $\tau$ se conoce. **Esa diferencia es la que esta lección persigue**, y exige estimar $\tau(x)$, no su promedio. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# Un experimento aleatorizado: el tratamiento no depende de nada, asi que
+# no hay confusion. Lo que queda por resolver es OTRA cosa: a quien sirve.
+def poblacion(n, semilla, p=0.5):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 3))
+    base = 10.0 + 5.0 * X[:, 0] ** 2 + 3.0 * np.sin(3.0 * X[:, 1]) + 2.0 * X[:, 2]
+    tau = 2.0 * (X[:, 0] > 0) - 1.0 * (X[:, 1] > 0.5)      # el efecto, que varia
+    T = (rng.random(n) < p).astype(int)
+    Y = base + tau * T + rng.standard_normal(n)
+    return X, T, Y, tau, base
+
+X, T, Y, tau, base = poblacion(2500, 16)
+print("un experimento con %d unidades, %d tratadas" % (len(Y), int(T.sum())))
+print("  ATE verdadero                 : %.6f" % float(np.mean(tau)))
+print("  diferencia de medias observada: %.6f"
+      % float(np.mean(Y[T == 1]) - np.mean(Y[T == 0])))
+print("  el efecto individual va de %.1f a %.1f" % (float(tau.min()), float(tau.max())))
+print()
+print("los valores que toma el efecto, y cuanta gente hay en cada uno")
+vals, cuenta = np.unique(np.round(tau, 6), return_counts=True)
+print("  %-10s %10s %10s" % ("efecto", "unidades", "fraccion"))
+for v, c in zip(vals, cuenta):
+    print("  %-10.1f %10d %10.4f" % (v, c, c / len(tau)))
+print()
+print("el ATE vale %.2f y NINGUNA unidad tiene ese efecto: es el promedio"
+      % float(np.mean(tau)))
+print("de cuatro grupos, uno de los cuales pierde %.1f" % abs(float(vals[0])))
+print()
+
+print("lo que se gana sabiendo a quien tratar")
+print("  %-34s %14s %14s" % ("politica", "valor por unidad", "tratados")) 
+for nombre, pi in (("no tratar a nadie", np.zeros(len(tau), dtype=int)),
+                   ("tratar a todos", np.ones(len(tau), dtype=int)),
+                   ("tratar si el efecto es positivo", (tau > 0).astype(int)),
+                   ("tratar al azar a la mitad", (np.arange(len(tau)) % 2))):
+    valor = float(np.mean(base + tau * pi))
+    print("  %-34s %14.6f %14.4f" % (nombre, valor, float(np.mean(pi))))
+print()
+mejor = float(np.mean(base + tau * (tau > 0)))
+todos = float(np.mean(base + tau))
+nadie = float(np.mean(base))
+print("tratar a todos deja %.4f por unidad sobre no tratar a nadie, y" % (todos - nadie))
+print("tratar solo a quien le sirve deja %.4f: un %.0f %% mas, con el"
+      % (mejor - nadie, 100 * (mejor - nadie) / (todos - nadie) - 100))
+print("%.0f %% de los envios" % (100 * float(np.mean(tau > 0))))
+print()
+print("esa diferencia es lo que esta leccion persigue. Y exige estimar")
+print("tau(x) = E[Y(1) - Y(0) | X = x], no su promedio")
+```
+
+## 2. El S-learner: un modelo, y el encogimiento
+
+::: {.definicion}
+**Definición 16.4 (S-learner, el primer [metalearner]{.g}).** Ajustar **un** modelo $\hat\mu(x,t)$ con el tratamiento como una columna más, y estimar $\hat\tau(x)=\hat\mu(x,1)-\hat\mu(x,0)$.
+:::
+
+::: {.proposicion}
+**Proposición 16.5 (encoge hacia cero, y siempre en esa dirección).** Con el bosque de la celda, la importancia de la columna del tratamiento vale **0,001483**, la menor de las cuatro, y la media del efecto estimado cae a **0,162742** frente a un ATE de 0,654, con desviación típica **0,211504** contra 1,100493.
+:::
+
+::: {.demostracion}
+*Demostración.* El árbol elige en cada nodo el corte que más reduce el error, y la línea base —aquí $5x_0^2$ más el resto— explica mucha más varianza que el efecto. Los cortes se gastan en ella y casi ninguno separa tratados de no tratados, que es el único corte capaz de producir una diferencia. La celda mide el efecto según la línea base pesa: con la base apagada la media estimada vale **0,694023** y la desviación **1,067343**, casi las verdaderas; con la base al triple bajan a **0,065142** y **0,142582**. El sesgo apunta siempre a cero. ∎
+:::
+
+::: {.proposicion}
+**Proposición 16.6 (el orden sobrevive al encogimiento).** Aun encogido, el orden que produce sirve: tratar donde el S-learner predice efecto positivo logra **0,705200** contra **0,654000** de tratar a todos, con el 75,8 % de los envíos.
+:::
+
+::: {.demostracion}
+*Demostración.* Encoger multiplica por un factor casi constante, que no cambia el signo ni el orden salvo cerca del cero. La celda mide las tres políticas. **Lo que se pierde es la escala**, y eso importa en cuanto hay que decidir si el efecto paga el coste, que es la Lección 22. ∎
+:::
+
+**Modo de falla.** El S-learner no falla ruidosamente: produce un efecto pequeño y plausible, con el signo correcto, y la conclusión que se saca es que «el tratamiento funciona poco». La magnitud que se lleva a la decisión de negocio es una fracción de la verdadera, y el error crece justo cuando la línea base es fuerte, que es el caso normal en datos de clientes. La defensa es mirar la importancia de la columna del tratamiento: si es la última de la lista, el efecto que salga está encogido.
+
+```{pyodide}
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+
+def poblacion(n, semilla, p=0.5, fuerza_base=1.0):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 3))
+    base = fuerza_base * (10.0 + 5.0 * X[:, 0] ** 2 + 3.0 * np.sin(3.0 * X[:, 1]) + 2.0 * X[:, 2])
+    tau = 2.0 * (X[:, 0] > 0) - 1.0 * (X[:, 1] > 0.5)
+    T = (rng.random(n) < p).astype(int)
+    Y = base + tau * T + rng.standard_normal(n)
+    return X, T, Y, tau
+
+def s_learner(X, T, Y, X_new):
+    """Un solo modelo, con el tratamiento como una columna mas."""
+    Z = np.column_stack([X, T])
+    m = RandomForestRegressor(n_estimators=100, min_samples_leaf=10, random_state=0)
+    m.fit(Z, Y)
+    uno = np.column_stack([X_new, np.ones(len(X_new))])
+    cero = np.column_stack([X_new, np.zeros(len(X_new))])
+    return m.predict(uno) - m.predict(cero), m
+
+X, T, Y, tau = poblacion(2500, 16)
+Xp, _, _, taup = poblacion(2500, 161)
+tau_s, modelo = s_learner(X, T, Y, Xp)
+
+print("el S-learner: un modelo con el tratamiento como columna")
+print("  ATE verdadero                 : %.6f" % float(np.mean(taup)))
+print("  media de tau estimado         : %.6f" % float(np.mean(tau_s)))
+print("  error cuadratico medio        : %.6f" % float(np.mean((tau_s - taup) ** 2)))
+print("  correlacion con el verdadero  : %.6f"
+      % float(np.corrcoef(tau_s, taup)[0, 1]))
+print("  desviacion tipica de tau_hat  : %.6f" % float(np.std(tau_s)))
+print("  desviacion tipica de tau real : %.6f" % float(np.std(taup)))
+print()
+print("importancia de cada columna para el bosque")
+print("  %-16s %12s" % ("columna", "importancia"))
+for nombre, imp in zip(["X0", "X1", "X2", "T"], modelo.feature_importances_):
+    print("  %-16s %12.6f" % (nombre, imp))
+print()
+print("el tratamiento es la columna que MENOS pesa. El bosque gasta sus")
+print("cortes en explicar la linea base, que es grande, y casi ninguno en")
+print("separar tratados de no tratados, que es el unico corte que produce")
+print("un efecto distinto de cero")
+print()
+
+print("y empeora segun la linea base pesa mas frente al efecto")
+print("  %-16s %12s %12s %12s" % ("escala de base", "media tau", "desv. tau", "importancia T"))
+for f in (0.0, 0.2, 1.0, 3.0):
+    Xa, Ta, Ya, taua = poblacion(2500, 16, fuerza_base=f)
+    ts, m = s_learner(Xa, Ta, Ya, Xp)
+    print("  %-16.1f %12.6f %12.6f %12.6f"
+          % (f, float(np.mean(ts)), float(np.std(ts)), float(m.feature_importances_[3])))
+print()
+print("con la base apagada el S-learner recupera el efecto casi entero.")
+print("Con la base tres veces mas fuerte, la desviacion de tau estimado")
+print("cae a una fraccion de la verdadera: el metodo no se equivoca al")
+print("azar, encoge SIEMPRE hacia cero")
+print()
+
+print("cuanto cuesta ese encogimiento al decidir a quien tratar")
+valor = lambda pi: float(np.mean(taup * pi))
+print("  %-34s %16s %12s" % ("politica", "efecto logrado", "tratados"))
+print("  %-34s %16.6f %12.4f" % ("tratar a todos", valor(np.ones(len(taup))), 1.0))
+print("  %-34s %16.6f %12.4f"
+      % ("tratar si S-learner dice > 0", valor((tau_s > 0).astype(int)), float(np.mean(tau_s > 0))))
+print("  %-34s %16.6f %12.4f"
+      % ("tratar si el efecto real es > 0", valor((taup > 0).astype(int)), float(np.mean(taup > 0))))
+print()
+print("aun encogido, el orden que produce sirve: la regla basada en el")
+print("S-learner mejora a tratar a todos. Lo que pierde es la escala, y")
+print("eso importa cuando hay que decidir si el efecto paga el coste")
+```
+
+```{=html}
+<div class="viz-imputa">
+  <div class="controles">
+    <label>Dónde está la unidad <input id="im-x" type="range" min="-2" max="2" step="0.05" value="0.8"> <span id="im-x-v">0.80</span></label>
+    <label>Peso de la línea base <input id="im-b" type="range" min="0" max="3" step="0.1" value="1.0"> <span id="im-b-v">1.0</span></label>
+  </div>
+  <svg id="im-svg" viewBox="0 0 660 300" role="img" aria-label="Las dos curvas de resultado esperado y el efecto imputado a una unidad tratada, que es su resultado menos lo que el modelo del otro brazo predice."></svg>
+  <p class="lectura" id="im-lectura"></p>
+</div>
+<style>
+.viz-imputa { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-imputa .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-imputa label { display: flex; align-items: center; gap: .4rem; }
+.viz-imputa input[type=range] { width: 150px; padding: 0; }
+.viz-imputa svg { width: 100%; height: auto; display: block; }
+.viz-imputa .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("im-svg"), lec = document.getElementById("im-lectura");
+  var cx = document.getElementById("im-x"), cb = document.getElementById("im-b");
+  var ex_ = document.getElementById("im-x-v"), eb = document.getElementById("im-b-v");
+  var X0 = 62, X1 = 620, Y0 = 22, Y1 = 236, LO = -2, HI = 2;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(v) { return X0 + (v - LO) * (X1 - X0) / (HI - LO); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var x = +cx.value, b = +cb.value;
+    ex_.textContent = x.toFixed(2); eb.textContent = b.toFixed(1);
+    var mu0 = function (z) { return b * (10 + 5 * z * z); };
+    var tau = function (z) { return z > 0 ? 2 : 0; };
+    var mu1 = function (z) { return mu0(z) + tau(z); };
+    var VLO = 0, VHI = b * 30 + 4;
+    function py(v) { return Y1 - (Math.max(VLO, Math.min(VHI, v)) - VLO) * (Y1 - Y0) / (VHI - VLO); }
+
+    for (var g = 0; g <= 4; g++) {
+      var yv = VLO + g * (VHI - VLO) / 4;
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(yv).toFixed(1) + " L" + X1 + " " + py(yv).toFixed(1),
+        stroke: C_L, "stroke-width": 0.8, opacity: .5 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(yv) + 4, "text-anchor": "end", "font-size": 10,
+        fill: C_T, opacity: .65 }, yv.toFixed(0)));
+    }
+    for (var t2 = LO; t2 <= HI; t2 += 1)
+      svg.appendChild(el("text", { x: px(t2), y: Y1 + 20, "text-anchor": "middle", "font-size": 10.5,
+        fill: C_T, opacity: .7 }, t2.toFixed(0)));
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 40, "text-anchor": "middle", "font-size": 10.5,
+      fill: C_T, opacity: .7 }, "x, la característica de la unidad"));
+
+    var d0 = "", d1 = "", i;
+    for (i = 0; i <= 200; i++) {
+      var z = LO + i * (HI - LO) / 200;
+      d0 += (i === 0 ? "M" : " L") + px(z).toFixed(1) + " " + py(mu0(z)).toFixed(1);
+      d1 += (i === 0 ? "M" : " L") + px(z).toFixed(1) + " " + py(mu1(z)).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: d0, fill: "none", stroke: C_A, "stroke-width": 2.2 }));
+    svg.appendChild(el("path", { d: d1, fill: "none", stroke: C_B, "stroke-width": 2.2, "stroke-dasharray": "6 4" }));
+    svg.appendChild(el("text", { x: X1 - 4, y: Y0 + 12, "text-anchor": "end", "font-size": 11, fill: C_A }, "μ₀(x), los no tratados"));
+    svg.appendChild(el("text", { x: X1 - 4, y: Y0 + 28, "text-anchor": "end", "font-size": 11, fill: C_B }, "μ₁(x), los tratados"));
+
+    // la unidad tratada, su Y y el efecto imputado
+    var y_obs = mu1(x);
+    svg.appendChild(el("path", { d: "M" + px(x).toFixed(1) + " " + Y0 + " L" + px(x).toFixed(1) + " " + Y1,
+      stroke: C_L, "stroke-width": 1.2, "stroke-dasharray": "4 4" }));
+    svg.appendChild(el("circle", { cx: px(x).toFixed(1), cy: py(y_obs).toFixed(1), r: 6.5, fill: C_B }));
+    svg.appendChild(el("circle", { cx: px(x).toFixed(1), cy: py(mu0(x)).toFixed(1), r: 5.5, fill: C_A, opacity: .55 }));
+    svg.appendChild(el("path", { d: "M" + (px(x) + 13) + " " + py(mu0(x)).toFixed(1) +
+      " L" + (px(x) + 13) + " " + py(y_obs).toFixed(1), stroke: C_T, "stroke-width": 3.5, opacity: .75 }));
+    svg.appendChild(el("text", { x: px(x) + 20, y: (py(mu0(x)) + py(y_obs)) / 2 + 4, "font-size": 10.5, fill: C_T },
+      "D = " + (y_obs - mu0(x)).toFixed(2)));
+
+    var hueco = y_obs - mu0(x), parte = 100 * hueco / (VHI - VLO);
+    lec.innerHTML = "En x = <strong>" + x.toFixed(2) + "</strong>, una unidad tratada vale <strong>" + y_obs.toFixed(2) +
+      "</strong> y el modelo del otro brazo dice que sin tratar habría valido <strong>" + mu0(x).toFixed(2) +
+      "</strong>. El X-learner le imputa como efecto la diferencia, <strong>" + hueco.toFixed(2) +
+      "</strong>, y después modela esa diferencia en lugar del resultado. " +
+      "El hueco entre las dos curvas vale siempre " + (x > 0 ? "2" : "0") + " en unidades de gasto, pero con el peso de la base en <strong>" +
+      b.toFixed(1) + "</strong> ocupa solo el <strong>" + parte.toFixed(1) +
+      " %</strong> del recorrido vertical del dibujo. Esa es la fracción que un modelo del resultado tiene que encontrar; un modelo de la diferencia la tiene entera delante.";
+  }
+  cx.addEventListener("input", dibujar); cb.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. El T-learner: dos modelos, y el brazo pequeño
+
+::: {.definicion}
+**Definición 16.7 (T-learner).** Ajustar $\hat\mu_1$ sobre los tratados y $\hat\mu_0$ sobre los controles, por separado, y estimar $\hat\tau(x)=\hat\mu_1(x)-\hat\mu_0(x)$.
+:::
+
+::: {.proposicion}
+**Proposición 16.8 (recupera la escala y pierde en error cuadrático).** Con los brazos parejos, el T-learner da media **0,765969** y desviación **1,639067** frente a 0,654000 y 1,100493 verdaderas, donde el S-learner daba 0,16 y 0,21. Y sin embargo su ECM es **mayor**: 2,162237 contra 1,229465.
+:::
+
+::: {.demostracion}
+*Demostración.* Cada modelo solo tiene que explicar su propia línea base, y el efecto aparece al restar, de modo que no hay nada que empuje la estimación hacia cero. A cambio, la resta suma las varianzas de los dos. El S-learner cambia varianza por sesgo, y sobre este problema el cambio le sale a cuenta. La celda mide las tres columnas. ∎
+:::
+
+::: {.proposicion}
+**Proposición 16.9 (hereda el ruido del brazo pequeño).** Al bajar del 50 % al 5 % de tratados quedan **123 unidades** en el brazo tratado y el ECM del T-learner pasa de 2,162237 a **21,838277**, diez veces más. Reajustando cada modelo con otra semilla, el del brazo pequeño se mueve más que el del grande en las tres proporciones medidas.
+:::
+
+::: {.demostracion}
+*Demostración.* La varianza de $\hat\mu_1-\hat\mu_0$ es la suma de las dos, y la del brazo con $n_1$ unidades crece como $1/n_1$. La celda mide el ECM en cuatro proporciones y la inestabilidad de cada modelo por separado. ∎
+:::
+
+::: {.proposicion}
+**Proposición 16.10 (el error cuadrático y la decisión ordenan distinto).** El S-learner tiene menor ECM en las **cuatro** proporciones y pierde al decidir en **tres** de las cuatro. En la última su encogimiento llega tan lejos que no encuentra a nadie con efecto positivo: su política es no tratar a nadie y logra **0,000000** de los 0,814800 disponibles.
+:::
+
+::: {.demostracion}
+*Demostración.* El ECM penaliza el error de magnitud en todas las unidades; la política solo usa el **signo** de $\hat\tau$ cerca del umbral. Un estimador encogido acierta la magnitud media y se equivoca de lado en la frontera; uno ruidoso yerra la magnitud y acierta el lado. La celda mide las dos columnas para las cuatro proporciones. **Elegir un estimador de efectos por su ECM y usarlo para ordenar pueden dar rankings opuestos sobre los mismos datos**, que es el problema de la Lección 18. ∎
+:::
+
+```{pyodide}
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+
+def poblacion(n, semilla, p=0.5):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 3))
+    base = 10.0 + 5.0 * X[:, 0] ** 2 + 3.0 * np.sin(3.0 * X[:, 1]) + 2.0 * X[:, 2]
+    tau = 2.0 * (X[:, 0] > 0) - 1.0 * (X[:, 1] > 0.5)
+    T = (rng.random(n) < p).astype(int)
+    Y = base + tau * T + rng.standard_normal(n)
+    return X, T, Y, tau
+
+def bosque(Xa, Ya, semilla=0):
+    m = RandomForestRegressor(n_estimators=100, min_samples_leaf=10, random_state=semilla)
+    m.fit(Xa, Ya)
+    return m
+
+def s_learner(X, T, Y, X_new):
+    m = bosque(np.column_stack([X, T]), Y)
+    return m.predict(np.column_stack([X_new, np.ones(len(X_new))])) - \
+           m.predict(np.column_stack([X_new, np.zeros(len(X_new))]))
+
+def t_learner(X, T, Y, X_new):
+    """Dos modelos, uno por brazo. La resta se hace al final."""
+    m1 = bosque(X[T == 1], Y[T == 1], 1)
+    m0 = bosque(X[T == 0], Y[T == 0], 0)
+    return m1.predict(X_new) - m0.predict(X_new), m1, m0
+
+Xp, _, _, taup = poblacion(2500, 161)
+X, T, Y, tau = poblacion(2500, 16)
+tau_t, m1, m0 = t_learner(X, T, Y, Xp)
+tau_s = s_learner(X, T, Y, Xp)
+
+print("el T-learner: un modelo por brazo, la resta al final")
+print("  %-28s %12s %12s %12s" % ("", "media", "desv. tipica", "ECM"))
+print("  %-28s %12.6f %12.6f %12s" % ("efecto verdadero", float(np.mean(taup)), float(np.std(taup)), "-"))
+print("  %-28s %12.6f %12.6f %12.6f"
+      % ("S-learner", float(np.mean(tau_s)), float(np.std(tau_s)), float(np.mean((tau_s - taup) ** 2))))
+print("  %-28s %12.6f %12.6f %12.6f"
+      % ("T-learner", float(np.mean(tau_t)), float(np.std(tau_t)), float(np.mean((tau_t - taup) ** 2))))
+print()
+print("con los dos brazos del mismo tamaño el T-learner recupera la")
+print("ESCALA: su media y su desviacion se acercan a las verdaderas, donde")
+print("el S-learner encogia a %.2f y %.2f. Cada modelo explica SU linea"
+      % (float(np.mean(tau_s)), float(np.std(tau_s))))
+print("base y el efecto aparece al restar")
+print()
+print("y sin embargo su error cuadratico es MAYOR: %.4f contra %.4f. Al"
+      % (float(np.mean((tau_t - taup) ** 2)), float(np.mean((tau_s - taup) ** 2))))
+print("encoger, el S-learner cambia varianza por sesgo, y sobre este")
+print("problema ese cambio le sale a cuenta")
+print()
+
+print("el T-learner se apoya en el brazo mas pequeño")
+print("  %-10s %10s %14s %14s %12s"
+      % ("p tratada", "tratados", "ECM T-learner", "ECM S-learner", "menor"))
+guardados = {}
+for p in (0.5, 0.2, 0.1, 0.05):
+    Xa, Ta, Ya, _ = poblacion(2500, 16, p=p)
+    tt, _, _ = t_learner(Xa, Ta, Ya, Xp)
+    ts = s_learner(Xa, Ta, Ya, Xp)
+    guardados[p] = (tt, ts, int(Ta.sum()))
+    et = float(np.mean((tt - taup) ** 2)); es = float(np.mean((ts - taup) ** 2))
+    print("  %-10.2f %10d %14.6f %14.6f %12s"
+          % (p, int(Ta.sum()), et, es, "T" if et < es else "S"))
+print()
+print("al llegar al 5 %% de tratados quedan %d unidades para ajustar el"
+      % guardados[0.05][2])
+print("modelo del brazo tratado, y su ruido entra entero en la resta: el")
+print("error cuadratico del T-learner se multiplica por %.0f"
+      % (float(np.mean((guardados[0.05][0] - taup) ** 2))
+         / float(np.mean((guardados[0.5][0] - taup) ** 2))))
+print()
+
+print("pero el error cuadratico no es lo que se decide. Lo que se decide")
+print("es a quien tratar, y ahi manda el ORDEN, no la escala")
+print("  %-10s %18s %18s %14s"
+      % ("p tratada", "efecto con T", "efecto con S", "efecto maximo"))
+for p in (0.5, 0.2, 0.1, 0.05):
+    tt, ts, _ = guardados[p]
+    vt = float(np.mean(taup * (tt > 0))); vs = float(np.mean(taup * (ts > 0)))
+    print("  %-10.2f %18.6f %18.6f %14.6f"
+          % (p, vt, vs, float(np.mean(taup * (taup > 0)))))
+print()
+print("el S-learner gana en error cuadratico en las CUATRO filas y pierde")
+print("al decidir en TRES de las cuatro. Y en la ultima su encogimiento")
+print("llega tan lejos que no encuentra a nadie con efecto positivo: la")
+print("politica que produce es no tratar a nadie, y se queda en 0.000000")
+print("de los %.6f disponibles" % float(np.mean(taup * (taup > 0))))
+print()
+print("medir un estimador de efectos por su error cuadratico y usarlo")
+print("para ordenar son dos cosas distintas, y pueden dar rankings")
+print("opuestos sobre los mismos datos. La leccion 18 se ocupa de como")
+print("elegir entre ellos sin conocer el efecto verdadero")
+print()
+
+print("de donde viene ese ruido: cuanto cambia cada modelo al reajustarlo")
+print("  %-10s %16s %16s" % ("p tratada", "desv. de mu1", "desv. de mu0"))
+for p in (0.5, 0.1, 0.05):
+    Xa, Ta, Ya, _ = poblacion(2500, 16, p=p)
+    _, ma, mb = t_learner(Xa, Ta, Ya, Xp)
+    ma2 = bosque(Xa[Ta == 1], Ya[Ta == 1], 11)
+    mb2 = bosque(Xa[Ta == 0], Ya[Ta == 0], 10)
+    print("  %-10.2f %16.6f %16.6f"
+          % (p, float(np.std(ma.predict(Xp) - ma2.predict(Xp))),
+             float(np.std(mb.predict(Xp) - mb2.predict(Xp)))))
+print()
+print("el modelo del brazo pequeño cambia mas que el del grande en las")
+print("tres filas. La resta hereda el peor de los dos, y por eso el")
+print("T-learner necesita que los DOS brazos tengan datos suficientes")
+```
+
+## 4. El X-learner: imputar el efecto y mezclar
+
+::: {.definicion}
+**Definición 16.11 (X-learner).** Cuatro pasos: (1) ajustar $\hat\mu_1$ y $\hat\mu_0$ como en el T-learner; (2) **imputar** el efecto de cada unidad con el modelo del otro brazo, $D_i=Y_i-\hat\mu_0(X_i)$ para los tratados y $D_i=\hat\mu_1(X_i)-Y_i$ para los controles; (3) ajustar un modelo de $D$ sobre cada brazo, $\hat\tau_1$ y $\hat\tau_0$; (4) mezclarlos con la propensión, $\hat\tau(x)=e(x)\hat\tau_0(x)+(1-e(x))\hat\tau_1(x)$.
+:::
+
+::: {.proposicion}
+**Proposición 16.12 (modelar la diferencia en lugar del resultado).** Con los brazos parejos, el ECM del X-learner vale **0,456447** contra **2,162237** del T-learner sobre los mismos datos y con el mismo modelo base.
+:::
+
+::: {.demostracion}
+*Demostración.* En el paso 2, $D_i$ ya es una estimación del efecto de esa unidad, con la línea base restada. El modelo del paso 3 no tiene que explicar la base: la tiene quitada de antemano, y por eso aprende $\tau$ con muchas menos unidades de las que haría falta para aprender $\mu$. La celda mide los dos ECM. ∎
+:::
+
+::: {.proposicion}
+**Proposición 16.13 (por qué el peso es la propensión).** $\hat\tau_1$ **mejora** al encoger el brazo tratado —de 2,217844 a 0,297772— porque lo que lo limita es la calidad de $\hat\mu_0$, estimada con todos los controles; a $\hat\tau_0$ le ocurre lo contrario, de 1,979300 a **20,993553**. El peso $1-e$ sobre $\hat\tau_1$ vale 0,95 justo cuando solo hay un 5 % de tratados.
+:::
+
+::: {.demostracion}
+*Demostración.* $\hat\tau_1$ se ajusta sobre los tratados, que son pocos, pero su variable respuesta $D=Y-\hat\mu_0(X)$ es limpia porque $\hat\mu_0$ usa el brazo grande; $\hat\tau_0$ tiene muchas unidades y una respuesta sucia. La celda mide los dos ECM por separado y el de la mezcla, que vale **0,456447** con los brazos parejos, por debajo de sus dos componentes: los errores de $\hat\tau_1$ y $\hat\tau_0$ son casi independientes y al promediarlos se cancelan. ∎
+:::
+
+::: {.proposicion}
+**Proposición 16.14 (gana en las ocho comparaciones).** El X-learner tiene el menor ECM en las cuatro proporciones y la mejor política en las cuatro. Con un 5 % de tratados recoge el **90,8 %** del efecto disponible, donde el S-learner recoge el 0,0 % y el T-learner el 61,0 %.
+:::
+
+::: {.demostracion}
+*Demostración.* La celda ajusta los tres métodos una vez por proporción y evalúa las dos métricas sobre la misma muestra de prueba. La ventaja viene de combinar lo que cada uno hace bien: modela la diferencia, como el T, y usa los dos brazos para todo, como el S. ∎
+:::
+
+```{pyodide}
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+
+def poblacion(n, semilla, p=0.5):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 3))
+    base = 10.0 + 5.0 * X[:, 0] ** 2 + 3.0 * np.sin(3.0 * X[:, 1]) + 2.0 * X[:, 2]
+    tau = 2.0 * (X[:, 0] > 0) - 1.0 * (X[:, 1] > 0.5)
+    T = (rng.random(n) < p).astype(int)
+    Y = base + tau * T + rng.standard_normal(n)
+    return X, T, Y, tau
+
+def bosque(Xa, Ya, s=0):
+    m = RandomForestRegressor(n_estimators=100, min_samples_leaf=10, random_state=s)
+    m.fit(Xa, Ya); return m
+
+def t_learner(X, T, Y, Xn):
+    return bosque(X[T == 1], Y[T == 1], 1).predict(Xn) - bosque(X[T == 0], Y[T == 0], 0).predict(Xn)
+
+def x_learner(X, T, Y, Xn, e):
+    """1. dos modelos de resultado. 2. imputar el efecto de cada unidad
+       usando el modelo del OTRO brazo. 3. un modelo del efecto por brazo.
+       4. mezclarlos con la propension como peso."""
+    m1 = bosque(X[T == 1], Y[T == 1], 1)
+    m0 = bosque(X[T == 0], Y[T == 0], 0)
+    d1 = Y[T == 1] - m0.predict(X[T == 1])      # tratados: lo real menos lo que habrian tenido
+    d0 = m1.predict(X[T == 0]) - Y[T == 0]      # controles: lo que habrian tenido menos lo real
+    tau1 = bosque(X[T == 1], d1, 2).predict(Xn)
+    tau0 = bosque(X[T == 0], d0, 3).predict(Xn)
+    return e * tau0 + (1.0 - e) * tau1, tau1, tau0
+
+Xp, _, _, taup = poblacion(2500, 161)
+X, T, Y, tau = poblacion(2500, 16)
+tx, t1, t0 = x_learner(X, T, Y, Xp, 0.5)
+tt = t_learner(X, T, Y, Xp)
+
+print("el X-learner, paso a paso, con los brazos parejos")
+print("  %-34s %12s %12s" % ("", "media", "desv. tipica"))
+print("  %-34s %12.6f %12.6f" % ("efecto verdadero", float(np.mean(taup)), float(np.std(taup))))
+print("  %-34s %12.6f %12.6f" % ("tau1, desde los tratados", float(np.mean(t1)), float(np.std(t1))))
+print("  %-34s %12.6f %12.6f" % ("tau0, desde los controles", float(np.mean(t0)), float(np.std(t0))))
+print("  %-34s %12.6f %12.6f" % ("mezcla con e = 0.5", float(np.mean(tx)), float(np.std(tx))))
+print()
+print("  ECM del X-learner : %.6f" % float(np.mean((tx - taup) ** 2)))
+print("  ECM del T-learner : %.6f" % float(np.mean((tt - taup) ** 2)))
+print()
+print("el truco esta en el paso 2: a cada tratado se le resta lo que el")
+print("modelo del OTRO brazo dice que habria tenido, y esa diferencia ya")
+print("es una estimacion de SU efecto. Despues se modela esa diferencia,")
+print("que no tiene dentro la linea base")
+print()
+
+print("por que la mezcla usa la propension como peso")
+print("  %-10s %16s %16s %16s" % ("p tratada", "ECM de tau1", "ECM de tau0", "ECM mezclado"))
+piezas = {}
+for p in (0.5, 0.2, 0.1, 0.05):
+    Xa, Ta, Ya, _ = poblacion(2500, 16, p=p)
+    tm, a1, a0 = x_learner(Xa, Ta, Ya, Xp, p)
+    piezas[p] = (float(np.mean((a1 - taup) ** 2)), float(np.mean((a0 - taup) ** 2)),
+                 float(np.mean((tm - taup) ** 2)))
+    print("  %-10.2f %16.6f %16.6f %16.6f" % ((p,) + piezas[p]))
+print()
+print("tau1 MEJORA al encoger el brazo tratado, de %.2f a %.2f, aunque se"
+      % (piezas[0.5][0], piezas[0.05][0]))
+print("ajuste con menos unidades: lo que lo limita es la calidad de mu0,")
+print("que se estima con todos los controles. A tau0 le pasa lo contrario,")
+print("de %.2f a %.2f, porque su mu1 se estima con cada vez menos gente"
+      % (piezas[0.5][1], piezas[0.05][1]))
+print("El peso e da (1-e) a tau1, o sea 0.95 cuando solo hay un 5 % de")
+print("tratados: justo el que conviene")
+print()
+print("y la mezcla es mejor que sus dos partes: %.4f contra %.2f y %.2f"
+      % (piezas[0.5][2], piezas[0.5][0], piezas[0.5][1]))
+print("con los brazos parejos. Los errores de tau1 y tau0 son casi")
+print("independientes y al promediarlos se cancelan")
+print()
+
+def s_learner(X, T, Y, Xn):
+    m = bosque(np.column_stack([X, T]), Y)
+    return m.predict(np.column_stack([Xn, np.ones(len(Xn))])) - \
+           m.predict(np.column_stack([Xn, np.zeros(len(Xn))]))
+
+# los tres metodos se ajustan UNA vez por cada p y se guardan
+tabla = {}
+for p in (0.5, 0.2, 0.1, 0.05):
+    Xa, Ta, Ya, _ = poblacion(2500, 16, p=p)
+    tm, _, _ = x_learner(Xa, Ta, Ya, Xp, p)
+    tabla[p] = (s_learner(Xa, Ta, Ya, Xp), t_learner(Xa, Ta, Ya, Xp), tm)
+
+ecm = lambda z: float(np.mean((z - taup) ** 2))
+val = lambda z: float(np.mean(taup * (z > 0)))
+
+print("los tres metodos, uno al lado del otro")
+print("  %-10s %12s %12s %12s %12s" % ("p tratada", "ECM S", "ECM T", "ECM X", "menor"))
+for p in (0.5, 0.2, 0.1, 0.05):
+    ts, tt2, tm = tabla[p]
+    e = [ecm(ts), ecm(tt2), ecm(tm)]
+    print("  %-10.2f %12.6f %12.6f %12.6f %12s"
+          % (p, e[0], e[1], e[2], ["S", "T", "X"][int(np.argmin(e))]))
+print()
+print("y el efecto que logra la politica de cada uno")
+print("  %-10s %12s %12s %12s %12s" % ("p tratada", "con S", "con T", "con X", "maximo"))
+for p in (0.5, 0.2, 0.1, 0.05):
+    ts, tt2, tm = tabla[p]
+    print("  %-10.2f %12.6f %12.6f %12.6f %12.6f"
+          % (p, val(ts), val(tt2), val(tm), float(np.mean(taup * (taup > 0)))))
+print()
+print("el X-learner tiene el menor error cuadratico en las cuatro filas y")
+print("la mejor politica en las cuatro. Con un 5 % de tratados recoge")
+print("%.1f %% del efecto disponible, donde el S-learner recoge %.1f %%"
+      % (100 * val(tabla[0.05][2]) / float(np.mean(taup * (taup > 0))),
+         100 * val(tabla[0.05][0]) / float(np.mean(taup * (taup > 0)))))
+```
+
+```{=html}
+<div class="viz-learners">
+  <div class="controles">
+    <label>Proporción tratada <input id="ml-p" type="range" min="0" max="3" step="1" value="0"> <span id="ml-p-v">0.50</span></label>
+    <label>Método <input id="ml-m" type="range" min="0" max="2" step="1" value="0"> <span id="ml-m-v">S-learner</span></label>
+  </div>
+  <svg id="ml-svg" viewBox="0 0 660 300" role="img" aria-label="El error cuadrático medio y el efecto logrado por la política de cada metalearner, según la proporción tratada."></svg>
+  <p class="lectura" id="ml-lectura"></p>
+</div>
+<style>
+.viz-learners { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-learners .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-learners label { display: flex; align-items: center; gap: .4rem; }
+.viz-learners input[type=range] { width: 130px; padding: 0; }
+.viz-learners svg { width: 100%; height: auto; display: block; }
+.viz-learners .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("ml-svg"), lec = document.getElementById("ml-lectura");
+  var cp = document.getElementById("ml-p"), cm = document.getElementById("ml-m");
+  var ep = document.getElementById("ml-p-v"), em = document.getElementById("ml-m-v");
+  var PS = [0.50, 0.20, 0.10, 0.05], MET = ["S-learner", "T-learner", "X-learner"];
+  // lo que la celda midio sobre 2500 unidades
+  var ECM = [[1.229465, 2.162237, 0.456447], [1.553536, 5.836087, 0.485717],
+             [1.638800, 14.851421, 0.347096], [1.638800, 21.838277, 0.329890]];
+  var VAL = [[0.705200, 0.683600, 0.780800], [0.525200, 0.622400, 0.747600],
+             [0.000000, 0.490800, 0.772400], [0.000000, 0.497200, 0.740000]];
+  var MAX = 0.814800;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var ip = Math.round(+cp.value), im = Math.round(+cm.value);
+    ep.textContent = PS[ip].toFixed(2); em.textContent = MET[im];
+
+    var X0 = 132, X1 = 620, i, j;
+    // panel de arriba: el error cuadratico, en escala logaritmica
+    var Y0 = 34, Y1 = 128, LO = -0.7, HI = 1.5;
+    function ex(v) {
+      var q = Math.log(Math.max(v, 0.05)) / Math.LN10;
+      return X0 + (Math.max(LO, Math.min(HI, q)) - LO) * (X1 - X0) / (HI - LO);
+    }
+    svg.appendChild(el("text", { x: 8, y: Y0 - 12, "font-size": 11, fill: C_T, opacity: .8 },
+      "error cuadrático medio (escala log)"));
+    for (i = 0; i < 3; i++) {
+      var y = Y0 + i * 32, v = ECM[ip][i], act = i === im;
+      svg.appendChild(el("path", { d: "M" + X0 + " " + y + " L" + X1 + " " + y, stroke: C_L, "stroke-width": 1 }));
+      svg.appendChild(el("path", { d: "M" + X0 + " " + y + " L" + ex(v).toFixed(1) + " " + y,
+        stroke: act ? C_B : C_A, "stroke-width": act ? 9 : 5, opacity: act ? .75 : .3 }));
+      svg.appendChild(el("circle", { cx: ex(v).toFixed(1), cy: y, r: act ? 6 : 4, fill: act ? C_B : C_A }));
+      svg.appendChild(el("text", { x: X0 - 10, y: y + 4, "text-anchor": "end", "font-size": 10.5,
+        fill: C_T, opacity: act ? 1 : .6 }, MET[i]));
+      svg.appendChild(el("text", { x: ex(v) + 12, y: y + 4, "font-size": 10, fill: C_T, opacity: .75 },
+        v.toFixed(3)));
+    }
+    // panel de abajo: el efecto que logra la politica
+    var Z0 = 188, ZA = 132, ZB = 560;
+    function px(v) { return ZA + (v / MAX) * (ZB - ZA); }
+    svg.appendChild(el("text", { x: 8, y: Z0 - 12, "font-size": 11, fill: C_T, opacity: .8 },
+      "efecto logrado por su política"));
+    svg.appendChild(el("path", { d: "M" + px(MAX).toFixed(1) + " " + (Z0 - 8) + " L" + px(MAX).toFixed(1) + " " + (Z0 + 78),
+      stroke: C_T, "stroke-width": 2 }));
+    svg.appendChild(el("text", { x: px(MAX) + 6, y: Z0 + 40, "font-size": 10, fill: C_T, opacity: .8 }, "techo"));
+    for (i = 0; i < 3; i++) {
+      var y2 = Z0 + i * 32, w = VAL[ip][i], act2 = i === im;
+      svg.appendChild(el("path", { d: "M" + ZA + " " + y2 + " L" + ZB + " " + y2, stroke: C_L, "stroke-width": 1 }));
+      svg.appendChild(el("path", { d: "M" + ZA + " " + y2 + " L" + px(w).toFixed(1) + " " + y2,
+        stroke: act2 ? C_B : C_A, "stroke-width": act2 ? 9 : 5, opacity: act2 ? .75 : .3 }));
+      svg.appendChild(el("circle", { cx: px(w).toFixed(1), cy: y2, r: act2 ? 6 : 4, fill: act2 ? C_B : C_A }));
+      svg.appendChild(el("text", { x: ZA - 10, y: y2 + 4, "text-anchor": "end", "font-size": 10.5,
+        fill: C_T, opacity: act2 ? 1 : .6 }, MET[i]));
+      svg.appendChild(el("text", { x: px(w) + 12, y: y2 + 4, "font-size": 10, fill: C_T, opacity: .75 },
+        w.toFixed(3)));
+    }
+
+    // el puntero del metodo elegido: cambia de fila y de posicion, que es
+    // lo que la regla 19b pide de un control
+    svg.appendChild(el("circle", { cx: ex(ECM[ip][im]).toFixed(1), cy: Y0 + im * 32, r: 11,
+      fill: "none", stroke: C_B, "stroke-width": 2 }));
+    svg.appendChild(el("circle", { cx: px(VAL[ip][im]).toFixed(1), cy: Z0 + im * 32, r: 11,
+      fill: "none", stroke: C_B, "stroke-width": 2 }));
+
+    var e2 = ECM[ip], v2 = VAL[ip];
+    var mejorE = e2.indexOf(Math.min.apply(null, e2)), mejorV = v2.indexOf(Math.max.apply(null, v2));
+    lec.innerHTML = "Con el <strong>" + (100 * PS[ip]).toFixed(0) + " %</strong> tratado, el <strong>" + MET[im] +
+      "</strong> tiene un error cuadrático de <strong>" + ECM[ip][im].toFixed(3) +
+      "</strong> y su política logra <strong>" + VAL[ip][im].toFixed(3) + "</strong> de los " + MAX.toFixed(3) + " disponibles, el <strong>" +
+      (100 * VAL[ip][im] / MAX).toFixed(0) + " %</strong>. " +
+      "Aquí el menor error es del <strong>" + MET[mejorE] + "</strong> y la mejor política es del <strong>" + MET[mejorV] + "</strong>" +
+      (mejorE === mejorV ? ", que coinciden." : ", que <strong>no coinciden</strong>: el error cuadrático y la decisión ordenan distinto.") +
+      " Bajando la proporción tratada, el T-learner se derrumba porque su modelo del brazo pequeño se queda sin datos, y el S-learner encoge hasta no encontrar a nadie con efecto positivo.";
+  }
+  cp.addEventListener("input", dibujar); cm.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Los dos supuestos, y qué los rompe
+
+::: {.proposicion}
+**Proposición 16.15 (perder superposición, con la ignorabilidad intacta).** Cuando el tratamiento depende de $X$ y $X$ se observa, la ignorabilidad se cumple por construcción y lo que se pierde es la **[superposición]{.g}**: con confusión 4,0 el **60,8 %** de las unidades tiene una propensión fuera de $[0{,}05,\,0{,}95]$, y el ATE estimado pasa de 0,746519 a **1,989154** frente a una verdad de 0,654000.
+:::
+
+::: {.demostracion}
+*Demostración.* En esa parte del espacio casi no hay unidades del otro brazo con las que comparar, de modo que el modelo del brazo escaso extrapola. La celda tabula el mínimo y el máximo de $e(x)$, la fracción extrema y el ATE estimado para cinco fuerzas de confusión. Parte del daño se arregla usando $e(x)$ como peso de la mezcla en lugar de una constante: el ECM baja de **4,409406 a 0,651814**. ∎
+:::
+
+::: {.proposicion}
+**Proposición 16.16 (un confusor no observado no lo arregla ningún metalearner).** Con un confusor $U$ fuera de la tabla, el ATE estimado vale **4,042667** donde la verdad es 0,654000 y el ECM se multiplica por **39**.
+:::
+
+::: {.demostracion}
+*Demostración.* Los tres métodos estiman $E[Y\mid X,T]$ y lo restan; si $T$ depende de algo que no está en $X$, esa diferencia contiene el camino trasero entero, tal como midió la Lección 02. La celda mide tres fuerzas de $U$. **Los metalearners no identifican nada por sí solos**: dan por supuesta la ignorabilidad y lo que aportan es estimar con cuidado bajo ese supuesto. Cerrar un camino que no se observa es lo de las Lecciones 13 a 15. ∎
+:::
+
+**Modo de falla.** Todo lo que esta lección ha usado para comparar —el ECM contra $\tau$— **no se puede calcular con datos reales**, porque exige el efecto individual, que la Proposición 1.2 declaró inobservable. La trampa correspondiente es evaluar un modelo de efectos con las métricas de un modelo de predicción: un $R^2$ alto sobre $Y$ no dice nada sobre $\hat\tau$, y de hecho el S-learner predice $Y$ mejor que el X-learner mientras estima $\tau$ mucho peor. La defensa es la Lección 18, que construye un criterio calculable, y la 21, que evalúa la política en lugar del efecto.
+
+```{pyodide}
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+
+# Todo lo anterior supone que el tratamiento se asigno al azar. Aqui se
+# separan los dos modos en que eso puede fallar.
+def poblacion(n, semilla, confusion=0.0):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 3))
+    base = 10.0 + 5.0 * X[:, 0] ** 2 + 3.0 * np.sin(3.0 * X[:, 1]) + 2.0 * X[:, 2]
+    tau = 2.0 * (X[:, 0] > 0) - 1.0 * (X[:, 1] > 0.5)
+    e = 1.0 / (1.0 + np.exp(-confusion * (X[:, 0] + X[:, 2])))
+    T = (rng.random(n) < e).astype(int)
+    Y = base + tau * T + rng.standard_normal(n)
+    return X, T, Y, tau, e
+
+def bosque(Xa, Ya, s=0):
+    m = RandomForestRegressor(n_estimators=100, min_samples_leaf=10, random_state=s)
+    m.fit(Xa, Ya); return m
+
+def x_learner(X, T, Y, Xn, e):
+    m1 = bosque(X[T == 1], Y[T == 1], 1)
+    m0 = bosque(X[T == 0], Y[T == 0], 0)
+    d1 = Y[T == 1] - m0.predict(X[T == 1])
+    d0 = m1.predict(X[T == 0]) - Y[T == 0]
+    tau1 = bosque(X[T == 1], d1, 2).predict(Xn)
+    tau0 = bosque(X[T == 0], d0, 3).predict(Xn)
+    return e * tau0 + (1.0 - e) * tau1
+
+Xp, _, _, taup, _ = poblacion(2500, 161)
+print("primer modo de fallo: el tratamiento depende de X, y X se observa")
+print("  %-10s %9s %9s %14s %14s"
+      % ("confusion", "min e(x)", "max e(x)", "e fuera de", "ATE estimado"))
+print("  %-10s %9s %9s %14s %14s" % ("", "", "", "[0.05, 0.95]", ""))
+for c in (0.0, 0.5, 1.0, 2.0, 4.0):
+    Xa, Ta, Ya, _, ea = poblacion(2500, 16, confusion=c)
+    tx = x_learner(Xa, Ta, Ya, Xp, float(np.mean(Ta)))
+    print("  %-10.1f %9.4f %9.4f %14.4f %14.6f"
+          % (c, float(ea.min()), float(ea.max()),
+             float(np.mean((ea < 0.05) | (ea > 0.95))), float(np.mean(tx))))
+print("  ATE verdadero: %.6f" % float(np.mean(taup)))
+print()
+print("aqui la ignorabilidad se cumple por construccion: T depende solo de")
+print("X. Lo que se pierde es la SUPERPOSICION: con confusion 4.0, el 61 %")
+print("de las unidades tiene una propension fuera de [0.05, 0.95], o sea")
+print("que en esa parte del espacio casi no hay unidades del otro brazo")
+print("con las que comparar")
+print()
+
+print("y parte del daño lo arregla usar e(x) como peso, en vez de una")
+print("constante")
+Xa, Ta, Ya, _, ea = poblacion(2500, 16, confusion=2.0)
+_, _, _, _, ep = poblacion(2500, 161, confusion=2.0)
+tx_cte = x_learner(Xa, Ta, Ya, Xp, float(np.mean(Ta)))
+tx_ex = x_learner(Xa, Ta, Ya, Xp, ep)
+print("  %-34s %12s %12s %14s" % ("peso de la mezcla", "ATE est.", "ECM", "efecto logrado"))
+for nombre, tz in (("la proporcion tratada, constante", tx_cte), ("la propension real e(x)", tx_ex)):
+    print("  %-34s %12.6f %12.6f %14.6f"
+          % (nombre, float(np.mean(tz)), float(np.mean((tz - taup) ** 2)),
+             float(np.mean(taup * (tz > 0)))))
+print("  %-34s %12.6f %12s %14.6f"
+      % ("la verdad", float(np.mean(taup)), "-", float(np.mean(taup * (taup > 0)))))
+print()
+print("el error cuadratico baja de %.2f a %.2f. El peso decide de cual de"
+      % (float(np.mean((tx_cte - taup) ** 2)), float(np.mean((tx_ex - taup) ** 2))))
+print("los dos modelos fiarse en cada punto, y con e(x) variable acierta")
+print("donde una constante no puede")
+print()
+
+# --- segundo modo: un confusor que NO se observa ---
+def pob_u(n, semilla, fuerza):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 3)); U = rng.standard_normal(n)
+    base = 10.0 + 5.0 * X[:, 0] ** 2 + 3.0 * np.sin(3.0 * X[:, 1]) + 2.0 * X[:, 2] + fuerza * U
+    tau = 2.0 * (X[:, 0] > 0) - 1.0 * (X[:, 1] > 0.5)
+    T = (rng.random(n) < 1.0 / (1.0 + np.exp(-1.5 * U))).astype(int)
+    return X, T, base + tau * T + rng.standard_normal(n), tau
+
+print("segundo modo de fallo: un confusor que no esta en la tabla")
+print("  %-12s %14s %12s %16s" % ("fuerza de U", "ATE estimado", "ECM", "efecto logrado"))
+conU = {}
+for f in (0.0, 1.0, 3.0):
+    Xa, Ta, Ya, _ = pob_u(2500, 16, f)
+    tx = x_learner(Xa, Ta, Ya, Xp, float(np.mean(Ta)))
+    conU[f] = (float(np.mean(tx)), float(np.mean((tx - taup) ** 2)))
+    print("  %-12.1f %14.6f %12.6f %16.6f"
+          % (f, conU[f][0], conU[f][1], float(np.mean(taup * (tx > 0)))))
+print("  %-12s %14.6f %12s %16.6f"
+      % ("la verdad", float(np.mean(taup)), "-", float(np.mean(taup * (taup > 0)))))
+print()
+print("con U fuerte el ATE estimado vale %.2f donde la verdad es %.2f, y"
+      % (conU[3.0][0], float(np.mean(taup))))
+print("el error cuadratico se multiplica por %.0f. Ningun metalearner"
+      % (conU[3.0][1] / conU[0.0][1]))
+print("arregla esto: los tres dan por supuesta la ignorabilidad de la")
+print("leccion 01, y lo que hacen es estimar con cuidado bajo ese")
+print("supuesto. Cerrar un camino que no se observa es lo que traen las")
+print("lecciones 13 a 15")
+print()
+
+print("y lo que ninguna de estas tablas se puede calcular con datos reales")
+print("  %-42s %16s" % ("cantidad", "se observa"))
+for nombre, obs in (("el resultado Y de cada unidad", "si"),
+                    ("el tratamiento T de cada unidad", "si"),
+                    ("el efecto individual Y(1)-Y(0)", "NO"),
+                    ("el ECM de un estimador de tau", "NO"),
+                    ("el valor de una politica", "si, leccion 21")):
+    print("  %-42s %16s" % (nombre, obs))
+print()
+print("dos de las cinco no se pueden calcular fuera de una simulacion, y")
+print("son justo las dos con las que aqui se ha elegido metodo. Elegir sin")
+print("ellas es el asunto de la leccion 18")
+```
+
+## 6. Lo que esta lección no resuelve
+
+No se ha usado validación cruzada para ajustar las funciones auxiliares, y eso importa: reutilizar las mismas unidades para estimar $\hat\mu$ y para estimar $\tau$ mete un sesgo de sobreajuste que aquí queda escondido dentro del ECM. El **cross-fitting** que lo arregla es la mitad de la Lección 17 y la base de la 21.
+
+Tampoco se han tratado el R-learner ni el DR-learner, que construyen la variable respuesta de otra manera —ortogonalizando en lugar de imputando— y tienen garantías que estos tres no tienen; ni cómo poner intervalos de confianza sobre $\hat\tau(x)$, que exige el bosque causal de la Lección 19; ni qué hacer cuando el tratamiento tiene más de dos niveles, que es la Lección 07.
+
+## Ejercicios
+
+### Ejercicio 1, El encogimiento del S-learner
+
+Un S-learner reparte su capacidad entre explicar la línea base y separar los brazos. Si la fracción de varianza que el efecto aporta es $f$ y el modelo recupera una fracción $\sqrt{f}$ de la señal del tratamiento, calcular el factor de encogimiento para cuatro pesos de la línea base.
+
+```{pyodide}
+#| exercise: ex_encoge
+import numpy as np
+
+var_efecto = 1.21          # la varianza del efecto verdadero
+pesos = [0.0, 0.2, 1.0, 3.0]
+var_base = 30.0            # la varianza de la linea base con peso 1
+
+factores = []
+for b in pesos:
+    f = ______
+    factores.append(______)
+
+print([round(float(z), 4) for z in factores])
+```
+
+::: {.hint exercise="ex_encoge"}
+La fracción que el efecto aporta es su varianza dividida por la varianza total, que es la del efecto más la de la base multiplicada por el peso al cuadrado.
+:::
+
+::: {.solution exercise="ex_encoge"}
+```{pyodide}
+import numpy as np
+
+var_efecto = 1.21
+pesos = [0.0, 0.2, 1.0, 3.0]
+var_base = 30.0
+
+factores = []
+for b in pesos:
+    f = var_efecto / (var_efecto + var_base * b * b)
+    factores.append(np.sqrt(f))
+
+print([round(float(z), 4) for z in factores])
+```
+
+Los factores son **1,0, 0,7086, 0,1969 y 0,0668**. Lo medido en la celda son factores de 0,97, 0,88, 0,19 y 0,13 —la desviación estimada pasa de 1,067 a 0,969, 0,212 y 0,143 sobre una verdadera de 1,10—. Los dos extremos y el caso central coinciden; el segundo se queda corto, 0,71 contra 0,88, porque el bosque conserva algo más de señal de la que esta cuenta supone. Es un modelo de juguete que dice de dónde viene el encogimiento, no una demostración de su tamaño.
+:::
+
+```{pyodide}
+#| exercise: ex_encoge
+#| check: true
+if [round(float(z), 4) for z in factores] == [1.0, 0.7086, 0.1969, 0.0668]:
+    feedback = {"correct": True, "message": "Correcto: 1.0, 0.7086, 0.1969 y 0.0668."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [1.0, 0.7086, 0.1969, 0.0668]."}
+feedback
+```
+
+### Ejercicio 2, El peso de la mezcla del X-learner
+
+Con la Proposición 16.13, calcular el ECM de la mezcla suponiendo que los errores de $\hat\tau_1$ y $\hat\tau_0$ son independientes, para cuatro propensiones, y decir con cuál se acerca más al mejor de sus dos componentes.
+
+```{pyodide}
+#| exercise: ex_mezcla
+import numpy as np
+
+e = np.array([0.5, 0.2, 0.1, 0.05])
+ecm1 = np.array([2.2178, 0.7021, 0.3250, 0.2978])   # tau1, desde los tratados
+ecm0 = np.array([1.9793, 6.9152, 14.9464, 20.9936]) # tau0, desde los controles
+
+mezcla = ______
+mejor = ______
+cociente = ______
+
+print([round(float(z), 4) for z in mezcla], [round(float(z), 3) for z in cociente])
+```
+
+::: {.hint exercise="ex_mezcla"}
+Con errores independientes, la varianza de $e\,a+(1-e)\,b$ es $e^2$ por la de $a$ más $(1-e)^2$ por la de $b$. El mejor componente es el mínimo de los dos en cada columna.
+:::
+
+::: {.solution exercise="ex_mezcla"}
+```{pyodide}
+import numpy as np
+
+e = np.array([0.5, 0.2, 0.1, 0.05])
+ecm1 = np.array([2.2178, 0.7021, 0.3250, 0.2978])
+ecm0 = np.array([1.9793, 6.9152, 14.9464, 20.9936])
+
+mezcla = e ** 2 * ecm0 + (1 - e) ** 2 * ecm1
+mejor = np.minimum(ecm1, ecm0)
+cociente = mezcla / mejor
+
+print([round(float(z), 4) for z in mezcla], [round(float(z), 3) for z in cociente])
+```
+
+La mezcla da **1,0493, 0,7260, 0,4127 y 0,3212**, y el cociente contra el mejor componente vale **0,53, 1,034, 1,27 y 1,079**. Con los brazos parejos la mezcla **mejora** a los dos, porque promedia dos errores independientes; con los brazos desiguales se queda algo por encima del mejor, que es el precio de no saber cuál de los dos lo es. Comparado con lo medido en la celda —0,4564, 0,4857, 0,3471 y 0,3299— la cuenta acierta el patrón y sobrestima el caso parejo, donde los errores se cancelan más de lo que la independencia predice.
+:::
+
+```{pyodide}
+#| exercise: ex_mezcla
+#| check: true
+if ([round(float(z), 4) for z in mezcla] == [1.0493, 0.726, 0.4127, 0.3212]
+        and [round(float(z), 3) for z in cociente] == [0.53, 1.034, 1.27, 1.079]):
+    feedback = {"correct": True, "message": "Correcto: con los brazos parejos la mezcla mejora a sus dos partes."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [1.0493, 0.726, 0.4127, 0.3212] y [0.53, 1.034, 1.27, 1.079]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F5-retos.ipynb`, sección **Causal 16**:
+
+1. Escribir los tres learners sobre una población simulada propia y medir, para cuatro proporciones tratadas, el ECM y el efecto que logra la política de cada uno. Anotar en qué filas los dos criterios discrepan.
+2. Repetir el S-learner variando el peso de la línea base y anotar la importancia de la columna del tratamiento y la desviación típica del efecto estimado. Comprobar que el encogimiento va siempre hacia cero.
+3. Meter un confusor no observado con tres fuerzas y medir cuánto se desplaza el ATE estimado. Guardar en `50-Errores/` la fuerza a partir de la cual la política deja de ser mejor que tratar a todos.
+
+## Del libro
+
+Facure cap. 21 *Meta Learners* presenta los tres como formas de reutilizar modelos de predicción para estimar efectos, y señala el problema del S-learner con la regularización y el del T-learner con los brazos desiguales, que son las Proposiciones 16.5 y 16.9. El X-learner y su mezcla por la propensión se deben a Künzel y coautores. El capítulo se cita por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- El ATE es un promedio: aquí vale **0,66** y **ninguna** unidad tiene ese efecto.
+- Saber a quién tratar vale **24 % más de efecto con el 48 % de los envíos**.
+- **S-learner**: importancia del tratamiento **0,001483**, la menor. Encoge siempre hacia cero.
+- **T-learner**: recupera la escala y pierde en ECM, 2,162 contra 1,229.
+- Con el 5 % tratado, el T-learner ajusta con **123 unidades** y su ECM se multiplica por **10**.
+- El S gana en ECM en las **cuatro** filas y pierde al decidir en **tres**.
+- Con el 5 % tratado, el S-learner **no trata a nadie**: 0,000000 de 0,814800.
+- **X-learner**: imputa $D=Y-\hat\mu_0(X)$ y modela la diferencia. ECM **0,456** contra 2,162.
+- $\hat\tau_1$ **mejora** al encoger su brazo (2,218 → 0,298) porque lo limita $\hat\mu_0$.
+- El X gana en las **ocho** comparaciones; con el 5 % recoge el **90,8 %** del efecto.
+- Perder superposición: **60,8 %** de propensiones extremas y el ATE se triplica.
+- Un confusor no observado multiplica el ECM por **39**. Ninguno de los tres lo arregla.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico: el reparto del efecto en cuatro valores con fracciones 0,1596, 0,3556, 0,1492 y 0,3356 y un ATE de 0,66; que tratar a todos deja 0,6608 y tratar a quien le sirve 0,8204, un 24 % más con el 48 % de los envíos; que la importancia de la columna del tratamiento vale 0,001483 y la media estimada 0,162742 con desviación 0,211504 frente a 0,654000 y 1,100493; que con la base en 0,0, 0,2, 1,0 y 3,0 la media estimada vale 0,694023, 0,712718, 0,162742 y 0,065142; que la política del S-learner logra 0,705200 con el 75,8 % de los envíos; que el T-learner da media 0,765969 y desviación 1,639067 con ECM 2,162237; que su ECM pasa a 5,836087, 14,851421 y 21,838277 con el 20, el 10 y el 5 % tratado, con 491, 246 y 123 unidades en el brazo; que las políticas logran 0,683600, 0,622400, 0,490800 y 0,497200 con el T y 0,705200, 0,525200, 0,000000 y 0,000000 con el S sobre un máximo de 0,814800; que el X-learner da ECM 0,456447 con los brazos parejos y 0,485717, 0,347096 y 0,329890 en los otros tres; que $\hat\tau_1$ pasa de 2,217844 a 0,297772 y $\hat\tau_0$ de 1,979300 a 20,993553; que las políticas del X logran 0,780800, 0,747600, 0,772400 y 0,740000; que con confusión 0,0 a 4,0 la fracción de propensiones fuera de $[0{,}05,\,0{,}95]$ vale 0,0000, 0,0000, 0,0332, 0,3024 y 0,6084 y el ATE estimado 0,746519 a 1,989154; que usar $e(x)$ como peso baja el ECM de 4,409406 a 0,651814; y que con un confusor no observado de fuerza 3,0 el ATE estimado vale 4,042667 con ECM 12,188482, 39 veces el de fuerza cero.
+
+**Lo que viene de los libros.** De Facure cap. 21, los tres metalearners como reutilización de modelos de predicción, el problema del S-learner con la regularización y el del T-learner con brazos desiguales. El capítulo se cita por su número y su título; el texto no se reproduce. El X-learner es de Künzel y coautores, y aquí se implementa y se mide en lugar de citarse.
+
+**Lo que es mío, no del libro.** La decisión de medir cada método con **dos** criterios —el error cuadrático y el efecto que logra su política— en lugar de uno, que es lo que hace visible que ordenan distinto; el barrido del peso de la línea base, que convierte «el S-learner encoge» en una tabla con la dirección del sesgo; la separación de los dos modos de fallo en la Sección 5, porque la pérdida de superposición y el confusor no observado suelen contarse juntos y tienen remedios distintos; y el cierre que enumera qué cantidades de esta lección se pueden calcular con datos reales, que resultó ser dos de cinco y es lo que obliga a que existan las Lecciones 18 y 21.
+:::

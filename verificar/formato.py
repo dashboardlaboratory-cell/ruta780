@@ -132,6 +132,7 @@ MIGRADAS = {
     "ml/41-convolucion-y-vision.qmd",
     "causal/01-resultados-potenciales.qmd",
     "causal/02-dags-y-puerta-trasera.qmd",
+    "causal/16-metalearners.qmd",
     "series/01-descomposicion.qmd",
     "series/02-estacionariedad.qmd",
     "series/03-autocorrelacion.qmd",
