@@ -1,0 +1,872 @@
+---
+title: "Double machine learning y Frisch-Waugh-Lovell"
+subtitle: "Inferencia causal · Lección 17"
+nivel: L3
+modulo: causal
+fase: F5
+prereqs: [causal/16-metalearners, causal/02-dags-y-puerta-trasera, matematica/05-proyeccion-ortogonal]
+siguientes: []
+libro: "Facure, cap. 22 Debiased/Orthogonal Machine Learning"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="causal/17-double-machine-learning"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F5]{.item}
+[**Libro** Facure 22]{.item}
+[**Prereqs** [Metalearners](16-metalearners.qmd) · [DAGs y puerta trasera](02-dags-y-puerta-trasera.qmd) · [Proyección ortogonal](../matematica/05-proyeccion-ortogonal.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Demostrar el teorema de Frisch-Waugh-Lovell** implementando los dos caminos y comprobando que coinciden **por debajo de 1e-10**.
+2. **Medir cuál de los dos residuos identifica**: residualizar solo $T$ da el mismo número hasta el último dígito, y residualizar también $Y$ divide el error típico por **3,7**.
+3. **Exhibir por qué hace falta un modelo flexible**: con confusión torcida, la regresión lineal da **3,13** y el bosque **1,62** frente a una verdad de 1,50.
+4. **Separar las dos fuentes de sesgo** de las funciones auxiliares, y medir que el cross-fitting solo quita una.
+5. **Demostrar que el cross-fitting habilita el extremo flexible**: con $k=1$ dentro de la muestra el residuo vale **exactamente cero** y el estimador no existe.
+6. **Medir la ortogonalidad de Neyman**: la pendiente log-log del error vale **2,008** para el momento ortogonal y **1,026** para el que no lo es.
+7. Explicar por qué eso permite auxiliares que convergen a $n^{-1/4}$ y aun así un $\theta$ que converge a $n^{-1/2}$.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Causal 16**: los metalearners, que resuelven el mismo problema sin ortogonalizar.
+- **Causal 02**: qué variables van en $X$, que es la pregunta previa a todo esto.
+- **Matemática 5**: la proyección ortogonal, que es literalmente lo que hace un residuo.
+- **Matemática 6**: los mínimos cuadrados, de donde sale la forma cerrada.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Causal 18**: el R-learner, que es esta misma residualización llevada a $\tau(x)$.
+- **Causal 19**: el bosque causal, que usa residuos ortogonalizados en cada hoja.
+- **Causal 21**: la evaluación de políticas, cuyo estimador también es ortogonal.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $\theta$ | theta | El efecto del tratamiento, un solo número |
+| $m(X)$ | eme de equis | $E[T\mid X]$, la esperanza del tratamiento dadas las características |
+| $\ell(X)$ | ele de equis | $E[Y\mid X]$, la esperanza del resultado |
+| $g(X)$ | ge de equis | La parte de $Y$ que no pasa por $T$ |
+| $\tilde T,\ \tilde Y$ | te tilde, y tilde | Los residuos, $T-\hat m(X)$ e $Y-\hat\ell(X)$ |
+| $\delta$ | delta | El tamaño del error con que se estiman las auxiliares |
+| $k$ | ka | Los vecinos que promedia el estimador auxiliar |
+:::
+
+## 1. Frisch-Waugh-Lovell: qué significa «controlar por X»
+
+::: {.definicion}
+**Definición 17.1 (modelo parcialmente lineal).** $Y=\theta T+g(X)+\varepsilon$ y $T=m(X)+\nu$, con $E[\varepsilon\mid X,T]=0$ y $E[\nu\mid X]=0$. El efecto es un solo número, $\theta$, y todo lo demás sobre $X$ queda libre.
+:::
+
+::: {.proposicion}
+**Proposición 17.2 ([teorema de Frisch-Waugh-Lovell]{.g}).** En una regresión lineal, el coeficiente de $T$ en $Y\sim T+X$ es igual al coeficiente de regresar el residuo de $Y$ sobre $X$ contra el residuo de $T$ sobre $X$. Medido: **1,505053983** por los dos caminos, coincidentes por debajo de 1e-10.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $M=I-C(C^{\mathsf{T}}C)^{-1}C^{\mathsf{T}}$ la proyección sobre el ortogonal de las columnas de $C=[1,X]$. Las ecuaciones normales de la regresión larga, separadas en el bloque de $T$ y el de $X$, dan $\theta=(T^{\mathsf{T}}MT)^{-1}T^{\mathsf{T}}MY$, y como $M$ es idempotente y simétrica eso es $(\tilde T^{\mathsf{T}}\tilde T)^{-1}\tilde T^{\mathsf{T}}\tilde Y$. La celda implementa los dos caminos por separado. **«Controlar por $X$» significa exactamente quitar de los dos lo que $X$ explica y mirar lo que sobra.** ∎
+:::
+
+::: {.proposicion}
+**Proposición 17.3 (es el residuo de $T$ el que identifica).** Residualizar **solo** $T$ da el mismo número hasta el último dígito, 1,505053983; residualizar solo $Y$ da 0,779015645 y no residualizar nada da 2,368644518. Lo que se gana residualizando también $Y$ es precisión: el error típico pasa de **0,067382 a 0,018310**.
+:::
+
+::: {.demostracion}
+*Demostración.* El residuo $\tilde T$ es ortogonal a las columnas de $C$, de modo que $\tilde T^{\mathsf{T}}Y=\tilde T^{\mathsf{T}}(\theta T+g(X)+\varepsilon)=\theta\,\tilde T^{\mathsf{T}}T$ salvo por el término de error: la parte de $Y$ que $X$ explica se anula sola. Residualizar $Y$ no cambia el valor esperado y reduce la varianza del numerador, porque le quita la variación que $X$ explica. La celda mide los cuatro estimadores y los dos errores típicos. En el ejemplo $X$ explica el **48,2 %** de la variación de $T$. ∎
+:::
+
+**Modo de falla.** El residuo es la única parte de $T$ que identifica, así que cuanto mejor prediga $X$ a $T$, menos queda con qué estimar. En el límite —un tratamiento asignado por una regla determinista de $X$— el residuo es cero y $\theta$ no está identificado, por mucho que la regresión siga devolviendo un número. Es la pérdida de superposición de la Lección 16 vista desde el otro lado. La defensa es mirar la desviación típica del residuo de $T$ antes que el coeficiente: si se ha encogido a una fracción de la de $T$, el intervalo de confianza que salga será ancho o mentiroso.
+
+```{pyodide}
+import numpy as np
+
+# El teorema de Frisch-Waugh-Lovell, escrito y comprobado: el coeficiente
+# de T en una regresion con controles se puede sacar residualizando.
+rng = np.random.default_rng(170)
+N, K = 3000, 5
+X = rng.standard_normal((N, K))
+T = 0.8 * X[:, 0] - 0.5 * X[:, 2] + rng.standard_normal(N)
+Y = 1.5 * T + 2.0 * X[:, 0] + 1.0 * X[:, 1] - 0.7 * X[:, 3] + rng.standard_normal(N)
+
+def ols(A, b):
+    return np.linalg.lstsq(A, b, rcond=None)[0]
+
+# camino 1: la regresion larga, Y sobre T y todas las X
+larga = ols(np.column_stack([np.ones(N), T, X]), Y)
+theta_larga = float(larga[1])
+
+# camino 2: quitar de Y y de T lo que X explica, y regresar residuo
+# contra residuo
+C = np.column_stack([np.ones(N), X])
+rY = Y - C.dot(ols(C, Y))
+rT = T - C.dot(ols(C, T))
+theta_fwl = float(np.dot(rT, rY) / np.dot(rT, rT))
+
+print("el mismo coeficiente por dos caminos")
+print("  regresion larga, Y ~ T + X        : %.9f" % theta_larga)
+print("  residuo de Y contra residuo de T  : %.9f" % theta_fwl)
+print("  coinciden por debajo de 1e-10     :", abs(theta_larga - theta_fwl) < 1e-10)
+print("  el valor verdadero es 1.5")
+print()
+print("eso es Frisch-Waugh-Lovell. «Controlar por X» significa exactamente")
+print("QUITAR DE LOS DOS lo que X explica y mirar lo que sobra")
+print()
+
+print("las tres piezas, por separado")
+print("  %-34s %14s" % ("cantidad", "valor"))
+print("  %-34s %14.6f" % ("desviacion tipica de T", float(np.std(T))))
+print("  %-34s %14.6f" % ("desviacion tipica del residuo de T", float(np.std(rT))))
+print("  %-34s %14.6f" % ("fraccion de T que X explica",
+                          1 - float(np.var(rT)) / float(np.var(T))))
+print("  %-34s %14.6f" % ("desviacion tipica de Y", float(np.std(Y))))
+print("  %-34s %14.6f" % ("desviacion tipica del residuo de Y", float(np.std(rY))))
+print()
+print("X explica el %.1f %% de la variacion de T. Lo que queda, el residuo,"
+      % (100 * (1 - float(np.var(rT)) / float(np.var(T)))))
+print("es la parte de T que NO se puede predecir con X: la unica que sirve")
+print("para identificar el efecto, porque es la que no arrastra confusion")
+print()
+
+print("y de los dos residuos, cual hace falta de verdad")
+solo_T = float(np.dot(rT, Y) / np.dot(rT, rT))
+solo_Y = float(np.dot(T, rY) / np.dot(T, T))
+print("  %-40s %14.9f" % ("residualizando los dos (correcto)", theta_fwl))
+print("  %-40s %14.9f" % ("residualizando solo T", solo_T))
+print("  %-40s %14.9f" % ("residualizando solo Y", solo_Y))
+print("  %-40s %14.9f" % ("sin residualizar nada",
+                          float(np.dot(T - T.mean(), Y - Y.mean()) / np.dot(T - T.mean(), T - T.mean()))))
+print()
+print("residualizar solo T ya da el MISMO numero, hasta el ultimo digito,")
+print("porque el residuo de T es ortogonal a X y por tanto a la parte de Y")
+print("que X explica. Residualizar solo Y da 0.78 y no residualizar nada")
+print("da 2.37: es el residuo de T el que identifica")
+print()
+
+print("lo que se gana residualizando tambien Y es precision")
+print("  %-34s %16s" % ("estimador", "error tipico"))
+for nombre, num, den in (("residualizando los dos", rY, rT), ("residualizando solo T", Y - Y.mean(), rT)):
+    res = num - den * float(np.dot(den, num) / np.dot(den, den))
+    et = float(np.sqrt(np.dot(res, res) / (N - K - 2) / np.dot(den, den)))
+    print("  %-34s %16.9f" % (nombre, et))
+```
+
+```{=html}
+<div class="viz-residual">
+  <div class="controles">
+    <label>Cuánto explica X de T <input id="rs-c" type="range" min="0" max="0.9" step="0.05" value="0.5"> <span id="rs-c-v">0.50</span></label>
+    <label>Efecto verdadero θ <input id="rs-t" type="range" min="-1" max="3" step="0.25" value="1.5"> <span id="rs-t-v">1.50</span></label>
+  </div>
+  <svg id="rs-svg" viewBox="0 0 660 300" role="img" aria-label="La nube de T contra Y, con su pendiente engañosa, y la nube de los residuos, con la pendiente verdadera."></svg>
+  <p class="lectura" id="rs-lectura"></p>
+</div>
+<style>
+.viz-residual { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-residual .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-residual label { display: flex; align-items: center; gap: .4rem; }
+.viz-residual input[type=range] { width: 150px; padding: 0; }
+.viz-residual svg { width: 100%; height: auto; display: block; }
+.viz-residual .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("rs-svg"), lec = document.getElementById("rs-lectura");
+  var cc = document.getElementById("rs-c"), ct = document.getElementById("rs-t");
+  var ec = document.getElementById("rs-c-v"), et = document.getElementById("rs-t-v");
+
+  function gen(s) { var x = s; return function () { x = (x * 1103515245 + 12345) % 2147483648; return x / 2147483648; }; }
+  function normales(n, s) {
+    var r = gen(s), o = [], i;
+    for (i = 0; i < n; i++) {
+      var u = Math.max(1e-9, r()), v = r();
+      o.push(Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v));
+    }
+    return o;
+  }
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function pendiente(u, v) {
+    var n = u.length, mu = 0, mv = 0, i;
+    for (i = 0; i < n; i++) { mu += u[i]; mv += v[i]; }
+    mu /= n; mv /= n;
+    var num = 0, den = 0;
+    for (i = 0; i < n; i++) { num += (u[i] - mu) * (v[i] - mv); den += (u[i] - mu) * (u[i] - mu); }
+    return den === 0 ? 0 : num / den;
+  }
+
+  var N = 500, eX = normales(N, 11), eT = normales(N, 23), eY = normales(N, 37);
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var c = +cc.value, th = +ct.value;
+    ec.textContent = c.toFixed(2); et.textContent = th.toFixed(2);
+    // X confunde: entra en T y en Y con el mismo signo
+    var X = [], T = [], Y = [], rT = [], rY = [], i;
+    var a = Math.sqrt(c), b = Math.sqrt(1 - c);
+    for (i = 0; i < N; i++) {
+      X.push(eX[i]);
+      T.push(2.0 * a * X[i] + 2.0 * b * eT[i]);
+      Y.push(th * T[i] + 3.0 * X[i] + eY[i]);
+    }
+    var pTX = pendiente(X, T), pYX = pendiente(X, Y);
+    var mX = 0; for (i = 0; i < N; i++) mX += X[i]; mX /= N;
+    for (i = 0; i < N; i++) { rT.push(T[i] - pTX * (X[i] - mX)); rY.push(Y[i] - pYX * (X[i] - mX)); }
+    var cruda = pendiente(T, Y), limpia = pendiente(rT, rY);
+
+    var paneles = [
+      { x0: 46, x1: 320, u: T, v: Y, p: cruda, n: "T contra Y, tal cual", col: C_B },
+      { x0: 370, x1: 640, u: rT, v: rY, p: limpia, n: "residuo contra residuo", col: C_A }
+    ];
+    var Y0 = 26, Y1 = 236, R = 7;
+    for (var k = 0; k < 2; k++) {
+      var P = paneles[k];
+      var mu = 0, mv = 0;
+      for (i = 0; i < N; i++) { mu += P.u[i]; mv += P.v[i]; }
+      mu /= N; mv /= N;
+      function ex(z) { return P.x0 + (Math.max(-R, Math.min(R, z - mu)) + R) * (P.x1 - P.x0) / (2 * R); }
+      function ey(z) { return Y1 - (Math.max(-3 * R, Math.min(3 * R, z - mv)) + 3 * R) * (Y1 - Y0) / (6 * R); }
+      svg.appendChild(el("path", { d: "M" + P.x0 + " " + Y1 + " L" + P.x1 + " " + Y1, stroke: C_L, "stroke-width": 1.2 }));
+      svg.appendChild(el("path", { d: "M" + P.x0 + " " + Y0 + " L" + P.x0 + " " + Y1, stroke: C_L, "stroke-width": 1.2 }));
+      for (i = 0; i < N; i++)
+        svg.appendChild(el("circle", { cx: ex(P.u[i]).toFixed(1), cy: ey(P.v[i]).toFixed(1), r: 1.9,
+          fill: C_T, opacity: .3 }));
+      svg.appendChild(el("path", { d: "M" + ex(mu - R).toFixed(1) + " " + ey(mv - P.p * R).toFixed(1) +
+        " L" + ex(mu + R).toFixed(1) + " " + ey(mv + P.p * R).toFixed(1), stroke: P.col, "stroke-width": 2.6 }));
+      svg.appendChild(el("circle", { cx: ex(mu + R * 0.7).toFixed(1), cy: ey(mv + P.p * R * 0.7).toFixed(1),
+        r: 6, fill: P.col }));
+      svg.appendChild(el("text", { x: (P.x0 + P.x1) / 2, y: Y1 + 22, "text-anchor": "middle",
+        "font-size": 10.5, fill: C_T, opacity: .8 }, P.n));
+      svg.appendChild(el("text", { x: (P.x0 + P.x1) / 2, y: Y1 + 42, "text-anchor": "middle",
+        "font-size": 12, fill: P.col }, "pendiente " + P.p.toFixed(3)));
+    }
+
+    lec.innerHTML = "X explica el <strong>" + (100 * c).toFixed(0) + " %</strong> de la variación de T y entra también en Y. " +
+      "La nube de la izquierda da pendiente <strong>" + cruda.toFixed(3) + "</strong> y el efecto verdadero es <strong>" +
+      th.toFixed(2) + "</strong>: sobra <strong>" + (cruda - th).toFixed(3) + "</strong>, que es lo que X arrastra. " +
+      "Quitando de T y de Y lo que X explica, la nube de la derecha da <strong>" + limpia.toFixed(3) +
+      "</strong>. Con el primer control en cero las dos nubes coinciden, porque no hay nada que quitar; " +
+      "subiéndolo, la de la izquierda se inclina y la de la derecha no se mueve. Eso es Frisch-Waugh-Lovell dibujado.";
+  }
+  cc.addEventListener("input", dibujar); ct.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Por qué hace falta un modelo flexible
+
+::: {.proposicion}
+**Proposición 17.4 (una recta no quita una confusión torcida).** Cuando $g$ y $m$ no son lineales en $X$, la regresión con $X$ como controles da **3,125421** frente a una verdad de 1,5 —peor incluso que no controlar nada, que da 2,960539—, y residualizar con un bosque da **1,615940**.
+:::
+
+::: {.demostracion}
+*Demostración.* La regresión lineal proyecta sobre el espacio generado por las columnas de $X$; si $m$ vive fuera de ese espacio, el residuo conserva la parte de $m$ que la proyección no alcanza, y esa parte está correlacionada con $g(X)$. La celda mide cuánta confusión queda en cada residuo regresándolo contra $g(X)$: el residuo lineal tiene $R^2=\mathbf{0{,}469124}$ contra $g$, y el del bosque **0,001248**. ∎
+:::
+
+::: {.proposicion}
+**Proposición 17.5 (el sesgo crece con lo torcida que sea).** Con un mando que va de confusión lineal a muy torcida, el estimador lineal va de 1,483488 a **3,848246** y el del bosque de 1,488656 a 1,914902.
+:::
+
+::: {.demostracion}
+*Demostración.* Con el mando en cero la confusión es lineal, la proyección la alcanza entera y los dos aciertan; al subirlo, la parte no alcanzable crece. La celda tabula cuatro valores. **Ése es el argumento entero para meter aprendizaje automático en una estimación causal**, y es un argumento sobre residualizar, no sobre predecir. ∎
+:::
+
+```{pyodide}
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+
+# El mismo teorema, pero con una confusion que NO es lineal en X.
+def datos(n, semilla):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 5))
+    g = 3.0 * np.sin(2.0 * X[:, 0]) + 2.0 * X[:, 1] ** 2 - 1.5 * np.abs(X[:, 2])
+    m = 1.2 * np.tanh(2.0 * X[:, 0]) + 0.8 * X[:, 1] ** 2
+    T = m + rng.standard_normal(n)
+    Y = 1.5 * T + g + rng.standard_normal(n)
+    return X, T, Y
+
+THETA = 1.5
+X, T, Y = datos(3000, 171)
+
+def ols(A, b):
+    return np.linalg.lstsq(A, b, rcond=None)[0]
+
+N = len(Y)
+# 1) la regresion lineal con X como controles
+lineal = float(ols(np.column_stack([np.ones(N), T, X]), Y)[1])
+# 2) sin controlar por nada
+crudo = float(ols(np.column_stack([np.ones(N), T]), Y)[1])
+# 3) residualizar con un modelo flexible, dentro de la misma muestra
+def bosque(A, b, s=0):
+    m = RandomForestRegressor(n_estimators=100, min_samples_leaf=10, random_state=s)
+    m.fit(A, b); return m
+rY = Y - bosque(X, Y, 0).predict(X)
+rT = T - bosque(X, T, 1).predict(X)
+flexible = float(np.dot(rT, rY) / np.dot(rT, rT))
+
+print("una confusion que no es lineal en X")
+print("  %-42s %14s %12s" % ("estimador de theta", "valor", "error"))
+print("  %-42s %14.6f %12.6f" % ("sin controlar nada", crudo, crudo - THETA))
+print("  %-42s %14.6f %12.6f" % ("regresion lineal con X como controles", lineal, lineal - THETA))
+print("  %-42s %14.6f %12.6f" % ("residualizando con un bosque", flexible, flexible - THETA))
+print("  %-42s %14.6f %12s" % ("la verdad", THETA, "-"))
+print()
+print("la regresion lineal controla por X, y no alcanza: la confusion")
+print("entra por sin(2*x0) y por x1 al cuadrado, y una recta no puede")
+print("quitar eso. El bosque si, y por eso su residuo esta mucho mas")
+print("limpio")
+print()
+
+print("cuanta confusion queda en cada residuo de T")
+C = np.column_stack([np.ones(N), X])
+rT_lin = T - C.dot(ols(C, T))
+print("  %-36s %16s %16s" % ("residuo de T obtenido con", "desv. tipica", "R2 contra g(X)"))
+gX = 3.0 * np.sin(2.0 * X[:, 0]) + 2.0 * X[:, 1] ** 2 - 1.5 * np.abs(X[:, 2])
+for nombre, r in (("una regresion lineal", rT_lin), ("un bosque", rT)):
+    D = np.column_stack([np.ones(N), gX])
+    pred = D.dot(ols(D, r))
+    r2 = 1 - float(np.var(r - pred)) / float(np.var(r))
+    print("  %-36s %16.6f %16.6f" % (nombre, float(np.std(r)), r2))
+print()
+print("el residuo lineal todavia se deja predecir por g(X): le queda")
+print("confusion dentro. El del bosque casi no. Y ese resto es justo lo")
+print("que se cuela en el coeficiente")
+print()
+
+print("y el sesgo crece con lo torcida que sea la confusion")
+print("  %-16s %14s %14s %14s" % ("torcimiento", "lineal", "bosque", "verdad"))
+for k in (0.0, 0.5, 1.0, 2.0):
+    rng = np.random.default_rng(172)
+    Xa = rng.standard_normal((3000, 5))
+    ga = k * (3.0 * np.sin(2.0 * Xa[:, 0]) + 2.0 * Xa[:, 1] ** 2) + 2.0 * Xa[:, 0]
+    ma = k * (1.2 * np.tanh(2.0 * Xa[:, 0]) + 0.8 * Xa[:, 1] ** 2) + 0.5 * Xa[:, 0]
+    Ta = ma + rng.standard_normal(3000)
+    Ya = THETA * Ta + ga + rng.standard_normal(3000)
+    lin = float(ols(np.column_stack([np.ones(3000), Ta, Xa]), Ya)[1])
+    ry = Ya - bosque(Xa, Ya, 0).predict(Xa)
+    rt = Ta - bosque(Xa, Ta, 1).predict(Xa)
+    flex = float(np.dot(rt, ry) / np.dot(rt, rt))
+    print("  %-16.1f %14.6f %14.6f %14.6f" % (k, lin, flex, THETA))
+print()
+print("con torcimiento cero la confusion es lineal y los dos aciertan. Al")
+print("subirlo, el lineal se va y el bosque aguanta. Ese es el argumento")
+print("entero para meter machine learning en una estimacion causal: no")
+print("para predecir mejor, sino para residualizar mejor")
+```
+
+## 3. Las dos fuentes de sesgo de las auxiliares
+
+::: {.definicion}
+**Definición 17.6 ([cross-fitting]{.g}).** Partir la muestra en $k$ pliegues; para cada uno, ajustar las funciones auxiliares con los **otros** y residualizar solo las unidades de ese pliegue. Ninguna unidad se residualiza con un modelo que la haya visto.
+:::
+
+::: {.proposicion}
+**Proposición 17.7 (son dos sesgos distintos y solo uno se quita así).** El sesgo de $\hat\theta$ viene de ajustar y predecir sobre las mismas unidades —que el cross-fitting quita— y de que el modelo auxiliar no alcance la forma real —que solo quita más flexibilidad—. Con $k=300$ vecinos los dos estimadores se van al mismo sitio, **2,136329 y 2,221833**.
+:::
+
+::: {.demostracion}
+*Demostración.* El primero es un término de sobreajuste, que depende de si la unidad participó en su propio ajuste; el segundo es un error de aproximación de $\hat m$ y $\hat\ell$, que existe igual se ajuste donde se ajuste. La celda barre la flexibilidad con el número de vecinos y mide las dos columnas. **Los dos tiran en sentidos opuestos**: bajando $k$ baja el segundo y sube el primero. ∎
+:::
+
+::: {.proposicion}
+**Proposición 17.8 (con $k=1$ dentro de la muestra el estimador no existe).** El vecino más cercano de cada unidad es ella misma, de modo que el residuo vale **exactamente 0,000000** y $\theta$ queda indefinido. Con cross-fitting el vecino se busca fuera y sale **1,527380**, el mejor número de la tabla.
+:::
+
+::: {.demostracion}
+*Demostración.* Con $k=1$ y predicción en la propia muestra, $\hat m(X_i)=T_i$ por construcción, luego $\tilde T_i=0$ para toda $i$ y el cociente $\tilde T^{\mathsf{T}}\tilde Y/\tilde T^{\mathsf{T}}\tilde T$ es $0/0$. La celda lo exhibe. **Lo que el cross-fitting compra es habilitar el extremo flexible**, que sin él no se puede usar; afinar un estimador ya fijado es otra cosa, y más pequeña. Comparando lo mejor de cada uno sobre 10 muestras, el sesgo pasa de **0,084567 a 0,039757** y el cruzado gana en **10 de 10**, con menos desviación típica. ∎
+:::
+
+**Modo de falla.** Un modelo auxiliar demasiado rígido sesga sin dar ninguna señal: converge, sus residuos parecen normales y el intervalo de confianza sale estrecho alrededor de un número que puede estar al 50 % de la verdad, como el 2,22 de la tabla frente a 1,50. Y el síntoma es engañoso, porque unas auxiliares rígidas dan residuos **grandes**, que es lo contrario de lo que uno vigila al temer el sobreajuste. La defensa es barrer la flexibilidad y mirar si $\hat\theta$ se estabiliza; si sigue moviéndose en el extremo flexible, las auxiliares aún no alcanzan.
+
+```{pyodide}
+import numpy as np
+
+THETA = 1.5
+
+def datos(n, semilla):
+    rng = np.random.default_rng(semilla)
+    # dos caracteristicas, no cinco: el metodo de los k vecinos se hunde en
+    # dimension alta y aqui lo que se quiere medir es otra cosa
+    X = rng.standard_normal((n, 2))
+    g = 3.0 * np.sin(2.0 * X[:, 0]) + 2.0 * X[:, 1] ** 2
+    m = 1.2 * np.tanh(2.0 * X[:, 0]) + 0.8 * X[:, 1] ** 2
+    T = m + rng.standard_normal(n)
+    return X, T, THETA * T + g + rng.standard_normal(n)
+
+# Las funciones auxiliares, escritas a mano: la media de los k vecinos mas
+# cercanos. La flexibilidad es k, y el metodo es determinista, sin la
+# dependencia de version que tienen los bosques con hojas diminutas.
+def vecinos(Xa, Xb, k):
+    """Los indices de los k vecinos de cada fila de Xb dentro de Xa."""
+    d2 = (np.sum(Xb * Xb, 1)[:, None] + np.sum(Xa * Xa, 1)[None, :]
+          - 2.0 * Xb.dot(Xa.T))
+    return np.argsort(d2, axis=1, kind="stable")[:, :k]
+
+def dentro(X, T, Y, k):
+    """Ajustar y predecir sobre las MISMAS unidades: cada punto es vecino
+       de si mismo y se predice a si mismo en parte."""
+    idx = vecinos(X, X, k)
+    rY = Y - Y[idx].mean(1)
+    rT = T - T[idx].mean(1)
+    return float(np.dot(rT, rY) / np.dot(rT, rT)), float(np.std(rT))
+
+def cruzado(X, T, Y, k, pliegues=5):
+    """Los vecinos de cada unidad se buscan SOLO fuera de su pliegue."""
+    n = len(Y)
+    pl = np.arange(n) % pliegues
+    rY, rT = np.zeros(n), np.zeros(n)
+    for f in range(pliegues):
+        ent, fue = pl != f, pl == f
+        idx = vecinos(X[ent], X[fue], k)
+        rY[fue] = Y[fue] - Y[ent][idx].mean(1)
+        rT[fue] = T[fue] - T[ent][idx].mean(1)
+    return float(np.dot(rT, rY) / np.dot(rT, rT)), float(np.std(rT))
+
+X, T, Y = datos(3000, 171)
+print("el sesgo tiene dos fuentes, y se ven barriendo la flexibilidad")
+print("  %-10s %12s %12s %14s %14s"
+      % ("vecinos k", "dentro", "cruzado", "sd residuo T", "sd residuo T"))
+print("  %-10s %12s %12s %14s %14s" % ("", "", "", "dentro", "cruzado"))
+res = {}
+for k in (1, 10, 50, 300):
+    d, sd = dentro(X, T, Y, k)
+    c, sc = cruzado(X, T, Y, k)
+    res[k] = (d, c, sd, sc)
+    print("  %-10d %12.6f %12.6f %14.6f %14.6f" % (k, d, c, sd, sc))
+print("  %-10s %12.6f %12.6f" % ("la verdad", THETA, THETA))
+print()
+print("con k = 1 y dentro de la muestra, el vecino mas cercano de cada")
+print("unidad es ELLA MISMA: el residuo vale exactamente %.6f y theta"
+      % res[1][2])
+print("no esta ni definido. Con cross-fitting el vecino se busca fuera y")
+print("theta sale %.6f" % res[1][1])
+print()
+print("con k = 300 el promedio es tan ancho que no sigue la forma de g ni")
+print("la de m, y los DOS estimadores se van al mismo sitio: %.4f y %.4f."
+      % (res[300][0], res[300][1]))
+print("Ese sesgo no es de sobreajuste, y el cross-fitting no lo toca")
+print()
+
+print("las dos fuentes, dichas aparte")
+print("  %-44s %18s" % ("fuente del sesgo", "la quita"))
+print("  %-44s %18s" % ("ajustar y predecir sobre las mismas unidades", "cross-fitting"))
+print("  %-44s %18s" % ("un modelo que no llega a la forma real", "mas flexibilidad"))
+print()
+print("y aqui esta lo que el cross-fitting compra de verdad: no afina un")
+print("estimador ya fijado, sino que HABILITA el extremo flexible. Dentro")
+print("de la muestra, k = 1 no existe y k = 10 es lo mejor que se puede")
+print("usar; con cross-fitting, k = 1 da %.4f, el mejor numero de la tabla"
+      % res[1][1])
+print()
+
+print("las dos mejores versiones, sobre 10 muestras")
+dd, cc = [], []
+for s in range(10):
+    Xa, Ta, Ya = datos(3000, 300 + s)
+    dd.append(dentro(Xa, Ta, Ya, 10)[0])      # lo mejor que puede hacer dentro
+    cc.append(cruzado(Xa, Ta, Ya, 1)[0])      # lo que el cross-fitting desbloquea
+dd, cc = np.array(dd), np.array(cc)
+print("  %-34s %13s %13s %13s" % ("metodo", "media", "sesgo", "desv. tipica"))
+print("  %-34s %13.6f %13.6f %13.6f"
+      % ("dentro de la muestra, k = 10", float(dd.mean()), float(dd.mean()) - THETA, float(dd.std())))
+print("  %-34s %13.6f %13.6f %13.6f"
+      % ("con cross-fitting, k = 1", float(cc.mean()), float(cc.mean()) - THETA, float(cc.std())))
+print("  muestras en que el cruzado queda mas cerca : %d de 10"
+      % int(np.sum(np.abs(cc - THETA) < np.abs(dd - THETA))))
+print()
+print("el sesgo pasa de %.4f a %.4f, se divide por %.1f, y la desviacion"
+      % (float(dd.mean()) - THETA, float(cc.mean()) - THETA,
+         (float(dd.mean()) - THETA) / (float(cc.mean()) - THETA)))
+print("tipica TAMBIEN baja, de %.4f a %.4f. El cruzado gana en las diez"
+      % (float(dd.std()), float(cc.std())))
+print("muestras, y todo el coste es ajustar cinco modelos en vez de uno")
+```
+
+## 4. La ortogonalidad de Neyman, medida
+
+::: {.definicion}
+**Definición 17.9 (momento ortogonal, y la [ortogonalidad de Neyman]{.g}).** Un momento $\psi(W;\theta,\eta)$ es ortogonal cuando su derivada respecto de las funciones auxiliares $\eta$, evaluada en las verdaderas, vale cero. El momento del [double machine learning]{.g}, $\psi=(\tilde Y-\theta\tilde T)\,\tilde T$, lo es; el mismo numerador con $T$ crudo como instrumento, no.
+:::
+
+::: {.proposicion}
+**Proposición 17.10 (uno se mueve como $\delta$ y el otro como $\delta^2$).** Estropeando las dos auxiliares con un error de tamaño $\delta$, la pendiente del error de $\hat\theta$ en escala log-log vale **2,008** para el momento ortogonal y **1,026** para el que no lo es. Con $\delta=0{,}05$, el segundo se mueve **6** veces más.
+:::
+
+::: {.demostracion}
+*Demostración.* Escribiendo $\hat m=m+\delta h$ y $\hat\ell=\ell+\delta h$ y desarrollando el momento alrededor de las verdaderas, el término lineal en $\delta$ lleva por factor la derivada de Gateaux del momento, que para el ortogonal es cero; el primer término no nulo es el cuadrático. Para el momento con $T$ crudo esa derivada no se anula. La celda conoce $m$ y $\ell$ **exactas** —la población es simulada— y las estropea a propósito en cinco tamaños, midiendo el desplazamiento respecto del valor sin perturbar. Las pendientes salen 2 y 1 con dos cifras. ∎
+:::
+
+::: {.proposicion}
+**Proposición 17.11 (es una propiedad local).** Con $\delta=0{,}4$ el estimador ortogonal ya es **peor**: 0,053584 contra 0,042323. Una parábola acaba pasando a una recta, y el cruce cae entre 0,2 y 0,4.
+:::
+
+::: {.demostracion}
+*Demostración.* $\delta^2<c\,\delta$ solo mientras $\delta<c$; la constante del término cuadrático fija dónde. La celda lo tabula con la columna de quién gana en cada $\delta$. **La ortogonalidad no promete que las auxiliares puedan estar mal**: promete que un error pequeño se paga al cuadrado. ∎
+:::
+
+::: {.proposicion}
+**Proposición 17.12 (de ahí la condición $n^{-1/4}$).** Si cada auxiliar converge a velocidad $n^{-a}$, el producto de los dos errores va como $n^{-2a}$, y basta $2a\ge 1/2$, es decir $a\ge 1/4$, para que el sesgo no domine frente a $n^{-1/2}$.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Proposición 17.10 el sesgo de $\hat\theta$ está acotado por el producto de los errores de las dos auxiliares. La celda tabula cinco velocidades y cuál basta. **$n^{-1/4}$ es lenta y está al alcance de un bosque o de un lasso sobre muchas variables**, y aun así $\theta$ converge a la velocidad de un estimador paramétrico. Ésa es la razón por la que DML existe. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# Por que DML aguanta que las funciones auxiliares esten mal: se perturban
+# a proposito y se mide cuanto se mueve theta.
+THETA = 1.5
+rng = np.random.default_rng(173)
+N = 200000
+X = rng.standard_normal((N, 3))
+m = 1.2 * np.tanh(2.0 * X[:, 0]) + 0.8 * X[:, 1] ** 2        # E[T|X], exacta
+g = 3.0 * np.sin(2.0 * X[:, 0]) + 2.0 * X[:, 1] ** 2
+T = m + rng.standard_normal(N)
+Y = THETA * T + g + rng.standard_normal(N)
+ell = THETA * m + g                                           # E[Y|X], exacta
+h = np.cos(1.7 * X[:, 0]) + 0.5 * X[:, 2]                     # la direccion del error
+
+def ortogonal(d):
+    """El residuo de T hace de instrumento: <rT, rY> / <rT, rT>."""
+    rT, rY = T - (m + d * h), Y - (ell + d * h)
+    return float(np.dot(rT, rY) / np.dot(rT, rT))
+
+def no_ortogonal(d):
+    """El mismo numerador, pero con T crudo como instrumento."""
+    rT, rY = T - (m + d * h), Y - (ell + d * h)
+    return float(np.dot(T, rY) / np.dot(T, rT))
+
+print("las dos funciones auxiliares se conocen exactas, y se estropean a")
+print("proposito sumandoles delta por una direccion cualquiera")
+print("  %-10s %14s %14s" % ("delta", "ortogonal", "no ortogonal"))
+for d in (0.0, 0.1, 0.2, 0.4):
+    print("  %-10.2f %14.6f %14.6f" % (d, ortogonal(d), no_ortogonal(d)))
+print("  %-10s %14.6f %14.6f" % ("la verdad", THETA, THETA))
+print()
+
+o0, n0 = ortogonal(0.0), no_ortogonal(0.0)
+ds = np.array([0.025, 0.05, 0.1, 0.2, 0.4])
+eo = np.array([abs(ortogonal(d) - o0) for d in ds])
+en = np.array([abs(no_ortogonal(d) - n0) for d in ds])
+print("cuanto se mueve theta respecto de su valor sin perturbar")
+print("  %-10s %16s %16s %12s" % ("delta", "ortogonal", "no ortogonal", "cociente"))
+for d, a, b in zip(ds, eo, en):
+    print("  %-10.3f %16.6f %16.6f %12.2f" % (d, a, b, b / a))
+print()
+po = float(np.polyfit(np.log(ds), np.log(eo), 1)[0])
+pn = float(np.polyfit(np.log(ds), np.log(en), 1)[0])
+print("  pendiente en escala log-log, ortogonal   : %.3f" % po)
+print("  pendiente en escala log-log, no ortogonal: %.3f" % pn)
+print()
+print("las dos pendientes valen 2 y 1 con dos cifras. El error del")
+print("estimador no ortogonal crece como delta y el del ortogonal como")
+print("delta al cuadrado: con las auxiliares mal en un 5 %%, el primero se")
+print("mueve %.0f veces mas que el segundo" % (en[1] / eo[1]))
+print()
+print("eso es la ortogonalidad de Neyman: la derivada del momento respecto")
+print("de las funciones auxiliares, evaluada en las verdaderas, vale cero.")
+print("El primer orden desaparece y solo queda el segundo")
+print()
+
+print("pero es una propiedad LOCAL, y la tabla lo dice")
+cruce = ds[np.argmax(eo > en)] if np.any(eo > en) else None
+print("  %-10s %16s %16s %14s" % ("delta", "ortogonal", "no ortogonal", "quien gana"))
+for d, a, b in zip(ds, eo, en):
+    print("  %-10.3f %16.6f %16.6f %14s" % (d, a, b, "ortogonal" if a < b else "el otro"))
+print()
+print("con delta 0.4 el ortogonal ya es PEOR: %.4f contra %.4f. Una" % (eo[-1], en[-1]))
+print("parabola acaba pasando a una recta, y el cruce cae entre 0.2 y 0.4")
+print("La ortogonalidad no promete que las auxiliares puedan estar mal;")
+print("promete que un error PEQUEÑO se paga al cuadrado")
+print()
+
+print("y de ahi la condicion que DML pide de verdad")
+print("  si cada auxiliar converge a velocidad n^(-a), su error al")
+print("  cuadrado va como n^(-2a), y basta que eso sea mas rapido que")
+print("  n^(-1/2) para que el sesgo no se note")
+print("  %-16s %18s %16s" % ("a, por auxiliar", "el producto va a", "basta?"))
+for a in (0.10, 0.20, 0.25, 0.40, 0.50):
+    print("  %-16s %18s %16s"
+          % ("n^(-%.2f)" % a, "n^(-%.2f)" % (2 * a), "si" if 2 * a >= 0.5 else "no"))
+print()
+print("a partir de a = 0.25 basta, y n^(-1/4) es una velocidad lenta, al")
+print("alcance de un bosque o de un lasso sobre muchas variables. Aun asi")
+print("theta converge a n^(-1/2), la velocidad de un estimador")
+print("parametrico: eso es lo que compra la ortogonalidad")
+```
+
+```{=html}
+<div class="viz-orto">
+  <div class="controles">
+    <label>Error de las auxiliares δ <input id="or-d" type="range" min="-1.8" max="0" step="0.05" value="-1.0"> <span id="or-d-v">0.100</span></label>
+    <label>Exponente del ortogonal <input id="or-p" type="range" min="1" max="3" step="0.1" value="2"> <span id="or-p-v">2.0</span></label>
+  </div>
+  <svg id="or-svg" viewBox="0 0 660 300" role="img" aria-label="El error del estimador frente al error de las funciones auxiliares, en escala logarítmica, para un momento ortogonal y uno que no lo es."></svg>
+  <p class="lectura" id="or-lectura"></p>
+</div>
+<style>
+.viz-orto { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-orto .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-orto label { display: flex; align-items: center; gap: .4rem; }
+.viz-orto input[type=range] { width: 150px; padding: 0; }
+.viz-orto svg { width: 100%; height: auto; display: block; }
+.viz-orto .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("or-svg"), lec = document.getElementById("or-lectura");
+  var cd = document.getElementById("or-d"), cp = document.getElementById("or-p");
+  var ed = document.getElementById("or-d-v"), ep = document.getElementById("or-p-v");
+  // lo que la celda midio: delta y el desplazamiento de cada estimador
+  var DS = [0.025, 0.05, 0.1, 0.2, 0.4];
+  var EO = [0.000206, 0.000882, 0.003630, 0.014439, 0.053584];
+  var EN = [0.002454, 0.004931, 0.009959, 0.020316, 0.042323];
+  var X0 = 68, X1 = 628, Y0 = 26, Y1 = 232;
+  var LX0 = -1.85, LX1 = -0.3, LY0 = -4.2, LY1 = -1.0;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(l) { return X0 + (Math.max(LX0, Math.min(LX1, l)) - LX0) * (X1 - X0) / (LX1 - LX0); }
+  function py(l) { return Y1 - (Math.max(LY0, Math.min(LY1, l)) - LY0) * (Y1 - Y0) / (LY1 - LY0); }
+  function log10(v) { return Math.log(v) / Math.LN10; }
+
+  // las dos rectas ajustadas a los puntos medidos, en escala log-log
+  function recta(ys) {
+    var n = DS.length, sx = 0, sy = 0, sxx = 0, sxy = 0, i;
+    for (i = 0; i < n; i++) {
+      var a = log10(DS[i]), b = log10(ys[i]);
+      sx += a; sy += b; sxx += a * a; sxy += a * b;
+    }
+    var m = (n * sxy - sx * sy) / (n * sxx - sx * sx);
+    return { m: m, b: (sy - m * sx) / n };
+  }
+  var RN = recta(EN);
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var ld = +cd.value, p = +cp.value;
+    var d = Math.pow(10, ld);
+    ed.textContent = d.toFixed(3); ep.textContent = p.toFixed(1);
+    // el ortogonal se dibuja con el exponente que pida el control, anclado
+    // en el punto medido mas pequeño
+    var anc = log10(EO[0]) - p * log10(DS[0]);
+    var fo = function (l) { return anc + p * l; };
+    var fn = function (l) { return RN.b + RN.m * l; };
+
+    var i, q;
+    for (q = -4; q <= -1; q++) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(q).toFixed(1) + " L" + X1 + " " + py(q).toFixed(1),
+        stroke: C_L, "stroke-width": 0.8, opacity: .5 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(q) + 4, "text-anchor": "end", "font-size": 10,
+        fill: C_T, opacity: .7 }, "1e" + q));
+    }
+    for (i = 0; i < DS.length; i++)
+      svg.appendChild(el("text", { x: px(log10(DS[i])), y: Y1 + 20, "text-anchor": "middle",
+        "font-size": 10, fill: C_T, opacity: .7 }, DS[i].toString()));
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 40, "text-anchor": "middle",
+      "font-size": 10.5, fill: C_T, opacity: .7 }, "δ, el error de las funciones auxiliares"));
+
+    var dA = "", dB = "";
+    for (i = 0; i <= 120; i++) {
+      var l = LX0 + i * (LX1 - LX0) / 120;
+      dA += (i === 0 ? "M" : " L") + px(l).toFixed(1) + " " + py(fo(l)).toFixed(1);
+      dB += (i === 0 ? "M" : " L") + px(l).toFixed(1) + " " + py(fn(l)).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: dA, fill: "none", stroke: C_A, "stroke-width": 2.4 }));
+    svg.appendChild(el("path", { d: dB, fill: "none", stroke: C_B, "stroke-width": 2.4, "stroke-dasharray": "6 4" }));
+    for (i = 0; i < DS.length; i++) {
+      svg.appendChild(el("circle", { cx: px(log10(DS[i])).toFixed(1), cy: py(log10(EO[i])).toFixed(1), r: 3.4, fill: C_A }));
+      svg.appendChild(el("circle", { cx: px(log10(DS[i])).toFixed(1), cy: py(log10(EN[i])).toFixed(1), r: 3.4, fill: C_B }));
+    }
+    svg.appendChild(el("text", { x: X1 - 4, y: Y0 + 12, "text-anchor": "end", "font-size": 11, fill: C_A }, "ortogonal"));
+    svg.appendChild(el("text", { x: X1 - 4, y: Y0 + 28, "text-anchor": "end", "font-size": 11, fill: C_B }, "no ortogonal"));
+
+    var vo = Math.pow(10, fo(ld)), vn = Math.pow(10, fn(ld));
+    svg.appendChild(el("path", { d: "M" + px(ld).toFixed(1) + " " + Y0 + " L" + px(ld).toFixed(1) + " " + Y1,
+      stroke: C_L, "stroke-width": 1.2, "stroke-dasharray": "4 4" }));
+    svg.appendChild(el("circle", { cx: px(ld).toFixed(1), cy: py(fo(ld)).toFixed(1), r: 7, fill: C_A }));
+    svg.appendChild(el("circle", { cx: px(ld).toFixed(1), cy: py(fn(ld)).toFixed(1), r: 7, fill: C_B }));
+
+    lec.innerHTML = "Con las auxiliares equivocadas en <strong>" + d.toFixed(3) + "</strong>, el estimador ortogonal se mueve <strong>" +
+      vo.toExponential(2) + "</strong> y el que no lo es, <strong>" + vn.toExponential(2) + "</strong>: " +
+      (vo < vn ? "<strong>" + (vn / vo).toFixed(1) + " veces menos</strong>."
+               : "<strong>" + (vo / vn).toFixed(1) + " veces más</strong>, porque δ ya es grande.") +
+      " Los puntos son lo medido; las rectas, su ajuste en escala log-log, con pendientes <strong>2,008</strong> y <strong>1,026</strong>. " +
+      "El segundo control mueve el exponente del ortogonal: con 1 las dos rectas son paralelas y la ventaja es un factor fijo; " +
+      "con 2 la ventaja crece sin límite al acercarse δ a cero, y ése es el valor que la medición encontró.";
+  }
+  cd.addEventListener("input", dibujar); cp.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Lo que esta lección no resuelve
+
+El efecto se ha supuesto **un solo número**. En cuanto $\theta$ depende de $x$, la residualización sigue sirviendo pero hay que regresar $\tilde Y$ contra $\tilde T$ **interactuado con $x$**, y eso es el R-learner de la Lección 18. Tampoco se han puesto intervalos de confianza sobre $\hat\theta$: la teoría dice que el cross-fitting los deja válidos, y comprobarlo exige simular muchas muestras y medir la cobertura, que es lo que hace la Lección 19 para el bosque causal.
+
+Y todo lo anterior descansa en la ignorabilidad de la Lección 01. DML no cierra ningún camino trasero: lo que arregla es el **sesgo de regularización** que aparece al usar modelos flexibles para cerrar los que sí se pueden cerrar. Con un confusor fuera de la tabla, sus estimaciones son tan falsas como las de la Lección 16, y la celda de allí lo midió: el error se multiplicaba por 39.
+
+## Ejercicios
+
+### Ejercicio 1, El residuo que identifica
+
+Con la Proposición 17.3, calcular qué fracción de la varianza de $T$ sobrevive a la residualización y cuánto se ensancha el error típico de $\hat\theta$, para cuatro valores del $R^2$ de $T$ contra $X$.
+
+```{pyodide}
+#| exercise: ex_residuo
+import numpy as np
+
+r2 = np.array([0.0, 0.5, 0.9, 0.99])
+var_T = 2.0        # la varianza de T
+sigma = 1.0        # la desviacion del error de Y
+n = 1000
+
+queda = ______
+error_tipico = ______
+cociente = ______
+
+print([round(float(z), 4) for z in queda], [round(float(z), 4) for z in cociente])
+```
+
+::: {.hint exercise="ex_residuo"}
+Lo que queda es $(1-R^2)$ de la varianza. El error típico de $\hat\theta$ es $\sigma$ dividido por la raíz de $n$ por la varianza del residuo, y el cociente se toma contra el caso $R^2=0$.
+:::
+
+::: {.solution exercise="ex_residuo"}
+```{pyodide}
+import numpy as np
+
+r2 = np.array([0.0, 0.5, 0.9, 0.99])
+var_T = 2.0
+sigma = 1.0
+n = 1000
+
+queda = (1 - r2) * var_T
+error_tipico = sigma / np.sqrt(n * queda)
+cociente = error_tipico / error_tipico[0]
+
+print([round(float(z), 4) for z in queda], [round(float(z), 4) for z in cociente])
+```
+
+Queda **2,0, 1,0, 0,2 y 0,02** de varianza, y el error típico se multiplica por **1,0, 1,4142, 3,1623 y 10,0**. Con un $R^2$ del 99 % —un tratamiento casi determinado por $X$— el intervalo de confianza es diez veces más ancho con los mismos datos. Es la misma pérdida de superposición de la Lección 16, contada con la varianza del residuo.
+:::
+
+```{pyodide}
+#| exercise: ex_residuo
+#| check: true
+if ([round(float(z), 4) for z in queda] == [2.0, 1.0, 0.2, 0.02]
+        and [round(float(z), 4) for z in cociente] == [1.0, 1.4142, 3.1623, 10.0]):
+    feedback = {"correct": True, "message": "Correcto: con R2 del 99 % el error tipico se multiplica por 10."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [2.0, 1.0, 0.2, 0.02] y [1.0, 1.4142, 3.1623, 10.0]."}
+feedback
+```
+
+### Ejercicio 2, Las dos pendientes
+
+Con la Proposición 17.10, calcular cuánto se mueve cada estimador para cuatro tamaños del error de las auxiliares, suponiendo pendientes exactas de 2 y de 1 ancladas en $\delta=0{,}025$.
+
+```{pyodide}
+#| exercise: ex_pendiente
+import numpy as np
+
+ds = np.array([0.025, 0.05, 0.1, 0.2])
+e_orto_0 = 0.000206     # lo medido en delta = 0.025
+e_no_0 = 0.002454
+
+orto = ______
+no_orto = ______
+ventaja = ______
+
+print([round(float(z), 6) for z in orto], [round(float(z), 1) for z in ventaja])
+```
+
+::: {.hint exercise="ex_pendiente"}
+Una pendiente $p$ en escala log-log significa que el error se multiplica por $(\delta/\delta_0)^p$.
+:::
+
+::: {.solution exercise="ex_pendiente"}
+```{pyodide}
+import numpy as np
+
+ds = np.array([0.025, 0.05, 0.1, 0.2])
+e_orto_0 = 0.000206
+e_no_0 = 0.002454
+
+orto = e_orto_0 * (ds / ds[0]) ** 2
+no_orto = e_no_0 * (ds / ds[0]) ** 1
+ventaja = no_orto / orto
+
+print([round(float(z), 6) for z in orto], [round(float(z), 1) for z in ventaja])
+```
+
+El ortogonal da **0,000206, 0,000824, 0,003296 y 0,013184**, y la ventaja sobre el otro vale **11,9, 6,0, 3,0 y 1,5**: se divide por dos cada vez que $\delta$ se dobla. Extrapolando, el cruce cae en $\delta\approx0{,}30$, que es donde la celda lo encontró. La ventaja de la ortogonalidad se agota exactamente al ritmo al que crece el error de las auxiliares.
+:::
+
+```{pyodide}
+#| exercise: ex_pendiente
+#| check: true
+if ([round(float(z), 6) for z in orto] == [0.000206, 0.000824, 0.003296, 0.013184]
+        and [round(float(z), 1) for z in ventaja] == [11.9, 6.0, 3.0, 1.5]):
+    feedback = {"correct": True, "message": "Correcto: la ventaja se divide por dos cada vez que delta se dobla."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [0.000206, 0.000824, 0.003296, 0.013184] y [11.9, 6.0, 3.0, 1.5]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F5-retos.ipynb`, sección **Causal 17**:
+
+1. Implementar los dos caminos de Frisch-Waugh-Lovell sobre datos propios y comprobar que coinciden. Medir además el error típico residualizando los dos y solo $T$, y anotar el cociente.
+2. Construir una confusión no lineal y comparar el estimador lineal con uno que residualice con un modelo flexible, barriendo lo torcida que sea. Anotar a partir de qué punto el lineal deja de servir.
+3. Barrer la flexibilidad del modelo auxiliar con y sin cross-fitting, y anotar dónde está el mínimo de cada curva. Guardar en `50-Errores/` el caso en que el cross-fitting no mejore nada y la razón.
+
+## Del libro
+
+Facure cap. 22 *Debiased/Orthogonal Machine Learning* presenta la residualización como la forma de usar modelos flexibles sin heredar su sesgo de regularización, y apoya la construcción en Frisch-Waugh-Lovell, que es la Proposición 17.2. El capítulo se cita por su número y su título; el texto no se reproduce. El resultado de ortogonalidad y la condición $n^{-1/4}$ se deben a Chernozhukov y coautores, y aquí se miden en lugar de citarse.
+
+## Para el Cerebro
+
+- «Controlar por $X$» es **quitar de los dos** lo que $X$ explica. FWL, comprobado a 1e-10.
+- Es el residuo de **$T$** el que identifica: residualizar solo $T$ da el mismo dígito.
+- Residualizar también $Y$ divide el error típico por **3,7**: 0,0674 a 0,0183.
+- Con confusión torcida, la recta da **3,13** y empeora incluso a no controlar nada.
+- Al residuo lineal le queda $R^2=\mathbf{0{,}469}$ contra $g(X)$; al del bosque, **0,001**.
+- Dos sesgos distintos: **sobreajuste** (lo quita el cross-fitting) y **rigidez** (no).
+- Con $k=1$ dentro de la muestra, el residuo vale **exactamente 0** y $\theta$ no existe.
+- El cross-fitting **habilita el extremo flexible**: sesgo de 0,0846 a 0,0398, y gana 10 de 10.
+- Pendientes log-log: **2,008** el ortogonal y **1,026** el que no lo es.
+- Es **local**: con $\delta=0{,}4$ el ortogonal ya es peor, 0,0536 contra 0,0423.
+- Auxiliares a $n^{-1/4}$ bastan para que $\theta$ vaya a $n^{-1/2}$.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico: que los dos caminos de Frisch-Waugh-Lovell dan 1,505053983 y coinciden por debajo de 1e-10; que $X$ explica el 48,2 % de la variación de $T$ y las desviaciones típicas de $T$, de su residuo, de $Y$ y del suyo valen 1,399351, 1,006873, 4,009133 y 1,820348; que residualizar solo $T$ da 1,505053983, solo $Y$ da 0,779015645 y nada da 2,368644518; que el error típico pasa de 0,067382177 a 0,018309796; que con confusión no lineal el estimador crudo da 2,960539, el lineal 3,125421 y el del bosque 1,615940; que el $R^2$ del residuo contra $g(X)$ vale 0,469124 con la recta y 0,001248 con el bosque; que barriendo el torcimiento el lineal va de 1,483488 a 3,848246 y el del bosque de 1,488656 a 1,914902; que con $k$ igual a 1, 10, 50 y 300 vecinos los estimadores dentro de la muestra dan nan, 1,543751, 1,684001 y 2,136329 y los cruzados 1,527380, 1,566776, 1,725203 y 2,221833, con residuos de $T$ de 0,000000, 0,984858, 1,057542 y 1,177231 dentro y 1,490671, 1,089360, 1,088203 y 1,209085 cruzados; que sobre 10 muestras el mejor estimador dentro de la muestra tiene sesgo 0,084567 y el cruzado 0,039757, con el cruzado más cerca en 10 de 10 y desviaciones típicas 0,028130 y 0,023696; que las pendientes log-log valen 2,008 y 1,026; y que con $\delta$ igual a 0,025, 0,05, 0,1, 0,2 y 0,4 los desplazamientos son 0,000206, 0,000882, 0,003630, 0,014439 y 0,053584 para el ortogonal y 0,002454, 0,004931, 0,009959, 0,020316 y 0,042323 para el otro.
+
+**Lo que viene de los libros.** De Facure cap. 22, la residualización como forma de usar modelos flexibles sin heredar su sesgo, apoyada en Frisch-Waugh-Lovell. El capítulo se cita por su número y su título; el texto no se reproduce. El teorema de ortogonalidad y la condición $n^{-1/4}$ son de Chernozhukov y coautores, y aquí se miden.
+
+**Lo que es mío, no del libro.** La medición de **cuál de los dos residuos identifica**, que separa el valor esperado de la precisión y sale de preguntarse qué pasa si solo se residualiza uno; la separación de las dos fuentes de sesgo de las auxiliares en la Sección 3, que apareció al ver que el cross-fitting **no** reducía el sesgo como yo esperaba y resultó que lo que hace es otra cosa; el uso de la media de $k$ vecinos escrita a mano en lugar de un bosque, tomada porque un bosque con hojas pequeñas no da los mismos bits entre versiones de scikit-learn y porque con $k=1$ el residuo vale exactamente cero, que es la forma más corta de explicar el cross-fitting; y la medición directa de las dos pendientes perturbando auxiliares que se conocen exactas, con la observación de que el cruce existe y cae entre 0,2 y 0,4.
+:::
