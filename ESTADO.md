@@ -4592,6 +4592,34 @@ Cuando el CI falla, `https://api.github.com/repos/<owner>/<repo>/actions/runs/<i
 dice **qué paso** cayó sin necesidad de token; los logs completos devuelven 403.
 
 
+**Un bosque de sklearn NO es bit-reproducible con hojas pequeñas (24-09-2026).**
+Encontrado escribiendo Causal 17. Con la misma semilla y los mismos datos,
+`RandomForestRegressor(random_state=0)` da predicciones distintas en sklearn
+0.24.1 y 1.9.1 cuando `min_samples_leaf` es pequeño:
+
+```
+hoja 1    DIFIERE      hoja 5    igual
+hoja 2    DIFIERE      hoja 10   igual
+hoja 3    DIFIERE      hoja 15   igual
+hoja 4    frontera     hoja 20+  igual
+```
+
+Con hojas diminutas el árbol sigue partiendo hasta casi la pureza, y el
+desempate entre cortes igual de buenos cambió de versión. La frontera **no es
+fija**: con un conjunto de datos hoja 4 coincidía y con otro no.
+
+**La regla:** en una celda publicada, `min_samples_leaf >= 5`. Lo que ya está
+publicado usa 10 (ML 13, ML 35, Causal 16) y está a salvo; se comprobó.
+
+**Y una segunda salida, mejor cuando lo que se quiere medir es el método y no
+el bosque:** escribir el estimador auxiliar a mano. Causal 17 usa la media de
+los k vecinos más cercanos, quince líneas de numpy, determinista por
+construcción, y con la flexibilidad en un solo mando. Además hace el punto más
+nítido: con k = 1 dentro de la muestra el residuo vale **exactamente cero** y
+el estimador no existe, que es la forma más corta de explicar por qué hace
+falta cross-fitting.
+
+
 ## 6. Decisiones pendientes
 
 - ~~**Qué trata Estadística 25.**~~ **Resuelto el 13-09-2026.** Estaba planeada
