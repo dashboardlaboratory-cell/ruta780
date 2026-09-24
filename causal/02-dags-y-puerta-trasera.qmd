@@ -1,0 +1,1084 @@
+---
+title: "DAGs y criterio de puerta trasera"
+subtitle: "Inferencia causal · Lección 02"
+nivel: L2
+modulo: causal
+fase: F5
+prereqs: [causal/01-resultados-potenciales, estadistica/05-covarianza-correlacion, ml/02-diagnostico-regresion]
+siguientes: []
+libro: "—"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="causal/02-dags-y-puerta-trasera"}
+[[L2]{.nivel .nivel-L2} **Derivación**]{.item}
+[**Fase** F5]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Resultados potenciales](01-resultados-potenciales.qmd) · [Covarianza y correlación](../estadistica/05-covarianza-correlacion.qmd) · [Diagnóstico de la regresión](../ml/02-diagnostico-regresion.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Distinguir las tres estructuras** de tres variables y medir que en dos de ellas fijar la del medio **rompe** la relación y en la tercera la **crea**: de −0,005751 a −0,502010.
+2. **Escribir el algoritmo de d-separación** entero y comprobarlo contra los datos en los **240** casos posibles.
+3. **Exhibir que la recíproca falla**: 3 de los 214 casos que el grafo declara unidos no muestran dependencia, porque dos caminos abiertos se cancelan.
+4. **Escribir el criterio de puerta trasera** y comprobar, enumerando los **16** subconjuntos, que separa exactamente los que recuperan el efecto de los que no.
+5. **Medir qué mide cada ajuste equivocado**: ajustar por el mediador da el efecto **directo** (0,4969) y no el total.
+6. **Demostrar que ninguna combinación sirve** cuando la causa común no se observa, y que multiplicar los datos por cien no cambia el error.
+7. **Medir dos formas de empeorar ajustando**: una variable **anterior** al tratamiento que mete un 40 % de sesgo, y un instrumento que multiplica el sesgo restante **por 9**.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Causal 01**: el sesgo de selección, que aquí pasa a tener una forma dibujable.
+- **Estadística 5**: la correlación parcial, que es lo que se mide en cada caso.
+- **ML 2**: qué hace de verdad añadir una columna a una regresión.
+- **Matemática 4**: la proyección, que es lo que «quitar lo que Z explica» significa.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Causal 03**: la confusión y el sesgo de selección, ya con el vocabulario del grafo.
+- **Causal 06**: el matching, que es el criterio de puerta trasera llevado a la práctica.
+- **Causal 10**: los instrumentos, que usan la misma Z que aquí resulta dañina como control.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $X\to Y$ | equis flecha y | $X$ es causa directa de $Y$ |
+| $Z$ | zeta | El conjunto de variables por las que se ajusta |
+| $\rho(A,C)$ | ro de a y c | La correlación entre $A$ y $C$ |
+| $\rho(A,C\mid B)$ | ro de a y c dado be | La correlación entre lo que queda de $A$ y de $C$ tras quitarles lo que $B$ explica |
+| colisionador | | Un nodo al que llegan dos flechas dentro de un camino |
+| camino trasero | | Un camino de $X$ a $Y$ que empieza con una flecha **entrando** en $X$ |
+:::
+
+## 1. Las tres estructuras, y la que va al revés
+
+::: {.definicion}
+**Definición 2.1 (las tres formas de conectar).** Tres variables se conectan de tres maneras: la **cadena** $A\to B\to C$, la **bifurcación** $A\leftarrow B\to C$ y el [colisionador]{.g} $A\to B\leftarrow C$. Cualquier camino largo está hecho de estas tres piezas.
+:::
+
+::: {.proposicion}
+**Proposición 2.2 (dos se cierran al fijar y una se abre).** En la cadena y en la bifurcación, $A$ y $C$ están relacionadas y fijar $B$ rompe la relación. En el colisionador ocurre lo contrario: $A$ y $C$ son independientes y fijar $B$ las relaciona. Medido: la correlación pasa de 0,857355 a 0,000423, de 0,744246 a −0,001779, y de **−0,005751 a −0,502010**.
+:::
+
+::: {.demostracion}
+*Demostración.* En la cadena, todo lo que $A$ dice sobre $C$ viaja por $B$; conocido $B$, lo que quede de $A$ no añade nada. En la bifurcación, lo que comparten $A$ y $C$ es $B$. En el colisionador, $B=A+C+\varepsilon$: sabiendo que $B$ vale 4 y que $A$ vale 3, $C$ tiene que rondar 1, de modo que conocer $A$ informa sobre $C$ **solo porque se conoce su suma**. La celda mide las tres y, para el colisionador, mide además la correlación **dentro de cada cuartil de $B$**: −0,345749, −0,475178, −0,474552 y −0,337678, negativas las cuatro sobre un conjunto donde vale −0,005751. ∎
+:::
+
+**Modo de falla.** El renglón invertido del colisionador es el que se pasa por alto, porque contradice el instinto de que más información no puede dañar. Y el daño no deja rastro: la regresión con la variable de más converge, tiene un $R^2$ mayor y un error estándar menor. El síntoma, cuando lo hay, es un coeficiente que cambia de signo al añadir un control, que suele interpretarse como que el control «era importante». La defensa es tener escrito el grafo antes de elegir las columnas.
+
+```{pyodide}
+import numpy as np
+
+# Tres estructuras de tres variables. Son las unicas tres formas de
+# conectar A y C pasando por B, y las tres se comportan distinto.
+rng = np.random.default_rng(20)
+N = 200000
+
+def corr(u, v):
+    u = u - np.mean(u); v = v - np.mean(v)
+    return float(np.dot(u, v) / np.sqrt(np.dot(u, u) * np.dot(v, v)))
+
+def corr_parcial(u, v, z):
+    """La correlacion de u y v una vez quitado de los dos lo que z explica."""
+    Z = np.column_stack([np.ones(len(z)), z])
+    ru = u - Z.dot(np.linalg.lstsq(Z, u, rcond=None)[0])
+    rv = v - Z.dot(np.linalg.lstsq(Z, v, rcond=None)[0])
+    return corr(ru, rv)
+
+# cadena  A -> B -> C
+a1 = rng.standard_normal(N)
+b1 = 2.0 * a1 + rng.standard_normal(N)
+c1 = 1.5 * b1 + rng.standard_normal(N)
+
+# bifurcacion  A <- B -> C
+b2 = rng.standard_normal(N)
+a2 = 2.0 * b2 + rng.standard_normal(N)
+c2 = 1.5 * b2 + rng.standard_normal(N)
+
+# colisionador  A -> B <- C
+a3 = rng.standard_normal(N)
+c3 = rng.standard_normal(N)
+b3 = a3 + c3 + rng.standard_normal(N)
+
+print("la correlacion entre A y C, antes y despues de fijar B")
+print("  %-22s %14s %18s" % ("estructura", "corr(A,C)", "corr(A,C | B)"))
+for nombre, (a, b, c) in (("cadena  A->B->C", (a1, b1, c1)),
+                          ("bifurcacion A<-B->C", (a2, b2, c2)),
+                          ("colisionador A->B<-C", (a3, b3, c3))):
+    print("  %-22s %14.6f %18.6f" % (nombre, corr(a, c), corr_parcial(a, c, b)))
+print()
+print("en las dos primeras A y C estan correlacionadas y fijar B rompe la")
+print("correlacion. En la tercera pasa lo contrario: A y C son")
+print("independientes y fijar B las correlaciona")
+print()
+
+print("las tres estructuras, dichas con palabras")
+print("  %-22s %-30s %-24s" % ("estructura", "sin fijar B", "fijando B"))
+print("  %-22s %-30s %-24s" % ("cadena", "A y C dependientes", "independientes"))
+print("  %-22s %-30s %-24s" % ("bifurcacion", "A y C dependientes", "independientes"))
+print("  %-22s %-30s %-24s" % ("colisionador", "A y C INdependientes", "DEPENDIENTES"))
+print()
+print("ese renglon invertido es toda la dificultad del tema: hay una")
+print("estructura en la que ajustar ABRE un camino que estaba cerrado")
+print()
+
+# Por que el colisionador crea dependencia: fijar B liga A y C
+print("por que ocurre, con el colisionador y numeros a mano")
+print("  B = A + C + ruido. Si se sabe que B vale 4 y que A vale 3,")
+print("  entonces C tiene que rondar 1. Saber A dice algo sobre C")
+print("  SOLO porque se conoce su suma")
+print()
+print("  dentro de cada tramo de B, la correlacion de A y C")
+print("  %-20s %14s %12s" % ("tramo de B", "corr(A,C)", "unidades"))
+bordes = np.quantile(b3, [0.0, 0.25, 0.5, 0.75, 1.0])
+for k in range(4):
+    m = (b3 >= bordes[k]) & (b3 <= bordes[k + 1])
+    print("  %-20s %14.6f %12d"
+          % ("%.2f a %.2f" % (bordes[k], bordes[k + 1]), corr(a3[m], c3[m]), int(np.sum(m))))
+print()
+print("en los cuatro tramos la correlacion es negativa, y en el conjunto")
+print("vale %.6f. La dependencia no estaba en los datos: la mete el" % corr(a3, c3))
+print("hecho de mirar solo dentro de un tramo")
+```
+
+```{=html}
+<div class="viz-tres">
+  <div class="controles">
+    <label>Estructura <input id="tr-e" type="range" min="0" max="2" step="1" value="0"> <span id="tr-e-v">cadena</span></label>
+    <label>Fijar B <input id="tr-b" type="range" min="0" max="1" step="1" value="0"> <span id="tr-b-v">no</span></label>
+  </div>
+  <svg id="tr-svg" viewBox="0 0 660 300" role="img" aria-label="Las tres estructuras de tres variables y la nube de puntos de A contra C, antes y después de fijar B."></svg>
+  <p class="lectura" id="tr-lectura"></p>
+</div>
+<style>
+.viz-tres { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-tres .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-tres label { display: flex; align-items: center; gap: .4rem; }
+.viz-tres input[type=range] { width: 130px; padding: 0; }
+.viz-tres svg { width: 100%; height: auto; display: block; }
+.viz-tres .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("tr-svg"), lec = document.getElementById("tr-lectura");
+  var ce = document.getElementById("tr-e"), cb = document.getElementById("tr-b");
+  var ee = document.getElementById("tr-e-v"), eb = document.getElementById("tr-b-v");
+  var NOM = ["cadena", "bifurcación", "colisionador"];
+
+  // un generador reproducible, para que el dibujo no cambie al redibujar
+  function gen(s) { var x = s; return function () { x = (x * 1103515245 + 12345) % 2147483648; return x / 2147483648; }; }
+  function normales(n, s) {
+    var r = gen(s), out = [], i;
+    for (i = 0; i < n; i++) {
+      var u = Math.max(1e-9, r()), v = r();
+      out.push(Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v));
+    }
+    return out;
+  }
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function corr(u, v) {
+    var n = u.length, mu = 0, mv = 0, i;
+    for (i = 0; i < n; i++) { mu += u[i]; mv += v[i]; }
+    mu /= n; mv /= n;
+    var su = 0, sv = 0, suv = 0;
+    for (i = 0; i < n; i++) { suv += (u[i] - mu) * (v[i] - mv); su += (u[i] - mu) * (u[i] - mu); sv += (v[i] - mv) * (v[i] - mv); }
+    return su * sv === 0 ? 0 : suv / Math.sqrt(su * sv);
+  }
+
+  var N = 700;
+  var e1 = normales(N, 7), e2 = normales(N, 13), e3 = normales(N, 29);
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var k = Math.round(+ce.value), fijar = Math.round(+cb.value) === 1;
+    ee.textContent = NOM[k]; eb.textContent = fijar ? "sí" : "no";
+
+    var A = [], B = [], C = [], i;
+    for (i = 0; i < N; i++) {
+      if (k === 0) { A.push(e1[i]); B.push(1.4 * A[i] + e2[i]); C.push(1.4 * B[i] + e3[i]); }
+      else if (k === 1) { B.push(e2[i]); A.push(1.4 * B[i] + e1[i]); C.push(1.4 * B[i] + e3[i]); }
+      else { A.push(e1[i]); C.push(e3[i]); B.push(A[i] + C[i] + e2[i]); }
+    }
+    // el diagrama, arriba a la izquierda
+    var cx = [70, 160, 250], cy = 56;
+    var etq = ["A", "B", "C"];
+    for (i = 0; i < 3; i++) {
+      svg.appendChild(el("circle", { cx: cx[i], cy: cy, r: 17,
+        fill: (i === 1 && fijar) ? C_B : "none", opacity: (i === 1 && fijar) ? .3 : 1,
+        stroke: C_T, "stroke-width": 1.4 }));
+      svg.appendChild(el("text", { x: cx[i], y: cy + 5, "text-anchor": "middle", "font-size": 13, fill: C_T }, etq[i]));
+    }
+    var flechas = k === 0 ? [[0, 1], [1, 2]] : (k === 1 ? [[1, 0], [1, 2]] : [[0, 1], [2, 1]]);
+    for (i = 0; i < flechas.length; i++) {
+      var a = cx[flechas[i][0]], b = cx[flechas[i][1]], d = b > a ? 1 : -1;
+      svg.appendChild(el("path", { d: "M" + (a + 19 * d) + " " + cy + " L" + (b - 24 * d) + " " + cy,
+        stroke: C_T, "stroke-width": 1.6 }));
+      svg.appendChild(el("path", { d: "M" + (b - 24 * d) + " " + (cy - 5) + " L" + (b - 17 * d) + " " + cy +
+        " L" + (b - 24 * d) + " " + (cy + 5), fill: "none", stroke: C_T, "stroke-width": 1.6 }));
+    }
+    if (fijar)
+      svg.appendChild(el("text", { x: cx[1], y: cy + 34, "text-anchor": "middle", "font-size": 10.5, fill: C_B }, "fijado"));
+
+    // la nube de A contra C
+    var X0 = 340, X1 = 630, Y0 = 26, Y1 = 250, R = 5.5;
+    svg.appendChild(el("path", { d: "M" + X0 + " " + Y1 + " L" + X1 + " " + Y1, stroke: C_L, "stroke-width": 1.2 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + Y0 + " L" + X0 + " " + Y1, stroke: C_L, "stroke-width": 1.2 }));
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 22, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .75 }, "A"));
+    svg.appendChild(el("text", { x: X0 - 12, y: (Y0 + Y1) / 2, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .75 }, "C"));
+    function ex(v) { return X0 + 10 + (Math.max(-R, Math.min(R, v)) + R) * (X1 - X0 - 20) / (2 * R); }
+    function ey(v) { return Y1 - 10 - (Math.max(-R, Math.min(R, v)) + R) * (Y1 - Y0 - 20) / (2 * R); }
+
+    var med = 0;
+    for (i = 0; i < N; i++) med += B[i];
+    med /= N;
+    var dentro = [], ai = [], ci = [];
+    for (i = 0; i < N; i++) {
+      var sel = !fijar || Math.abs(B[i] - med) < 0.28;
+      if (sel) { ai.push(A[i]); ci.push(C[i]); }
+      svg.appendChild(el("circle", { cx: ex(A[i]).toFixed(1), cy: ey(C[i]).toFixed(1), r: sel ? 2.4 : 1.6,
+        fill: sel ? C_A : C_T, opacity: sel ? .65 : .12 }));
+    }
+    var r = fijar ? corr(ai, ci) : corr(A, C);
+    // la recta de ajuste sobre los puntos visibles
+    var uu = fijar ? ai : A, vv = fijar ? ci : C, n = uu.length, mu = 0, mv = 0;
+    for (i = 0; i < n; i++) { mu += uu[i]; mv += vv[i]; }
+    mu /= n; mv /= n;
+    var num = 0, den = 0;
+    for (i = 0; i < n; i++) { num += (uu[i] - mu) * (vv[i] - mv); den += (uu[i] - mu) * (uu[i] - mu); }
+    var m = den === 0 ? 0 : num / den;
+    svg.appendChild(el("path", { d: "M" + ex(-R) + " " + ey(mv + m * (-R - mu)) + " L" + ex(R) + " " + ey(mv + m * (R - mu)),
+      stroke: C_B, "stroke-width": 2.4 }));
+    svg.appendChild(el("circle", { cx: ex(0).toFixed(1), cy: ey(mv + m * (0 - mu)).toFixed(1), r: 5, fill: C_B }));
+
+    lec.innerHTML = "Estructura <strong>" + NOM[k] + "</strong>" + (fijar ? ", mirando solo las unidades con B cerca de su media" : ", con todas las unidades") +
+      ". La correlación entre A y C vale <strong>" + r.toFixed(3) + "</strong> y la recta roja es su pendiente. " +
+      (k === 2
+        ? (fijar ? "En el colisionador, fijar B <strong>crea</strong> una relación entre A y C que no existía: la recta se inclina."
+                 : "En el colisionador, A y C son independientes y la recta sale plana, aunque los dos causen B.")
+        : (fijar ? "Fijar B <strong>rompe</strong> la relación: la recta se aplana, porque todo lo que A decía sobre C pasaba por B."
+                 : "A y C están relacionados porque hay un camino abierto entre ellos a través de B."));
+  }
+  ce.addEventListener("input", dibujar); cb.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. d-separación: el algoritmo, y hasta dónde llega
+
+::: {.definicion}
+**Definición 2.3 (camino bloqueado).** Un camino entre $A$ y $C$ está **bloqueado** dado $Z$ si contiene un no-colisionador que está en $Z$, o un colisionador que **no** está en $Z$ y ninguno de cuyos descendientes está en $Z$. $A$ y $C$ están **[d-separados]{.g data-t="d-separación"}** dado $Z$ si todos los caminos entre ellos están bloqueados.
+:::
+
+::: {.proposicion}
+**Proposición 2.4 (d-separados implica independientes).** Sobre un grafo de seis nodos y ocho aristas, el algoritmo declara d-separados **26** de los 240 pares-con-subconjunto, y en los 26 la correlación parcial medida queda por debajo de 0,01, con máximo **0,00442** frente a un ruido de muestreo de 0,00224.
+:::
+
+::: {.demostracion}
+*Demostración.* La celda implementa la definición 2.3 sobre el grafo —enumerando caminos no dirigidos y comprobando cada nodo interno— y la evalúa en los 240 casos. **El algoritmo no toca los datos**: solo mira el dibujo. Las correlaciones parciales se calculan aparte, con residuos de la regresión sobre $Z$. ∎
+:::
+
+::: {.proposicion}
+**Proposición 2.5 (la recíproca falla, y aquí está el caso).** De los 214 casos que el algoritmo declara unidos, **211** muestran dependencia por encima de 0,01 y **3 no**. En el caso $X$–$Y$ dado $\{U,M,S\}$ quedan dos caminos abiertos —la flecha directa $X\to Y$ y el colisionador abierto $X\to S\leftarrow Y$— cuyos aportes tienen signo contrario y casi se anulan: la correlación parcial sale **0,00604** aunque $X$ cause $Y$.
+:::
+
+::: {.demostracion}
+*Demostración.* La celda imprime los tres casos y descompone el que los explica, marcando cuál de los cuatro caminos $X$–$Y$ queda abierto dado $\{U,M,S\}$. Los tres comparten mecanismo: una ruta directa positiva contra una ruta por el colisionador $S$, negativa. **El grafo dice que hay dependencia y los datos no la encuentran**; el supuesto que permite leer el grafo en los datos en esa dirección se llama fidelidad, y es un supuesto más. ∎
+:::
+
+::: {.proposicion}
+**Proposición 2.6 (ajustar puede subir la correlación).** $Z$ e $Y$ tienen correlación 0,3292 sin ajustar y **0,3538 ajustando por $X$**, porque $X$ es colisionador en $Z\to X\leftarrow U$ y fijarlo abre esa vía hacia $Y$ por $U$.
+:::
+
+::: {.demostracion}
+*Demostración.* De los cuatro caminos $Z$–$Y$, fijar $X$ bloquea tres —$X$ es no-colisionador en ellos— y abre el cuarto, donde es colisionador. La celda mide los dos números. **El mismo ajuste cierra tres caminos y abre uno**, y el resultado neto no se puede anticipar sin mirar el grafo entero. ∎
+:::
+
+```{pyodide}
+import numpy as np
+from itertools import combinations
+
+# Un grafo y el algoritmo de d-separacion, escrito entero. Despues se
+# comprueba contra lo que los datos hacen, en TODOS los casos.
+ARISTAS = [("Z", "X"), ("U", "X"), ("U", "Y"), ("X", "M"),
+           ("M", "Y"), ("X", "Y"), ("X", "S"), ("Y", "S")]
+NODOS = ["Z", "U", "X", "M", "Y", "S"]
+padres = {n: [a for a, b in ARISTAS if b == n] for n in NODOS}
+hijos = {n: [b for a, b in ARISTAS if a == n] for n in NODOS}
+vecinos = {n: sorted(set(padres[n] + hijos[n])) for n in NODOS}
+
+def descendientes(n):
+    vistos, cola = set(), [n]
+    while cola:
+        u = cola.pop()
+        for v in hijos[u]:
+            if v not in vistos:
+                vistos.add(v); cola.append(v)
+    return vistos
+
+def caminos(a, b):
+    """Todos los caminos NO dirigidos de a a b, sin repetir nodos."""
+    out = []
+    def anda(actual, visto):
+        if actual == b:
+            out.append(list(visto)); return
+        for v in vecinos[actual]:
+            if v not in visto:
+                anda(v, visto + [v])
+    anda(a, [a])
+    return out
+
+def bloqueado(camino, Z):
+    for i in range(1, len(camino) - 1):
+        ant, act, sig = camino[i - 1], camino[i], camino[i + 1]
+        es_colisionador = (ant in padres[act]) and (sig in padres[act])
+        if es_colisionador:
+            # un colisionador bloquea salvo que el o un descendiente suyo
+            # este en Z: ahi es donde ajustar ABRE el camino
+            if act not in Z and not (descendientes(act) & set(Z)):
+                return True
+        else:
+            if act in Z:
+                return True
+    return False
+
+def d_separados(a, b, Z):
+    return all(bloqueado(c, Z) for c in caminos(a, b))
+
+print("el grafo: " + ", ".join("%s->%s" % e for e in ARISTAS))
+print("  caminos no dirigidos entre X e Y : %d" % len(caminos("X", "Y")))
+for c in caminos("X", "Y"):
+    print("    " + " - ".join(c))
+print()
+
+# Los mismos datos que el grafo describe, generados con esas ecuaciones
+rng = np.random.default_rng(21)
+N = 200000
+Zv = rng.standard_normal(N)
+U = rng.standard_normal(N)
+X = 1.0 * Zv + 1.2 * U + rng.standard_normal(N)
+M = 0.8 * X + rng.standard_normal(N)
+Y = 0.5 * X + 0.9 * M + 1.5 * U + rng.standard_normal(N)
+S = 0.7 * X + 0.7 * Y + rng.standard_normal(N)
+datos = {"Z": Zv, "U": U, "X": X, "M": M, "Y": Y, "S": S}
+
+def parcial(a, b, Z):
+    u, v = datos[a], datos[b]
+    if Z:
+        C = np.column_stack([np.ones(N)] + [datos[z] for z in Z])
+        u = u - C.dot(np.linalg.lstsq(C, u, rcond=None)[0])
+        v = v - C.dot(np.linalg.lstsq(C, v, rcond=None)[0])
+    u = u - np.mean(u); v = v - np.mean(v)
+    return float(np.dot(u, v) / np.sqrt(np.dot(u, u) * np.dot(v, v)))
+
+UMBRAL = 0.01
+sep, unidos = [], []
+for a, b in combinations(NODOS, 2):
+    libres = [n for n in NODOS if n not in (a, b)]
+    for k in range(len(libres) + 1):
+        for Z in combinations(libres, k):
+            r = abs(parcial(a, b, list(Z)))
+            (sep if d_separados(a, b, list(Z)) else unidos).append((r, a, b, Z))
+sep.sort(); unidos.sort()
+
+print("el algoritmo contra los datos, en TODOS los casos")
+print("  casos (par, subconjunto)          : %d" % (len(sep) + len(unidos)))
+print("  ruido de muestreo, 1/raiz(N)      : %.5f" % (1.0 / np.sqrt(N)))
+print()
+print("  el algoritmo dice SEPARADOS en %d casos" % len(sep))
+print("    mayor |correlacion parcial| de los %d : %.5f" % (len(sep), sep[-1][0]))
+print("    todos por debajo de %.2f              : %s"
+      % (UMBRAL, all(r < UMBRAL for r, _, _, _ in sep)))
+print()
+print("  el algoritmo dice UNIDOS en %d casos" % len(unidos))
+print("    cuantos superan %.2f                  : %d de %d"
+      % (UMBRAL, sum(1 for r, _, _, _ in unidos if r >= UMBRAL), len(unidos)))
+print("    los que no lo superan:")
+for r, a, b, Z in unidos:
+    if r < UMBRAL:
+        print("      %s-%s dado %-18s |r| = %.5f" % (a, b, str(Z) or "{}", r))
+print()
+print("la implicacion «d-separados => independientes» se cumple en los %d"
+      % len(sep))
+print("casos, todos por debajo del doble del ruido. La reciproca falla en")
+print("3 de los %d: hay caminos abiertos cuyos efectos se cancelan" % len(unidos))
+print()
+
+print("por que se cancelan esos tres: el caso X-Y dado {U, M, S}")
+for c in caminos("X", "Y"):
+    print("    %-14s %s" % (" - ".join(c),
+                            "bloqueado" if bloqueado(c, ["U", "M", "S"]) else "ABIERTO"))
+print("  quedan dos abiertos: la flecha directa X->Y, que aporta en")
+print("  positivo, y X->S<-Y con S fijado, que aporta en negativo. Con")
+print("  estos coeficientes casi se anulan, y la correlacion parcial sale")
+print("  %.5f aunque X cause Y de verdad" % abs(parcial("X", "Y", ["U", "M", "S"])))
+print()
+print("el grafo dice que hay dependencia y los datos no la encuentran. El")
+print("supuesto que hace falta para leer el grafo en los datos se llama")
+print("fidelidad, y es un supuesto mas, no un teorema")
+print()
+
+print("cuatro casos que conviene mirar despacio")
+for a, b, Z in (("Z", "Y", []), ("Z", "Y", ["X"]), ("X", "Y", ["U"]), ("X", "Y", ["U", "M"])):
+    print("  %-3s %-3s dado %-10s d-sep=%-6s |r| = %.4f"
+          % (a, b, str(Z) or "{}", d_separados(a, b, Z), abs(parcial(a, b, Z))))
+print()
+print("el segundo es el interesante: fijar X cierra Z->X->Y, pero X es un")
+print("colisionador en Z->X<-U, y fijarlo ABRE esa via hacia Y por U. La")
+print("correlacion sube de %.4f a %.4f al ajustar"
+      % (abs(parcial("Z", "Y", [])), abs(parcial("Z", "Y", ["X"]))))
+print("Y en el cuarto, añadir M cierra el mediador y deja solo el efecto")
+print("directo: %.4f contra %.4f" % (abs(parcial("X", "Y", ["U", "M"])),
+                                      abs(parcial("X", "Y", ["U"]))))
+```
+
+## 3. El criterio de puerta trasera
+
+::: {.definicion}
+**Definición 2.7 ([camino trasero]{.g} y criterio).** Un camino de $X$ a $Y$ es **trasero** si empieza con una flecha que **entra** en $X$. Un conjunto $Z$ cumple el **criterio de puerta trasera** si (1) no contiene ningún descendiente de $X$ y (2) bloquea todos los caminos traseros. Bajo ese [criterio de puerta trasera]{.g}, ajustar por $Z$ identifica el efecto total de $X$ sobre $Y$.
+:::
+
+::: {.proposicion}
+**Proposición 2.8 (el criterio separa exactamente).** Enumerando los **16** subconjuntos de $\{Z,U,M,S\}$, los **2** que cumplen el criterio —$\{U\}$ y $\{Z,U\}$— dan 1,2161 y 1,2156 frente a un efecto total de 1,2200, con error máximo **0,0044**; el menor error de los 14 que no lo cumplen es **0,0157**.
+:::
+
+::: {.demostracion}
+*Demostración.* La celda calcula el criterio sobre el grafo y el coeficiente de $X$ en la regresión con cada subconjunto, y compara los dos grupos. El efecto total, 1,2200, es la suma del directo, 0,5000, y del que pasa por el mediador, $0{,}8\times0{,}9=0{,}7200$, conocidos por construcción. **El criterio se decide mirando el dibujo, antes de calcular nada.** Conviene notar que $\{Z,M\}$ se queda a 0,0157 del efecto sin cumplirlo: el criterio da una **garantía**, y no cumplirlo no obliga a errar mucho en un caso concreto. ∎
+:::
+
+::: {.proposicion}
+**Proposición 2.9 (ajustar por el [mediador]{.g} mide otra cosa).** Ajustando por $\{U,M\}$ sale **0,4969**, que es el efecto **directo** de $X$ sobre $Y$, 0,5000, medido con precisión. No es un fallo de estimación.
+:::
+
+::: {.demostracion}
+*Demostración.* Fijar $M$ bloquea el camino $X\to M\to Y$, de modo que lo que queda es el aporte de la flecha $X\to Y$. La celda lo mide. El efecto directo y el total son **dos cantidades distintas y las dos son legítimas**; el error consiste en calcular una y llamarla la otra. Por eso el criterio excluye los descendientes de $X$: son los que separan una de otra. ∎
+:::
+
+```{pyodide}
+import numpy as np
+from itertools import combinations
+
+# El mismo grafo, ahora con U observable, y la pregunta de siempre:
+# ¿por que variables hay que ajustar para medir el efecto de X en Y?
+ARISTAS = [("Z", "X"), ("U", "X"), ("U", "Y"), ("X", "M"),
+           ("M", "Y"), ("X", "Y"), ("X", "S"), ("Y", "S")]
+NODOS = ["Z", "U", "X", "M", "Y", "S"]
+padres = {n: [a for a, b in ARISTAS if b == n] for n in NODOS}
+hijos = {n: [b for a, b in ARISTAS if a == n] for n in NODOS}
+vecinos = {n: sorted(set(padres[n] + hijos[n])) for n in NODOS}
+
+def descendientes(n):
+    vistos, cola = set(), [n]
+    while cola:
+        u = cola.pop()
+        for v in hijos[u]:
+            if v not in vistos:
+                vistos.add(v); cola.append(v)
+    return vistos
+
+def caminos(a, b):
+    out = []
+    def anda(x, visto):
+        if x == b:
+            out.append(list(visto)); return
+        for v in vecinos[x]:
+            if v not in visto:
+                anda(v, visto + [v])
+    anda(a, [a]); return out
+
+def bloqueado(c, Z):
+    for i in range(1, len(c) - 1):
+        ant, act, sig = c[i - 1], c[i], c[i + 1]
+        if (ant in padres[act]) and (sig in padres[act]):
+            if act not in Z and not (descendientes(act) & set(Z)):
+                return True
+        elif act in Z:
+            return True
+    return False
+
+def puerta_trasera(Z):
+    """Z cumple el criterio para el efecto de X en Y si (1) no contiene
+    descendientes de X y (2) bloquea todo camino que sale de X por una
+    flecha que APUNTA a X."""
+    if set(Z) & descendientes("X"):
+        return False
+    traseros = [c for c in caminos("X", "Y") if c[1] in padres["X"]]
+    return all(bloqueado(c, Z) for c in traseros)
+
+print("los caminos de X a Y, y cuales son «traseros»")
+for c in caminos("X", "Y"):
+    trasero = c[1] in padres["X"]
+    print("  %-14s %s" % (" - ".join(c), "TRASERO" if trasero else "hacia delante"))
+print()
+print("un camino trasero empieza con una flecha que ENTRA en X. Lo que")
+print("transmite es una causa comun, y se confunde con el efecto de X")
+print()
+
+rng = np.random.default_rng(22)
+N = 300000
+Zv = rng.standard_normal(N); U = rng.standard_normal(N)
+X = 1.0 * Zv + 1.2 * U + rng.standard_normal(N)
+M = 0.8 * X + rng.standard_normal(N)
+Y = 0.5 * X + 0.9 * M + 1.5 * U + rng.standard_normal(N)
+S = 0.7 * X + 0.7 * Y + rng.standard_normal(N)
+datos = {"Z": Zv, "U": U, "M": M, "S": S}
+TOTAL = 0.5 + 0.8 * 0.9           # directo mas el que pasa por M
+DIRECTO = 0.5
+print("el efecto verdadero de X sobre Y")
+print("  directo, la flecha X->Y            : %.4f" % DIRECTO)
+print("  por el mediador, X->M->Y           : %.4f" % (0.8 * 0.9))
+print("  total                              : %.4f" % TOTAL)
+print()
+
+def ajusta(Z):
+    C = np.column_stack([np.ones(N), X] + [datos[z] for z in Z])
+    return float(np.linalg.lstsq(C, Y, rcond=None)[0][1])
+
+OBS = ["Z", "U", "M", "S"]
+print("los %d subconjuntos posibles, con el criterio al lado" % (2 ** len(OBS)))
+print("  %-22s %12s %14s %12s" % ("ajustar por", "criterio", "coef. de X", "error"))
+aciertan, fallan = [], []
+for k in range(len(OBS) + 1):
+    for Z in combinations(OBS, k):
+        crit = puerta_trasera(list(Z))
+        coef = ajusta(list(Z))
+        err = abs(coef - TOTAL)
+        (aciertan if crit else fallan).append((Z, coef, err))
+        print("  %-22s %12s %14.4f %12.4f"
+              % (str(list(Z)) if Z else "{}  (nada)", "SI" if crit else "no", coef, err))
+print()
+print("los %d subconjuntos que cumplen el criterio dan el efecto total:"
+      % len(aciertan))
+print("  mayor error de los que cumplen  : %.4f" % max(e for _, _, e in aciertan))
+print("  menor error de los que NO        : %.4f" % min(e for _, _, e in fallan))
+print("  el criterio separa los dos grupos :",
+      bool(max(e for _, _, e in aciertan) < min(e for _, _, e in fallan)))
+print()
+print("el criterio se calcula MIRANDO EL DIBUJO, sin tocar los datos, y")
+print("separa los 16 casos. Los dos que cumplen son los que contienen U y")
+print("ningun descendiente de X. Notese que ['Z','M'] se queda a %.4f del"
+      % min(e for _, _, e in fallan))
+print("efecto total sin cumplirlo: el criterio da una garantia, y no")
+print("cumplirlo no obliga a errar mucho en un caso concreto")
+print()
+
+print("por que falla cada uno de los otros, en una linea")
+print("  %-14s %-48s" % ("ajustar por", "que pasa"))
+print("  %-14s %-48s" % ("{}", "queda abierto X<-U->Y: sobra 1.8 de sesgo"))
+print("  %-14s %-48s" % ("['M']", "cierra el mediador: mide el directo, no el total"))
+print("  %-14s %-48s" % ("['S']", "S es hijo de X y de Y: abre un colisionador"))
+print("  %-14s %-48s" % ("['Z']", "no toca el camino trasero por U"))
+print("  %-14s %-48s" % ("['U','M']", "cierra U y tambien el mediador: %.4f" % ajusta(["U", "M"])))
+print()
+print("  ajustando por U y M sale %.4f, que es el efecto DIRECTO exacto."
+      % ajusta(["U", "M"]))
+print("  Es otra cantidad, bien medida; el error esta en llamarla efecto")
+```
+
+```{=html}
+<div class="viz-puerta">
+  <div class="controles">
+    <label>Ajustar por U <input id="pt-u" type="range" min="0" max="1" step="1" value="0"> <span id="pt-u-v">no</span></label>
+    <label>Y además por <input id="pt-o" type="range" min="0" max="3" step="1" value="0"> <span id="pt-o-v">nada</span></label>
+  </div>
+  <svg id="pt-svg" viewBox="0 0 660 320" role="img" aria-label="El grafo con las variables ajustadas marcadas, y la estimación del efecto de X sobre Y frente a su valor verdadero."></svg>
+  <p class="lectura" id="pt-lectura"></p>
+</div>
+<style>
+.viz-puerta { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-puerta .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-puerta label { display: flex; align-items: center; gap: .4rem; }
+.viz-puerta input[type=range] { width: 130px; padding: 0; }
+.viz-puerta svg { width: 100%; height: auto; display: block; }
+.viz-puerta .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("pt-svg"), lec = document.getElementById("pt-lectura");
+  var cu = document.getElementById("pt-u"), co = document.getElementById("pt-o");
+  var eu = document.getElementById("pt-u-v"), eo = document.getElementById("pt-o-v");
+  var OTROS = [[], ["M"], ["S"], ["M", "S"]], NOM = ["nada", "M", "S", "M y S"];
+  // los coeficientes que la celda midio sobre 300 000 unidades
+  var COEF = { "": 1.7435, "M": 1.0193, "S": 0.0780, "M,S": -0.0576,
+               "U": 1.2161, "M,U": 0.4969, "S,U": 0.1719, "M,S,U": 0.0030 };
+  var TOTAL = 1.22;
+  var POS = { Z: [70, 190], U: [250, 60], X: [250, 190], M: [400, 252], Y: [530, 190], S: [400, 108] };
+  var ARI = [["Z", "X"], ["U", "X"], ["U", "Y"], ["X", "M"], ["M", "Y"], ["X", "Y"], ["X", "S"], ["Y", "S"]];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var conU = Math.round(+cu.value) === 1, io = Math.round(+co.value);
+    eu.textContent = conU ? "sí" : "no"; eo.textContent = NOM[io];
+    var Z = OTROS[io].slice();
+    if (conU) Z.push("U");
+    Z.sort();
+    var coef = COEF[Z.join(",")], err = Math.abs(coef - TOTAL);
+    var cumple = conU && OTROS[io].length === 0;
+
+    var i, k;
+    for (i = 0; i < ARI.length; i++) {
+      var a = POS[ARI[i][0]], b = POS[ARI[i][1]];
+      var dx = b[0] - a[0], dy = b[1] - a[1], L = Math.sqrt(dx * dx + dy * dy);
+      var ux = dx / L, uy = dy / L;
+      var x1 = a[0] + 20 * ux, y1 = a[1] + 20 * uy, x2 = b[0] - 24 * ux, y2 = b[1] - 24 * uy;
+      svg.appendChild(el("path", { d: "M" + x1.toFixed(1) + " " + y1.toFixed(1) + " L" + x2.toFixed(1) + " " + y2.toFixed(1),
+        stroke: C_T, "stroke-width": 1.5, opacity: .7 }));
+      svg.appendChild(el("path", { d: "M" + (x2 - 7 * ux + 4 * uy).toFixed(1) + " " + (y2 - 7 * uy - 4 * ux).toFixed(1) +
+        " L" + x2.toFixed(1) + " " + y2.toFixed(1) + " L" + (x2 - 7 * ux - 4 * uy).toFixed(1) + " " + (y2 - 7 * uy + 4 * ux).toFixed(1),
+        fill: "none", stroke: C_T, "stroke-width": 1.5, opacity: .7 }));
+    }
+    var nombres = ["Z", "U", "X", "M", "Y", "S"];
+    for (i = 0; i < nombres.length; i++) {
+      var n = nombres[i], p = POS[n], aj = Z.indexOf(n) >= 0;
+      svg.appendChild(el("circle", { cx: p[0], cy: p[1], r: 19,
+        fill: aj ? C_B : "var(--r-fondo,#fff)", opacity: aj ? .3 : 1, stroke: C_T, "stroke-width": 1.5 }));
+      svg.appendChild(el("text", { x: p[0], y: p[1] + 5, "text-anchor": "middle", "font-size": 13.5, fill: C_T }, n));
+      if (aj)
+        svg.appendChild(el("text", { x: p[0], y: p[1] + 36, "text-anchor": "middle", "font-size": 9.5, fill: C_B }, "ajustada"));
+    }
+
+    // la barra con la estimacion
+    var BX0 = 70, BX1 = 620, YB = 296, LO = -0.3, HI = 2.1;
+    function bx(v) { return BX0 + (Math.max(LO, Math.min(HI, v)) - LO) * (BX1 - BX0) / (HI - LO); }
+    svg.appendChild(el("path", { d: "M" + BX0 + " " + YB + " L" + BX1 + " " + YB, stroke: C_L, "stroke-width": 1.4 }));
+    for (k = 0; k <= 2; k += 0.5)
+      svg.appendChild(el("text", { x: bx(k), y: YB + 16, "text-anchor": "middle", "font-size": 9.5, fill: C_T, opacity: .65 },
+        k.toFixed(1)));
+    svg.appendChild(el("path", { d: "M" + bx(TOTAL).toFixed(1) + " " + (YB - 14) + " L" + bx(TOTAL).toFixed(1) + " " + (YB + 5),
+      stroke: C_T, "stroke-width": 2 }));
+    svg.appendChild(el("text", { x: bx(TOTAL).toFixed(1), y: YB - 19, "text-anchor": "middle", "font-size": 9.5, fill: C_T },
+      "verdad 1.22"));
+    svg.appendChild(el("circle", { cx: bx(coef).toFixed(1), cy: YB, r: 7, fill: cumple ? C_A : C_B }));
+
+    lec.innerHTML = "Ajustando por <strong>" + (Z.length ? Z.join(", ") : "nada") + "</strong>, el coeficiente de X sale <strong>" +
+      coef.toFixed(4) + "</strong> frente a un efecto total de <strong>1,2200</strong>: un error de <strong>" + err.toFixed(4) + "</strong>. " +
+      (cumple
+        ? "Este conjunto <strong>cumple el criterio de puerta trasera</strong>: cierra el camino X←U→Y y no contiene ningún descendiente de X."
+        : (!conU
+            ? "Falta U, así que el camino X←U→Y sigue abierto y transmite lo que la causa común produce en los dos."
+            : "U cierra el camino trasero, pero " + NOM[io] + " es descendiente de X: ajustar por M quita la parte del efecto que pasa por él, y ajustar por S abre el colisionador X→S←Y.")) +
+      " El criterio se decide sobre el dibujo, antes de calcular nada.";
+  }
+  cu.addEventListener("input", dibujar); co.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Cuando ninguna columna sirve
+
+::: {.proposicion}
+**Proposición 2.10 (sin la causa común no hay ajuste que valga).** Con $U$ sin observar, ninguno de los **8** subconjuntos de $\{Z,M,S\}$ recupera el efecto: el menos malo, $\{Z,M\}$, se queda a **0,0131**, y ninguno baja de 0,01.
+:::
+
+::: {.demostracion}
+*Demostración.* El camino $X\leftarrow U\to Y$ solo se cierra fijando $U$ o algo que lo separe, y ninguna columna observada lo hace. La celda enumera los ocho. ∎
+:::
+
+::: {.proposicion}
+**Proposición 2.11 (el sesgo no baja con el tamaño).** Sin ajustar, la estimación vale 1,7433, 1,7403 y 1,7423 con 10 000, 100 000 y 1 000 000 de unidades: el error se queda en 0,52. Y crece con la fuerza de la causa común: con el coeficiente $U\to Y$ en 0,0, 0,5, 1,5 y 3,0 el error vale **0,0002, 0,1752, 0,5252 y 1,0503**.
+:::
+
+::: {.demostracion}
+*Demostración.* El sesgo es el límite al que converge el estimador, de modo que aumentar $n$ reduce la varianza alrededor de ese límite y no lo mueve. La celda mide las dos tablas. Con $U\to Y$ nulo el camino trasero no transmite nada y la estimación sin ajustar ya acierta, lo que convierte la pregunta útil en una con número: **cuánta confusión hay**, no si la hay. ∎
+:::
+
+**Modo de falla.** Un conjunto de datos grande transmite autoridad, y el intervalo de confianza estrecho la confirma. Aquí el intervalo se estrecha alrededor de 1,74 cuando la verdad es 1,22, y nada en la salida lo indica: los residuos se comportan, el $R^2$ sube y la prueba de significación pasa holgadamente. La defensa es que la pregunta «¿qué variable no observada podría estar causando las dos?» se responde **antes** de mirar el ajuste, y su respuesta no aparece en ninguna tabla.
+
+```{pyodide}
+import numpy as np
+from itertools import combinations
+
+# El mismo grafo, pero ahora U NO se observa. Se prueban todos los
+# subconjuntos de lo que si se ve, y se mira si alguno sirve.
+rng = np.random.default_rng(23)
+N = 300000
+Zv = rng.standard_normal(N); U = rng.standard_normal(N)
+X = 1.0 * Zv + 1.2 * U + rng.standard_normal(N)
+M = 0.8 * X + rng.standard_normal(N)
+Y = 0.5 * X + 0.9 * M + 1.5 * U + rng.standard_normal(N)
+S = 0.7 * X + 0.7 * Y + rng.standard_normal(N)
+TOTAL = 0.5 + 0.8 * 0.9
+visibles = {"Z": Zv, "M": M, "S": S}
+
+def ajusta(Z, tabla):
+    C = np.column_stack([np.ones(N), X] + [tabla[z] for z in Z])
+    return float(np.linalg.lstsq(C, Y, rcond=None)[0][1])
+
+OBS = ["Z", "M", "S"]
+print("U no se observa. Todos los subconjuntos de lo que si se ve:")
+print("  %-16s %14s %12s" % ("ajustar por", "coef. de X", "error"))
+mejor = (1e9, None)
+for k in range(len(OBS) + 1):
+    for Z in combinations(OBS, k):
+        coef = ajusta(list(Z), visibles)
+        err = abs(coef - TOTAL)
+        if err < mejor[0]:
+            mejor = (err, Z)
+        print("  %-16s %14.4f %12.4f" % (str(list(Z)) if Z else "{}  (nada)", coef, err))
+print()
+print("  efecto verdadero        : %.4f" % TOTAL)
+print("  el menos malo de los 8  : %s, con error %.4f"
+      % (str(list(mejor[1])) if mejor[1] else "{}", mejor[0]))
+print("  alguno acierta a 0.01   :", bool(mejor[0] < 0.01))
+print()
+print("ninguno de los ocho sirve. El camino X<-U->Y no se puede cerrar")
+print("porque U no esta en la tabla, y no hay combinacion de columnas")
+print("que lo sustituya")
+print()
+
+print("y aumentar la muestra no cambia nada")
+print("  %-12s %14s %12s" % ("unidades", "sin ajustar", "error"))
+for n in (10000, 100000, 1000000):
+    r = np.random.default_rng(230)
+    z2 = r.standard_normal(n); u2 = r.standard_normal(n)
+    x2 = 1.0 * z2 + 1.2 * u2 + r.standard_normal(n)
+    m2 = 0.8 * x2 + r.standard_normal(n)
+    y2 = 0.5 * x2 + 0.9 * m2 + 1.5 * u2 + r.standard_normal(n)
+    C = np.column_stack([np.ones(n), x2])
+    c = float(np.linalg.lstsq(C, y2, rcond=None)[0][1])
+    print("  %-12d %14.4f %12.4f" % (n, c, abs(c - TOTAL)))
+print()
+print("con cien veces mas datos el error se queda donde estaba: no es")
+print("ruido, es un camino abierto. Lo unico que baja con el tamaño es")
+print("la incertidumbre alrededor del numero equivocado")
+print()
+
+print("cuanto sesgo mete U, segun lo fuerte que sea")
+print("  %-16s %14s %12s" % ("coef. U->Y", "coef. de X", "error"))
+for uy in (0.0, 0.5, 1.5, 3.0):
+    r = np.random.default_rng(231)
+    n = 200000
+    z2 = r.standard_normal(n); u2 = r.standard_normal(n)
+    x2 = 1.0 * z2 + 1.2 * u2 + r.standard_normal(n)
+    m2 = 0.8 * x2 + r.standard_normal(n)
+    y2 = 0.5 * x2 + 0.9 * m2 + uy * u2 + r.standard_normal(n)
+    C = np.column_stack([np.ones(n), x2])
+    c = float(np.linalg.lstsq(C, y2, rcond=None)[0][1])
+    print("  %-16.1f %14.4f %12.4f" % (uy, c, abs(c - TOTAL)))
+print()
+print("con U->Y en cero el camino trasero no transmite nada y la")
+print("estimacion sin ajustar ya acierta. El sesgo crece con la fuerza")
+print("de la causa comun, y de ahi que la pregunta util lleve un numero:")
+print("cuanta confusion hay, y no si la hay")
+print()
+print("que queda cuando ningun ajuste sirve, y donde se trata:")
+print("  %-34s %-22s" % ("estrategia", "leccion"))
+print("  %-34s %-22s" % ("buscar un instrumento como Z", "Causal 10"))
+print("  %-34s %-22s" % ("usar un corte administrativo", "Causal 11"))
+print("  %-34s %-22s" % ("comparar antes y despues", "Causal 08"))
+print("  %-34s %-22s" % ("construir un control sintetico", "Causal 12"))
+```
+
+## 5. Dos formas de empeorar ajustando
+
+::: {.proposicion}
+**Proposición 2.12 (una variable anterior al tratamiento puede meter sesgo).** En el grafo $A\to C\leftarrow B$, $A\to X$, $B\to Y$, $X\to Y$, la estimación sin ajustar vale 1,0021 frente a un efecto de 1,0000, y ajustando por $C$ vale **0,6002**: un sesgo del **40 %** introducido por el ajuste. $C$ se midió **antes** del tratamiento y no es descendiente de $X$.
+:::
+
+::: {.demostracion}
+*Demostración.* El único camino trasero es $X\leftarrow A\to C\leftarrow B\to Y$, bloqueado porque $C$ es un colisionador cerrado; ajustar por $C$ lo abre. La celda mide los tres números. **La regla «ajustar por todo lo medido antes del tratamiento» recomienda aquí exactamente lo que estropea el resultado**, y es una regla que se enseña. ∎
+:::
+
+::: {.proposicion}
+**Proposición 2.13 (ajustar por un instrumento amplifica el sesgo restante).** Con $U$ sin observar, el sesgo pasa de 0,5000 sin ajustar a **0,7499** ajustando por el instrumento $Z$, un factor 1,50. Y el factor crece con la fuerza del instrumento: **1,13, 1,50, 3,00 y 9,00** para $Z\to X$ igual a 0,5, 1,0, 2,0 y 4,0.
+:::
+
+::: {.demostracion}
+*Demostración.* $Z$ no toca ningún camino trasero, de modo que no puede quitar sesgo; lo que hace es retirar de $X$ la parte de su variación que venía de $Z$, con lo que la parte que viene de $U$ pesa más en lo que queda. La celda mide que el sesgo **con** $Z$ vale 0,7479 en las cuatro filas —ajustar por $Z$ lo borra del problema— mientras que el sesgo **sin** ajustar baja de 0,6640 a 0,0831 según $Z$ aporta más variación limpia. **Cuanto mejor es el instrumento, más caro sale usarlo como control**, y el mismo $Z$ será una herramienta útil en la Lección 10. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def coef_x(Y, X, extras):
+    C = np.column_stack([np.ones(len(X)), X] + extras)
+    return float(np.linalg.lstsq(C, Y, rcond=None)[0][1])
+
+# Trampa 1: una variable ANTERIOR al tratamiento que no hay que tocar.
+#   A -> C <- B,  A -> X,  B -> Y,  X -> Y
+rng = np.random.default_rng(24)
+N = 400000
+A = rng.standard_normal(N)
+B = rng.standard_normal(N)
+C = 1.0 * A + 1.0 * B + rng.standard_normal(N)     # se mide ANTES de tratar
+X = 1.5 * A + rng.standard_normal(N)
+Y = 1.0 * X + 2.0 * B + rng.standard_normal(N)
+print("trampa 1: la variable previa que abre un camino")
+print("  el grafo: A->C<-B, A->X, B->Y, X->Y. C se mide antes que X")
+print("  efecto verdadero de X sobre Y   : %.4f" % 1.0)
+print("  sin ajustar por nada            : %.4f" % coef_x(Y, X, []))
+print("  ajustando por C                 : %.4f" % coef_x(Y, X, [C]))
+print("  sesgo que mete el ajuste        : %.4f" % (coef_x(Y, X, [C]) - 1.0))
+print()
+print("  sin ajustar, el unico camino de X a Y por detras es X<-A->C<-B->Y,")
+print("  y C es un colisionador cerrado, asi que no transmite nada. Al")
+print("  ajustar por C ese camino se abre y aparece un sesgo del %.0f %%"
+      % (100 * abs(coef_x(Y, X, [C]) - 1.0)))
+print()
+print("  C se midio ANTES del tratamiento y no es descendiente de X, asi")
+print("  que la regla «ajustar por todo lo anterior» la recomienda. Y aqui")
+print("  esa regla empeora el resultado")
+print()
+
+# Trampa 2: ajustar por un instrumento amplifica el sesgo que quede.
+#   Z -> X,  U -> X,  U -> Y,  X -> Y,  con U sin observar
+rng = np.random.default_rng(25)
+Zv = rng.standard_normal(N)
+U = rng.standard_normal(N)
+X2 = 1.0 * Zv + 1.0 * U + rng.standard_normal(N)
+Y2 = 1.0 * X2 + 1.5 * U + rng.standard_normal(N)
+print("trampa 2: ajustar por un instrumento amplifica lo que quedaba")
+print("  el grafo: Z->X, U->X, U->Y, X->Y, con U sin observar")
+print("  %-26s %12s %12s" % ("ajustar por", "coef. de X", "sesgo"))
+for nombre, ex in (("nada", []), ("Z, el instrumento", [Zv])):
+    c = coef_x(Y2, X2, ex)
+    print("  %-26s %12.4f %12.4f" % (nombre, c, c - 1.0))
+print("  el sesgo se multiplica por      : %.4f"
+      % ((coef_x(Y2, X2, [Zv]) - 1.0) / (coef_x(Y2, X2, []) - 1.0)))
+print()
+print("  Z no toca el camino trasero, asi que no puede quitar sesgo. Lo")
+print("  que hace es quitarle a X la parte de su variacion que venia de Z,")
+print("  con lo que la parte que viene de U pesa mas en lo que queda")
+print()
+print("  segun la fuerza del instrumento")
+print("  %-14s %10s %12s %12s %10s"
+      % ("coef. Z->X", "R2 con Z", "sesgo sin Z", "sesgo con Z", "factor"))
+for zx in (0.5, 1.0, 2.0, 4.0):
+    r = np.random.default_rng(250)
+    z3 = r.standard_normal(N); u3 = r.standard_normal(N)
+    x3 = zx * z3 + 1.0 * u3 + r.standard_normal(N)
+    y3 = 1.0 * x3 + 1.5 * u3 + r.standard_normal(N)
+    r2 = zx * zx / (zx * zx + 1.0 + 1.0)
+    sin_z = coef_x(y3, x3, []) - 1.0
+    con_z = coef_x(y3, x3, [z3]) - 1.0
+    print("  %-14.1f %10.4f %12.4f %12.4f %10.2f"
+          % (zx, r2, sin_z, con_z, con_z / sin_z))
+print()
+print("  el sesgo CON Z no depende de la fuerza de Z: vale lo mismo en las")
+print("  cuatro filas, porque ajustar por Z borra a Z del problema. Lo que")
+print("  cambia es el sesgo SIN ajustar, que baja cuando Z aporta mas")
+print("  variacion limpia a X. De ahi que el factor pase de 1.1 a 9.0")
+print()
+print("  cuanto mejor es el instrumento, mas caro sale usarlo como")
+print("  control. El mismo Z es una herramienta util en la leccion 10 y")
+print("  aqui empeora la estimacion: depende de donde se ponga")
+print()
+
+print("las tres reglas que salen de todo esto")
+print("  1. ajustar por una causa comun de X e Y      : quita sesgo")
+print("  2. ajustar por un descendiente de X          : mide otra cosa")
+print("  3. ajustar por un colisionador o su hijo     : mete sesgo")
+print("  y ninguna de las tres se puede decidir mirando las columnas:")
+print("  hace falta saber que causa que, que es informacion de fuera")
+```
+
+## 6. Lo que esta lección no resuelve
+
+El grafo se ha dado por conocido. De dónde sale es el problema difícil: se puede intentar aprenderlo de los datos —hay algoritmos que lo hacen— pero los datos solo determinan el grafo **hasta una clase de equivalencia**, porque la cadena, la bifurcación y las dos orientaciones restantes producen las mismas independencias; solo el colisionador es distinguible, y por eso la Proposición 2.2 importa más de lo que parece. Lo demás hay que traerlo de fuera.
+
+Tampoco se ha tratado el criterio de puerta **delantera**, que identifica el efecto usando un mediador cuando la causa común no se observa y que es el complemento natural de la Sección 4; ni el cálculo-do, que generaliza los dos; ni qué hacer cuando el grafo tiene ciclos o el tratamiento cambia con el tiempo. Y todo lo medido aquí es lineal y gaussiano: la d-separación vale igual en cualquier caso, pero la **correlación parcial** solo detecta dependencia lineal, de modo que el contraste de la Sección 2 confirmaría independencia donde hubiese una relación no lineal.
+
+## Ejercicios
+
+### Ejercicio 1, Clasificar los nodos de un camino
+
+Dado el camino $X \to M \to Y \leftarrow S \leftarrow W$, decir cuáles de los tres nodos internos son colisionadores y si el camino queda bloqueado al ajustar por $\{M\}$, por $\{Y\}$ y por $\{M, Y\}$.
+
+```{pyodide}
+#| exercise: ex_camino
+camino = ["X", "M", "Y", "S", "W"]
+# las flechas del camino, como pares (origen, destino)
+flechas = [("X", "M"), ("M", "Y"), ("S", "Y"), ("W", "S")]
+padres = {}
+for a, b in flechas:
+    padres.setdefault(b, []).append(a)
+
+def es_colisionador(i):
+    ant, act, sig = camino[i - 1], camino[i], camino[i + 1]
+    return ______
+
+def bloqueado(Z):
+    for i in range(1, len(camino) - 1):
+        if es_colisionador(i):
+            if ______:
+                return True
+        else:
+            if ______:
+                return True
+    return False
+
+cols = [camino[i] for i in range(1, len(camino) - 1) if es_colisionador(i)]
+print(cols, bloqueado(["M"]), bloqueado(["Y"]), bloqueado(["M", "Y"]))
+```
+
+::: {.hint exercise="ex_camino"}
+Un nodo es colisionador si las dos flechas del camino apuntan hacia él. Un colisionador bloquea **salvo** que esté en $Z$; un no-colisionador bloquea **solo** si está en $Z$.
+:::
+
+::: {.solution exercise="ex_camino"}
+```{pyodide}
+camino = ["X", "M", "Y", "S", "W"]
+flechas = [("X", "M"), ("M", "Y"), ("S", "Y"), ("W", "S")]
+padres = {}
+for a, b in flechas:
+    padres.setdefault(b, []).append(a)
+
+def es_colisionador(i):
+    ant, act, sig = camino[i - 1], camino[i], camino[i + 1]
+    return ant in padres.get(act, []) and sig in padres.get(act, [])
+
+def bloqueado(Z):
+    for i in range(1, len(camino) - 1):
+        if es_colisionador(i):
+            if camino[i] not in Z:
+                return True
+        else:
+            if camino[i] in Z:
+                return True
+    return False
+
+cols = [camino[i] for i in range(1, len(camino) - 1) if es_colisionador(i)]
+print(cols, bloqueado(["M"]), bloqueado(["Y"]), bloqueado(["M", "Y"]))
+```
+
+El único colisionador es **Y**, donde chocan $M\to Y$ y $S\to Y$. Sin ajustar por nada el camino está bloqueado por ese colisionador; ajustando por $\{M\}$ sigue bloqueado, ahora por dos motivos a la vez; ajustando por $\{Y\}$ se **abre**, y ajustando por $\{M,Y\}$ se vuelve a cerrar, esta vez por $M$. Añadir una variable puede abrir el camino y añadir la siguiente puede volver a cerrarlo.
+:::
+
+```{pyodide}
+#| exercise: ex_camino
+#| check: true
+if (cols == ["Y"] and bloqueado(["M"]) is True
+        and bloqueado(["Y"]) is False and bloqueado(["M", "Y"]) is True):
+    feedback = {"correct": True, "message": "Correcto: solo Y es colisionador, y ajustar por Y abre el camino."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba ['Y'], True, False, True."}
+feedback
+```
+
+### Ejercicio 2, Elegir el conjunto de ajuste
+
+En el grafo $U\to X$, $U\to Y$, $X\to M$, $M\to Y$, $X\to Y$, $X\to S$, $Y\to S$, decidir cuáles de los cuatro conjuntos $\{\}$, $\{U\}$, $\{U,M\}$ y $\{U,S\}$ cumplen el criterio de puerta trasera para el efecto **total** de $X$ sobre $Y$.
+
+```{pyodide}
+#| exercise: ex_puerta
+hijos = {"U": ["X", "Y"], "X": ["M", "Y", "S"], "M": ["Y"], "Y": ["S"]}
+
+def descendientes(n):
+    vistos, cola = set(), [n]
+    while cola:
+        u = cola.pop()
+        for v in hijos.get(u, []):
+            if v not in vistos:
+                vistos.add(v); cola.append(v)
+    return vistos
+
+# el unico camino trasero es X <- U -> Y, y lo bloquea fijar U
+def cumple(Z):
+    sin_descendientes = ______
+    cierra_el_trasero = ______
+    return sin_descendientes and cierra_el_trasero
+
+conjuntos = [[], ["U"], ["U", "M"], ["U", "S"]]
+print([cumple(Z) for Z in conjuntos], sorted(descendientes("X")))
+```
+
+::: {.hint exercise="ex_puerta"}
+La primera condición es que $Z$ no toque los descendientes de $X$; la segunda, que $U$ esté en $Z$, porque $U$ es un no-colisionador en el único camino trasero.
+:::
+
+::: {.solution exercise="ex_puerta"}
+```{pyodide}
+hijos = {"U": ["X", "Y"], "X": ["M", "Y", "S"], "M": ["Y"], "Y": ["S"]}
+
+def descendientes(n):
+    vistos, cola = set(), [n]
+    while cola:
+        u = cola.pop()
+        for v in hijos.get(u, []):
+            if v not in vistos:
+                vistos.add(v); cola.append(v)
+    return vistos
+
+def cumple(Z):
+    sin_descendientes = not (set(Z) & descendientes("X"))
+    cierra_el_trasero = "U" in Z
+    return sin_descendientes and cierra_el_trasero
+
+conjuntos = [[], ["U"], ["U", "M"], ["U", "S"]]
+print([cumple(Z) for Z in conjuntos], sorted(descendientes("X")))
+```
+
+Solo $\{U\}$ cumple. El conjunto vacío deja abierto el camino trasero; $\{U,M\}$ y $\{U,S\}$ lo cierran pero incluyen descendientes de $X$, que son **M, S e Y**: los tres, porque $Y$ también es hijo de $X$. Esa lista de descendientes es la que hay que mirar antes de añadir cualquier control.
+:::
+
+```{pyodide}
+#| exercise: ex_puerta
+#| check: true
+if ([cumple(Z) for Z in conjuntos] == [False, True, False, False]
+        and sorted(descendientes("X")) == ["M", "S", "Y"]):
+    feedback = {"correct": True, "message": "Correcto: solo {U} cumple, y los descendientes de X son M, S e Y."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [False, True, False, False] y ['M', 'S', 'Y']."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F5-retos.ipynb`, sección **Causal 2**:
+
+1. Simular las tres estructuras de tres variables y medir la correlación de $A$ y $C$ antes y después de fijar $B$, por cuartiles. Anotar cuál de las tres cambia de dirección.
+2. Escribir el algoritmo de d-separación sobre un grafo propio de cinco o seis nodos y comprobarlo contra las correlaciones parciales en todos los pares y subconjuntos. Anotar cuántos casos hay y si alguno discrepa.
+3. Construir un grafo con una causa común no observada y probar todos los subconjuntos de lo observable. Guardar en `50-Errores/` el subconjunto que más se acerque al efecto verdadero sin cumplir el criterio, y por qué se acerca.
+
+## Del libro
+
+Ningún libro con índice verificado en esta plataforma trata los grafos causales, de modo que esta lección va sin cita. La d-separación y el criterio de puerta trasera son resultados clásicos de Pearl; aquí se enuncian, se implementan y se comprueban contra datos simulados en lugar de atribuirse a un texto que no se ha podido verificar.
+
+## Para el Cerebro
+
+- Tres estructuras. En dos, fijar el nodo del medio **cierra**; en el colisionador, **abre**.
+- Medido: −0,005751 sin fijar y **−0,502010** fijando, con los cuatro cuartiles negativos.
+- d-separados ⟹ independientes: se cumple en los **26** casos, máximo 0,00442.
+- La recíproca falla en **3 de 214**: dos caminos abiertos que se cancelan.
+- Ajustar puede **subir** la correlación: $Z$–$Y$ pasa de 0,3292 a **0,3538** al fijar $X$.
+- El criterio de puerta trasera separa los **16** subconjuntos: error máximo 0,0044 contra mínimo 0,0157.
+- Ajustar por el mediador da el efecto **directo**, 0,4969, que es otra cantidad bien medida.
+- Sin la causa común, **ninguno** de los 8 subconjuntos sirve, y con cien veces más datos el error sigue en 0,52.
+- Una variable **anterior** al tratamiento puede meter un **40 %** de sesgo.
+- Ajustar por el instrumento multiplica el sesgo restante **por 9** cuando el instrumento es fuerte.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico: que la correlación de $A$ y $C$ pasa de 0,857355 a 0,000423 en la cadena, de 0,744246 a −0,001779 en la bifurcación y de −0,005751 a −0,502010 en el colisionador, y que en los cuatro cuartiles de $B$ vale −0,345749, −0,475178, −0,474552 y −0,337678; que de los 240 casos el algoritmo declara 26 d-separados con máximo 0,00442 sobre un ruido de 0,00224, y 214 unidos de los que 211 superan 0,01 y 3 no, con valores 0,00168, 0,00593 y 0,00604; que $Z$–$Y$ pasa de 0,3292 a 0,3538 al ajustar por $X$ y que $X$–$Y$ pasa de 0,7874 a 0,4219 al añadir $M$; que de los 16 subconjuntos los 2 que cumplen el criterio dan 1,2161 y 1,2156 con error máximo 0,0044 frente a un mínimo de 0,0157 entre los 14 restantes, y la tabla completa de los 16; que ajustar por $\{U,M\}$ da 0,4969 frente a un efecto directo de 0,5000; que sin observar $U$ los 8 subconjuntos fallan y el menos malo se queda a 0,0131; que sin ajustar la estimación vale 1,7433, 1,7403 y 1,7423 con 10 000, 100 000 y 1 000 000 de unidades; que el error vale 0,0002, 0,1752, 0,5252 y 1,0503 según la fuerza de $U\to Y$; que ajustar por una variable anterior lleva la estimación de 1,0021 a 0,6002; y que ajustar por el instrumento lleva el sesgo de 0,5000 a 0,7499, con factores 1,13, 1,50, 3,00 y 9,00 y un sesgo ajustado constante de 0,7479.
+
+**Lo que viene de los libros.** Nada. Ningún índice verificado cubre el tema, así que la lección va con `libro: "—"`. La d-separación y el criterio de puerta trasera se deben a Pearl; aquí se implementan y se comprueban en lugar de citarse.
+
+**Lo que es mío, no del libro.** La comprobación del algoritmo contra los datos en **los 240 casos** en lugar de en unos pocos ejemplos, que es lo que hace visible el límite; el hallazgo de que la recíproca falla en 3 de ellos y la descomposición del caso que lo explica, que apareció al ver que mi primer umbral daba «desacuerdos» y resultó que los desacuerdos eran el resultado interesante; la enumeración de los 16 subconjuntos con el criterio al lado, que convierte el teorema en una separación medida; la observación de que $\{Z,M\}$ se acerca a 0,0157 sin cumplir el criterio, que obliga a decir que el criterio da una garantía y no una necesidad; y la Sección 5 entera, elegida porque los dos errores que contiene —la variable previa y el instrumento como control— son los que se cometen siguiendo reglas que suenan prudentes.
+:::
