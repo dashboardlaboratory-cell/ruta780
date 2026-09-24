@@ -134,6 +134,7 @@ MIGRADAS = {
     "causal/02-dags-y-puerta-trasera.qmd",
     "causal/16-metalearners.qmd",
     "causal/17-double-machine-learning.qmd",
+    "causal/18-r-learner-y-r-score.qmd",
     "series/01-descomposicion.qmd",
     "series/02-estacionariedad.qmd",
     "series/03-autocorrelacion.qmd",

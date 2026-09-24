@@ -1,0 +1,878 @@
+---
+title: "El R-learner y el R-score: elegir entre modelos de efecto"
+subtitle: "Inferencia causal · Lección 18"
+nivel: L3
+modulo: causal
+fase: F5
+prereqs: [causal/17-double-machine-learning, causal/16-metalearners, ml/06-validacion-cruzada]
+siguientes: []
+libro: "Facure, cap. 19 Evaluating Causal Models · cap. 22 Debiased/Orthogonal Machine Learning"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="causal/18-r-learner-y-r-score"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F5]{.item}
+[**Libro** Facure 19 · 22]{.item}
+[**Prereqs** [Double machine learning](17-double-machine-learning.qmd) · [Metalearners](16-metalearners.qmd) · [Validación cruzada](../ml/06-validacion-cruzada.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Comprobar la descomposición de Robinson**: lo que sobra tiene desviación **0,997375** y $R^2$ por debajo de **5 × 10⁻⁵** contra $X$, $T$ y los dos.
+2. **Escribir el objetivo del R-learner** y ver que las unidades con tratamiento predecible pesan **170 veces menos** que las demás.
+3. **Implementar el R-learner** y medir que gana a los tres metalearners: ECM **0,131944** contra 0,47, 1,21 y 0,68.
+4. **Construir el R-score**, un criterio que **sí se puede calcular** con datos reales.
+5. **Demostrar que su ranking coincide con el inobservable**: los **cinco** modelos, en el mismo orden.
+6. **Derivar por qué**: el R-score es el ECM contra $\tau$ **pesado por $\tilde T^2$**, más una constante que no depende del modelo.
+7. **Medir dónde deja de servir**: al encoger el residuo, la diferencia entre el mejor y el peor cae de **14,7 a 1,6** errores típicos.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Causal 17**: la residualización y el cross-fitting, que aquí se usan tal cual.
+- **Causal 16**: los tres metalearners, que son los modelos que hay que ordenar.
+- **ML 6**: la validación cruzada, que es el mismo gesto para un problema donde sí hay etiqueta.
+- **Estadística 16**: la calibración, que es evaluar predicciones cuando la verdad se observa.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Causal 19**: el bosque causal, que optimiza este mismo criterio al partir.
+- **Causal 20**: la curva de ganancia, el otro criterio calculable.
+- **Causal 21**: el valor de una política, que es lo que de verdad se quiere maximizar.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $\tau(x)$ | tau de equis | El efecto sobre las unidades con característica $x$ |
+| $\tilde T,\ \tilde Y$ | te tilde, y tilde | Los residuos $T-\hat m(X)$ e $Y-\hat\ell(X)$ |
+| $R(\hat\tau)$ | erre de tau gorro | El R-score: la media de $(\tilde Y-\hat\tau(X)\tilde T)^2$ |
+| $\hat\tau$ | tau gorro | Un modelo del efecto, el que sea |
+| $w_i$ | doble u sub i | El peso de la unidad $i$ en el objetivo, $\tilde T_i^2$ |
+:::
+
+## 1. La descomposición de Robinson
+
+::: {.proposicion}
+**Proposición 18.1 ([descomposición de Robinson]{.g}).** Si $Y=\tau(X)T+g(X)+\varepsilon$ y $T=m(X)+\nu$, entonces
+$$Y-\ell(X)=\tau(X)\,\bigl(T-m(X)\bigr)+\varepsilon,\qquad \ell(X)=E[Y\mid X]=\tau(X)m(X)+g(X).$$
+Es la Proposición 17.2 con un $\tau$ que depende de $x$.
+:::
+
+::: {.demostracion}
+*Demostración.* Tomando esperanza condicional en la ecuación de $Y$ sale $\ell(X)=\tau(X)m(X)+g(X)$; restándola, los términos en $g$ se cancelan y queda $\tau(X)(T-m(X))+\varepsilon$. La celda lo comprueba con las auxiliares **exactas**: lo que sobra tiene desviación típica **0,997375** frente al 1,0 del ruido por diseño, media indistinguible de cero, y $R^2$ de 0,000038, 0,000027 y 0,000049 contra $X$, contra $T$ y contra los dos. **No es una aproximación.** ∎
+:::
+
+::: {.definicion}
+**Definición 18.2 (el objetivo del R-learner).** Minimizar $\sum_i\bigl(\tilde Y_i-\hat\tau(X_i)\tilde T_i\bigr)^2$. Es el único objetivo de esta lección que **se puede calcular sin conocer $\tau$**: solo hace falta residualizar.
+:::
+
+::: {.proposicion}
+**Proposición 18.3 (el verdadero lo minimiza, y descuenta solo a quien no sabe).** Desplazando $\tau$ por una constante, el objetivo vale 1,2488, 1,0363, **0,9948**, 1,0333 y 1,2411 para desplazamientos de −0,5 a 0,5: una parábola con el mínimo en cero. Y el peso de cada unidad es $\tilde T_i^2$, que va del percentil 10 al 90 en un factor **170,34**.
+:::
+
+::: {.demostracion}
+*Demostración.* Sustituyendo $\hat\tau=\tau+d$ el objetivo pasa a $\sum(\varepsilon_i-d\tilde T_i)^2=\sum\varepsilon_i^2+d^2\sum\tilde T_i^2$, ya que el término cruzado tiene media cero; es una parábola en $d$ con mínimo en 0 y curvatura $\sum\tilde T_i^2$. La celda mide los cinco valores y los cuantiles del peso. **Una unidad cuyo tratamiento era predecible desde $X$ tiene residuo pequeño y no dice nada sobre el efecto; el objetivo la descuenta sin que haya que decírselo.** ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# La leccion 17 supuso un theta unico. Aqui el efecto depende de x, y la
+# residualizacion sigue sirviendo: eso es la descomposicion de Robinson.
+def poblacion(n, semilla):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 3))
+    tau = 1.0 + 0.8 * X[:, 0] - 0.5 * X[:, 1] ** 2        # el efecto, que varia
+    m = 0.7 * np.tanh(1.5 * X[:, 0]) + 0.4 * X[:, 2]      # E[T|X]
+    g = 2.0 * np.sin(2.0 * X[:, 1]) + 1.5 * X[:, 2] ** 2  # lo que no pasa por T
+    T = m + rng.standard_normal(n)
+    Y = tau * T + g + rng.standard_normal(n)
+    return X, T, Y, tau, m, g
+
+X, T, Y, tau, m, g = poblacion(50000, 180)
+ell = tau * m + g                       # E[Y|X], porque E[T|X] = m
+
+print("la identidad de Robinson, con las auxiliares exactas")
+print("  Y - l(X) = tau(X) * (T - m(X)) + error")
+izq = Y - ell
+der = tau * (T - m)
+resto = izq - der
+print("  %-40s %14.6f" % ("desviacion tipica de Y - l(X)", float(np.std(izq))))
+print("  %-40s %14.6f" % ("desviacion tipica de tau*(T - m)", float(np.std(der))))
+print("  %-40s %14.6f" % ("desviacion tipica de lo que sobra", float(np.std(resto))))
+print("  %-40s %14.6f" % ("desviacion del ruido de Y, por diseño", 1.0))
+print("  lo que sobra tiene media casi cero        : %s"
+      % bool(abs(float(np.mean(resto))) < 0.02))
+print("  y no se deja predecir por X ni por T      :")
+for nombre, z in (("con X", X), ("con T", T.reshape(-1, 1)), ("con los dos", np.column_stack([X, T]))):
+    C = np.column_stack([np.ones(len(Y)), z])
+    pred = C.dot(np.linalg.lstsq(C, resto, rcond=None)[0])
+    print("     %-16s R2 = %.6f" % (nombre, 1 - float(np.var(resto - pred)) / float(np.var(resto))))
+print()
+print("lo que sobra es exactamente el ruido de Y: desviacion 1 y ningun")
+print("R2 por encima del redondeo. La identidad no es una aproximacion")
+print()
+
+print("y de ahi el objetivo que el R-learner minimiza")
+print("  suma de (Y - l(X) - tau(X) * (T - m(X)))^2")
+print()
+print("  tau(X) verdadero es el que lo hace minimo. Se comprueba moviendo")
+print("  tau una constante arriba y abajo")
+print("  %-16s %18s" % ("tau desplazado en", "suma de cuadrados"))
+for d in (-0.5, -0.2, 0.0, 0.2, 0.5):
+    r = izq - (tau + d) * (T - m)
+    print("  %-16.1f %18.4f" % (d, float(np.dot(r, r)) / len(Y)))
+print()
+print("el minimo cae en el desplazamiento cero y la curva es una parabola")
+print("en torno a el. Ese objetivo se puede calcular SIN conocer tau: solo")
+print("hace falta residualizar")
+print()
+
+print("cuanto pesa cada unidad en ese objetivo")
+w = (T - m) ** 2
+print("  %-34s %14.6f" % ("peso medio, (T - m)^2", float(np.mean(w))))
+q = np.quantile(w, [0.1, 0.5, 0.9])
+print("  %-34s %14.6f" % ("percentil 10 del peso", float(q[0])))
+print("  %-34s %14.6f" % ("mediana del peso", float(q[1])))
+print("  %-34s %14.6f" % ("percentil 90 del peso", float(q[2])))
+print("  %-34s %14.2f" % ("cociente entre el 90 y el 10", float(q[2] / q[0])))
+print()
+print("las unidades cuyo tratamiento era predecible desde X pesan casi")
+print("nada: su residuo es pequeño y no dicen nada sobre el efecto. El")
+print("objetivo las descuenta solo, sin que haya que decirselo")
+```
+
+```{=html}
+<div class="viz-peso">
+  <div class="controles">
+    <label>Cuánto predice X a T <input id="pe-r" type="range" min="0" max="0.95" step="0.05" value="0.5"> <span id="pe-r-v">0.50</span></label>
+    <label>Desplazar τ <input id="pe-d" type="range" min="-0.6" max="0.6" step="0.05" value="0"> <span id="pe-d-v">0.00</span></label>
+  </div>
+  <svg id="pe-svg" viewBox="0 0 660 300" role="img" aria-label="El peso que el objetivo del R-learner da a cada unidad según su residuo de tratamiento, y la parábola del objetivo al desplazar el efecto."></svg>
+  <p class="lectura" id="pe-lectura"></p>
+</div>
+<style>
+.viz-peso { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-peso .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-peso label { display: flex; align-items: center; gap: .4rem; }
+.viz-peso input[type=range] { width: 150px; padding: 0; }
+.viz-peso svg { width: 100%; height: auto; display: block; }
+.viz-peso .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("pe-svg"), lec = document.getElementById("pe-lectura");
+  var cr = document.getElementById("pe-r"), cd = document.getElementById("pe-d");
+  var er = document.getElementById("pe-r-v"), ed = document.getElementById("pe-d-v");
+
+  function gen(s) { var x = s; return function () { x = (x * 1103515245 + 12345) % 2147483648; return x / 2147483648; }; }
+  function normales(n, s) {
+    var r = gen(s), o = [], i;
+    for (i = 0; i < n; i++) { var u = Math.max(1e-9, r()), v = r(); o.push(Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v)); }
+    return o;
+  }
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var N = 260, eX = normales(N, 19), eT = normales(N, 29), eE = normales(N, 41);
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var r2 = +cr.value, d = +cd.value;
+    er.textContent = r2.toFixed(2); ed.textContent = d.toFixed(2);
+    var s = Math.sqrt(1 - r2), i;
+    var X = [], rT = [], tau = [], rY = [];
+    for (i = 0; i < N; i++) {
+      X.push(eX[i]);
+      rT.push(s * eT[i]);                     // lo que queda de T tras quitarle X
+      tau.push(1.0 + 0.8 * X[i]);
+      rY.push(tau[i] * rT[i] + 0.5 * eE[i]);
+    }
+    // panel izquierdo: cada unidad, con tamaño proporcional a su peso
+    var X0 = 44, X1 = 330, Y0 = 26, Y1 = 214;
+    svg.appendChild(el("path", { d: "M" + X0 + " " + Y1 + " L" + X1 + " " + Y1, stroke: C_L, "stroke-width": 1.2 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + Y0 + " L" + X0 + " " + Y1, stroke: C_L, "stroke-width": 1.2 }));
+    var ws = [];
+    for (i = 0; i < N; i++) ws.push(rT[i] * rT[i]);
+    var wmax = Math.max.apply(null, ws), suma = 0;
+    for (i = 0; i < N; i++) suma += ws[i];
+    function ex(z) { return X0 + (Math.max(-3, Math.min(3, z)) + 3) * (X1 - X0) / 6; }
+    function ey(z) { return Y1 - (Math.max(-3, Math.min(3, z)) + 3) * (Y1 - Y0) / 6; }
+    for (i = 0; i < N; i++)
+      svg.appendChild(el("circle", { cx: ex(X[i]).toFixed(1), cy: ey(rT[i]).toFixed(1),
+        r: (1.2 + 5.5 * Math.sqrt(ws[i] / Math.max(wmax, 1e-9))).toFixed(2),
+        fill: C_A, opacity: .45 }));
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 22, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .8 }, "x"));
+    svg.appendChild(el("text", { x: X0 - 10, y: (Y0 + Y1) / 2, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .8 }, "T − m(x)"));
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 42, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 },
+      "el tamaño es el peso (T − m)²"));
+
+    // panel derecho: el objetivo al desplazar tau
+    var Z0 = 392, Z1 = 632, W0 = 26, W1 = 214;
+    function obj(dd) {
+      var t = 0;
+      for (var j = 0; j < N; j++) { var e = rY[j] - (tau[j] + dd) * rT[j]; t += e * e; }
+      return t / N;
+    }
+    var o0 = obj(0), omax = Math.max(obj(-0.6), obj(0.6), o0 + 1e-6);
+    function px(v) { return Z0 + (v + 0.6) * (Z1 - Z0) / 1.2; }
+    function py(v) { return W1 - (v - o0) * (W1 - W0) / Math.max(omax - o0, 1e-9); }
+    svg.appendChild(el("path", { d: "M" + Z0 + " " + W1 + " L" + Z1 + " " + W1, stroke: C_L, "stroke-width": 1.2 }));
+    var dd = "";
+    for (i = 0; i <= 80; i++) {
+      var v = -0.6 + i * 1.2 / 80;
+      dd += (i === 0 ? "M" : " L") + px(v).toFixed(1) + " " + py(obj(v)).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: dd, fill: "none", stroke: C_T, "stroke-width": 2 }));
+    svg.appendChild(el("circle", { cx: px(d).toFixed(1), cy: py(obj(d)).toFixed(1), r: 6.5, fill: C_B }));
+    svg.appendChild(el("text", { x: (Z0 + Z1) / 2, y: W1 + 22, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .8 }, "τ desplazado en"));
+    svg.appendChild(el("text", { x: (Z0 + Z1) / 2, y: W1 + 42, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "el objetivo del R-learner"));
+
+    var ord = ws.slice().sort(function (a, b) { return a - b; });
+    var p10 = ord[Math.floor(0.1 * N)], p90 = ord[Math.floor(0.9 * N)];
+    lec.innerHTML = "Con X prediciendo el <strong>" + (100 * r2).toFixed(0) + " %</strong> de T, el peso del percentil 90 es <strong>" +
+      (p10 > 1e-9 ? (p90 / p10).toFixed(0) : "∞") + " veces</strong> el del percentil 10: las unidades cuyo tratamiento era predecible desde x " +
+      "aparecen como puntos diminutos y no dicen nada sobre el efecto. El objetivo las descuenta solo. " +
+      "A la derecha, ese objetivo al sumarle una constante a τ: es una parábola con el mínimo en <strong>0</strong>, " +
+      "y con el desplazamiento en <strong>" + d.toFixed(2) + "</strong> vale <strong>" + obj(d).toFixed(4) +
+      "</strong> frente a " + o0.toFixed(4) + ". Subiendo el primer control la parábola se aplana: con menos residuo, el objetivo distingue menos.";
+  }
+  cr.addEventListener("input", dibujar); cd.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. El R-learner
+
+::: {.definicion}
+**Definición 18.4 ([R-learner]{.g}).** Residualizar con cross-fitting, formar el pseudo-resultado $\tilde Y_i/\tilde T_i$ y ajustar un modelo de $X$ contra él **pesando por $\tilde T_i^2$**. Minimizar esa suma pesada es minimizar el objetivo de la Definición 18.2.
+:::
+
+::: {.proposicion}
+**Proposición 18.5 (gana a los tres metalearners).** Sobre la misma población y con el mismo modelo base, el ECM contra $\tau$ vale **0,131944** con el R-learner contra 0,470744, 1,207432 y 0,680876 de los learners S, T y X. Su correlación con el efecto verdadero es **0,952448**.
+:::
+
+::: {.demostracion}
+*Demostración.* La equivalencia entre el objetivo pesado y el de la Definición 18.2 es inmediata: $w_i(\tilde Y_i/\tilde T_i-\hat\tau_i)^2=(\tilde Y_i-\hat\tau_i\tilde T_i)^2$ con $w_i=\tilde T_i^2$. La celda implementa los cuatro y mide. Por tramos del efecto verdadero, el R-learner es el más cercano en los **cuatro**. Aquí el tratamiento es **continuo**, de modo que los learners S, T y X tienen que partirlo por la mediana para poder trabajar; el R no lo necesita, porque el residuo conserva su escala. ∎
+:::
+
+**Modo de falla.** El pseudo-resultado $\tilde Y/\tilde T$ estalla cuando $\tilde T$ se acerca a cero, y son justo las unidades que el peso anula. Si el modelo de $\tau$ no respeta esos pesos —por ejemplo porque la librería los ignora en silencio, o porque se recortan los valores extremos antes de pesar— el ajuste queda dominado por las unidades que menos saben. La defensa es comprobar que la suma de pesos que entra al modelo coincide con $\sum\tilde T_i^2$, y mirar qué fracción del peso total se lleva el 1 % de unidades con mayor residuo.
+
+```{pyodide}
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+
+def poblacion(n, semilla):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 3))
+    tau = 1.0 + 0.8 * X[:, 0] - 0.5 * X[:, 1] ** 2
+    m = 0.7 * np.tanh(1.5 * X[:, 0]) + 0.4 * X[:, 2]
+    g = 2.0 * np.sin(2.0 * X[:, 1]) + 1.5 * X[:, 2] ** 2
+    T = m + rng.standard_normal(n)
+    return X, T, tau * T + g + rng.standard_normal(n), tau
+
+# min_samples_leaf >= 5: con hojas menores el bosque no da los mismos
+# bits en sklearn 0.24 y 1.9
+def bosque(A, b, s=0, w=None):
+    mo = RandomForestRegressor(n_estimators=100, min_samples_leaf=10, random_state=s)
+    mo.fit(A, b, sample_weight=w)
+    return mo
+
+# El modelo del efecto se escribe a mano: la media PESADA de los k vecinos.
+# Un bosque con sample_weight no da los mismos bits en sklearn 0.24 y 1.9,
+# y aqui el peso es justo lo que define al R-learner.
+def knn_pesado(Xa, ya, wa, Xb, k=40):
+    d2 = (np.sum(Xb * Xb, 1)[:, None] + np.sum(Xa * Xa, 1)[None, :]
+          - 2.0 * Xb.dot(Xa.T))
+    idx = np.argsort(d2, axis=1, kind="stable")[:, :k]
+    num = (ya[idx] * wa[idx]).sum(1)
+    den = wa[idx].sum(1)
+    return np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.0)
+
+def residuos(X, T, Y, k=5):
+    """Residualiza T e Y con cross-fitting de k pliegues."""
+    n = len(Y)
+    pl = np.arange(n) % k
+    rT, rY = np.zeros(n), np.zeros(n)
+    for f in range(k):
+        e, fu = pl != f, pl == f
+        rT[fu] = T[fu] - bosque(X[e], T[e], 1).predict(X[fu])
+        rY[fu] = Y[fu] - bosque(X[e], Y[e], 0).predict(X[fu])
+    return rT, rY
+
+def r_learner(X, T, Y, Xn):
+    """El pseudo-resultado rY/rT, pesado por rT^2: minimizar la suma de
+       w*(pseudo - tau)^2 es minimizar la suma de (rY - tau*rT)^2."""
+    rT, rY = residuos(X, T, Y)
+    seguro = np.abs(rT) > 1e-6
+    pseudo = np.where(seguro, rY / np.where(seguro, rT, 1.0), 0.0)
+    w = rT ** 2
+    return knn_pesado(X[seguro], pseudo[seguro], w[seguro], Xn)
+
+def s_learner(X, T, Y, Xn):
+    mo = bosque(np.column_stack([X, T]), Y)
+    return (mo.predict(np.column_stack([Xn, np.ones(len(Xn))]))
+            - mo.predict(np.column_stack([Xn, np.zeros(len(Xn))])))
+
+def t_learner(X, T, Y, Xn, corte=None):
+    c = np.median(T) if corte is None else corte
+    alto, bajo = T >= c, T < c
+    return (bosque(X[alto], Y[alto], 1).predict(Xn)
+            - bosque(X[bajo], Y[bajo], 0).predict(Xn))
+
+def x_learner(X, T, Y, Xn):
+    c = np.median(T)
+    alto, bajo = T >= c, T < c
+    m1, m0 = bosque(X[alto], Y[alto], 1), bosque(X[bajo], Y[bajo], 0)
+    d1 = Y[alto] - m0.predict(X[alto])
+    d0 = m1.predict(X[bajo]) - Y[bajo]
+    return 0.5 * bosque(X[bajo], d0, 3).predict(Xn) + 0.5 * bosque(X[alto], d1, 2).predict(Xn)
+
+X, T, Y, tau = poblacion(4000, 180)
+Xp, Tp, Yp, taup = poblacion(4000, 1801)
+
+print("cuatro estimadores de tau(x) sobre los mismos datos")
+print("  %-14s %14s %14s %14s" % ("metodo", "ECM contra tau", "correlacion", "efecto logrado"))
+est = {}
+for nombre, f in (("S-learner", s_learner), ("T-learner", t_learner),
+                  ("X-learner", x_learner), ("R-learner", r_learner)):
+    z = f(X, T, Y, Xp)
+    est[nombre] = z
+    print("  %-14s %14.6f %14.6f %14.6f"
+          % (nombre, float(np.mean((z - taup) ** 2)),
+             float(np.corrcoef(z, taup)[0, 1]),
+             float(np.mean(taup * (z > 0)))))
+print("  %-14s %14s %14s %14.6f" % ("la verdad", "-", "1.000000", float(np.mean(taup * (taup > 0)))))
+print()
+print("el tratamiento aqui es CONTINUO, asi que el S, el T y el X tienen")
+print("que partirlo en dos por la mediana para poder trabajar; el R no lo")
+print("necesita, porque el residuo de T conserva su escala")
+print()
+
+print("lo que cada uno estima, por tramos del efecto verdadero")
+bordes = np.quantile(taup, [0.0, 0.25, 0.5, 0.75, 1.0])
+print("  %-22s %10s %10s %10s %10s %10s"
+      % ("tramo de tau", "verdad", "S", "T", "X", "R"))
+for i in range(4):
+    sel = (taup >= bordes[i]) & (taup <= bordes[i + 1])
+    fila = [float(np.mean(est[n][sel])) for n in ("S-learner", "T-learner", "X-learner", "R-learner")]
+    print("  %-22s %10.4f %10.4f %10.4f %10.4f %10.4f"
+          % ("%.2f a %.2f" % (bordes[i], bordes[i + 1]), float(np.mean(taup[sel])), *fila))
+print()
+print("los cuatro ordenan bien los tramos; lo que cambia es la escala. El")
+print("R-learner es el unico que no tuvo que binarizar el tratamiento, y")
+print("es el que mas se acerca en los cuatro tramos")
+```
+
+## 3. El R-score: un criterio que sí se puede calcular
+
+::: {.definicion}
+**Definición 18.6 ([R-score]{.g}).** El mismo objetivo, evaluado **fuera de la muestra** con residuos calculados allí: $R(\hat\tau)=\frac1n\sum(\tilde Y_i-\hat\tau(X_i)\tilde T_i)^2$. Más bajo es mejor.
+:::
+
+::: {.proposicion}
+**Proposición 18.7 (ordena igual que el criterio inobservable).** Sobre cinco modelos —los cuatro learners y uno de efecto constante—, el ranking por R-score coincide **entero** con el ranking por ECM contra $\tau$: R-learner, S-learner, X-learner, efecto constante, T-learner.
+:::
+
+::: {.demostracion}
+*Demostración.* La celda calcula los dos criterios para los cinco. El R-score usa solo $Y$, $T$ y $X$; el ECM contra $\tau$ exige el efecto individual, que la Proposición 1.2 declaró inobservable. **Ésta es la respuesta a lo que la Lección 16 dejó abierto**: sí hay una forma de elegir entre modelos de efecto con datos reales. ∎
+:::
+
+::: {.proposicion}
+**Proposición 18.8 (por qué coincide).** $R(\hat\tau)=\frac1n\sum(\tau(X_i)-\hat\tau(X_i))^2\tilde T_i^2+\text{constante}$: es el ECM contra $\tau$ **pesado por $\tilde T^2$**, más un término que no depende del modelo.
+:::
+
+::: {.demostracion}
+*Demostración.* Sustituyendo $\tilde Y_i=\tau(X_i)\tilde T_i+\varepsilon_i$ por la Proposición 18.1, el sumando es $\bigl((\tau_i-\hat\tau_i)\tilde T_i+\varepsilon_i\bigr)^2$, cuyo desarrollo da el término pesado, el término $\varepsilon_i^2$ —que no depende del modelo— y un cruzado de media cero. La celda tabula el ECM pesado junto al R-score menos su mínimo: 0,477 y 0,297, 1,262 y 1,278, 0,740 y 0,735, 0,138 y 0,000, 1,198 y 0,923. **Las dos columnas se mueven juntas.** ∎
+:::
+
+```{pyodide}
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+
+def poblacion(n, semilla):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 3))
+    tau = 1.0 + 0.8 * X[:, 0] - 0.5 * X[:, 1] ** 2
+    m = 0.7 * np.tanh(1.5 * X[:, 0]) + 0.4 * X[:, 2]
+    g = 2.0 * np.sin(2.0 * X[:, 1]) + 1.5 * X[:, 2] ** 2
+    T = m + rng.standard_normal(n)
+    return X, T, tau * T + g + rng.standard_normal(n), tau
+
+def bosque(A, b, s=0, w=None):
+    mo = RandomForestRegressor(n_estimators=100, min_samples_leaf=10, random_state=s)
+    mo.fit(A, b, sample_weight=w); return mo
+
+# El modelo del efecto se escribe a mano: la media PESADA de los k vecinos.
+# Un bosque con sample_weight no da los mismos bits en sklearn 0.24 y 1.9,
+# y aqui el peso es justo lo que define al R-learner.
+def knn_pesado(Xa, ya, wa, Xb, k=40):
+    d2 = (np.sum(Xb * Xb, 1)[:, None] + np.sum(Xa * Xa, 1)[None, :]
+          - 2.0 * Xb.dot(Xa.T))
+    idx = np.argsort(d2, axis=1, kind="stable")[:, :k]
+    num = (ya[idx] * wa[idx]).sum(1)
+    den = wa[idx].sum(1)
+    return np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.0)
+
+def residuos(X, T, Y, k=5):
+    n = len(Y); pl = np.arange(n) % k
+    rT, rY = np.zeros(n), np.zeros(n)
+    for f in range(k):
+        e, fu = pl != f, pl == f
+        rT[fu] = T[fu] - bosque(X[e], T[e], 1).predict(X[fu])
+        rY[fu] = Y[fu] - bosque(X[e], Y[e], 0).predict(X[fu])
+    return rT, rY
+
+def r_learner(X, T, Y, Xn, res=None):
+    rT, rY = residuos(X, T, Y) if res is None else res
+    seg = np.abs(rT) > 1e-6
+    ps = np.where(seg, rY / np.where(seg, rT, 1.0), 0.0)
+    return knn_pesado(X[seg], ps[seg], (rT ** 2)[seg], Xn)
+
+def s_learner(X, T, Y, Xn, res=None):
+    mo = bosque(np.column_stack([X, T]), Y)
+    return (mo.predict(np.column_stack([Xn, np.ones(len(Xn))]))
+            - mo.predict(np.column_stack([Xn, np.zeros(len(Xn))])))
+
+def t_learner(X, T, Y, Xn, res=None):
+    c = np.median(T); a, b = T >= c, T < c
+    return bosque(X[a], Y[a], 1).predict(Xn) - bosque(X[b], Y[b], 0).predict(Xn)
+
+def x_learner(X, T, Y, Xn, res=None):
+    c = np.median(T); a, b = T >= c, T < c
+    m1, m0 = bosque(X[a], Y[a], 1), bosque(X[b], Y[b], 0)
+    return (0.5 * bosque(X[b], m1.predict(X[b]) - Y[b], 3).predict(Xn)
+            + 0.5 * bosque(X[a], Y[a] - m0.predict(X[a]), 2).predict(Xn))
+
+def plano(X, T, Y, Xn, res=None):
+    """Un estimador tonto: el mismo efecto para todos, el de la regresion."""
+    rT, rY = residuos(X, T, Y) if res is None else res
+    return np.full(len(Xn), float(np.dot(rT, rY) / np.dot(rT, rT)))
+
+X, T, Y, tau = poblacion(4000, 180)
+Xp, Tp, Yp, taup = poblacion(4000, 1801)
+# los residuos, calculados UNA vez: los de entrenamiento para ajustar y
+# los de prueba para puntuar
+res_tr = residuos(X, T, Y)
+rTp, rYp = residuos(Xp, Tp, Yp)
+
+METODOS = (("S-learner", s_learner), ("T-learner", t_learner),
+           ("X-learner", x_learner), ("R-learner", r_learner),
+           ("efecto constante", plano))
+
+print("dos criterios sobre los mismos cinco modelos")
+print("  %-18s %18s %16s" % ("metodo", "ECM contra tau", "R-score"))
+print("  %-18s %18s %16s" % ("", "NO calculable", "calculable"))
+filas = []
+for nombre, f in METODOS:
+    z = f(X, T, Y, Xp, res_tr)
+    ecm = float(np.mean((z - taup) ** 2))
+    rsc = float(np.mean((rYp - z * rTp) ** 2))
+    filas.append((nombre, ecm, rsc, z))
+    print("  %-18s %18.6f %16.6f" % (nombre, ecm, rsc))
+print()
+
+def orden(vals):
+    return [filas[i][0] for i in np.argsort(vals)]
+print("el ranking que da cada criterio, de mejor a peor")
+o_ecm = orden([f[1] for f in filas])
+o_rsc = orden([f[2] for f in filas])
+print("  %-22s %s" % ("por ECM contra tau", " > ".join(o_ecm)))
+print("  %-22s %s" % ("por R-score", " > ".join(o_rsc)))
+print("  coinciden en el orden completo :", o_ecm == o_rsc)
+print("  coinciden en el ganador        :", o_ecm[0] == o_rsc[0])
+print()
+print("el R-score solo usa Y, T y X: se puede calcular con datos reales.")
+print("El ECM contra tau exige el efecto individual, que segun la leccion")
+print("01 no se observa nunca. Y aqui los dos dan el mismo orden")
+print()
+
+print("por que funciona: el R-score es el ECM contra tau mas una constante")
+print("  R(tau_hat) = suma de (rY - tau_hat * rT)^2")
+print("             = suma de ((tau - tau_hat) * rT + error)^2")
+print("             = suma de (tau - tau_hat)^2 * rT^2 + constante")
+print()
+print("  o sea el ECM PESADO por rT^2, mas algo que no depende del modelo")
+print("  %-22s %16s %16s" % ("metodo", "ECM pesado", "R-score - min"))
+base = min(f[2] for f in filas)
+for nombre, ecm, rsc, z in filas:
+    pesado = float(np.mean((taup - z) ** 2 * rTp ** 2))
+    print("  %-22s %16.6f %16.6f" % (nombre, pesado, rsc - base))
+print()
+print("las dos columnas se mueven juntas: el R-score ordena por el error")
+print("contra tau, pesando cada unidad por cuanto sabe de el")
+```
+
+## 4. Dónde el R-score deja de servir
+
+::: {.proposicion}
+**Proposición 18.9 (no se equivoca: deja de distinguir).** Al encoger el ruido del tratamiento de 1,00 a 0,03, la diferencia de R-score entre el mejor modelo y el peor cae de **1,232569 a 0,006617**, y medida en errores típicos, de **14,7 a 1,6**. El orden sigue siendo el correcto en las cuatro filas.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Proposición 18.8 la diferencia entre dos modelos es $\frac1n\sum\bigl((\tau-\hat\tau_1)^2-(\tau-\hat\tau_2)^2\bigr)\tilde T^2$, proporcional a la escala de $\tilde T^2$; al encogerla, la diferencia se encoge con ella mientras el ruido de $Y$ no. La celda mide las cuatro filas con su cociente contra el error típico. **Cuando esa columna baja de 2, el orden es una moneda al aire.** Es la superposición de la Lección 16 otra vez: sin variación libre en el tratamiento no se puede estimar el efecto ni juzgar a quien lo estima. ∎
+:::
+
+::: {.proposicion}
+**Proposición 18.10 (es un criterio relativo).** El R-score ordena los modelos que se le den y no dice si alguno acierta. Con cien unidades de prueba su propio error típico vale **0,2010** frente a una diferencia entre modelos de 0,7733: el orden sale bien por poco, y con dos modelos parecidos no saldría.
+:::
+
+::: {.demostracion}
+*Demostración.* Es una media de cuadrados, con error típico $\operatorname{sd}/\sqrt{n}$; la celda lo mide con 100, 1000 y 6000 unidades: 0,2010, 0,0814 y 0,0430. Cuatro preguntas y solo la primera se contesta: cuál de estos modelos es mejor, **sí**; cuánto vale el efecto de una unidad, **no**; si el mejor sirve para algo, **no**; cuánto dinero deja una política, no —eso es la Lección 21—. ∎
+:::
+
+**Modo de falla.** Un R-score bajo se lee como «el modelo es bueno», y no significa eso: significa que es el menos malo de la lista que se le pasó. Si todos los candidatos comparten el mismo error —por ejemplo, todos ignoran una variable que importa— el R-score elegirá entre ellos sin dar ninguna señal de que falta algo. La defensa es meter siempre en la lista un modelo de **efecto constante**: si el mejor no le gana con holgura, no hay heterogeneidad que aprovechar y la personalización no va a pagar su coste.
+
+```{pyodide}
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+
+# El R-score es calculable, pero no es gratis: tiene ruido y tiene un
+# punto ciego. Aqui se miden los dos.
+def poblacion(n, semilla, fuerza_m=1.0):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 3))
+    tau = 1.0 + 0.8 * X[:, 0] - 0.5 * X[:, 1] ** 2
+    m = fuerza_m * (0.7 * np.tanh(1.5 * X[:, 0]) + 0.4 * X[:, 2])
+    g = 2.0 * np.sin(2.0 * X[:, 1]) + 1.5 * X[:, 2] ** 2
+    T = m + rng.standard_normal(n)
+    return X, T, tau * T + g + rng.standard_normal(n), tau
+
+def bosque(A, b, s=0, w=None):
+    mo = RandomForestRegressor(n_estimators=60, min_samples_leaf=10, random_state=s)
+    mo.fit(A, b, sample_weight=w); return mo
+
+def residuos(X, T, Y, k=5):
+    n = len(Y); pl = np.arange(n) % k
+    rT, rY = np.zeros(n), np.zeros(n)
+    for f in range(k):
+        e, fu = pl != f, pl == f
+        rT[fu] = T[fu] - bosque(X[e], T[e], 1).predict(X[fu])
+        rY[fu] = Y[fu] - bosque(X[e], Y[e], 0).predict(X[fu])
+    return rT, rY
+
+X, T, Y, tau = poblacion(4000, 180)
+Xp, Tp, Yp, taup = poblacion(6000, 1801)
+rTp, rYp = residuos(Xp, Tp, Yp)
+
+# dos modelos de efecto, construidos a mano para tenerlos controlados
+bueno = 1.0 + 0.8 * Xp[:, 0] - 0.5 * Xp[:, 1] ** 2            # el verdadero
+regular = 1.0 + 0.8 * Xp[:, 0] - 0.5                          # sin el termino cuadratico
+malo = np.full(len(Xp), float(np.mean(tau)))                  # constante
+
+def rscore(z, sel=None):
+    s = slice(None) if sel is None else sel
+    return float(np.mean((rYp[s] - z[s] * rTp[s]) ** 2))
+
+print("cuanta muestra de prueba hace falta para que el orden se estabilice")
+print("  %-10s %12s %12s %12s %12s"
+      % ("unidades", "bueno", "regular", "malo", "orden correcto"))
+aciertos = 0
+for n in (100, 300, 1000, 3000, 6000):
+    sel = slice(0, n)
+    a, b, c = rscore(bueno, sel), rscore(regular, sel), rscore(malo, sel)
+    ok = a < b < c
+    aciertos += ok
+    print("  %-10d %12.6f %12.6f %12.6f %12s" % (n, a, b, c, "si" if ok else "NO"))
+print()
+print("con cien unidades de prueba el R-score ya ordena bien los tres en")
+print("este ejemplo. Pero es un promedio de cuadrados, y su error tipico")
+print("no es pequeño:")
+for n in (100, 1000, 6000):
+    sel = slice(0, n)
+    d = (rYp[sel] - bueno[sel] * rTp[sel]) ** 2
+    print("  %-10d unidades: R-score %.4f, error tipico %.4f"
+          % (n, float(np.mean(d)), float(np.std(d) / np.sqrt(n))))
+print()
+print("la diferencia entre el bueno y el regular es %.4f, y con cien"
+      % (rscore(regular, slice(0, 100)) - rscore(bueno, slice(0, 100))))
+print("unidades el error tipico del propio R-score vale %.4f: el orden"
+      % float(np.std((rYp[:100] - bueno[:100] * rTp[:100]) ** 2) / 10.0))
+print("sale bien por poco, y con dos modelos parecidos no saldria")
+print()
+
+print("donde el R-score deja de servir: cuando el residuo de T se encoge")
+print("  %-10s %11s %11s %11s %12s %10s"
+      % ("ruido de T", "sd del rT", "R bueno", "R malo", "diferencia", "dif/error"))
+for s in (1.0, 0.3, 0.1, 0.03):
+    rng = np.random.default_rng(1801)
+    n = 6000
+    Xq = rng.standard_normal((n, 3))
+    tauq = 1.0 + 0.8 * Xq[:, 0] - 0.5 * Xq[:, 1] ** 2
+    mq = 0.7 * np.tanh(1.5 * Xq[:, 0]) + 0.4 * Xq[:, 2]
+    gq = 2.0 * np.sin(2.0 * Xq[:, 1]) + 1.5 * Xq[:, 2] ** 2
+    Tq = mq + s * rng.standard_normal(n)
+    Yq = tauq * Tq + gq + rng.standard_normal(n)
+    rTq, rYq = residuos(Xq, Tq, Yq)
+    bq = 1.0 + 0.8 * Xq[:, 0] - 0.5 * Xq[:, 1] ** 2
+    mal = np.full(n, float(np.mean(tauq)))
+    da = (rYq - bq * rTq) ** 2
+    dm = (rYq - mal * rTq) ** 2
+    dif = float(np.mean(dm) - np.mean(da))
+    err = float(np.std(dm - da) / np.sqrt(n))
+    print("  %-10.2f %11.6f %11.6f %11.6f %12.6f %10.1f"
+          % (s, float(np.std(rTq)), float(np.mean(da)), float(np.mean(dm)), dif, dif / err))
+print()
+print("el R-score no se equivoca al encoger el residuo: sigue poniendo el")
+print("modelo bueno delante. Lo que hace es dejar de DISCRIMINAR. La")
+print("diferencia entre el mejor y el peor cae de 1.23 a 0.007, y lo que")
+print("importa es la ultima columna, la diferencia medida en errores")
+print("tipicos: cuando baja de 2, el orden es una moneda al aire")
+print()
+print("y eso es la superposicion de la leccion 16 otra vez: si el")
+print("tratamiento se puede predecir desde X, no hay variacion libre con")
+print("que estimar el efecto, y tampoco con que juzgar quien lo estima")
+print()
+
+print("lo que el R-score NO puede decir")
+print("  %-46s %14s" % ("pregunta", "la contesta"))
+print("  %-46s %14s" % ("cual de estos modelos de efecto es mejor", "si"))
+print("  %-46s %14s" % ("cuanto vale el efecto de una unidad concreta", "NO"))
+print("  %-46s %14s" % ("si el mejor de los mios sirve para algo", "NO"))
+print("  %-46s %14s" % ("cuanto dinero deja una politica", "no, leccion 21"))
+print()
+print("es un criterio RELATIVO: ordena los modelos que se le den y no")
+print("dice nada de si alguno acierta. Un R-score bajo con una lista de")
+print("modelos malos sigue eligiendo el menos malo de la lista")
+```
+
+```{=html}
+<div class="viz-discrimina">
+  <div class="controles">
+    <label>Ruido del tratamiento <input id="di-s" type="range" min="0" max="3" step="1" value="0"> <span id="di-s-v">1.00</span></label>
+    <label>Unidades de prueba <input id="di-n" type="range" min="2" max="3.8" step="0.1" value="3.78"> <span id="di-n-v">6000</span></label>
+  </div>
+  <svg id="di-svg" viewBox="0 0 660 260" role="img" aria-label="El R-score de un modelo bueno y de uno malo, con su intervalo, según el ruido del tratamiento y el tamaño de la muestra de prueba."></svg>
+  <p class="lectura" id="di-lectura"></p>
+</div>
+<style>
+.viz-discrimina { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-discrimina .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-discrimina label { display: flex; align-items: center; gap: .4rem; }
+.viz-discrimina input[type=range] { width: 150px; padding: 0; }
+.viz-discrimina svg { width: 100%; height: auto; display: block; }
+.viz-discrimina .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("di-svg"), lec = document.getElementById("di-lectura");
+  var cs = document.getElementById("di-s"), cn = document.getElementById("di-n");
+  var es = document.getElementById("di-s-v"), en = document.getElementById("di-n-v");
+  // lo que la celda midio con 6000 unidades de prueba
+  var RUIDO = [1.0, 0.3, 0.1, 0.03];
+  var SDRT  = [1.022482, 0.308506, 0.106966, 0.044348];
+  var BUENO = [1.390952, 1.341472, 1.338242, 1.337977];
+  var MALO  = [2.623521, 1.466886, 1.358103, 1.344593];
+  var TDIF  = [14.7, 7.6, 3.3, 1.6];          // la diferencia en errores tipicos, con 6000
+  var X0 = 150, X1 = 620, Y0 = 46, Y1 = 176;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var i = Math.round(+cs.value), n = Math.round(Math.pow(10, +cn.value));
+    es.textContent = RUIDO[i].toFixed(2); en.textContent = String(n);
+    var b = BUENO[i], m = MALO[i], dif = m - b;
+    // el error tipico escala como 1/raiz(n); el medido es con 6000
+    var err = (dif / TDIF[i]) * Math.sqrt(6000 / n);
+    var t = dif / err;
+    var lo = Math.min(b, m) - 3.2 * err - 0.02 * dif - 0.01;
+    var hi = Math.max(b, m) + 3.2 * err + 0.02 * dif + 0.01;
+    function px(v) { return X0 + (v - lo) * (X1 - X0) / (hi - lo); }
+
+    var filas = [{ y: Y0 + 28, v: b, n: "modelo bueno", c: C_A }, { y: Y0 + 84, v: m, n: "modelo malo", c: C_B }];
+    for (var k = 0; k < 2; k++) {
+      var F = filas[k];
+      svg.appendChild(el("path", { d: "M" + X0 + " " + F.y + " L" + X1 + " " + F.y, stroke: C_L, "stroke-width": 1 }));
+      svg.appendChild(el("path", { d: "M" + px(F.v - 1.96 * err).toFixed(1) + " " + F.y +
+        " L" + px(F.v + 1.96 * err).toFixed(1) + " " + F.y, stroke: F.c, "stroke-width": 10, opacity: .35 }));
+      svg.appendChild(el("circle", { cx: px(F.v).toFixed(1), cy: F.y, r: 6.5, fill: F.c }));
+      svg.appendChild(el("text", { x: X0 - 12, y: F.y + 4, "text-anchor": "end", "font-size": 11, fill: C_T }, F.n));
+      svg.appendChild(el("text", { x: px(F.v).toFixed(1), y: F.y - 14, "text-anchor": "middle", "font-size": 10, fill: C_T, opacity: .8 },
+        F.v.toFixed(4)));
+    }
+    svg.appendChild(el("path", { d: "M" + X0 + " " + (Y1 + 4) + " L" + X1 + " " + (Y1 + 4), stroke: C_L, "stroke-width": 1.2 }));
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 26, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 },
+      "R-score, más bajo es mejor"));
+
+    var solapan = (b + 1.96 * err) > (m - 1.96 * err);
+    lec.innerHTML = "Con ruido del tratamiento <strong>" + RUIDO[i].toFixed(2) + "</strong>, el residuo tiene desviación <strong>" +
+      SDRT[i].toFixed(3) + "</strong> y los dos R-scores valen <strong>" + b.toFixed(4) + "</strong> y <strong>" + m.toFixed(4) +
+      "</strong>. Con <strong>" + n + "</strong> unidades de prueba, la diferencia mide <strong>" + t.toFixed(1) +
+      " errores típicos</strong> y los intervalos " + (solapan ? "<strong>se solapan</strong>: el orden es una moneda al aire."
+        : "no se solapan: el orden es fiable.") +
+      " El R-score nunca pone al malo delante, pero al encoger el residuo deja de <strong>distinguir</strong>, " +
+      "y entonces hace falta más muestra de prueba para lo mismo. Con residuo pequeño ni el efecto se puede estimar ni se puede juzgar a quien lo estima.";
+  }
+  cs.addEventListener("input", dibujar); cn.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Lo que esta lección no resuelve
+
+El R-score compara modelos del **efecto**, y lo que se quiere maximizar casi nunca es eso: es el valor de una política, que es otra cantidad y tiene su propio estimador, el de la Lección 21. Un modelo puede ganar el R-score y perder al decidir, tal como la Lección 16 midió con el ECM: basta que acierte la magnitud lejos del umbral y falle el signo cerca de él.
+
+Tampoco se han puesto intervalos de confianza sobre el R-score ni se ha tratado cómo elegir el número de pliegues del cross-fitting que lo alimenta, que arrastra las mismas dos fuentes de sesgo de la Lección 17. Y el R-learner se ha implementado con un modelo del efecto muy sencillo —una media pesada de vecinos— porque lo que se quería medir era el **objetivo**; con un modelo que optimice el objetivo directamente al partir se llega al bosque causal de la Lección 19.
+
+## Ejercicios
+
+### Ejercicio 1, El peso de cada unidad
+
+Con la Proposición 18.3, calcular qué fracción del peso total se lleva el 10 % de unidades con mayor residuo, para cuatro repartos del residuo de $T$.
+
+```{pyodide}
+#| exercise: ex_peso
+import numpy as np
+
+rng = np.random.default_rng(18)
+n = 20000
+
+fracciones = []
+for sd in (1.0, 1.0, 1.0, 1.0):
+    rT = rng.standard_normal(n) * sd
+    w = ______
+    orden = np.sort(w)[::-1]
+    arriba = ______
+    fracciones.append(arriba / ______)
+
+print([round(float(z), 4) for z in fracciones])
+```
+
+::: {.hint exercise="ex_peso"}
+El peso es el residuo al cuadrado. El 10 % con mayor peso son los primeros `n // 10` de la lista ordenada de mayor a menor.
+:::
+
+::: {.solution exercise="ex_peso"}
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(18)
+n = 20000
+
+fracciones = []
+for sd in (1.0, 1.0, 1.0, 1.0):
+    rT = rng.standard_normal(n) * sd
+    w = rT ** 2
+    orden = np.sort(w)[::-1]
+    arriba = orden[:n // 10].sum()
+    fracciones.append(arriba / orden.sum())
+
+print([round(float(z), 4) for z in fracciones])
+```
+
+El 10 % de unidades con mayor residuo se lleva alrededor del **44 %** del peso total, y las cuatro repeticiones dan casi el mismo número porque la desviación típica no cambia el reparto: el peso es invariante a la escala de $\tilde T$. Esa concentración es la que hace que el R-learner sea eficiente —descuenta a quien no sabe— y también la que lo hace frágil si esas unidades son pocas.
+:::
+
+```{pyodide}
+#| exercise: ex_peso
+#| check: true
+if all(0.44 < float(z) < 0.50 for z in fracciones) and len(fracciones) == 4:
+    feedback = {"correct": True, "message": "Correcto: el 10 % con mayor residuo se lleva cerca del 44 % del peso."}
+else:
+    feedback = {"correct": False, "message": "Se esperaban cuatro fracciones entre 0.44 y 0.50."}
+feedback
+```
+
+### Ejercicio 2, Cuánta prueba hace falta
+
+Con la Proposición 18.9, calcular cuántas unidades de prueba se necesitan para que la diferencia entre dos modelos valga al menos 2 errores típicos, partiendo de lo medido con 6000.
+
+```{pyodide}
+#| exercise: ex_prueba
+import numpy as np
+
+t_con_6000 = np.array([14.7, 7.6, 3.3, 1.6])
+n_base = 6000
+
+# el error tipico va como 1/raiz(n), asi que t va como raiz(n)
+n_necesaria = ______
+
+print([int(np.ceil(z)) for z in n_necesaria])
+```
+
+::: {.hint exercise="ex_prueba"}
+Si $t\propto\sqrt{n}$, entonces para pasar de $t_0$ a 2 hace falta multiplicar $n$ por $(2/t_0)^2$.
+:::
+
+::: {.solution exercise="ex_prueba"}
+```{pyodide}
+import numpy as np
+
+t_con_6000 = np.array([14.7, 7.6, 3.3, 1.6])
+n_base = 6000
+
+n_necesaria = n_base * (2.0 / t_con_6000) ** 2
+
+print([int(np.ceil(z)) for z in n_necesaria])
+```
+
+Hacen falta **112, 416, 2204 y 9375** unidades de prueba. Con el tratamiento bien aleatorizado bastan ciento y pico; con el residuo encogido a 0,044 hacen falta **nueve mil**, y eso solo para distinguir el mejor modelo del peor de la lista. Dos modelos parecidos exigirían un orden de magnitud más.
+:::
+
+```{pyodide}
+#| exercise: ex_prueba
+#| check: true
+if [int(np.ceil(z)) for z in n_necesaria] == [112, 416, 2204, 9375]:
+    feedback = {"correct": True, "message": "Correcto: de 112 unidades a 9375 segun se encoge el residuo."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [112, 416, 2204, 9375]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F5-retos.ipynb`, sección **Causal 18**:
+
+1. Comprobar la descomposición de Robinson sobre una población propia con las auxiliares exactas, y anotar la desviación de lo que sobra y su $R^2$ contra $X$ y contra $T$.
+2. Implementar el R-learner y compararlo con los tres metalearners por ECM contra $\tau$ y por R-score. Anotar si los dos rankings coinciden.
+3. Encoger el ruido del tratamiento hasta que el R-score deje de distinguir, midiendo la diferencia en errores típicos. Guardar en `50-Errores/` el punto en que baja de 2 y cuánta muestra de prueba haría falta allí.
+
+## Del libro
+
+Facure cap. 19 *Evaluating Causal Models* plantea el problema que esta lección resuelve —cómo comparar modelos de efecto cuando el efecto no se observa— y cap. 22 *Debiased/Orthogonal Machine Learning* contiene la descomposición de Robinson sobre la que se construye el R-learner. Los capítulos se citan por su número y su título; el texto no se reproduce. El R-learner y el R-score se deben a Nie y Wager, y aquí se implementan y se miden.
+
+## Para el Cerebro
+
+- Robinson: $\tilde Y=\tau(X)\tilde T+\varepsilon$. Lo que sobra tiene $R^2<5\times10^{-5}$ contra todo.
+- El objetivo pesa cada unidad por $\tilde T^2$: del percentil 10 al 90 hay un factor **170**.
+- El R-learner gana a los tres: ECM **0,1319** contra 0,47, 1,21 y 0,68.
+- Y no necesita binarizar un tratamiento continuo; los otros tres sí.
+- El **R-score** solo usa $Y$, $T$ y $X$: **se puede calcular**.
+- Su ranking coincide **entero** con el del criterio inobservable, en los cinco modelos.
+- Porque es el ECM contra $\tau$ **pesado por $\tilde T^2$**, más una constante.
+- Al encoger el residuo no se equivoca: **deja de distinguir**, de 14,7 a **1,6** errores típicos.
+- Es **relativo**: elige el menos malo de la lista y no dice si alguno sirve.
+- Por eso en la lista va siempre un modelo de **efecto constante**.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico: que en la descomposición de Robinson lo que sobra tiene desviación 0,997375 y $R^2$ de 0,000038, 0,000027 y 0,000049 contra $X$, $T$ y los dos; que el objetivo vale 1,2488, 1,0363, 0,9948, 1,0333 y 1,2411 al desplazar $\tau$ de −0,5 a 0,5; que el peso medio es 1,000586 y los percentiles 10, 50 y 90 valen 0,015857, 0,459446 y 2,700936, con cociente 170,34; que los ECM contra $\tau$ valen 0,470744, 1,207432, 0,680876 y 0,131944 para los learners S, T, X y R, con correlaciones 0,783416, 0,861306, 0,947838 y 0,952448; las medias por tramo de los cuatro; que los R-scores valen 1,896549, 2,877026, 2,333729, 1,599191 y 2,522343 para esos cuatro más el de efecto constante, y que los dos rankings coinciden enteros; que el ECM pesado y el R-score menos su mínimo dan 0,477 y 0,297, 1,262 y 1,278, 0,740 y 0,735, 0,138 y 0,000, y 1,198 y 0,923; que con ruido del tratamiento 1,00, 0,30, 0,10 y 0,03 la desviación del residuo vale 1,022482, 0,308506, 0,106966 y 0,044348, la diferencia entre el mejor y el peor 1,232569, 0,125414, 0,019861 y 0,006617, y su cociente contra el error típico 14,7, 7,6, 3,3 y 1,6; y que el error típico del R-score con 100, 1000 y 6000 unidades vale 0,2010, 0,0814 y 0,0430.
+
+**Lo que viene de los libros.** De Facure cap. 19, el problema de comparar modelos de efecto sin observar el efecto; de cap. 22, la descomposición de Robinson. Los capítulos se citan por su número y su título; el texto no se reproduce. El R-learner y el R-score son de Nie y Wager, y aquí se implementan y se miden.
+
+**Lo que es mío, no del libro.** Meter en la comparación un **modelo de efecto constante**, que es lo que convierte el R-score en una prueba de si hay heterogeneidad y no solo en un ranking; la comprobación de que los dos rankings coinciden **enteros** y no solo en el ganador, que es lo que hace útil al criterio; la tabla que pone el ECM pesado al lado del R-score menos su mínimo, que convierte la Proposición 18.8 en algo mirable; y la Sección 4, que empezó buscando un caso en el que el R-score se equivocara y no lo encontró: lo que se encontró, y es más útil, es que no se equivoca sino que **deja de distinguir**, con la diferencia medida en errores típicos y el punto en que baja de 2.
+:::
