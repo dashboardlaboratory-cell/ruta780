@@ -4448,6 +4448,80 @@ mejor de la lección.
 
 El sitio queda en **147 lecciones, 824 celdas, 3351 afirmaciones**, y el bloque de diseño experimental —05, 07 y 08— cerrado.
 
+### 3.81 El módulo de atributos, y su Lección 01 (25-09-2026)
+
+**El octavo módulo del sitio**, y la cuarta pieza del encargo de INCAE. Luis lo
+pidió así: *muy práctico y dinámico, con niveles, mezclando retos de creatividad,
+análisis y estándares*, y con una recomendación de dónde practicar.
+
+**Va sobre FES (Kuhn y Johnson)**, que ya estaba verificado con sus 12 capítulos
+y 92 secciones, y cada una de las 16 lecciones tiene su ancla citable: 01–03
+proceso y fuga (FES 1, 3, 4), 04–07 transformaciones numéricas (FES 6), 08–11
+categóricas y texto (FES 5), 12–14 interacciones, ausencias y datos
+relacionales (FES 7, 8, 9), 15–16 selección (FES 10, 11, 12).
+
+**Se evaluó y se descartó una segunda fuente.** *Feature Engineering A-Z*
+(Hvitfeldt, 2024) es libre, CC, con código en Python y cubre exactamente el
+temario. Al traer las dos fuentes que manda la regla, **no coinciden**: el
+`_quarto.yml` del repositorio lista 7 capítulos en *Sound Data* donde el sitio
+publicado muestra 2, varios llevan el marcador 🏗️ de en construcción y el libro
+entero está marcado como borrador. Queda **recomendado para hojear y no
+citado**. La regla que esto confirma: *traer la segunda fuente* no es un trámite
+—es lo que decide si un libro entra o no.
+
+**Atributos 01, Qué hace un atributo y cuánto decide (L2, FES 1).** La lección
+existe para poner una cifra debajo de la frase que Luis usó al pedir el módulo,
+«el feature engineering es el 80 % del éxito».
+
+El mecanismo depende **solo de $A/B$**, y ésa es toda la elección de diseño que
+hace falta: con la misma regresión logística —escrita a mano con
+Newton-Raphson— y los mismos 800 datos, el AUC vale **0,824606** con $A$ y $B$ y
+**0,847638** con $\log(A/B)$, que es exactamente el techo. La tercera fila,
+$\{\log A,\log B\}$, **también toca el techo**, y por una razón que convierte el
+argumento en álgebra en vez de en una mejora empírica: $\log(A/B)=\log A-\log B$,
+así que el modelo lineal ya contiene la razón en cuanto tiene los logaritmos. El
+Ejercicio 1 lo mide con el $R^2$ del predictor verdadero sobre cada base:
+**1,0 exacto** desde los logaritmos y **0,488753** desde las columnas crudas.
+
+**La tabla que responde de verdad a la pregunta del 80 %.** Con las columnas
+crudas el AUC vale 0,824680 con 200 filas y **0,824657 con 12 000**: sesenta
+veces más datos no compran nada, porque lo que falta no es muestra sino columna.
+Con los logaritmos se llega al techo **con 200**. Y un $k$-NN sobre las crudas
+—un modelo al que se le permite encontrar la forma por su cuenta— sube de
+0,815949 a **0,843447** con 12 000 filas y **sigue perdiendo** contra los dos
+logaritmos con 200. De ahí sale la formulación con condiciones que sustituye al
+eslogan: **los atributos deciden más cuanto más rígido es el modelo y más
+pequeña es la muestra.**
+
+**El caso donde la transformación hace daño**, que el índice del módulo promete
+para todas las lecciones. Cambiando una sola línea del generador —de $A/B$ a
+$A-B$— el mismo logaritmo pasa de ganar **0,022963** a perder **0,023755**.
+Magnitudes casi iguales y signos opuestos, sobre las mismas columnas y con el
+mismo modelo.
+
+**Y la elección de la transformación es un parámetro más.** Eligiendo el
+exponente de la familia de potencias por el ajuste interno, entre cinco
+candidatos, la elección acierta el **53,33 %** de las veces con 80 filas y el
+**100 %** con 1500, y cuesta 0,0057 de AUC en el peor caso. Se equivoca
+exactamente cuando la muestra es pequeña, que es cuando la ingeniería de
+atributos más falta hace. Es el enlace directo con la Lección 02.
+
+**El gate de visuales encontró un defecto real, y del tipo que existe para
+cazar.** El control del mecanismo no movía nada, y la causa era de fondo: con el
+umbral en cero la frontera es la diagonal $A=B$ **para cualquier mecanismo**,
+porque tanto $\log(A/B)$ como $A-B$ se anulan ahí. El arreglo fue mover el valor
+por omisión del umbral a 0,6 y, siguiendo la regla 19b, **decirlo en la lectura
+del visual** en vez de esconderlo.
+
+**Dos deudas saldadas.** `grafo/build_graph.py` nunca incluyó `series`, así que
+el grafo llevaba meses con 136 lecciones de 147; ahora van 151 nodos y 370
+aristas. Y `proyectos/genera_retos.py` tenía el nombre de los módulos **en dos
+sitios**: un diccionario y una expresión regular más abajo. Añadir el módulo al
+primero no bastaba, y el síntoma era silencioso —decía «los cuadernos están al
+día» sin haber escrito nada—, que es peor que un error.
+
+El sitio queda en **148 lecciones, 830 celdas, 3366 afirmaciones**, y el módulo nuevo en 1 de 16.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
@@ -4889,6 +4963,23 @@ se imprime la diferencia contra una cota, como manda el §5 de arriba.
 **Y el compañero de viaje del mismo fallo:** `print(..., list(array))` imprime
 `[np.float64(0.0), ...]` en numpy 2.x y `[0.0, ...]` en 1.x. En una celda
 publicada se escribe `[float(z) for z in array]`, que da lo mismo en las dos.
+
+**El gate de visuales necesita el sandbox apagado (25-09-2026).** Desde que la
+sesión corre con el sandbox de macOS por comando, `visuales.py` revienta con un
+volcado de Chromium en `ChildProcessLauncherHelper::LaunchOnLauncherThread`:
+Playwright lanza procesos hijo que el sandbox no deja crear. Los otros seis
+gates corren dentro sin problema. **Señal para distinguirlo de un fallo real:**
+el volcado es de Chromium y no menciona ninguna lección; un fallo de verdad
+nombra el archivo y el control.
+
+**El nombre de un módulo vive en cinco sitios, y dos de ellos son el mismo
+archivo (25-09-2026).** Al dar de alta `atributos` hubo que tocar
+`grafo/build_graph.py`, `verificar/retos.py`, `_quarto.yml`, la portada y
+`proyectos/genera_retos.py` **dos veces**: un diccionario arriba y una expresión
+regular cincuenta líneas más abajo. Con solo el diccionario puesto, el generador
+decía «no falta ninguna sección: los cuadernos están al día» sin haber escrito
+nada. Un fallo silencioso que informa de éxito es peor que una excepción; si
+alguna vez se toca ese archivo, conviene unificar las dos listas.
 
 ## 6. Decisiones pendientes
 

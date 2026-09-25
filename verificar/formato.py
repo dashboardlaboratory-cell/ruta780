@@ -135,6 +135,7 @@ MIGRADAS = {
     "causal/05-potencia-y-mde.qmd",
     "causal/07-multi-brazo.qmd",
     "causal/08-interferencia.qmd",
+    "atributos/01-que-hace-un-atributo.qmd",
     "causal/16-metalearners.qmd",
     "causal/17-double-machine-learning.qmd",
     "causal/18-r-learner-y-r-score.qmd",

@@ -101,7 +101,7 @@ pendientes = {}
 for p in sorted(RAIZ.glob("*/[0-9]*.qmd")):
     nb, etiqueta, puntos = retos_de(p)
     if not nb: continue
-    mm = re.match(r"(Fundamentos|Causal|Est|Mat|Py|Python|ML|Series|Estadística|Matemática)\s*(\d+)", etiqueta)
+    mm = re.match(r"(Fundamentos|Causal|Atributos|Est|Mat|Py|Python|ML|Series|Estadística|Matemática)\s*(\d+)", etiqueta)
     if not mm: continue
     mod = {"Est":"Estadística","Mat":"Matemática","Py":"Python"}.get(mm.group(1), mm.group(1))
     num = int(mm.group(2))
