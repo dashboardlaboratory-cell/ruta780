@@ -1,0 +1,813 @@
+---
+title: "Interferencia: switchback y experimentos por clúster"
+subtitle: "Inferencia causal · Lección 08"
+nivel: L3
+modulo: causal
+fase: F5
+prereqs: [causal/07-multi-brazo, causal/01-resultados-potenciales, causal/05-potencia-y-mde]
+siguientes: []
+libro: "—"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="causal/08-interferencia"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F5]{.item}
+[**Libro** —]{.item}
+[**Prereqs** [Multi-brazo](07-multi-brazo.qmd) · [Resultados potenciales](01-resultados-potenciales.qmd) · [Potencia y MDE](05-potencia-y-mde.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Distinguir el efecto que mide un A/B del efecto de lanzar el tratamiento a todos.** En un mercado donde la demanda apenas crece, el A/B mide **0,200178** y el lanzamiento completo vale **0,027593**: un factor de **7,25**.
+2. Explicar por qué eso **no** es un error típico mal calculado, sino otra pregunta: la ganancia de un tratado incluye la demanda que le quita a su vecino sin tratar.
+3. **Aleatorizar por clúster** y comprobar que el sesgo desaparece entero: de **0,169092** a **−0,000038**.
+4. **Poner precio a esa limpieza** con el efecto de diseño $1+(m-1)\rho$: con $\rho=0{,}17$ hacen falta **1849 mercados** para ver el efecto global, y con $\rho=0{,}36$, **4771**.
+5. **Montar un switchback** para la interferencia en el tiempo y encontrar el **mínimo interior** de la raíz del error cuadrático medio: **0,021878** con bloques de 30, entre los 0,124367 de bloques de 1 y los 0,023976 de bloques de 120.
+6. **Medir que quemar el principio de cada bloque sale más barato que alargarlo**: tirar el 62 % de los periodos quita el **83 %** del sesgo y sube el error típico un **12 %**.
+7. **Medir la interferencia en vez de suponerla** con un diseño por saturación: el vendedor sin tratar pierde **10,86 %** cuando tres de cada cuatro vecinos reciben el tratamiento, mientras la comparación de dentro del mercado sigue diciendo 0,20 en las tres saturaciones.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Causal 01**: los resultados potenciales, que aquí se escriben con el supuesto que esta lección rompe.
+- **Causal 05**: el error típico de una diferencia de medias y el MDE, que reaparecen al poner precio al clúster.
+- **Causal 07**: el diseño experimental con varios brazos, cuyo cálculo daba por buenos los errores típicos.
+- **Series de tiempo 2**: el ruido con memoria, que es lo que hace caro el switchback.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Causal 15**: el control sintético, que ataca el mismo problema cuando solo hay una unidad tratada.
+- **Causal 21**: la evaluación de políticas, cuyo estimador supone unidades independientes.
+- **Causal 22**: la conversión a dinero, que necesita el efecto global y no el del A/B.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $\tau$ | tau | Lo que el tratamiento sube el atractivo de una unidad |
+| $\eta$ | eta | Cuánto se expande el mercado entero cuando todos mejoran |
+| $f$ | efe | La fracción de unidades tratadas dentro de un clúster |
+| $\rho$ | ro | La correlación intraclase: cuánto se parecen dos unidades del mismo clúster |
+| $m$ | eme | Unidades por clúster |
+| $b$ | be | La longitud de un bloque del switchback, en periodos |
+| $\lambda$ | lambda | El arrastre: qué fracción del tratamiento de ayer sigue hoy |
+| $\varphi$ | fi | La memoria del ruido de un periodo al siguiente |
+| $\sum$ | sumatorio | Suma sobre el índice que lleve debajo |
+| $\beta$ | beta | La probabilidad de no rechazar habiendo efecto; $1-\beta$ es la potencia |
+| $\alpha$ | alfa | El nivel de la prueba |
+| $\delta$ | delta | El efecto que se quiere detectar |
+| $\sigma$ | sigma | La desviación típica del ruido de un periodo |
+| $z_q$ | zeta sub q | El cuantil $q$ de la normal |
+:::
+
+## 1. Cuando el tratamiento de uno cambia el resultado de otro
+
+::: {.definicion}
+**Definición 8.1 ([interferencia]{.g}).** El resultado de una unidad depende del tratamiento **de otras**. Cuando no la hay, el resultado potencial de la unidad $i$ se escribe $Y_i(w_i)$ y todo lo anterior vale; cuando la hay, hay que escribir $Y_i(w_1,\dots,w_N)$, y el número de resultados potenciales pasa de dos a $2^N$.
+:::
+
+::: {.proposicion}
+**Proposición 8.2 (el A/B contesta otra pregunta).** En un mercado de 2000 vendedores donde el tratamiento sube el atractivo un $\tau=0{,}20$ y la demanda total se expande con exponente $\eta=0{,}15$, el A/B mide **0,200178** frente al $\tau$ teórico, y el lanzamiento a todos vale **0,027593** frente al teórico $(1+\tau)^\eta-1=0{,}027726$.
+:::
+
+::: {.demostracion}
+*Demostración.* La demanda de cada vendedor es proporcional a su atractivo, así que en el A/B un tratado recibe $\tfrac{(1+\tau)a_i}{\sum_j a_j'}$ con el denominador ya subido por los demás tratados. Con la mitad tratada el denominador crece un factor $1+\tau/2$, de modo que el tratado queda en $\tfrac{1+\tau}{1+\tau/2}$ y el control en $\tfrac{1}{1+\tau/2}$: el cociente vale **exactamente $1+\tau$**, y la expansión del mercado se cancela. Con todos tratados el reparto no cambia y solo queda la expansión, $(1+\tau)^\eta$. Las dos cantidades responden a preguntas distintas, y **la que decide el lanzamiento es la segunda**. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# Un mercado donde la demanda total apenas se mueve: lo que gana un vendedor
+# sale en buena parte del resto. TAU es lo que el tratamiento sube el
+# atractivo; ETA, cuanto se expande el mercado entero cuando todos mejoran.
+N, TAU, ETA, D0 = 2000, 0.20, 0.15, 200.0
+
+def mercado(atr, tratados, rng):
+    """Reparte la demanda en proporcion al atractivo de cada vendedor."""
+    a = atr * np.where(tratados, 1.0 + TAU, 1.0)
+    total = D0 * len(a) * (a.mean() / atr.mean()) ** ETA
+    return rng.poisson(total * a / a.sum())
+
+rng = np.random.default_rng(7)
+atractivo = np.exp(0.4 * rng.standard_normal(N))
+
+glob = np.empty(400)
+ab = np.empty(400)
+for r in range(400):
+    g = np.random.default_rng(1000 + r)
+    glob[r] = (mercado(atractivo, np.ones(N, bool), g).mean()
+               / mercado(atractivo, np.zeros(N, bool), g).mean() - 1.0)
+    w = g.random(N) < 0.5
+    y = mercado(atractivo, w, g)
+    ab[r] = y[w].mean() / y[~w].mean() - 1.0
+
+print("dos preguntas distintas sobre el mismo tratamiento")
+print("  %-40s %12s %12s" % ("", "medido", "teorico"))
+print("  %-40s %12.6f %12.6f"
+      % ("todos tratados contra todos sin tratar", glob.mean(), (1 + TAU) ** ETA - 1.0))
+print("  %-40s %12.6f %12.6f"
+      % ("A/B: la mitad de los vendedores", ab.mean(), TAU))
+print("  %-40s %12.4f" % ("el A/B se pasa por un factor de", ab.mean() / glob.mean()))
+print()
+print("  errores tipicos: global %.6f, A/B %.6f" % (glob.std(ddof=1), ab.std(ddof=1)))
+print()
+print("el A/B no tiene un error tipico mal calculado: contesta otra pregunta.")
+print("Mide lo que gana un vendedor tratado FRENTE A SUS VECINOS sin tratar,")
+print("y parte de esa ganancia es demanda que les quita. Cuando el tratamiento")
+print("se lanza a todos no hay a quien quitarsela, y queda solo la expansion")
+print("del mercado: 2.77 % en vez de 20 %")
+```
+
+```{=html}
+<div class="viz-interf">
+  <div class="controles">
+    <label>Efecto τ <input id="if-t" type="range" min="0.02" max="0.60" step="0.01" value="0.20"> <span id="if-t-v">0,20</span></label>
+    <label>Expansión η <input id="if-e" type="range" min="0" max="1" step="0.05" value="0.15"> <span id="if-e-v">0,15</span></label>
+    <label>Saturación <input id="if-f" type="range" min="0" max="1" step="0.05" value="0.5"> <span id="if-f-v">0,50</span></label>
+  </div>
+  <svg id="if-svg" viewBox="0 0 660 300" role="img" aria-label="Resultado de los vendedores tratados y sin tratar según qué fracción del mercado recibe el tratamiento: el hueco entre las dos curvas es lo que mide el A/B, y el final de la curva es el efecto de lanzarlo a todos."></svg>
+  <p class="lectura" id="if-lectura"></p>
+</div>
+<style>
+.viz-interf { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-interf .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-interf label { display: flex; align-items: center; gap: .4rem; }
+.viz-interf input[type=range] { width: 130px; padding: 0; }
+.viz-interf svg { width: 100%; height: auto; display: block; }
+.viz-interf .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("if-svg"), lec = document.getElementById("if-lectura");
+  var ct = document.getElementById("if-t"), ce = document.getElementById("if-e"), cf = document.getElementById("if-f");
+  var et = document.getElementById("if-t-v"), ee = document.getElementById("if-e-v"), ef = document.getElementById("if-f-v");
+  var X0 = 62, X1 = 628, Y0 = 26, Y1 = 226;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // con fraccion f tratada, el atractivo medio sube 1 + tau*f
+  function sinTratar(f, tau, eta) { return Math.pow(1 + tau * f, eta - 1); }
+  function tratado(f, tau, eta) { return (1 + tau) * sinTratar(f, tau, eta); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var tau = +ct.value, eta = +ce.value, f = +cf.value;
+    et.textContent = tau.toFixed(2).replace(".", ",");
+    ee.textContent = eta.toFixed(2).replace(".", ",");
+    ef.textContent = f.toFixed(2).replace(".", ",");
+    var YMIN = 0.6, YMAX = Math.max(1.7, (1 + tau) * 1.05);
+    function px(v) { return X0 + v * (X1 - X0); }
+    function py(v) { return Y1 - ((v - YMIN) / (YMAX - YMIN)) * (Y1 - Y0); }
+
+    var g, i;
+    for (g = 0.6; g <= YMAX + 0.001; g += 0.2) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(g).toFixed(1) + " L" + X1 + " " + py(g).toFixed(1),
+        stroke: C_L, "stroke-width": 0.8, opacity: .55 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(g) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 },
+        ("×" + g.toFixed(1)).replace(".", ",")));
+    }
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(1).toFixed(1) + " L" + X1 + " " + py(1).toFixed(1),
+      stroke: C_T, "stroke-width": 1.4, opacity: .5 }));
+    for (i = 0; i <= 1.001; i += 0.25)
+      svg.appendChild(el("text", { x: px(i), y: Y1 + 20, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 },
+        i.toFixed(2).replace(".", ",")));
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 40, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 },
+      "fracción del mercado que recibe el tratamiento"));
+
+    var dS = "", dT = "", x;
+    for (i = 0; i <= 200; i++) {
+      x = i / 200;
+      dS += (i === 0 ? "M" : " L") + px(x).toFixed(1) + " " + py(sinTratar(x, tau, eta)).toFixed(1);
+      dT += (i === 0 ? "M" : " L") + px(x).toFixed(1) + " " + py(tratado(x, tau, eta)).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: dT, fill: "none", stroke: C_A, "stroke-width": 2.6 }));
+    svg.appendChild(el("path", { d: dS, fill: "none", stroke: C_B, "stroke-width": 2.6 }));
+    svg.appendChild(el("text", { x: px(0.02), y: py(tratado(0.02, tau, eta)) - 9, "font-size": 10.5, fill: C_A }, "tratados"));
+    svg.appendChild(el("text", { x: px(0.02), y: py(sinTratar(0.02, tau, eta)) + 16, "font-size": 10.5, fill: C_B }, "sin tratar"));
+
+    var yg = Math.pow(1 + tau, eta);
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(yg).toFixed(1) + " L" + X1 + " " + py(yg).toFixed(1),
+      stroke: C_T, "stroke-width": 1.3, "stroke-dasharray": "5 4", opacity: .7 }));
+    svg.appendChild(el("text", { x: X1 - 4, y: py(yg) - 7, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .85 },
+      "efecto de lanzarlo a todos"));
+
+    var s = sinTratar(f, tau, eta), tt = tratado(f, tau, eta);
+    svg.appendChild(el("path", { d: "M" + px(f).toFixed(1) + " " + py(s).toFixed(1) + " L" + px(f).toFixed(1) + " " + py(tt).toFixed(1),
+      stroke: C_T, "stroke-width": 2.2, opacity: .8 }));
+    svg.appendChild(el("circle", { cx: px(f).toFixed(1), cy: py(tt).toFixed(1), r: 6, fill: C_A }));
+    svg.appendChild(el("circle", { cx: px(f).toFixed(1), cy: py(s).toFixed(1), r: 6, fill: C_B }));
+
+    lec.innerHTML = "El <strong>hueco vertical</strong> entre las dos curvas es lo que mide un A/B: vale <strong>" +
+      (100 * tau).toFixed(1).replace(".", ",") + " %</strong> en toda la anchura, porque el reparto sube a los tratados y baja a los demás en la misma proporción. " +
+      "Lo que decide el lanzamiento es dónde <em>acaba</em> la curva verde: <strong>" +
+      (100 * (yg - 1)).toFixed(2).replace(".", ",") + " %</strong> sobre el punto de partida. " +
+      "Con saturación " + f.toFixed(2).replace(".", ",") + " el vendedor sin tratar ya está un <strong>" +
+      (100 * (s - 1)).toFixed(2).replace(".", ",") + " %</strong> por debajo de donde estaría si nadie recibiera nada" +
+      (eta >= 0.98
+        ? ". Con η = 1 el mercado se expande tanto como sube el atractivo, nadie le quita nada a nadie y las dos cifras coinciden."
+        : ", y esa caída es la interferencia.");
+  }
+  ct.addEventListener("input", dibujar); ce.addEventListener("input", dibujar); cf.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+**Modo de falla.** El experimento informa de un **+20 %** con un intervalo estrecho y toda la corrección del mundo, y el lanzamiento entrega un **+2,8 %**. Nada del análisis estaba mal: la estimación es insesgada **para el contraste que efectivamente aleatorizó**, que es tratado contra vecino. El síntoma llega un trimestre después y se explica como saturación del canal o cambio de estacionalidad. La defensa es preguntar, antes de diseñar, **si el recurso por el que compiten las unidades es fijo**; si lo es, el A/B por unidad mide desplazamiento y hay que cambiar de diseño.
+
+## 2. Aleatorizar el clúster
+
+::: {.definicion}
+**Definición 8.3 ([aleatorización por clúster]{.g} y [correlación intraclase]{.g}).** Se aleatoriza un grupo entero —un mercado, una ciudad, una semana— dentro del cual vive la interferencia, de modo que la comparación queda entre grupos y no dentro. La correlación intraclase $\rho$ mide cuánto se parecen dos unidades del mismo grupo; con $m$ unidades por grupo, la varianza se multiplica por el **efecto de diseño** $1+(m-1)\rho$.
+:::
+
+::: {.proposicion}
+**Proposición 8.4 (quita el sesgo entero).** Con 40 mercados de 50 vendedores, aleatorizar vendedores deja un sesgo de **0,169092** sobre un efecto verdadero de 0,027726; aleatorizar mercados lo deja en **−0,000038**.
+:::
+
+::: {.demostracion}
+*Demostración.* Dentro de un mercado tratado **todos** los vendedores suben su atractivo, así que el reparto interno no cambia y el total del mercado solo recoge la expansión. La comparación entre mercados es entonces exactamente el contraste que interesa. El precio aparece en la segunda columna de la celda: el error típico pasa de **0,022552 a 0,031709**, y con 40 mercados el efecto verdadero queda a **0,87** errores típicos del cero. **El diseño insesgado no detecta nada.** ∎
+:::
+
+::: {.proposicion}
+**Proposición 8.5 (y el precio crece con $\rho$).** Para $\rho=0{,}0369,\ 0{,}1675$ y $0{,}3602$ el efecto de diseño vale **2,81, 9,21 y 18,65**, y los mercados necesarios para detectar el efecto global con potencia 0,80 pasan de **411 a 1849 y 4771**. El sesgo de aleatorizar vendedores, en cambio, se queda entre **0,1688 y 0,1691** en las cuatro filas.
+:::
+
+::: {.demostracion}
+*Demostración.* El número de clústeres necesario sale de la fórmula del MDE de la Lección 05 aplicada al error típico medido: $M\ge M_0\,(z_{1-\alpha/2}+z_{1-\beta})^2\,\text{ET}^2/\delta^2$ con el factor 2,801585 de allí. Lo que la tabla pone frente a frente es que **el sesgo no depende de $\rho$ y el coste de quitarlo sí**, y que crece deprisa. Con la primera fila hay que tener cuidado: con mercados casi idénticos el estimador de momentos de $\rho$ sale **ligeramente negativo** —−0,0030— porque la varianza entre mercados no se distingue de la que produce el muestreo dentro; ahí la cota $1+(m-1)\rho$ deja de significar nada y lo que manda es el error típico medido, **0,016390**. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# Si la interferencia vive DENTRO de un mercado, aleatorizar mercados
+# enteros la deja fuera de la comparacion. El precio se paga en varianza.
+TAU, ETA, D0, M, NM = 0.20, 0.15, 200.0, 40, 50
+VERDAD = (1 + TAU) ** ETA - 1.0
+
+def mercado(atr, trat, nivel, rng):
+    a = atr * np.where(trat, 1.0 + TAU, 1.0)
+    total = D0 * len(a) * nivel * (a.mean() / atr.mean()) ** ETA
+    return rng.poisson(total * a / a.sum())
+
+def tirada(sigma_nivel):
+    """Devuelve rho, y los dos estimadores sobre 400 experimentos."""
+    g0 = np.random.default_rng(11)
+    atr = np.exp(0.4 * g0.standard_normal((M, NM)))
+    niv = np.exp(sigma_nivel * g0.standard_normal(M))
+    g = np.random.default_rng(99)
+    y = np.array([mercado(atr[m], np.zeros(NM, bool), niv[m], g) for m in range(M)])
+    entre, dentro = y.mean(1).var(ddof=1), y.var(1, ddof=1).mean()
+    rho = (entre - dentro / NM) / (entre - dentro / NM + dentro)
+    pu = np.empty(400); pc = np.empty(400)
+    for r in range(400):
+        g = np.random.default_rng(3000 + r)
+        w = g.random((M, NM)) < 0.5
+        yy = np.array([mercado(atr[m], w[m], niv[m], g) for m in range(M)])
+        pu[r] = yy[w].mean() / yy[~w].mean() - 1.0
+        wm = g.random(M) < 0.5
+        y2 = np.array([mercado(atr[m], np.full(NM, wm[m]), niv[m], g) for m in range(M)])
+        pc[r] = y2[wm].mean() / y2[~wm].mean() - 1.0
+    return rho, pu, pc
+
+rho, pu, pc = tirada(0.10)
+print("40 mercados de 50 vendedores, y la verdad global vale %.6f" % VERDAD)
+print("  %-26s %12s %12s %12s" % ("", "sesgo", "error tip.", "RECM"))
+for nom, v in (("aleatorizar vendedores", pu), ("aleatorizar mercados", pc)):
+    print("  %-26s %12.6f %12.6f %12.6f"
+          % (nom, v.mean() - VERDAD, v.std(ddof=1), np.sqrt(np.mean((v - VERDAD) ** 2))))
+print()
+print("aleatorizar mercados quita el sesgo entero y multiplica el error")
+print("tipico por %.2f. Con 40 mercados el efecto de 2.77 %% queda a %.2f"
+      % (pc.std(ddof=1) / pu.std(ddof=1), VERDAD / pc.std(ddof=1)))
+print("errores tipicos del cero: el experimento insesgado no lo detecta")
+print()
+
+print("cuanto cuesta, segun lo distintos que sean los mercados entre si")
+print("  %-8s %9s %12s %14s %14s %12s"
+      % ("sigma", "rho", "1+(m-1)rho", "sesgo vend.", "ET mercados", "mercados"))
+for sl in (0.05, 0.10, 0.20, 0.35):
+    r, u, c = tirada(sl)
+    se = c.std(ddof=1)
+    print("  %-8.2f %9.4f %12.2f %14.6f %14.6f %12.0f"
+          % (sl, r, 1 + (NM - 1) * r, u.mean() - VERDAD, se,
+             M * (se * 2.801585 / VERDAD) ** 2))
+print()
+print("el sesgo de aleatorizar vendedores no depende de rho: se mueve entre")
+print("0.1688 y 0.1691 en las cuatro filas. Lo que explota con rho es el")
+print("precio de quitarlo. Con rho = 0.17 hacen falta 1849 mercados para ver")
+print("el efecto global, y con rho = 0.36, casi 4800. Por eso casi nadie corre")
+print("este experimento y casi todos publican el 20 %")
+```
+
+**Modo de falla.** El diseño por clúster se propone, alguien calcula que hacen falta 1849 mercados, y la conclusión es que «el experimento no se puede hacer», con lo que se vuelve al A/B por unidad y a su 20 %. Queda una tercera salida, y es la Sección 4: **medir cuánta** interferencia hay, cosa que necesita muchos menos clústeres, porque estimar una pendiente entre saturaciones cuesta bastante menos que separar dos medias.
+
+## 3. Cuando la interferencia es en el tiempo: switchback
+
+::: {.definicion}
+**Definición 8.6 ([switchback]{.g}).** El sistema entero se enciende y se apaga por bloques de $b$ periodos, sorteados de forma independiente. Como en cada instante todas las unidades reciben lo mismo, la interferencia entre unidades desaparece; queda la interferencia **del pasado consigo mismo**, el [arrastre]{.g}, que aquí se modela con una dosis efectiva $d_t=(1-\lambda)w_t+\lambda d_{t-1}$.
+:::
+
+::: {.proposicion}
+**Proposición 8.7 (el sesgo tiene forma cerrada).** Con bloques sorteados de forma independiente, el estimador converge a
+$$\tau\,\frac{1-S}{1+\tau S/2},\qquad S=\frac{\lambda\,(1-\lambda^{b})}{b\,(1-\lambda)} .$$
+Para $b=1,8,120$ la fórmula da **0,075472, 0,160177 y 0,197253** y la simulación **0,075728, 0,160328 y 0,198070**.
+:::
+
+::: {.demostracion}
+*Demostración.* Dentro de un bloque con tratamiento $w$ que empieza con dosis $d_{\text{prev}}$, la dosis en el $k$-ésimo periodo vale $w+(d_{\text{prev}}-w)\lambda^{k+1}$, cuya media sobre los $b$ periodos es $w+(d_{\text{prev}}-w)S$. Como los bloques se sortean de forma independiente, $\mathbb{E}[d_{\text{prev}}]$ no depende de $w$ y al restar las dos medias se cancela: la diferencia de dosis vale $1-S$. El denominador $1+\tau S/2$ aparece porque el estimador es un **cociente** de medias y la media de control no es la del testigo puro. Para $b=1$, $S=\lambda$ y el sesgo es máximo; para $b$ grande, $S\to\lambda/(b(1-\lambda))$ y se desvanece como $1/b$. ∎
+:::
+
+::: {.proposicion}
+**Proposición 8.8 (la raíz del error cuadrático medio tiene mínimo interior).** Con $T=2400$, $\lambda=0{,}6$ y ruido de memoria $\varphi=0{,}9$, vale **0,124367** con bloques de 1, baja hasta **0,021878** con bloques de 30 y vuelve a subir a **0,023976** con bloques de 120.
+:::
+
+::: {.demostracion}
+*Demostración.* El sesgo cae como $1/b$ por la Proposición 8.7 y el error típico sube porque el número de bloques es $T/b$: la varianza de la media de un bloque vale $\tfrac{\sigma^2}{b}\bigl[1+2\sum_{k=1}^{b-1}(1-k/b)\varphi^{k}\bigr]$ y la del estimador, $4$ veces eso por $b/T$. La fórmula predice **0,004899, 0,012184 y 0,020494** para $b=1,8,120$ contra **0,004865, 0,012861 y 0,023929** medidos; se queda corta en los bloques largos porque **trata los bloques como independientes** y con veinte bloques el ruido todavía correlaciona de uno al siguiente. El fondo de la curva es **plano** —0,0219, 0,0228 y 0,0225 con 30, 50 y 80—, así que acertar el orden de magnitud basta. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# Cuando la interferencia es en el TIEMPO —el tratamiento de hoy deja rastro
+# en manana— se apaga y se enciende el sistema entero por bloques.
+T, TAU, LAM, PHI, MU, SIG, REPS = 2400, 0.20, 0.6, 0.9, 100.0, 12.0, 400
+
+def tanda(b, semilla):
+    """REPS switchbacks a la vez: el bucle recorre el tiempo, no las repeticiones."""
+    rng = np.random.default_rng(semilla)
+    w = np.repeat(rng.random((REPS, T // b)) < 0.5, b, axis=1).astype(float)
+    dosis = np.empty_like(w)
+    prev = w[:, 0].copy()
+    for t in range(T):                       # el arrastre: lo de ayer no se va
+        prev = (1.0 - LAM) * w[:, t] + LAM * prev
+        dosis[:, t] = prev
+    z = rng.standard_normal((REPS, T)) * SIG
+    ruido = np.empty_like(z)
+    ruido[:, 0] = z[:, 0]
+    raiz = np.sqrt(1.0 - PHI ** 2)
+    for t in range(1, T):                    # el ruido tambien tiene memoria
+        ruido[:, t] = PHI * ruido[:, t - 1] + raiz * z[:, t]
+    return w > 0.5, MU * (1.0 + TAU * dosis) + ruido
+
+def lift(w, y):
+    return np.array([y[r][w[r]].mean() / y[r][~w[r]].mean() - 1.0 for r in range(len(y))])
+
+print("bloques cortos sesgan por el arrastre; bloques largos hacen ruido")
+print("  %-8s %9s %12s %12s %12s %12s"
+      % ("bloque", "bloques", "media", "sesgo", "error tip.", "RECM"))
+for b in (1, 2, 4, 8, 12, 20, 30, 50, 80, 120):
+    w, y = tanda(b, 5000 + b)
+    e = lift(w, y)
+    print("  %-8d %9d %12.6f %12.6f %12.6f %12.6f"
+          % (b, T // b, e.mean(), e.mean() - TAU, e.std(ddof=1),
+             np.sqrt(np.mean((e - TAU) ** 2))))
+print()
+print("con bloques de 1 el sesgo se come el 62 % del efecto, y con bloques de")
+print("120 queda en el 1 %, pero el error tipico se multiplica por cinco. La")
+print("RECM tiene minimo dentro: 0.021878 con bloques de 30. Y el fondo es")
+print("plano —0.0219, 0.0228 y 0.0225 con 30, 50 y 80—, asi que acertar el")
+print("orden de magnitud basta")
+```
+
+```{=html}
+<div class="viz-bloque">
+  <div class="controles">
+    <label>Arrastre λ <input id="bq-l" type="range" min="0" max="0.92" step="0.02" value="0.6"> <span id="bq-l-v">0,60</span></label>
+    <label>Memoria del ruido φ <input id="bq-p" type="range" min="0" max="0.96" step="0.02" value="0.9"> <span id="bq-p-v">0,90</span></label>
+    <label>Bloque <input id="bq-b" type="range" min="0" max="2.3" step="0.02" value="1.48"> <span id="bq-b-v">30</span></label>
+  </div>
+  <svg id="bq-svg" viewBox="0 0 660 300" role="img" aria-label="Sesgo, error típico y raíz del error cuadrático medio de un switchback según la longitud del bloque, con el mínimo marcado."></svg>
+  <p class="lectura" id="bq-lectura"></p>
+</div>
+<style>
+.viz-bloque { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-bloque .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-bloque label { display: flex; align-items: center; gap: .4rem; }
+.viz-bloque input[type=range] { width: 130px; padding: 0; }
+.viz-bloque svg { width: 100%; height: auto; display: block; }
+.viz-bloque .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("bq-svg"), lec = document.getElementById("bq-lectura");
+  var cl = document.getElementById("bq-l"), cp = document.getElementById("bq-p"), cb = document.getElementById("bq-b");
+  var el_ = document.getElementById("bq-l-v"), ep = document.getElementById("bq-p-v"), eb = document.getElementById("bq-b-v");
+  var X0 = 62, X1 = 628, Y0 = 26, Y1 = 226;
+  var T = 2400, TAU = 0.20, MU = 100, SIG = 12;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function S(b, lam) { return lam === 0 ? 0 : lam * (1 - Math.pow(lam, b)) / (b * (1 - lam)); }
+  function sesgo(b, lam) { var s = S(b, lam); return Math.abs(TAU * (1 - s) / (1 + TAU * s / 2) - TAU); }
+  function sd(b, phi) {
+    var g = 1, k;
+    for (k = 1; k < b; k++) g += 2 * (1 - k / b) * Math.pow(phi, k);
+    return Math.sqrt(4 * (SIG * SIG / b) * g * b / T) / MU;
+  }
+  function recm(b, lam, phi) { var s = sesgo(b, lam), d = sd(b, phi); return Math.sqrt(s * s + d * d); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var lam = +cl.value, phi = +cp.value, b = Math.max(1, Math.round(Math.pow(10, +cb.value)));
+    el_.textContent = lam.toFixed(2).replace(".", ",");
+    ep.textContent = phi.toFixed(2).replace(".", ",");
+    eb.textContent = String(b);
+    var YMAX = 0.16;
+    function px(v) { return X0 + (Math.log(v) / Math.log(200)) * (X1 - X0); }
+    function py(v) { return Y1 - Math.min(v / YMAX, 1) * (Y1 - Y0); }
+
+    var g, i, bb, mejor = { v: 1e9, b: 1 };
+    for (g = 0; g <= YMAX + 1e-9; g += 0.04) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(g).toFixed(1) + " L" + X1 + " " + py(g).toFixed(1),
+        stroke: C_L, "stroke-width": 0.8, opacity: .55 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(g) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 },
+        g.toFixed(2).replace(".", ",")));
+    }
+    [1, 2, 5, 10, 20, 50, 100, 200].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y1 + 20, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, String(v)));
+    });
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 40, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 },
+      "periodos por bloque"));
+
+    var dS = "", dD = "", dR = "";
+    for (i = 0; i <= 160; i++) {
+      bb = Math.max(1, Math.round(Math.exp(Math.log(200) * i / 160)));
+      dS += (i === 0 ? "M" : " L") + px(bb).toFixed(1) + " " + py(sesgo(bb, lam)).toFixed(1);
+      dD += (i === 0 ? "M" : " L") + px(bb).toFixed(1) + " " + py(sd(bb, phi)).toFixed(1);
+      dR += (i === 0 ? "M" : " L") + px(bb).toFixed(1) + " " + py(recm(bb, lam, phi)).toFixed(1);
+      if (recm(bb, lam, phi) < mejor.v) { mejor.v = recm(bb, lam, phi); mejor.b = bb; }
+    }
+    svg.appendChild(el("path", { d: dS, fill: "none", stroke: C_B, "stroke-width": 2, "stroke-dasharray": "6 4" }));
+    svg.appendChild(el("path", { d: dD, fill: "none", stroke: C_T, "stroke-width": 2, "stroke-dasharray": "2 3", opacity: .75 }));
+    svg.appendChild(el("path", { d: dR, fill: "none", stroke: C_A, "stroke-width": 2.8 }));
+    svg.appendChild(el("text", { x: px(1.3), y: py(sesgo(1, lam)) - 8, "font-size": 10.5, fill: C_B }, "sesgo"));
+    svg.appendChild(el("text", { x: px(150), y: py(sd(150, phi)) - 9, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .8 }, "error típico"));
+
+    svg.appendChild(el("path", { d: "M" + px(mejor.b).toFixed(1) + " " + Y0 + " L" + px(mejor.b).toFixed(1) + " " + Y1,
+      stroke: C_A, "stroke-width": 1.2, "stroke-dasharray": "4 4", opacity: .6 }));
+    svg.appendChild(el("circle", { cx: px(b).toFixed(1), cy: py(recm(b, lam, phi)).toFixed(1), r: 7, fill: C_A }));
+
+    lec.innerHTML = "Con arrastre λ = " + lam.toFixed(2).replace(".", ",") + " y ruido de memoria φ = " +
+      phi.toFixed(2).replace(".", ",") + ", el mejor bloque tiene <strong>" + mejor.b +
+      "</strong> periodos y deja la RECM en <strong>" + mejor.v.toFixed(4).replace(".", ",") + "</strong>. " +
+      "Con los <strong>" + b + "</strong> elegidos, el sesgo vale " + sesgo(b, lam).toFixed(4).replace(".", ",") +
+      " y el error típico " + sd(b, phi).toFixed(4).replace(".", ",") + ". " +
+      (lam < 0.05
+        ? "Sin arrastre no hay sesgo que compensar y el bloque más corto gana siempre: el switchback deja de tener gracia."
+        : (b < mejor.b / 3
+            ? "Ese bloque es demasiado corto: el arrastre no ha terminado de irse cuando ya se cambia otra vez."
+            : (b > mejor.b * 3
+                ? "Ese bloque es demasiado largo: quedan pocos bloques y el ruido con memoria no se promedia."
+                : "El fondo de la curva es plano, así que cualquier bloque de ese orden sirve.")));
+  }
+  cl.addEventListener("input", dibujar); cp.addEventListener("input", dibujar); cb.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+::: {.proposicion}
+**Proposición 8.9 (quemar sale más barato que alargar).** Con bloques de 8, descartar los 5 primeros periodos de cada uno —el **62,5 %** de los datos— baja el sesgo de **0,039672 a 0,006920**, un 82,6 % menos, y sube el error típico de **0,012861 a 0,014416**, un 12,1 % más. La raíz del error cuadrático medio queda en **0,015975**, por debajo del mejor bloque sin quemar, 0,021878.
+:::
+
+::: {.demostracion}
+*Demostración.* Los periodos descartados son los que llevan la dosis del bloque anterior, así que quitarlos ataca el sesgo directamente. Que apenas cuesten precisión es consecuencia del ruido: con $\varphi=0{,}9$ **dos periodos seguidos son casi la misma observación**, de modo que tirar tres cuartos de cada bloque no tira tres cuartos de la información. Es la misma razón por la que alargar el bloque ayuda menos de lo que su número de periodos promete. ∎
+:::
+
+::: {.proposicion}
+**Proposición 8.10 (y el error típico declarado no se entera).** Tratando los periodos como independientes, el error típico calculado va de **0,004923 a 0,005498** para bloques de 1 a 120, mientras el real pasa de **0,004865 a 0,023929**: el intervalo publicado acaba siendo **4,35 veces** más estrecho de lo que le toca.
+:::
+
+::: {.demostracion}
+*Demostración.* La fórmula del error típico de una diferencia de medias cuenta $T$ observaciones; el switchback solo tiene $T/b$ asignaciones distintas, y con ruido correlacionado ni siquiera ésas son independientes. Con $b=1$ la razón vale **0,9884** y la cuenta ingenua es correcta, porque la alternancia periodo a periodo descorrelaciona el tratamiento del ruido. A partir de ahí empeora, y empeora **justo en la dirección a la que el arrastre obliga a moverse**: los dos remedios se pelean, y el error típico esconde la pelea. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# Dos arreglos para el mismo switchback, y lo que cada uno cuesta.
+T, TAU, LAM, PHI, MU, SIG, REPS = 2400, 0.20, 0.6, 0.9, 100.0, 12.0, 400
+
+def tanda(b, semilla):
+    rng = np.random.default_rng(semilla)
+    w = np.repeat(rng.random((REPS, T // b)) < 0.5, b, axis=1).astype(float)
+    dosis = np.empty_like(w)
+    prev = w[:, 0].copy()
+    for t in range(T):
+        prev = (1.0 - LAM) * w[:, t] + LAM * prev
+        dosis[:, t] = prev
+    z = rng.standard_normal((REPS, T)) * SIG
+    ruido = np.empty_like(z)
+    ruido[:, 0] = z[:, 0]
+    raiz = np.sqrt(1.0 - PHI ** 2)
+    for t in range(1, T):
+        ruido[:, t] = PHI * ruido[:, t - 1] + raiz * z[:, t]
+    return w > 0.5, MU * (1.0 + TAU * dosis) + ruido
+
+def lift(w, y, b, quema):
+    """Descarta los primeros `quema` periodos de cada bloque."""
+    if quema:
+        m = np.zeros(T, bool)
+        for k in range(quema, b):
+            m[k::b] = True
+        w, y = w[:, m], y[:, m]
+    return np.array([y[r][w[r]].mean() / y[r][~w[r]].mean() - 1.0 for r in range(len(y))])
+
+w8, y8 = tanda(8, 5008)
+print("quemar el principio de cada bloque, con bloques de 8")
+print("  %-8s %10s %12s %12s %12s %12s"
+      % ("quema", "periodos", "media", "sesgo", "error tip.", "RECM"))
+for q in (0, 1, 2, 3, 4, 5):
+    e = lift(w8, y8, 8, q)
+    print("  %-8d %10d %12.6f %12.6f %12.6f %12.6f"
+          % (q, (8 - q) * (T // 8), e.mean(), e.mean() - TAU, e.std(ddof=1),
+             np.sqrt(np.mean((e - TAU) ** 2))))
+print()
+print("tirar 5 de cada 8 periodos —el 62 % de los datos— quita el 83 % del")
+print("sesgo y sube el error tipico solo un 12 %. Lo tirado casi no llevaba")
+print("informacion: con ruido tan persistente, dos periodos seguidos son")
+print("practicamente la misma observacion")
+print()
+
+print("y el error tipico que sale de tratar los periodos como independientes")
+print("  %-8s %9s %16s %16s %10s"
+      % ("bloque", "bloques", "ET que declara", "ET de verdad", "razon"))
+for b in (1, 4, 20, 50, 120):
+    w, y = tanda(b, 5000 + b)
+    est = np.empty(REPS); dec = np.empty(REPS)
+    for r in range(REPS):
+        a, c = y[r][w[r]], y[r][~w[r]]
+        est[r] = a.mean() / c.mean() - 1.0
+        va, vc = a.var(ddof=1) / len(a), c.var(ddof=1) / len(c)
+        dec[r] = np.sqrt(va / c.mean() ** 2 + vc * a.mean() ** 2 / c.mean() ** 4)
+    print("  %-8d %9d %16.6f %16.6f %10.4f"
+          % (b, T // b, dec.mean(), est.std(ddof=1), est.std(ddof=1) / dec.mean()))
+print()
+print("el error tipico declarado no se entera de la longitud del bloque: va de")
+print("0.0049 a 0.0055 en las cinco filas, mientras el de verdad se multiplica")
+print("por cinco. Con bloques de 1 los dos coinciden; a partir de ahi se publica")
+print("un intervalo hasta 4.35 veces mas estrecho de lo que le toca, y en la")
+print("direccion a la que el arrastre obliga a moverse")
+```
+
+**Modo de falla.** El equipo elige bloques largos para matar el arrastre, cosa correcta, y sigue calculando el intervalo con los $T$ periodos, cosa que ya no vale. El resultado es un efecto casi insesgado **con un intervalo cuatro veces demasiado estrecho**, que es peor que el sesgo porque parece más fiable. La defensa cuesta poco: el error típico se calcula **sobre las medias de bloque**, que son tantas como asignaciones hubo, y nunca sobre los periodos.
+
+## 4. Medir la interferencia en vez de suponerla
+
+::: {.definicion}
+**Definición 8.11 ([diseño por saturación]{.g}).** Se aleatoriza en dos etapas: primero cada clúster recibe una **fracción objetivo** $f$ de tratados, y después se sortea dentro del clúster qué unidades la componen. La comparación entre clústeres de distinta $f$ mide el derrame; la de dentro mide lo de siempre.
+:::
+
+::: {.proposicion}
+**Proposición 8.12 (la comparación de dentro es ciega por construcción).** Con $f=0{,}25$, $0{,}50$ y $0{,}75$, la comparación de tratados contra no tratados **del mismo mercado** da **0,196965, 0,199169 y 0,194053** frente a un $\tau$ teórico de 0,20 en las tres.
+:::
+
+::: {.demostracion}
+*Demostración.* A saturación $f$ el atractivo medio vale $1+\tau f$, de modo que un tratado se lleva $\tfrac{1+\tau}{1+\tau f}$ y un no tratado $\tfrac{1}{1+\tau f}$ de lo que le tocaría: el cociente es $1+\tau$ **para cualquier $f$**. La comparación de dentro mide el mismo número aunque la interferencia cambie de 0 a total, y por eso ningún A/B, por grande que sea, puede detectarla. ∎
+:::
+
+::: {.proposicion}
+**Proposición 8.13 (la pendiente entre saturaciones es la interferencia).** El no tratado cae **−0,038013, −0,076016 y −0,108594** respecto de un mercado con nadie tratado, contra las predichas $(1+\tau f)^{\eta-1}-1$ = **−0,040623, −0,077819 y −0,112013**. El salto de $f=0$ a $f=1$ entre mercados da **0,028833** contra el 0,027726 verdadero.
+:::
+
+::: {.demostracion}
+*Demostración.* Por la cuenta anterior, el no tratado recibe $(1+\tau f)^{\eta-1}$ veces lo que recibiría sin nadie tratado: negativo mientras $\eta<1$, cero si $\eta=1$ —mercado que se expande tanto como sube el atractivo— y positivo si $\eta>1$. **La caída se mide sin saber nada del mecanismo**: basta con comparar unidades que no recibieron nada en clústeres con distinta saturación. Y con la curva medida, el extremo $f=1$ da el efecto global directamente. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# En vez de suponer que hay interferencia o que no la hay, se mide: cada
+# mercado recibe una FRACCION distinta de tratados, y se mira que le pasa
+# al que no recibe nada segun cuantos vecinos si.
+TAU, ETA, D0, NM, SL, MPS = 0.20, 0.15, 200.0, 50, 0.10, 500
+SATS = (0.0, 0.25, 0.5, 0.75, 1.0)
+
+def mercado(atr, trat, nivel, rng):
+    a = atr * np.where(trat, 1.0 + TAU, 1.0)
+    total = D0 * len(a) * nivel * (a.mean() / atr.mean()) ** ETA
+    return rng.poisson(total * a / a.sum())
+
+filas = []
+for f in SATS:
+    sin_t, con_t, medias = [], [], []
+    for m in range(MPS):
+        g = np.random.default_rng(600000 + int(1000 * f) + m)
+        atr = np.exp(0.4 * g.standard_normal(NM))
+        niv = float(np.exp(SL * g.standard_normal()))
+        w = np.zeros(NM, bool)
+        w[g.permutation(NM)[:int(round(f * NM))]] = True
+        y = mercado(atr, w, niv, g) / niv       # se quita el nivel del mercado
+        sin_t.extend(y[~w]); con_t.extend(y[w]); medias.append(y.mean())
+    filas.append((f, np.mean(sin_t) if sin_t else float("nan"),
+                  np.mean(con_t) if con_t else float("nan"), np.mean(medias)))
+
+print("500 mercados por saturacion, de 50 vendedores cada uno")
+print("  %-12s %13s %13s %15s %12s"
+      % ("saturacion", "sin tratar", "tratados", "lift dentro", "teorico"))
+for f, s, c, mm in filas:
+    hay = s == s and c == c
+    print("  %-12.2f %13.4f %13.4f %15s %12s"
+          % (f, s, c, "%.6f" % (c / s - 1.0) if hay else "—",
+             "%.6f" % TAU if hay else "—"))
+print()
+print("la comparacion de dentro del mercado da 0.20 en las tres saturaciones,")
+print("igual que el A/B de la Seccion 1. Es ciega a la interferencia por")
+print("construccion: mide tratados contra vecinos, y los vecinos se mueven")
+print()
+
+print("lo que le pasa al que NO recibe nada, segun cuantos vecinos si")
+print("  %-12s %16s %16s" % ("saturacion", "contra f = 0", "teorico"))
+base = filas[0][1]
+for f, s, c, mm in filas[:-1]:
+    print("  %-12.2f %16.6f %16.6f"
+          % (f, s / base - 1.0, (1.0 + TAU * f) ** (ETA - 1.0) - 1.0))
+print()
+print("  %-38s %12.6f" % ("efecto global, mercados f=1 vs f=0",
+                          filas[-1][3] / filas[0][3] - 1.0))
+print("  %-38s %12.6f" % ("verdad (1+tau)^eta - 1", (1.0 + TAU) ** ETA - 1.0))
+print()
+print("la pendiente de la segunda tabla ES la interferencia, y se lee sin")
+print("saber nada del mercado: el vendedor sin tratar pierde un 10.9 % cuando")
+print("tres de cada cuatro vecinos reciben el tratamiento. Con esa pendiente")
+print("medida, el salto de f=0 a f=1 da el efecto global, 0.0288 contra los")
+print("0.0277 verdaderos, y el 20 % del A/B queda explicado entero")
+```
+
+**Modo de falla.** El diseño por saturación se monta con dos brazos, 0 % y 50 %, y se concluye que «hay derrame» sin más. Con dos puntos no se distingue una caída lineal de una que se aplana, y la extrapolación a $f=1$ —que es la que decide el lanzamiento— depende entera de esa forma. Hacen falta **al menos tres saturaciones intermedias**, y conviene comprobar que la curva medida se parece a la que predice el mecanismo que se cree tener, como hace la segunda tabla de la celda.
+
+## 5. Lo que esta lección no resuelve
+
+Los tres diseños suponen que se sabe **dónde** vive la interferencia: dentro del mercado, dentro del periodo, dentro de la ciudad. Cuando la estructura es una red y no una partición —amigos de amigos, vendedores que compiten con vendedores de otra ciudad— no hay clúster que la contenga, y lo que se usa es aleatorizar sobre el grafo con diseños que aquí quedan nombrados y no hechos.
+
+Tampoco se ha tratado el caso de **una sola unidad tratada**: una ciudad donde se cambia el precio, un país donde entra una ley. Ahí no hay clústeres que comparar y el remedio es construir el control, que es la Lección 15.
+
+Y todo el capítulo mide el efecto **medio**. El diseño por saturación de la Sección 4 da la curva de derrame promedio; qué unidades pierden y cuáles ganan dentro de un mercado es otra pregunta, y la contestan los métodos de efecto heterogéneo de las Lecciones 16 a 19.
+
+## Ejercicios
+
+### Ejercicio 1, Cuántos clústeres hacen falta
+
+Un experimento necesitaría 2000 unidades si fueran independientes. Con clústeres de 50 unidades y correlación intraclase $\rho$, calcular el efecto de diseño, las unidades necesarias y cuántos clústeres son.
+
+```{pyodide}
+#| exercise: ex_clusteres
+import numpy as np
+
+rhos = np.array([0.01, 0.05, 0.10, 0.20])
+m, n_indep = 50.0, 2000.0
+
+efecto_diseno = ______
+n = ______
+clusteres = ______
+
+print([round(float(z), 2) for z in efecto_diseno])
+print([int(z) for z in n], [int(z) for z in clusteres])
+```
+
+::: {.hint exercise="ex_clusteres"}
+El efecto de diseño es $1+(m-1)\rho$ y multiplica las unidades necesarias. Los clústeres son las unidades entre $m$, redondeando hacia arriba.
+:::
+
+::: {.solution exercise="ex_clusteres"}
+```{pyodide}
+import numpy as np
+
+rhos = np.array([0.01, 0.05, 0.10, 0.20])
+m, n_indep = 50.0, 2000.0
+
+efecto_diseno = 1.0 + (m - 1.0) * rhos
+n = n_indep * efecto_diseno
+clusteres = np.ceil(n / m)
+
+print([round(float(z), 2) for z in efecto_diseno])
+print([int(z) for z in n], [int(z) for z in clusteres])
+```
+
+Con una correlación intraclase de **0,01** —que suena despreciable— el experimento ya necesita **un 49 % más de gente**, porque lo que multiplica a $\rho$ es $m-1$ y no 1. Con 0,20 necesita **diez veces más**: 21 600 unidades en 432 clústeres. Ésa es la cuenta que conviene hacer antes de prometer un experimento por ciudad.
+:::
+
+```{pyodide}
+#| exercise: ex_clusteres
+#| check: true
+if ([round(float(z), 2) for z in efecto_diseno] == [1.49, 3.45, 5.9, 10.8]
+        and [int(z) for z in clusteres] == [60, 138, 236, 432]):
+    feedback = {"correct": True, "message": "Correcto: con rho = 0,01 ya hacen falta 60 clústeres."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [1.49, 3.45, 5.9, 10.8] y [60, 138, 236, 432]."}
+feedback
+```
+
+### Ejercicio 2, La curva de derrame
+
+Con la Proposición 8.13, calcular cuánto pierde una unidad **sin tratar** en un clúster con fracción tratada $f$, para $\tau=0{,}20$ y $\eta=0{,}15$.
+
+```{pyodide}
+#| exercise: ex_derrame
+import numpy as np
+
+tau, eta = 0.20, 0.15
+f = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+
+# el atractivo medio del cluster sube 1 + tau*f, y el que no recibe nada
+# se lleva una porcion menor de una tarta que crece con exponente eta
+sin_tratar = ______
+global_ = ______
+
+print([round(float(z), 6) for z in sin_tratar])
+print(round(float(global_), 6))
+```
+
+::: {.hint exercise="ex_derrame"}
+La porción es $1/(1+\tau f)$ y la tarta, $(1+\tau f)^{\eta}$; el producto es $(1+\tau f)^{\eta-1}$. El efecto global es el de $f=1$ para quien **sí** recibe, o sea $(1+\tau)^\eta-1$.
+:::
+
+::: {.solution exercise="ex_derrame"}
+```{pyodide}
+import numpy as np
+
+tau, eta = 0.20, 0.15
+f = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+
+sin_tratar = (1.0 + tau * f) ** (eta - 1.0) - 1.0
+global_ = (1.0 + tau) ** eta - 1.0
+
+print([round(float(z), 6) for z in sin_tratar])
+print(round(float(global_), 6))
+```
+
+El no tratado pierde hasta un **14,36 %** cuando todos sus vecinos reciben el tratamiento, y el efecto global vale **2,77 %**. Las dos cifras juntas explican el 20 % del A/B: $1{,}0277/0{,}8564-1=0{,}20$. **El A/B mide la suma de lo que uno gana y lo que el otro pierde**, y solo la primera parte sobrevive al lanzamiento.
+:::
+
+```{pyodide}
+#| exercise: ex_derrame
+#| check: true
+if ([round(float(z), 6) for z in sin_tratar] == [0.0, -0.040623, -0.077819, -0.112013, -0.143562]
+        and round(float(global_), 6) == 0.027726):
+    feedback = {"correct": True, "message": "Correcto: el no tratado pierde un 14,36 % con todos los vecinos tratados."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [0.0, -0.040623, -0.077819, -0.112013, -0.143562] y 0.027726."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F5-retos.ipynb`, sección **Causal 8**:
+
+1. Montar el mercado de la Sección 1 y medir el A/B y el efecto global para tres valores de $\eta$. Anotar con qué $\eta$ dejan de diferir.
+2. Aleatorizar por clúster sobre ese mismo mercado y medir sesgo, error típico y RECM frente a aleatorizar unidades, para dos valores de la correlación intraclase.
+3. Montar un switchback con arrastre y ruido con memoria, y barrer la longitud del bloque hasta encontrar el mínimo de la RECM. Guardar en `50-Errores/` la longitud de bloque a partir de la cual el error típico ingenuo se queda a menos de la mitad del verdadero.
+
+## Del libro
+
+Esta lección **no sigue ningún libro**. Los cuatro resultados que la sostienen —que con recurso fijo el A/B mide exactamente $\tau$ y el lanzamiento $(1+\tau)^\eta-1$; que el efecto de diseño vale $1+(m-1)\rho$; que el sesgo del switchback es $\tau(1-S)/(1+\tau S/2)$ con $S=\lambda(1-\lambda^b)/(b(1-\lambda))$; y que la unidad sin tratar recibe $(1+\tau f)^{\eta-1}$— se demuestran aquí y se comprueban contra la simulación.
+
+Los puntos de contacto con el sitio son **Causal 01**, que introduce los resultados potenciales con el supuesto que esta página rompe, y **Causal 05**, de donde sale la cuenta del tamaño necesario. Lo que esta lección añade es la separación entre **el efecto que un experimento estima sin sesgo** y **el efecto por el que se le pregunta**, que en presencia de interferencia dejan de ser el mismo.
+
+## Para el Cerebro
+
+- Con interferencia, los resultados potenciales pasan de dos por unidad a $2^N$.
+- En un mercado de recurso casi fijo, el A/B mide **0,200178** y el lanzamiento **0,027593**: factor **7,25**.
+- El A/B es insesgado **para el contraste que aleatorizó**; el problema es cuál aleatorizó.
+- Aleatorizar clústeres deja el sesgo en **−0,000038** desde 0,169092.
+- El precio es el efecto de diseño $1+(m-1)\rho$: **2,81, 9,21 y 18,65** para $\rho$ de 0,037, 0,17 y 0,36.
+- Y en clústeres necesarios: **411, 1849 y 4771** para ver el mismo efecto.
+- Con $\rho=0{,}01$ y grupos de 50, el experimento ya necesita **un 49 % más de gente**.
+- Switchback: el sesgo vale $\tau(1-S)/(1+\tau S/2)$ con $S=\lambda(1-\lambda^{b})/(b(1-\lambda))$.
+- La RECM tiene **mínimo interior**: 0,124367 → **0,021878** (b=30) → 0,023976 (b=120).
+- Quemar 5 de cada 8 periodos quita el **83 %** del sesgo por un **12 %** de error típico.
+- El error típico ingenuo del switchback es hasta **4,35 veces** demasiado estrecho.
+- El *lift* de dentro del clúster vale $\tau$ **a cualquier saturación**: es ciego por construcción.
+- La unidad sin tratar recibe $(1+\tau f)^{\eta-1}$: **−10,86 %** con tres de cada cuatro vecinos tratados.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico. Que en el mercado de la Sección 1 el efecto global medido vale 0,027593 contra el teórico 0,027726 y el A/B 0,200178 contra $\tau=0{,}20$, con errores típicos 0,002176 y 0,023303 y un cociente de 7,2546; que aleatorizar mercados deja el sesgo en −0,000038 donde aleatorizar vendedores lo deja en 0,169092, con errores típicos 0,031709 y 0,022552 y RECM 0,031669 y 0,170585; que para $\sigma$ de nivel 0,05, 0,10, 0,20 y 0,35 la correlación intraclase medida vale −0,0030, 0,0369, 0,1675 y 0,3602, el efecto de diseño 0,85, 2,81, 9,21 y 18,65, el sesgo por unidad 0,168970, 0,169092, 0,168760 y 0,168821, el error típico por mercado 0,016390, 0,031709, 0,067291 y 0,108080 y los mercados necesarios 110, 411, 1849 y 4771; que el switchback con $\lambda=0{,}6$ y $\varphi=0{,}9$ da medias 0,075728 a 0,198070 y RECM 0,124367, 0,100546, 0,070401, 0,041699, 0,031710, 0,024431, 0,021878, 0,022754, 0,022528 y 0,023976 para bloques de 1 a 120, con mínimo en 30; que la fórmula cerrada predice 0,075472, 0,160177 y 0,197253 para el sesgo y 0,004899, 0,012184 y 0,020494 para el error típico en $b=1,8,120$; que quemar de 0 a 5 periodos de cada bloque de 8 lleva el sesgo de 0,039672 a 0,006920, el error típico de 0,012861 a 0,014416 y la RECM de 0,041699 a 0,015975; que el error típico declarado va de 0,004923 a 0,005498 mientras el real va de 0,004865 a 0,023929, con razones 0,9884, 1,8168, 3,1568, 3,8855 y 4,3522; y que en el diseño por saturación el *lift* de dentro vale 0,196965, 0,199169 y 0,194053 contra 0,20 teórico, la caída del no tratado −0,038013, −0,076016 y −0,108594 contra −0,040623, −0,077819 y −0,112013 predichos, y el salto entre mercados 0,028833 contra 0,027726.
+
+**Lo que se usa de otras lecciones sin repetir.** Los resultados potenciales y el supuesto de no interferencia son de Causal 01. La fórmula del tamaño necesario y el factor 2,801585 son de Causal 05. El ruido AR(1) y su varianza de media móvil son de Series de tiempo 2.
+
+**Lo que se enuncia sin demostrar.** El modelo de reparto proporcional al atractivo se **postula**, no se deriva de un modelo de elección; lo que la lección demuestra es qué implica, no que sea el reparto correcto de ningún mercado real. La aproximación de la varianza del switchback trata los bloques como independientes, y la propia lección mide dónde falla: predice 0,020494 donde se observan 0,023929 con veinte bloques. Y el estimador de momentos de la correlación intraclase se usa sin estudiar su distribución, que es por lo que sale negativo en la primera fila.
+
+**Lo que es mío, no del libro.** Plantear la interferencia como **un problema de estimando y no de error típico**, con un mercado donde el A/B es exactamente insesgado para lo que aleatorizó y aun así se pasa por siete. Poner el sesgo y el precio de quitarlo en la misma tabla, que es lo que convierte «aleatoriza por clúster» en una decisión con números. La forma cerrada del sesgo del switchback con bloques sorteados de forma independiente, con su denominador de cociente, verificada contra la simulación en todo el rango. La medición de que **quemar sale más barato que alargar**, que sale de que el ruido persistente hace que los periodos contiguos casi no aporten información nueva. Y el diseño por saturación presentado como lo que es: la única de las cuatro herramientas que **mide** la interferencia en lugar de suponerla, con la demostración de que la comparación de dentro del clúster vale $\tau$ a cualquier saturación y por tanto no puede verla.
+:::

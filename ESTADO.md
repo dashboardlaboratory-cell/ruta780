@@ -4362,6 +4362,92 @@ cosa» después de borrarla.
 
 El sitio queda en **146 lecciones, 817 celdas, 3327 afirmaciones**. Módulo causal: **9 de 22**.
 
+### 3.80 Causal 08: el estimando, y no el error típico (24-09-2026)
+
+**Causal 08, Interferencia: switchback y experimentos por clúster (L3, sin
+libro).** La tercera pieza del encargo de INCAE y el cierre del bloque de diseño
+experimental. El módulo causal queda en **10 de 22**.
+
+**El planteamiento que ordena la lección.** La interferencia suele contarse como
+un problema de errores típicos mal calculados. La lección la plantea como lo que
+es: **un problema de estimando**. En un mercado de 2000 vendedores donde el
+tratamiento sube el atractivo un 20 % y la demanda total se expande con exponente
+0,15, el A/B mide **0,200178** —y es insesgado, y su intervalo está bien— y el
+lanzamiento a todos vale **0,027593**. Un factor de **7,25** sin que nada del
+análisis esté mal. La demostración es de tres líneas: con la mitad tratada el
+denominador del reparto sube $1+\tau/2$, el tratado queda en
+$(1+\tau)/(1+\tau/2)$ y el control en $1/(1+\tau/2)$, así que **el cociente vale
+exactamente $1+\tau$ y la expansión se cancela**; con todos tratados el reparto
+no cambia y solo queda $(1+\tau)^\eta$.
+
+**El clúster, con su precio en la misma tabla.** Aleatorizar mercados enteros
+deja el sesgo en **−0,000038** desde 0,169092. El coste va en la columna de al
+lado: el efecto de diseño $1+(m-1)\rho$ vale **2,81, 9,21 y 18,65** para $\rho$
+de 0,037, 0,17 y 0,36, y los mercados necesarios pasan de **411 a 1849 y 4771**.
+Lo que la tabla enseña de un vistazo es que **el sesgo no depende de $\rho$** —se
+mueve entre 0,1688 y 0,1691 en las cuatro filas— y el precio de quitarlo sí. Con
+los 40 mercados de la primera tirada, el efecto verdadero queda a **0,87 errores
+típicos del cero**: el diseño insesgado no detecta nada.
+
+Un detalle que salió del propio barrido y se quedó en la lección: con mercados
+casi idénticos el **estimador de momentos de $\rho$ sale negativo** —−0,0030—,
+porque la varianza entre mercados no se distingue de la que produce el muestreo
+dentro. Ahí la cota deja de significar nada y lo que manda es el error típico
+medido. Se explica en la demostración en vez de esconder la fila.
+
+**El switchback, con forma cerrada.** El sesgo del arrastre resulta ser
+$$\tau\,\frac{1-S}{1+\tau S/2},\qquad S=\frac{\lambda(1-\lambda^{b})}{b(1-\lambda)},$$
+y la derivación tiene dos piezas que conviene no perder: como los bloques se
+sortean de forma **independiente**, $\mathbb{E}[d_\text{prev}]$ no depende del
+tratamiento del bloque y se cancela al restar; y el denominador aparece porque el
+estimador es un **cociente** de medias. Predice 0,075472, 0,160177 y 0,197253
+donde la simulación da 0,075728, 0,160328 y 0,198070.
+
+La RECM tiene **mínimo interior**: 0,124367 con bloques de 1, **0,021878** con 30
+y 0,023976 con 120, y el fondo es plano entre 30 y 80. La aproximación de la
+varianza se queda corta con bloques largos —0,020494 predicho contra 0,023929
+medido— porque trata los bloques como independientes y con veinte bloques el
+ruido todavía correlaciona de uno al siguiente; la lección lo dice y lo mide.
+
+**El hallazgo que no esperaba.** Quemar el principio de cada bloque sale **más
+barato que alargarlo**. Con bloques de 8, tirar los 5 primeros periodos —el
+62,5 % de los datos— baja el sesgo un **82,6 %** y sube el error típico un
+**12,1 %**, dejando la RECM en 0,015975, por debajo del mejor bloque sin quemar.
+La razón es el ruido: con $\varphi=0{,}9$ **dos periodos seguidos son casi la
+misma observación**, así que tirar tres cuartos de cada bloque no tira tres
+cuartos de la información.
+
+**Y el error típico esconde la pelea.** El calculado tratando los periodos como
+independientes va de **0,004923 a 0,005498** para bloques de 1 a 120, mientras el
+real pasa de 0,004865 a **0,023929**: hasta **4,35 veces** demasiado estrecho.
+Con bloques de 1 los dos coinciden (razón 0,9884) y empeora justo en la dirección
+a la que el arrastre obliga a moverse.
+
+**La cuarta herramienta es la única que mide.** En un diseño por saturación, la
+comparación de tratados contra no tratados **del mismo mercado** da 0,196965,
+0,199169 y 0,194053 con $f$ = 0,25, 0,50 y 0,75, contra un $\tau$ teórico de 0,20
+en las tres. Y se demuestra que tiene que ser así: a saturación $f$ el atractivo
+medio vale $1+\tau f$, el tratado se lleva $(1+\tau)/(1+\tau f)$ y el no tratado
+$1/(1+\tau f)$, de modo que **el cociente es $1+\tau$ para cualquier $f$**.
+Ningún A/B, por grande que sea, puede ver la interferencia. Lo que sí la ve es la
+caída del que no recibe nada: **−0,038013, −0,076016 y −0,108594** contra las
+predichas $(1+\tau f)^{\eta-1}-1$.
+
+**Los dos visuales resuelven las mismas fórmulas que las celdas**, y se
+comprobaron contra numpy antes de publicar: coinciden en los **seis** decimales
+en los dos casos, porque aquí no hay integrales ni colas lejanas, solo potencias
+y una suma geométrica finita.
+
+**Lo que costó.** Tres cosas, y ninguna nueva. El `formato.py` cazó un «no es X,
+es Y» en un modo de falla. `simbolos.py` delató seis símbolos sin declarar. Y la
+primera versión del mercado por clúster **salía con menos error típico que el
+A/B**, lo cual era señal de que al modelo le faltaba precisamente lo que hace
+caros a los clústeres: que difieran entre sí. Añadir un nivel de demanda por
+mercado arregló el modelo y produjo la tabla del efecto de diseño, que es de lo
+mejor de la lección.
+
+El sitio queda en **147 lecciones, 824 celdas, 3351 afirmaciones**, y el bloque de diseño experimental —05, 07 y 08— cerrado.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
