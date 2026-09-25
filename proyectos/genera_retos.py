@@ -18,7 +18,8 @@ import json, pathlib, re, sys
 RAIZ = pathlib.Path(__file__).resolve().parent.parent
 MOD = {"estadistica": "Estadística", "matematica": "Matemática",
        "python": "Python", "ml": "ML", "fundamentos": "Fundamentos",
-       "series": "Series", "causal": "Causal"}
+       "series": "Series", "causal": "Causal",
+       "atributos": "Atributos"}
 
 def secciones_existentes():
     hay = set()
@@ -27,7 +28,7 @@ def secciones_existentes():
         for c in d["cells"]:
             if c["cell_type"] != "markdown": continue
             for l in c["source"]:
-                m = re.match(r"##\s+(Matemática|Estadística|Python|ML|Series|Fundamentos|Causal)\s+(\d+)", l.strip())
+                m = re.match(r"##\s+(Matemática|Estadística|Python|ML|Series|Fundamentos|Causal|Atributos)\s+(\d+)", l.strip())
                 if m: hay.add((m.group(1), int(m.group(2))))
                 m = re.match(r"##\s+Lección\s+(\d+)", l.strip())
                 if m: hay.add(("Python", int(m.group(1))))

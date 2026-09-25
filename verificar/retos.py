@@ -40,6 +40,7 @@ MODULOS = {
     "ML": ("ML",),
     "Series": ("Series",),
     "Causal": ("Causal",),
+    "Atributos": ("Atributos",),
 }
 
 REF = re.compile(
