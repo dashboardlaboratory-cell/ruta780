@@ -4226,6 +4226,70 @@ se tira.
 el CI la rechazó. La causa está en el §5: el runner es un tercer entorno.
 
 
+### 3.78 Causal 05, y la portada reducida a un título (24-09-2026)
+
+**Causal 05, Potencia, MDE y cuándo la muestra no alcanza (L3, Facure 3).** La
+lección que faltaba antes de cualquier experimento: qué tamaño hace falta, qué
+significa «no significativo» y por qué un hallazgo pequeño mide de más.
+
+**Las cuatro cantidades están atadas por una sola fórmula**, y la lección la
+demuestra en lugar de citarla: el MDE vale $(z_{1-\alpha/2}+z_{1-\beta})\,\sigma
+\sqrt{4/n}$. Va como $1/\sqrt{n}$ —5,603170 con 100 unidades y 0,350198 con
+25 600—, así que **detectar la mitad del efecto exige cuatro veces más muestra**.
+La curva de potencia se comprueba contra sus dos puntos conocidos: con 800
+unidades la tasa de rechazo sale **0,0437** con efecto cero y **0,8045** puesto
+el efecto verdadero exactamente en el MDE.
+
+**Qué es «no significativo».** Con un efecto verdadero igual a la mitad del MDE,
+el **69,45 %** de los experimentos no rechaza; entre esos, el efecto medio
+estimado vale 0,642203 y el **88,31 %** tiene el signo correcto. El resultado
+describe la muestra, no el mundo.
+
+**La maldición del ganador, medida.** El estimador es insesgado —0,9880, 0,9874,
+1,0013 y 0,9910 sobre los cuatro tamaños— y **lo publicado no lo es**: 3,1520,
+1,8301, 1,1197 y 0,9910. Con potencia 0,1085 el efecto significativo vale
+**3,15 veces** el verdadero. Y con potencia 0,0820 el **8,90 %** de los
+hallazgos significativos tiene además **el signo cambiado**, mientras que con
+potencia 0,3017 no lo tiene ninguno de los 1810. Éste es el mecanismo por el que
+se acumula una carpeta de experimentos ganadores que no se reproducen al
+escalar, y la defensa es registrar la potencia junto al resultado.
+
+**Bajar el MDE sin más muestra.** La varianza entra lineal y el tamaño con raíz,
+así que **partir $\sigma$ por dos equivale a cuadruplicar la muestra**. El ajuste
+por una medida previa quita exactamente $\rho^2$ de la varianza: medidas
+9,9832, 9,5192, 7,9943 y 4,3592 contra las predichas 10,0000, 9,5394, 8,0000 y
+4,3589, y con $\rho=0{,}9$ la potencia sube de **0,5527 a 0,9980** sin una unidad
+más. El modo de falla es el de la Lección 02: la variable de ajuste tiene que ser
+**anterior** al tratamiento, y la tentación es fuerte porque las posteriores
+correlacionan más y por tanto reducen más la varianza aparente.
+
+**La portada, reducida a un título.** Fuera los dos párrafos explicativos, el
+sobretítulo y la fila de cifras —Horas 860 · Semanas 86 · Lecciones 174 · Al día
+2 h—, que además envejecían con cada lección publicada. Queda el título, la
+línea capilar y el botón. Misma poda en el pie del sitio: `Ruta 780 · 860 h · 86
+semanas` pasa a `Ruta 780`. El hueco se llena adelantando **Los módulos**, que
+es lo que se viene a buscar.
+
+Dos detalles del CSS que conviene no deshacer: la altura se fija en **`62dvh` y
+no `vh`**, porque Safari de iOS cuenta la barra de direcciones dentro de `vh` y
+el título salta al hacer scroll; y las tres animaciones de entrada
+—`r780-asentar` sobre título y botón, `r780-extender` sobre la línea— tocan solo
+`transform`, `opacity` y `filter`, y se apagan enteras bajo
+`prefers-reduced-motion`.
+
+**`verificacion.qmd` eliminada.** La página listaba los siete gates y sus
+recuentos; el sitio ya no la enlaza. Lo que contaba vive en este documento, que
+es donde se consulta de verdad, y una página que hay que actualizar a mano
+después de cada tanda es una que acaba mintiendo.
+
+**Lo que costó.** Un solo fallo, y del tipo de siempre: una afirmación de
+`salidas.py` copiada con dos espacios de más dentro de la fila de una tabla. La
+cadena literal de una salida tabular se copia de la ejecución, nunca se
+teclea.
+
+El sitio queda en **145 lecciones, 810 celdas, 3305 afirmaciones**. Módulo causal: **8 de 22** publicadas —01, 02, 05,
+16, 17, 18, 19 y 21—, con los huecos 03, 04, 06 a 15, 20 y 22 por delante.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

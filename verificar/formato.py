@@ -132,6 +132,7 @@ MIGRADAS = {
     "ml/41-convolucion-y-vision.qmd",
     "causal/01-resultados-potenciales.qmd",
     "causal/02-dags-y-puerta-trasera.qmd",
+    "causal/05-potencia-y-mde.qmd",
     "causal/16-metalearners.qmd",
     "causal/17-double-machine-learning.qmd",
     "causal/18-r-learner-y-r-score.qmd",

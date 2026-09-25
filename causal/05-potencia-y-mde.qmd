@@ -1,0 +1,848 @@
+---
+title: "Potencia, MDE y cuándo la muestra no alcanza"
+subtitle: "Inferencia causal · Lección 05"
+nivel: L3
+modulo: causal
+fase: F5
+prereqs: [estadistica/10-pruebas-de-hipotesis, causal/01-resultados-potenciales, estadistica/09-intervalos-de-confianza]
+siguientes: []
+libro: "Facure, cap. 3 Stats Review: The Most Dangerous Equation"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="causal/05-potencia-y-mde"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F5]{.item}
+[**Libro** Facure 3]{.item}
+[**Prereqs** [Pruebas de hipótesis](../estadistica/10-pruebas-de-hipotesis.qmd) · [Resultados potenciales](01-resultados-potenciales.qmd) · [Intervalos de confianza](../estadistica/09-intervalos-de-confianza.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Derivar la fórmula del efecto mínimo detectable** y comprobarla contando rechazos: **0,8060, 0,7997 y 0,7963** frente a un objetivo de 0,80.
+2. Explicar por qué el MDE va como $1/\sqrt{n}$: detectar la mitad del efecto exige **cuatro veces** más muestra.
+3. **Dibujar la curva de potencia** y verificar que pasa por $\alpha$ en cero y por la potencia en el MDE.
+4. Explicar por qué «no significativo» y «no hay efecto» son cosas distintas: con la mitad del MDE, la prueba **no rechaza en el 69 %** de los experimentos aunque el efecto exista.
+5. **Medir la maldición del ganador**: con potencia 0,11 el efecto publicado vale **3,15 veces** el verdadero.
+6. **Medir los errores de signo**: con potencia 0,08, el **8,9 %** de los hallazgos significativos apunta al revés.
+7. **Bajar el MDE sin más muestra**: ajustando por una medida previa que correlacione 0,9, la potencia sube de **0,5527 a 0,9980** y el experimento necesita 1900 unidades en lugar de 10 000.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Estadística 10**: la prueba de hipótesis y el nivel $\alpha$, que aquí es una de las cuatro cantidades.
+- **Causal 01**: que aleatorizar quita el sesgo y deja el ruido; esto trata del ruido.
+- **Estadística 9**: el error típico de una diferencia de medias.
+- **Estadística 17**: el p-hacking, que es el mismo mecanismo visto desde otro lado.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Causal 06**: las pruebas secuenciales, que cambian el nivel al mirar varias veces.
+- **Causal 07**: el diseño multi-brazo, donde el reparto de la muestra decide la potencia de cada comparación.
+- **Causal 21**: la evaluación de políticas, cuya cuenta final es ésta misma.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $\alpha$ | alfa | La probabilidad de rechazar cuando no hay efecto |
+| $1-\beta$ | uno menos beta | La **potencia**: la probabilidad de rechazar cuando sí lo hay |
+| MDE | eme de e | El efecto mínimo detectable con esa potencia y ese nivel |
+| $\sigma$ | sigma | La desviación típica del resultado |
+| $z_q$ | zeta sub q | El cuantil $q$ de la normal |
+| $\rho$ | ro | La correlación entre el resultado y una medida previa |
+:::
+
+## 1. Cuatro cantidades atadas entre sí
+
+::: {.definicion}
+**Definición 5.1 ([potencia estadística]{.g} y [efecto mínimo detectable]{.g}).** La **potencia** es la probabilidad de rechazar la hipótesis nula cuando el efecto vale $\delta$. El **efecto mínimo detectable** es el $\delta$ para el que esa probabilidad alcanza un valor fijado, normalmente 0,80.
+:::
+
+::: {.proposicion}
+**Proposición 5.2 (la fórmula).** Con dos grupos de $n/2$ unidades y desviación $\sigma$,
+$$\text{MDE}=(z_{1-\alpha/2}+z_{1-\beta})\,\sigma\sqrt{\tfrac{2}{n/2}}.$$
+Con $\alpha=0{,}05$ y potencia 0,80 el factor vale **2,801585**.
+:::
+
+::: {.demostracion}
+*Demostración.* La diferencia de medias tiene error típico $s=\sigma\sqrt{2/(n/2)}$. Se rechaza cuando $|\hat\delta|>z_{1-\alpha/2}s$; bajo un efecto verdadero $\delta$, $\hat\delta/s$ se distribuye como una normal centrada en $\delta/s$, y la probabilidad de superar el umbral alcanza $1-\beta$ cuando $\delta/s=z_{1-\alpha/2}+z_{1-\beta}$. La celda calcula los dos cuantiles **por bisección sobre la propia integral**, sin librería, y comprueba la fórmula simulando 4000 experimentos para tres tamaños: poniendo como efecto verdadero exactamente el MDE, la tasa de rechazo sale **0,8060, 0,7997 y 0,7963**. ∎
+:::
+
+::: {.proposicion}
+**Proposición 5.3 (el MDE va como $1/\sqrt{n}$).** Cuadruplicar la muestra lo divide por dos: con $\sigma=10$, va de **5,603170** con 100 unidades a **0,350198** con 25 600.
+:::
+
+::: {.demostracion}
+*Demostración.* $\sqrt{2/(n/2)}=2/\sqrt{n}$, de modo que el MDE es proporcional a $n^{-1/2}$. La celda tabula cinco tamaños. **Para detectar la mitad del efecto hace falta cuatro veces más gente**, y ésa es la relación que hay que tener en la cabeza antes de discutir un presupuesto. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# Cuatro cantidades atadas entre si: el nivel, la potencia, el efecto
+# minimo detectable y el tamaño. Fijadas tres, la cuarta queda determinada.
+def z(p):
+    """El cuantil de la normal, por biseccion sobre su propia integral."""
+    lo, hi = -10.0, 10.0
+    for _ in range(200):
+        me = 0.5 * (lo + hi)
+        # la acumulada, por la funcion error escrita con una serie
+        x = me / np.sqrt(2.0)
+        s, t, k = x, x, 0
+        while abs(t) > 1e-16 and k < 200:
+            k += 1
+            t = t * (-x * x) / k
+            s += t / (2 * k + 1)
+        F = 0.5 * (1 + 2.0 / np.sqrt(np.pi) * s)
+        if F < p:
+            lo = me
+        else:
+            hi = me
+    return 0.5 * (lo + hi)
+
+ALFA, POTENCIA = 0.05, 0.80
+za, zb = z(1 - ALFA / 2), z(POTENCIA)
+print("los dos cuantiles que aparecen en la formula")
+print("  z de 1 - alfa/2, con alfa = %.2f : %.6f" % (ALFA, za))
+print("  z de la potencia, %.2f           : %.6f" % (POTENCIA, zb))
+print("  suma                             : %.6f" % (za + zb))
+print()
+
+def mde(n, sigma, p=0.5):
+    """El efecto mas pequeño que se detecta con esa potencia y ese nivel."""
+    return (za + zb) * sigma * np.sqrt(1.0 / (n * p) + 1.0 / (n * (1 - p)))
+
+SIGMA = 10.0
+print("el efecto minimo detectable, con sigma = %.0f y mitad y mitad" % SIGMA)
+print("  %-14s %16s %20s" % ("unidades", "MDE", "MDE / sigma"))
+for n in (100, 400, 1600, 6400, 25600):
+    print("  %-14d %16.6f %20.6f" % (n, mde(n, SIGMA), mde(n, SIGMA) / SIGMA))
+print()
+print("cuadruplicar la muestra divide el MDE por dos: va como 1/raiz(n).")
+print("Para detectar la mitad del efecto hace falta CUATRO veces mas gente")
+print()
+
+# --- la comprobacion: simular y contar cuantas veces se rechaza ---
+def tasa_rechazo(n, efecto, sigma, reps, semilla):
+    rng = np.random.default_rng(semilla)
+    k = 0
+    for _ in range(reps):
+        T = np.zeros(n, dtype=int); T[: n // 2] = 1
+        Y = efecto * T + sigma * rng.standard_normal(n)
+        a, b = Y[T == 1], Y[T == 0]
+        d = float(np.mean(a) - np.mean(b))
+        se = float(np.sqrt(np.var(a, ddof=1) / len(a) + np.var(b, ddof=1) / len(b)))
+        if abs(d / se) > za:
+            k += 1
+    return k / reps
+
+print("la formula, comprobada contando rechazos en 4000 experimentos")
+print("  %-10s %14s %18s %14s" % ("unidades", "MDE segun formula", "tasa de rechazo", "objetivo"))
+for n in (200, 800, 3200):
+    m = mde(n, SIGMA)
+    print("  %-10d %14.6f %18.4f %14.2f"
+          % (n, m, tasa_rechazo(n, m, SIGMA, 4000, 500 + n), POTENCIA))
+print()
+print("poniendo como efecto verdadero exactamente el MDE, la prueba lo")
+print("detecta en el 80 % de los experimentos, que es lo que la formula")
+print("promete: esa tasa es la definicion misma de la potencia")
+print()
+
+print("y con el efecto en cero, la tasa de rechazo es el nivel")
+print("  %-10s %18s %14s" % ("unidades", "tasa de rechazo", "alfa"))
+for n in (200, 800, 3200):
+    print("  %-10d %18.4f %14.2f" % (n, tasa_rechazo(n, 0.0, SIGMA, 4000, 900 + n), ALFA))
+print()
+print("las dos columnas son las dos formas de equivocarse: rechazar cuando")
+print("no hay efecto, que se fija en alfa, y no rechazar cuando lo hay,")
+print("que es 1 menos la potencia")
+```
+
+## 2. La curva de potencia, y qué significa «no significativo»
+
+::: {.proposicion}
+**Proposición 5.4 (la curva pasa por dos puntos conocidos).** Con 800 unidades, la tasa de rechazo vale **0,0437** con efecto cero y **0,8045** en el MDE. Entre medias sube deprisa: con la mitad del MDE, **0,2915**.
+:::
+
+::: {.demostracion}
+*Demostración.* La tasa de rechazo es $\Phi(\delta/s-z_{1-\alpha/2})+\Phi(-\delta/s-z_{1-\alpha/2})$, que en $\delta=0$ vale $\alpha$ y en el MDE vale $1-\beta$ por construcción. La celda simula 6000 experimentos para siete efectos. ∎
+:::
+
+::: {.proposicion}
+**Proposición 5.5 («no significativo» describe la muestra, no el mundo).** Con un efecto verdadero igual a la mitad del MDE, el **69,45 %** de los experimentos no rechaza. Entre ellos, el efecto medio estimado vale 0,642203 y el **88,31 %** tiene el signo correcto.
+:::
+
+::: {.demostracion}
+*Demostración.* La celda lo mide. Dos de cada tres experimentos no rechazan **aunque el efecto exista**, y la mayoría de ellos apunta en la dirección correcta: la información está ahí, solo que no cruza el umbral. **No rechazar significa que con esta muestra el efecto no se distingue del cero**, y eso depende tanto del efecto como del tamaño. ∎
+:::
+
+::: {.proposicion}
+**Proposición 5.6 (el orden de magnitud que hay que aceptar antes).** Un efecto de 0,5 sobre $\sigma=10$ se detecta el **79,77 %** de las veces con 12 800 unidades y menos del **29,48 %** con 3200.
+:::
+
+::: {.demostracion}
+*Demostración.* La celda mide la tasa de rechazo para cuatro tamaños con el mismo efecto. La conversación sobre si un experimento es viable se resuelve con esta tabla, y se resuelve **antes** de lanzarlo: después el tamaño ya no se puede cambiar. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# La curva de potencia: para un tamaño fijo, con que frecuencia se
+# detecta cada efecto. Se simula en bloque, no de uno en uno.
+ZA = 1.959964          # el cuantil de 1 - alfa/2 con alfa = 0.05
+ZB = 0.841621          # el de la potencia 0.80
+SIGMA, N = 10.0, 800
+MDE = (ZA + ZB) * SIGMA * np.sqrt(2.0 / (N / 2))
+
+def experimentos(n, efecto, sigma, reps, semilla):
+    """Devuelve el efecto estimado y su error tipico en cada repeticion."""
+    rng = np.random.default_rng(semilla)
+    m = n // 2
+    a = efecto + sigma * rng.standard_normal((reps, m))
+    b = sigma * rng.standard_normal((reps, m))
+    d = a.mean(1) - b.mean(1)
+    se = np.sqrt(a.var(1, ddof=1) / m + b.var(1, ddof=1) / m)
+    return d, se
+
+print("con %d unidades y sigma = %.0f, el MDE vale %.6f" % (N, SIGMA, MDE))
+print()
+print("la curva de potencia")
+print("  %-16s %16s %16s" % ("efecto verdadero", "en MDE", "tasa de rechazo"))
+for f in (0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0):
+    d, se = experimentos(N, f * MDE, SIGMA, 6000, 700 + int(100 * f))
+    print("  %-16.6f %16.2f %16.4f" % (f * MDE, f, float(np.mean(np.abs(d / se) > ZA))))
+print()
+print("en cero la curva pasa por el nivel, 0.05; en el MDE, por la")
+print("potencia, 0.80. Entre medias sube deprisa: con la mitad del MDE")
+print("la prueba detecta el efecto una de cada tres veces")
+print()
+
+print("y lo que un experimento NO dice cuando no rechaza")
+d, se = experimentos(N, 0.5 * MDE, SIGMA, 6000, 4242)
+no = np.abs(d / se) <= ZA
+print("  efecto verdadero                      : %.6f" % (0.5 * MDE))
+print("  experimentos que no rechazan          : %.4f" % float(np.mean(no)))
+print("  efecto medio estimado en esos         : %.6f" % float(np.mean(d[no])))
+print("  cuantos de esos tienen el signo bueno : %.4f" % float(np.mean(d[no] > 0)))
+print()
+print("en dos de cada tres experimentos la prueba no rechaza AUNQUE el")
+print("efecto exista y valga la mitad del MDE. «No significativo» no")
+print("significa «no hay efecto»: significa que con esta muestra no se")
+print("distingue del cero")
+print()
+
+print("cuanto tendria que valer el efecto para verse con cada tamaño")
+print("  %-12s %14s %20s" % ("unidades", "MDE", "efecto de 0.5 se ve el"))
+for n in (200, 800, 3200, 12800):
+    m = (ZA + ZB) * SIGMA * np.sqrt(2.0 / (n / 2))
+    d2, se2 = experimentos(n, 0.5, SIGMA, 4000, 555 + n)
+    print("  %-12d %14.6f %20.4f" % (n, m, float(np.mean(np.abs(d2 / se2) > ZA))))
+print()
+print("un efecto de 0.5 sobre un sigma de 10 se ve 4 de cada 5 veces con")
+print("12 800 unidades, y menos de 1 de cada 3 con 3 200. Ese es el orden")
+print("de magnitud que hay que aceptar ANTES de lanzar el experimento:")
+print("despues ya no se puede cambiar")
+```
+
+```{=html}
+<div class="viz-potencia">
+  <div class="controles">
+    <label>Unidades <input id="pt-n" type="range" min="2" max="4.4" step="0.05" value="2.9"> <span id="pt-n-v">800</span></label>
+    <label>Efecto verdadero <input id="pt-e" type="range" min="0" max="5" step="0.1" value="2"> <span id="pt-e-v">2.0</span></label>
+  </div>
+  <svg id="pt-svg" viewBox="0 0 660 290" role="img" aria-label="La curva de potencia: con qué frecuencia se detecta cada efecto, para un tamaño de muestra dado."></svg>
+  <p class="lectura" id="pt-lectura"></p>
+</div>
+<style>
+.viz-potencia { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-potencia .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-potencia label { display: flex; align-items: center; gap: .4rem; }
+.viz-potencia input[type=range] { width: 150px; padding: 0; }
+.viz-potencia svg { width: 100%; height: auto; display: block; }
+.viz-potencia .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("pt-svg"), lec = document.getElementById("pt-lectura");
+  var cn = document.getElementById("pt-n"), ce = document.getElementById("pt-e");
+  var en = document.getElementById("pt-n-v"), ee = document.getElementById("pt-e-v");
+  var ZA = 1.959964, ZB = 0.841621, SIGMA = 10;
+  var X0 = 62, X1 = 628, Y0 = 26, Y1 = 218, EMAX = 5;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // la normal acumulada, por la aproximacion de Abramowitz y Stegun
+  function Phi(x) {
+    var s = x < 0 ? -1 : 1, a = Math.abs(x) / Math.SQRT2;
+    var t = 1 / (1 + 0.3275911 * a);
+    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-a * a);
+    return 0.5 * (1 + s * y);
+  }
+  function potencia(n, ef) {
+    var se = SIGMA * Math.sqrt(2 / (n / 2));
+    return Phi(ef / se - ZA) + Phi(-ef / se - ZA);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var n = Math.round(Math.pow(10, +cn.value)), ef = +ce.value;
+    en.textContent = String(n); ee.textContent = ef.toFixed(1);
+    var mde = (ZA + ZB) * SIGMA * Math.sqrt(2 / (n / 2));
+    function px(v) { return X0 + (v / EMAX) * (X1 - X0); }
+    function py(v) { return Y1 - v * (Y1 - Y0); }
+
+    for (var g = 0; g <= 1.0001; g += 0.25) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(g).toFixed(1) + " L" + X1 + " " + py(g).toFixed(1),
+        stroke: C_L, "stroke-width": 0.8, opacity: .55 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(g) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 },
+        g.toFixed(2)));
+    }
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(0.8).toFixed(1) + " L" + X1 + " " + py(0.8).toFixed(1),
+      stroke: C_T, "stroke-width": 1.4, "stroke-dasharray": "5 4", opacity: .55 }));
+    svg.appendChild(el("text", { x: X1 - 4, y: py(0.8) - 6, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, "0,80"));
+    for (var v = 0; v <= EMAX; v += 1)
+      svg.appendChild(el("text", { x: px(v), y: Y1 + 20, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 },
+        v.toFixed(0)));
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 40, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 },
+      "efecto verdadero"));
+
+    var d = "", i;
+    for (i = 0; i <= 200; i++) {
+      var x = i * EMAX / 200;
+      d += (i === 0 ? "M" : " L") + px(x).toFixed(1) + " " + py(potencia(n, x)).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_A, "stroke-width": 2.6 }));
+    if (mde <= EMAX) {
+      svg.appendChild(el("path", { d: "M" + px(mde).toFixed(1) + " " + Y1 + " L" + px(mde).toFixed(1) + " " + py(0.8).toFixed(1),
+        stroke: C_L, "stroke-width": 1.2 }));
+      svg.appendChild(el("circle", { cx: px(mde).toFixed(1), cy: py(0.8).toFixed(1), r: 5, fill: C_T, opacity: .6 }));
+      svg.appendChild(el("text", { x: px(mde).toFixed(1), y: Y1 + 20, "text-anchor": "middle", "font-size": 10, fill: C_T, opacity: .8 }, "MDE"));
+    }
+    var p = potencia(n, ef);
+    svg.appendChild(el("path", { d: "M" + px(ef).toFixed(1) + " " + Y0 + " L" + px(ef).toFixed(1) + " " + Y1,
+      stroke: C_B, "stroke-width": 1.3, "stroke-dasharray": "4 4", opacity: .7 }));
+    svg.appendChild(el("circle", { cx: px(ef).toFixed(1), cy: py(p).toFixed(1), r: 7, fill: C_B }));
+    svg.appendChild(el("text", { x: px(ef).toFixed(1), y: py(p) - 13, "text-anchor": "middle", "font-size": 11, fill: C_B },
+      p.toFixed(3)));
+
+    lec.innerHTML = "Con <strong>" + n + "</strong> unidades y σ = 10, el efecto mínimo detectable con potencia 0,80 vale <strong>" +
+      mde.toFixed(3) + "</strong>. Un efecto verdadero de <strong>" + ef.toFixed(1) + "</strong> se detecta el <strong>" +
+      (100 * p).toFixed(1) + " %</strong> de las veces. " +
+      (p < 0.5
+        ? "Por debajo del 50 %, lo más probable es que el experimento <strong>no encuentre nada</strong> aunque el efecto exista, y el que sí encuentre estará inflado."
+        : "La curva arranca en 0,05 con efecto cero —el nivel— y cruza 0,80 exactamente en el MDE.") +
+      " Cuadruplicar las unidades divide el MDE por dos: la curva se desplaza a la izquierda con la raíz del tamaño, nunca más deprisa.";
+  }
+  cn.addEventListener("input", dibujar); ce.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. La [maldición del ganador]{.g}
+
+::: {.proposicion}
+**Proposición 5.7 (el estimador es insesgado y lo publicado no).** Con un efecto verdadero de 1,0, el efecto medio de **todos** los experimentos vale 0,9880, 0,9874, 1,0013 y 0,9910 para cuatro tamaños. El efecto medio de los que salieron **significativos** vale **3,1520, 1,8301, 1,1197 y 0,9910**: una inflación de **3,15 veces** cuando la potencia es 0,1085.
+:::
+
+::: {.demostracion}
+*Demostración.* Rechazar exige $|\hat\delta|>z_{1-\alpha/2}s$; condicionar a ese suceso selecciona la cola de la distribución de $\hat\delta$, y cuando el umbral está por encima del efecto verdadero, **toda** la masa seleccionada está por encima de él. La celda lo mide para cuatro tamaños. Con 200 unidades, el **menor** efecto que llega a publicarse vale 2,3956, es decir **2,4 veces** el verdadero: ningún experimento de ese tamaño puede publicar la magnitud correcta. ∎
+:::
+
+::: {.proposicion}
+**Proposición 5.8 (y con poca potencia, el signo también falla).** Con potencia **0,0820**, el **8,90 %** de los hallazgos significativos tiene el signo cambiado; con potencia 0,3017, ninguno de los 1810 rechazos.
+:::
+
+::: {.demostracion}
+*Demostración.* La cola izquierda de la distribución de $\hat\delta$ también cruza el umbral, en $-z_{1-\alpha/2}s$; su masa es despreciable cuando $\delta/s$ es grande y deja de serlo cuando es pequeño. La celda cuenta los rechazos con el signo equivocado para cuatro tamaños. **Un experimento pequeño falla en detectar, y cuando detecta puede señalar la dirección contraria.** ∎
+:::
+
+**Modo de falla.** Éste es el mecanismo por el que una empresa acumula una carpeta de experimentos «ganadores» cuyo efecto nunca se reproduce al escalar: cada uno era pequeño, cada uno cruzó el umbral por poco, y cada uno midió entre dos y tres veces lo que había. El síntoma es que los efectos medidos en pruebas pequeñas se desinflan sistemáticamente al repetirlas en grande, y la explicación que se da suele ser «el mercado cambió». La defensa es registrar la potencia junto al resultado: de las cuatro preguntas que uno le hace a un experimento, **tres necesitan la potencia** y solo una el valor p.
+
+```{pyodide}
+import numpy as np
+
+# Lo que le pasa al efecto ESTIMADO cuando solo se miran los
+# experimentos que salieron significativos.
+ZA, ZB, SIGMA = 1.959964, 0.841621, 10.0
+
+def experimentos(n, efecto, sigma, reps, semilla):
+    rng = np.random.default_rng(semilla)
+    m = n // 2
+    a = efecto + sigma * rng.standard_normal((reps, m))
+    b = sigma * rng.standard_normal((reps, m))
+    d = a.mean(1) - b.mean(1)
+    se = np.sqrt(a.var(1, ddof=1) / m + b.var(1, ddof=1) / m)
+    return d, se
+
+EFECTO = 1.0
+print("el mismo efecto verdadero, %.1f, con muestras de distinto tamaño" % EFECTO)
+print("  %-10s %10s %12s %14s %14s %12s"
+      % ("unidades", "potencia", "efecto medio", "efecto medio", "inflacion", "signo malo"))
+print("  %-10s %10s %12s %14s %14s %12s"
+      % ("", "", "de todos", "si rechaza", "", "si rechaza"))
+# el trabajo va como n * reps, asi que las repeticiones se escalan a la
+# inversa para que cada fila cueste lo mismo: la celda entera baja de
+# seis minutos a menos de veinte segundos
+for n in (200, 800, 3200, 12800):
+    reps = max(3000, 3_000_000 // n)
+    d, se = experimentos(n, EFECTO, SIGMA, reps, 800 + n)
+    rech = np.abs(d / se) > ZA
+    pot = float(np.mean(rech))
+    if rech.sum() < 10:
+        continue
+    medio = float(np.mean(d[rech]))
+    malo = float(np.mean(d[rech] < 0))
+    print("  %-10d %10.4f %12.4f %14.4f %14.2f %12.4f"
+          % (n, pot, float(np.mean(d)), medio, medio / EFECTO, malo))
+print("  %-10s %10s %12.4f" % ("la verdad", "-", EFECTO))
+print()
+print("la tercera columna, el efecto medio de TODOS los experimentos,")
+print("acierta siempre: el estimador es insesgado. La cuarta, el efecto")
+print("medio de los que salieron significativos, se dispara cuando la")
+print("potencia es baja")
+print()
+
+print("por que: con poca potencia solo cruzan el umbral los experimentos")
+print("cuyo ruido empujo hacia arriba")
+n = 200
+d, se = experimentos(n, EFECTO, SIGMA, 15000, 1000)
+rech = np.abs(d / se) > ZA
+print("  con %d unidades:" % n)
+print("    potencia                              : %.4f" % float(np.mean(rech)))
+print("    efecto estimado minimo que se publica : %.4f" % float(np.min(np.abs(d[rech]))))
+print("    y el efecto verdadero es              : %.4f" % EFECTO)
+print("    o sea que para publicarse hace falta   : %.1f veces el efecto real"
+      % (float(np.min(np.abs(d[rech]))) / EFECTO))
+print()
+print("ningun experimento de ese tamaño puede publicar un efecto de 1.0:")
+print("el umbral de significacion esta muy por encima. Los que publican")
+print("son los que midieron mucho mas, y lo midieron mal")
+print()
+
+print("y la fraccion que ademas se equivoca de SIGNO")
+print("  %-12s %12s %16s %16s" % ("unidades", "potencia", "signo malo", "de los que rechazan"))
+for n in (100, 200, 400, 800):
+    d, se = experimentos(n, EFECTO, SIGMA, max(6000, 3_000_000 // n), 1300 + n)
+    rech = np.abs(d / se) > ZA
+    if rech.sum() < 10:
+        continue
+    print("  %-12d %12.4f %16.4f %16d"
+          % (n, float(np.mean(rech)), float(np.mean(d[rech] < 0)), int(rech.sum())))
+print()
+d100, se100 = experimentos(100, EFECTO, SIGMA, 30000, 1400)
+r100 = np.abs(d100 / se100) > ZA
+print("con potencia de %.2f, el %.1f %% de los hallazgos significativos"
+      % (float(np.mean(r100)), 100 * float(np.mean(d100[r100] < 0))))
+print("tiene el signo CAMBIADO. Un experimento pequeño falla en detectar,")
+print("y cuando detecta puede señalar la direccion contraria")
+print()
+
+print("lo que esto significa al leer un resultado")
+print("  %-46s %14s" % ("pregunta", "hace falta"))
+print("  %-46s %14s" % ("¿es significativo?", "el valor p"))
+print("  %-46s %14s" % ("¿cuanto vale el efecto?", "la potencia"))
+print("  %-46s %14s" % ("¿puedo creerme la magnitud?", "la potencia"))
+print("  %-46s %14s" % ("¿puedo creerme el signo?", "la potencia"))
+print()
+print("de las cuatro preguntas, tres necesitan saber la potencia, y la")
+print("potencia se fija ANTES de mirar los datos. Un resultado sin ella")
+print("no se puede leer")
+```
+
+```{=html}
+<div class="viz-maldicion">
+  <div class="controles">
+    <label>Potencia del experimento <input id="mc-p" type="range" min="0.06" max="0.99" step="0.01" value="0.11"> <span id="mc-p-v">0.11</span></label>
+    <label>Nivel α <input id="mc-e" type="range" min="0.005" max="0.25" step="0.005" value="0.05"> <span id="mc-e-v">0.050</span></label>
+  </div>
+  <svg id="mc-svg" viewBox="0 0 660 280" role="img" aria-label="La distribución del efecto estimado, con la zona que cruza el umbral de significación marcada aparte."></svg>
+  <p class="lectura" id="mc-lectura"></p>
+</div>
+<style>
+.viz-maldicion { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-maldicion .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-maldicion label { display: flex; align-items: center; gap: .4rem; }
+.viz-maldicion input[type=range] { width: 150px; padding: 0; }
+.viz-maldicion svg { width: 100%; height: auto; display: block; }
+.viz-maldicion .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("mc-svg"), lec = document.getElementById("mc-lectura");
+  var cp = document.getElementById("mc-p"), ce = document.getElementById("mc-e");
+  var ep = document.getElementById("mc-p-v"), ee = document.getElementById("mc-e-v");
+  var EFECTO = 1.0, X0 = 52, X1 = 628, Y0 = 30, Y1 = 208;
+  // el eje es FIJO en unidades del efecto verdadero: si se dejara
+  // escalar con el, el dibujo saldria identico para cualquier efecto,
+  // porque el error tipico escala con el (regla 19b)
+  var LO = -4.0, HI = 7.0;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function Phi(x) {
+    var s = x < 0 ? -1 : 1, a = Math.abs(x) / Math.SQRT2;
+    var t = 1 / (1 + 0.3275911 * a);
+    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-a * a);
+    return 0.5 * (1 + s * y);
+  }
+  function phi(x) { return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI); }
+  // el cuantil de la normal, por biseccion sobre Phi
+  function zDe(q) {
+    var lo = -8, hi = 8;
+    for (var i = 0; i < 80; i++) { var me = 0.5 * (lo + hi); if (Phi(me) < q) lo = me; else hi = me; }
+    return 0.5 * (lo + hi);
+  }
+  // el error tipico que da esa potencia, con el efecto y el nivel fijados
+  function seDe(pot, za) {
+    var lo = EFECTO / 40, hi = EFECTO * 200;
+    for (var i = 0; i < 90; i++) {
+      var me = 0.5 * (lo + hi);
+      var p = Phi(EFECTO / me - za) + Phi(-EFECTO / me - za);
+      if (p > pot) lo = me; else hi = me;
+    }
+    return 0.5 * (lo + hi);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var pot = +cp.value, alfa = +ce.value;
+    ep.textContent = pot.toFixed(2); ee.textContent = alfa.toFixed(3);
+    var ZA = zDe(1 - alfa / 2), ef = EFECTO;
+    var se = seDe(pot, ZA), umbral = ZA * se;
+    function px(v) { return X0 + (v - LO) * (X1 - X0) / (HI - LO); }
+    var alto = phi(0) / se;
+    function py(v) { return Y1 - v * (Y1 - Y0) / alto; }
+
+    svg.appendChild(el("path", { d: "M" + X0 + " " + Y1 + " L" + X1 + " " + Y1, stroke: C_L, "stroke-width": 1.2 }));
+    var d = "", dsig = "", abierto = false, i;
+    for (i = 0; i <= 300; i++) {
+      var x = LO + i * (HI - LO) / 300, y = phi((x - ef) / se) / se;
+      d += (i === 0 ? "M" : " L") + px(x).toFixed(1) + " " + py(y).toFixed(1);
+      if (Math.abs(x) > umbral) {
+        if (!abierto) { dsig += " M" + px(x).toFixed(1) + " " + Y1; abierto = true; }
+        dsig += " L" + px(x).toFixed(1) + " " + py(y).toFixed(1);
+      } else if (abierto) { abierto = false; }
+    }
+    svg.appendChild(el("path", { d: dsig, fill: C_B, stroke: "none", opacity: .3 }));
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_T, "stroke-width": 2.2 }));
+    [umbral, -umbral].forEach(function (u) {
+      if (u >= LO && u <= HI)
+        svg.appendChild(el("path", { d: "M" + px(u).toFixed(1) + " " + Y0 + " L" + px(u).toFixed(1) + " " + Y1,
+          stroke: C_B, "stroke-width": 1.4, "stroke-dasharray": "5 4" }));
+    });
+    svg.appendChild(el("path", { d: "M" + px(ef).toFixed(1) + " " + Y0 + " L" + px(ef).toFixed(1) + " " + Y1,
+      stroke: C_A, "stroke-width": 1.6 }));
+    svg.appendChild(el("circle", { cx: px(ef).toFixed(1), cy: Y1, r: 6, fill: C_A }));
+    svg.appendChild(el("text", { x: px(ef).toFixed(1), y: Y0 - 8, "text-anchor": "middle", "font-size": 10.5, fill: C_A },
+      "verdad " + ef.toFixed(1)));
+    // la media condicionada a rechazar, por integracion numerica
+    var num = 0, den = 0;
+    for (i = 0; i <= 2000; i++) {
+      var z = ef - 8 * se + i * 16 * se / 2000, w = phi((z - ef) / se);
+      if (Math.abs(z) > umbral) { num += z * w; den += w; }
+    }
+    var cond = den > 0 ? num / den : ef;
+    svg.appendChild(el("circle", { cx: px(cond).toFixed(1), cy: Y1, r: 7, fill: C_B }));
+    svg.appendChild(el("text", { x: px(cond).toFixed(1), y: Y1 + 22, "text-anchor": "middle", "font-size": 10.5, fill: C_B },
+      "publicado " + cond.toFixed(2)));
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 48, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 },
+      "efecto estimado; en rojo, lo que cruza el umbral"));
+
+    lec.innerHTML = "Con potencia <strong>" + pot.toFixed(2) + "</strong>, nivel <strong>" + alfa.toFixed(3) +
+      "</strong> y un efecto verdadero de <strong>1,0</strong>, el estimador es insesgado —su centro está en la verdad— " +
+      "pero solo se publica la parte roja, la que cruza el umbral en <strong>±" + umbral.toFixed(2) + "</strong>. " +
+      "El efecto medio de lo publicado vale <strong>" + cond.toFixed(2) + "</strong>: <strong>" + (cond / ef).toFixed(2) +
+      " veces</strong> el verdadero. " +
+      (pot < 0.3
+        ? "Con esta potencia el umbral está tan lejos del centro que ningún experimento honesto puede publicar la magnitud correcta."
+        : "Al subir la potencia la curva se estrecha, el umbral queda dentro y la inflación desaparece.") +
+      " Exigir un nivel más estricto empuja el umbral hacia fuera y <strong>empeora</strong> la inflación, aunque reduzca los falsos positivos. " +
+      "Y la cola izquierda, también roja, son los hallazgos con el <strong>signo cambiado</strong>.";
+  }
+  cp.addEventListener("input", dibujar); ce.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Bajar el MDE sin más muestra
+
+::: {.proposicion}
+**Proposición 5.9 (la varianza entra lineal y el tamaño con raíz).** Bajar $\sigma$ a la mitad divide el MDE por dos, igual que **cuadruplicar** la muestra.
+:::
+
+::: {.demostracion}
+*Demostración.* En la fórmula de la Proposición 5.2, $\sigma$ aparece con exponente 1 y $n$ con exponente $-1/2$. La celda tabula las cuatro comparaciones. **Y bajar la varianza suele ser mucho más barato, porque no hay que conseguir más gente.** ∎
+:::
+
+::: {.definicion}
+**Definición 5.10 (ajustar por una medida previa, o [reducción de varianza]{.g}).** Restar a cada unidad $\hat\theta$ veces una variable medida **antes** del tratamiento, con $\hat\theta$ la pendiente de la regresión conjunta. Como la variable es previa, no puede estar afectada por el tratamiento y el ajuste no toca el valor esperado de la diferencia.
+:::
+
+::: {.proposicion}
+**Proposición 5.11 (quita exactamente $\rho^2$ de la varianza).** La desviación pasa de 10 a $\sigma\sqrt{1-\rho^2}$: medida **9,9832, 9,5192, 7,9943 y 4,3592** frente a las predichas 10,0000, 9,5394, 8,0000 y 4,3589. Con $\rho=0{,}9$ la potencia sube de **0,5527 a 0,9980** sin una unidad más.
+:::
+
+::: {.demostracion}
+*Demostración.* La varianza del residuo de una regresión simple es $\sigma^2(1-\rho^2)$. La celda lo mide para cuatro correlaciones y lo compara con la predicción; con $\rho=0$ el ajuste no cambia nada —potencia 0,5647 contra 0,5629— y **tampoco estorba**. Como el tamaño necesario para un MDE dado es proporcional a $\sigma^2$, la misma prueba pasa de 10 000 unidades a **1900**. ∎
+:::
+
+**Modo de falla.** La variable de ajuste tiene que ser **anterior** al tratamiento. Ajustar por una posterior es lo que la Proposición 2.12 midió: un sesgo del 40 % introducido por el propio ajuste, sobre un experimento que estaba bien. Y la tentación es fuerte, porque las variables posteriores correlacionan más con el resultado y por tanto reducen más la varianza aparente. La defensa es la misma regla de la Lección 02: una variable entra en el ajuste solo si su valor estaba fijado antes de asignar el tratamiento.
+
+```{pyodide}
+import numpy as np
+
+# Si la muestra no alcanza, quedan dos palancas: mas unidades, que casi
+# nunca se pueden, o menos varianza, que casi siempre si.
+ZA, ZB = 1.959964, 0.841621
+
+def mde(n, sigma):
+    return (ZA + ZB) * sigma * np.sqrt(2.0 / (n / 2))
+
+print("la varianza entra en el MDE de forma lineal y el tamaño con raiz")
+print("  %-34s %16s" % ("cambio", "efecto sobre el MDE"))
+print("  %-34s %16s" % ("doblar las unidades", "se divide por 1.41"))
+print("  %-34s %16s" % ("cuadruplicar las unidades", "se divide por 2.00"))
+print("  %-34s %16s" % ("bajar sigma un 30 %", "se divide por 1.43"))
+print("  %-34s %16s" % ("bajar sigma a la mitad", "se divide por 2.00"))
+print()
+print("bajar sigma a la mitad equivale a CUADRUPLICAR la muestra, y suele")
+print("ser mucho mas barato: no hay que conseguir mas gente")
+print()
+
+# --- la palanca: restar lo que una variable previa ya explica ---
+def simula(n, efecto, rho, reps, semilla):
+    """El resultado tiene una parte predecible desde una medida previa.
+       rho es cuanto correlacionan."""
+    rng = np.random.default_rng(semilla)
+    m = n // 2
+    prev_a = rng.standard_normal((reps, m))
+    prev_b = rng.standard_normal((reps, m))
+    ea = rng.standard_normal((reps, m)); eb = rng.standard_normal((reps, m))
+    esc = 10.0
+    Ya = esc * (rho * prev_a + np.sqrt(1 - rho ** 2) * ea) + efecto
+    Yb = esc * (rho * prev_b + np.sqrt(1 - rho ** 2) * eb)
+    return Ya, Yb, esc * prev_a, esc * prev_b
+
+def prueba(Ya, Yb):
+    d = Ya.mean(1) - Yb.mean(1)
+    m = Ya.shape[1]
+    se = np.sqrt(Ya.var(1, ddof=1) / m + Yb.var(1, ddof=1) / m)
+    return d, se
+
+def ajustado(Ya, Yb, Pa, Pb):
+    """Restar theta por la medida previa, con theta la pendiente conjunta.
+       Es lo que se conoce como CUPED."""
+    P = np.concatenate([Pa, Pb], axis=1)
+    Y = np.concatenate([Ya, Yb], axis=1)
+    Pc = P - P.mean(1, keepdims=True)
+    Yc = Y - Y.mean(1, keepdims=True)
+    th = (Pc * Yc).sum(1) / (Pc * Pc).sum(1)
+    return Ya - th[:, None] * Pa, Yb - th[:, None] * Pb
+
+N, EFECTO = 800, 1.5
+print("el mismo experimento, con y sin ajustar por la medida previa")
+print("  %-10s %14s %14s %14s %14s"
+      % ("correlacion", "sd sin ajustar", "sd ajustada", "potencia sin", "potencia con"))
+guardado = {}
+for rho in (0.0, 0.3, 0.6, 0.9):
+    Ya, Yb, Pa, Pb = simula(N, EFECTO, rho, 8000, 1500 + int(100 * rho))
+    Aa, Ab = ajustado(Ya, Yb, Pa, Pb)
+    d1, s1 = prueba(Ya, Yb); d2, s2 = prueba(Aa, Ab)
+    guardado[rho] = (float(np.mean(Ya.std(1, ddof=1))), float(np.mean(Aa.std(1, ddof=1))),
+                     float(np.mean(np.abs(d1 / s1) > ZA)), float(np.mean(np.abs(d2 / s2) > ZA)))
+    print("  %-10.1f %14.4f %14.4f %14.4f %14.4f" % ((rho,) + guardado[rho]))
+print()
+print("con correlacion 0.9 la desviacion baja de %.1f a %.1f y la potencia"
+      % (guardado[0.9][0], guardado[0.9][1]))
+print("sube de %.4f a %.4f SIN una unidad mas. Con correlacion cero el"
+      % (guardado[0.9][2], guardado[0.9][3]))
+print("ajuste no hace nada, y tampoco estorba: %.4f contra %.4f"
+      % (guardado[0.0][2], guardado[0.0][3]))
+print()
+
+print("la cuenta exacta: la varianza que queda es sigma^2 (1 - rho^2)")
+print("  %-12s %16s %16s %14s" % ("rho", "1 - rho^2", "raiz de eso", "sd medida"))
+for rho in (0.0, 0.3, 0.6, 0.9):
+    Ya, Yb, Pa, Pb = simula(N, EFECTO, rho, 3000, 1900 + int(100 * rho))
+    Aa, _ = ajustado(Ya, Yb, Pa, Pb)
+    print("  %-12.1f %16.4f %16.4f %14.4f"
+          % (rho, 1 - rho ** 2, np.sqrt(1 - rho ** 2) * 10.0,
+             float(np.mean(Aa.std(1, ddof=1)))))
+print()
+print("la columna medida sigue a la predicha: ajustar por una variable")
+print("previa quita exactamente la fraccion rho^2 de la varianza")
+print()
+
+print("y cuantas unidades ahorra")
+print("  %-12s %18s %18s" % ("rho", "unidades sin ajuste", "unidades con ajuste"))
+for rho in (0.0, 0.3, 0.6, 0.9):
+    # para el mismo MDE: n proporcional a sigma^2
+    base = 10000
+    print("  %-12.1f %18d %18d" % (rho, base, int(round(base * (1 - rho ** 2)))))
+print()
+print("con una medida previa que correlacione 0.9 con el resultado, el")
+print("mismo experimento necesita 1900 unidades en vez de 10 000. Y esa")
+print("medida previa suele estar ya en la tabla: el gasto del mes")
+print("anterior, las visitas de la semana pasada")
+print()
+print("es la unica palanca que no cuesta muestra, y por eso se mira antes")
+print("de aceptar que un experimento no se puede hacer")
+```
+
+## 5. Lo que esta lección no resuelve
+
+Todo lo anterior supone que se mira **una vez**, al final. En cuanto se mira el resultado mientras el experimento corre, el nivel real deja de ser 0,05 y puede llegar al 35 % sin que nadie haga nada deshonesto; eso es la Lección 06, y su remedio son las pruebas secuenciales. Tampoco se ha tratado qué ocurre con **varios** brazos o varias métricas, donde la corrección por comparaciones múltiples vuelve a mover el umbral.
+
+Y el cálculo entero supone que las unidades son independientes. Si el tratamiento de una afecta al resultado de otra —dos vendedores que compiten por el mismo cliente, dos conductores por el mismo viaje— el error típico calculado aquí está mal, normalmente por debajo, y la potencia real es menor que la prometida. Ésa es la Lección 08.
+
+## Ejercicios
+
+### Ejercicio 1, El tamaño que hace falta
+
+Con la Proposición 5.2, calcular cuántas unidades hacen falta para detectar cuatro efectos con potencia 0,80 y $\sigma=10$.
+
+```{pyodide}
+#| exercise: ex_tamano
+import numpy as np
+
+za, zb, sigma = 1.959964, 0.841621, 10.0
+efectos = np.array([4.0, 2.0, 1.0, 0.5])
+
+# el MDE vale (za + zb) * sigma * 2 / raiz(n); se despeja n
+n = ______
+
+print([int(np.ceil(z)) for z in n])
+```
+
+::: {.hint exercise="ex_tamano"}
+De $\delta=(z_a+z_b)\sigma\,2/\sqrt{n}$ se despeja $n=\bigl(2(z_a+z_b)\sigma/\delta\bigr)^2$.
+:::
+
+::: {.solution exercise="ex_tamano"}
+```{pyodide}
+import numpy as np
+
+za, zb, sigma = 1.959964, 0.841621, 10.0
+efectos = np.array([4.0, 2.0, 1.0, 0.5])
+
+n = (2.0 * (za + zb) * sigma / efectos) ** 2
+
+print([int(np.ceil(z)) for z in n])
+```
+
+Hacen falta **197, 785, 3140 y 12 559** unidades. Cada vez que el efecto se parte por la mitad, el tamaño se multiplica por cuatro. Es la misma cuenta que cerró la Lección 21 —$n\ge n_0(2s/v)^2$— escrita con los cuantiles en lugar de con un error típico ya medido.
+:::
+
+```{pyodide}
+#| exercise: ex_tamano
+#| check: true
+if [int(np.ceil(z)) for z in n] == [197, 785, 3140, 12559]:
+    feedback = {"correct": True, "message": "Correcto: 197, 785, 3140 y 12 559 unidades."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [197, 785, 3140, 12559]."}
+feedback
+```
+
+### Ejercicio 2, Cuánto ahorra ajustar
+
+Con la Proposición 5.11, calcular qué fracción de la muestra ahorra ajustar por una medida previa, para cuatro correlaciones.
+
+```{pyodide}
+#| exercise: ex_ahorro
+import numpy as np
+
+rhos = np.array([0.0, 0.3, 0.6, 0.9])
+n_sin = 10000
+
+n_con = ______
+ahorro = ______
+
+print([int(round(float(z))) for z in n_con], [round(float(z), 3) for z in ahorro])
+```
+
+::: {.hint exercise="ex_ahorro"}
+El tamaño necesario es proporcional a la varianza, y la varianza que queda es $\sigma^2(1-\rho^2)$.
+:::
+
+::: {.solution exercise="ex_ahorro"}
+```{pyodide}
+import numpy as np
+
+rhos = np.array([0.0, 0.3, 0.6, 0.9])
+n_sin = 10000
+
+n_con = n_sin * (1 - rhos ** 2)
+ahorro = 1 - n_con / n_sin
+
+print([int(round(float(z))) for z in n_con], [round(float(z), 3) for z in ahorro])
+```
+
+Con $\rho=0{,}6$ el ahorro es del **36 %** y con $\rho=0{,}9$, del **81 %**: de 10 000 unidades a 1900. El ahorro crece con el **cuadrado** de la correlación, así que una medida previa mediocre —$\rho=0{,}3$— apenas sirve, y una buena lo cambia todo. Merece la pena mirar qué hay en la tabla antes de aceptar que el experimento no se puede hacer.
+:::
+
+```{pyodide}
+#| exercise: ex_ahorro
+#| check: true
+if ([int(round(float(z))) for z in n_con] == [10000, 9100, 6400, 1900]
+        and [round(float(z), 3) for z in ahorro] == [0.0, 0.09, 0.36, 0.81]):
+    feedback = {"correct": True, "message": "Correcto: con rho = 0.9 el ahorro es del 81 %."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [10000, 9100, 6400, 1900] y [0.0, 0.09, 0.36, 0.81]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F5-retos.ipynb`, sección **Causal 5**:
+
+1. Escribir la fórmula del MDE y comprobarla contando rechazos para tres tamaños, poniendo como efecto verdadero exactamente el MDE. Anotar las tasas obtenidas.
+2. Dibujar la curva de potencia para un tamaño fijo y comprobar que pasa por $\alpha$ en cero y por 0,80 en el MDE.
+3. Medir la inflación del efecto publicado para cuatro potencias y la fracción de hallazgos con el signo cambiado. Guardar en `50-Errores/` la potencia por debajo de la cual los errores de signo dejan de ser despreciables.
+
+## Del libro
+
+Facure cap. 3 *Stats Review: The Most Dangerous Equation* trata la ecuación de De Moivre —que el error típico va como $1/\sqrt{n}$— y muestra cómo las muestras pequeñas producen a la vez los valores más altos y los más bajos, que es el mecanismo de la maldición del ganador de la Sección 3. El capítulo se cita por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- $\text{MDE}=(z_{1-\alpha/2}+z_{1-\beta})\,\sigma\,2/\sqrt{n}$, con factor **2,801585** para 0,05 y 0,80.
+- Comprobado contando rechazos: **0,8060, 0,7997 y 0,7963** contra un objetivo de 0,80.
+- Detectar la mitad del efecto exige **cuatro veces** más muestra.
+- Con la mitad del MDE, el **69,45 %** de los experimentos no rechaza aunque el efecto exista.
+- **Maldición del ganador**: con potencia 0,1085, el efecto publicado vale **3,15 veces** el real.
+- Con 200 unidades, el menor efecto publicable es **2,4 veces** el verdadero.
+- Con potencia 0,0820, el **8,90 %** de los hallazgos tiene el **signo cambiado**.
+- Bajar $\sigma$ a la mitad equivale a **cuadruplicar** la muestra, y es más barato.
+- Ajustar por una medida previa quita exactamente $\rho^2$ de la varianza: medido **4,3592** contra 4,3589 predicho.
+- Con $\rho=0{,}9$: de **10 000 unidades a 1900**, y la potencia de 0,5527 a 0,9980.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico: que los cuantiles valen 1,959964 y 0,841621 con suma 2,801585, calculados por bisección sobre la integral; que el MDE vale 5,603170, 2,801585, 1,400793, 0,700396 y 0,350198 para cinco tamaños; que poniendo el MDE como efecto verdadero la tasa de rechazo sale 0,8060, 0,7997 y 0,7963 y con efecto cero 0,0553, 0,0465 y 0,0488; que la curva de potencia con 800 unidades pasa por 0,0437, 0,1078, 0,2915, 0,5652, 0,8045, 0,9880 y 1,0000; que con la mitad del MDE el 69,45 % no rechaza, con efecto medio estimado 0,642203 y el 88,31 % con signo correcto; que un efecto de 0,5 se detecta el 6,58 %, 11,05 %, 29,48 % y 79,77 % de las veces con 200, 800, 3200 y 12 800 unidades; que con efecto verdadero 1,0 el efecto medio de todos vale 0,9880, 0,9874, 1,0013 y 0,9910 y el de los significativos 3,1520, 1,8301, 1,1197 y 0,9910, con potencias 0,1085, 0,2904, 0,8117 y 1,0000; que con 200 unidades el menor efecto publicable vale 2,3956; que con potencias 0,0820, 0,1121, 0,1736 y 0,3017 los hallazgos con signo cambiado son el 8,90 %, 3,09 %, 1,23 % y 0,00 %; que ajustando por una medida previa la desviación medida vale 9,9832, 9,5192, 7,9943 y 4,3592 frente a las predichas 10,0000, 9,5394, 8,0000 y 4,3589; y que la potencia pasa de 0,5527 a 0,9980 con $\rho=0{,}9$ y de 0,5647 a 0,5629 con $\rho=0$.
+
+**Lo que viene de los libros.** De Facure cap. 3, la ecuación de De Moivre y el argumento de que las muestras pequeñas producen a la vez los valores extremos altos y bajos. El capítulo se cita por su número y su título; el texto no se reproduce.
+
+**Lo que es mío, no del libro.** El cálculo de los cuantiles **por bisección sobre la propia integral**, para que la lección no dependa de ninguna librería estadística; la comprobación de la fórmula del MDE poniéndolo como efecto verdadero y contando rechazos, que convierte la definición en una medición; la medición del **menor efecto publicable**, que dice en una cifra que ningún experimento de 200 unidades puede publicar un efecto de 1,0; la tabla de las cuatro preguntas y cuál necesita la potencia, que es lo que hace falta para leer un resultado ajeno; y la Sección 4 entera, porque la conversación sobre potencia suele terminar en «no hay muestra» cuando la palanca de la varianza está sin tocar y ahorra el 81 % con una correlación de 0,9.
+:::
