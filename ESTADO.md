@@ -4290,6 +4290,78 @@ teclea.
 El sitio queda en **145 lecciones, 810 celdas, 3305 afirmaciones**. Módulo causal: **8 de 22** publicadas —01, 02, 05,
 16, 17, 18, 19 y 21—, con los huecos 03, 04, 06 a 15, 20 y 22 por delante.
 
+### 3.79 Causal 07: el experimento elige mejor de lo que mide (24-09-2026)
+
+**Causal 07, Más de dos tratamientos: diseño y análisis multi-brazo (L3, sin
+libro).** La segunda pieza del encargo de INCAE sobre causalidad avanzada: qué
+cambia cuando los brazos dejan de ser dos. Cuatro cosas cambian, y ninguna es la
+que se suele contar.
+
+**1. La fórmula de siempre se pasa, y bastante.** Con $m$ brazos contra un
+control **común**, las $m$ comparaciones comparten un término y por tanto
+correlacionan: medido **0,4982, 0,5037, 0,4996, 0,5015 y 0,5007**, y en la
+demostración exactamente **1/2**, porque el control entra con el mismo peso en
+las dos comparaciones y cada brazo solo en la suya. Condicionando en el control
+la tasa de falso hallazgo sale de una integral de **una** variable,
+$1-\int\varphi(u)[\Phi(u+c\sqrt2)-\Phi(u-c\sqrt2)]^m du$, que la celda resuelve
+por Simpson: **0,4086** con diecinueve comparaciones, donde $1-(1-\alpha)^m$
+promete **0,6226**. La simulación de 40 000 experimentos da 0,4126, y el acuerdo
+con la integral es de tres decimales en los seis casos.
+
+**2. Dunnett se construye en diez líneas.** Con la integral escrita, el umbral
+que clava el 0,05 sale por bisección: **2,891963** con diecinueve comparaciones,
+contra los **3,007787** de Bonferroni, que al no mirar la correlación gasta solo
+**0,0358** del nivel disponible. Lo honesto es el tamaño del premio: de los
+**0,170** de potencia que se pierden al pasar de un brazo a tres, Dunnett
+devuelve **0,019**. El resto lo cobra la aritmética.
+
+**3. El control merece $\sqrt{m}$ veces más gente.** Sale de derivar
+$1/n_c+1/n_t$ con $n_c+m\,n_t=N$, y el barrido lo confirma: el mínimo cae en
+**0,3660** de la muestra con tres brazos, que es el valor de la fórmula. Vale un
+**7 %** con tres brazos y un **39 %** con diecinueve: la palanca es despreciable
+mientras haya dos o tres y deja de serlo justo cuando alguien propone «probar
+unas cuantas variantes».
+
+**4. El hallazgo que ordena la lección.** Ocho brazos con efectos de 0,0 a 2,0 y
+100 unidades cada uno. El experimento señala el mejor el **33,84 %** de las
+veces —mal—, y aun así el brazo que elige vale **1,6048** de los 2,0
+disponibles: el 80 %. Cuando el ruido tumba al mejor, quien lo sustituye es un
+vecino, y los vecinos valen casi lo mismo. Lo que sí sale muy mal es la cifra:
+promete **2,7789** y entrega 1,6048, un 73 % de más. Las tres columnas —acierta,
+entrega, promete— se comportan de forma **distinta**, y es el mismo desacople
+que la Lección 16 midió entre el error cuadrático y el orden de las unidades.
+Con esto el modo de falla se escribe solo: el plan anual recoge el 2,78 y no el
+1,60, y la diferencia aparece meses después como un incumplimiento de quien
+ejecutó.
+
+**5. Y la respuesta práctica a «más de dos tratamientos» suele ser otra
+pregunta.** Si lo que se prueban son **dos cambios**, el factorial 2×2 mide cada
+efecto principal con la muestra entera en lugar de con dos tercios: error típico
+**0,288771** contra 0,355250, razón **1,230212** contra el $\sqrt{3/2}=1{,}224745$
+que predice la cuenta, y potencia de 0,8035 a **0,9332** sin una unidad más. Se
+paga en dos monedas. La interacción tiene el **doble** de error típico —medido
+2,004328— o sea que pide **cuatro veces** la muestra: en el experimento que
+detecta el efecto principal el 93 % de las veces, una interacción del mismo
+tamaño se detecta el **41 %**. Y lo que el factorial llama «efecto de A» es
+$A+\text{interacción}/2$: con interacción 2,0 devuelve **1,999054** donde el
+efecto de A sobre el control puro vale 1,0, sin ninguna señal de alarma, porque
+el número es correcto para la pregunta que el contraste responde.
+
+**Los dos visuales resuelven la misma integral que las celdas**, en JavaScript y
+con la aproximación de Abramowitz y Stegun para $\Phi$. Se comprobó contra numpy
+antes de publicar: las FWER coinciden en los cuatro decimales que se imprimen
+(0,0500, 0,0907, 0,1254, 0,1828, 0,2692, 0,4086) y los umbrales de Dunnett en
+cinco. El de Bonferroni con $m=19$ difiere en 1,6e−5 —3,007803 contra
+3,007787— porque A&S solo garantiza 7 cifras y ahí se evalúa la cola lejana; a
+los cuatro decimales que muestra la lectura, los dos dan 3,0078.
+
+**Deuda saldada de paso.** `simbolos.py` delató que la Lección 05 usaba
+$\delta$, $\Phi$ y $\hat\theta$ sin declararlos; las dos lecciones quedan
+limpias. Y `CLAUDE.md` seguía listando `verificacion.qmd` en «Dónde está cada
+cosa» después de borrarla.
+
+El sitio queda en **146 lecciones, 817 celdas, 3327 afirmaciones**. Módulo causal: **9 de 22**.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
@@ -4713,6 +4785,24 @@ fueron cinco sitios.
 **La regla para las celdas nuevas:** ninguna por encima de **30 s**. Si una lo
 pasa, el primer sitio donde mirar es el tamaño de muestra, no el algoritmo.
 
+
+**Una media sobre 40 000 valores ya no cuadra entre versiones (24-09-2026).**
+Causal 07 pasó el gate con el Python local y falló con el del CI por **un
+dígito**: `1.984573` contra `1.984572`, y su complemento `0.015427` contra
+`0.015428`. La cuenta es `np.mean` sobre 40 000 flotantes; numpy suma por
+pares, y el tamaño de bloque y el ancho SIMD del desenrollado **no son los
+mismos entre 1.24 y 2.5**, así que el orden de las sumas cambia y el resultado
+se mueve en la séptima cifra significativa.
+
+**La regla:** de una media sobre decenas de miles de valores se publican **cuatro
+decimales**, no seis. Seis decimales están reservados a cuentas deterministas
+—cuantiles por bisección, fórmulas cerradas, integrales sobre una malla fija—
+donde no hay reducción larga de por medio. Y si la lección necesita los seis,
+se imprime la diferencia contra una cota, como manda el §5 de arriba.
+
+**Y el compañero de viaje del mismo fallo:** `print(..., list(array))` imprime
+`[np.float64(0.0), ...]` en numpy 2.x y `[0.0, ...]` en 1.x. En una celda
+publicada se escribe `[float(z) for z in array]`, que da lo mismo en las dos.
 
 ## 6. Decisiones pendientes
 

@@ -220,7 +220,6 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
 ## Dónde está cada cosa
 
 - `verificar/` — el verificador de salidas y las afirmaciones declaradas
-- `verificacion.qmd` — la página que le explica a Luis qué puede comprobar él
 - `grafo/build_graph.py` — grafo desde el frontmatter, corre en cada build
 - `brain/` — vault de Obsidian, no se renderiza
 - `proyectos/notebooks/F1-retos.ipynb` — una sección por lección publicada
