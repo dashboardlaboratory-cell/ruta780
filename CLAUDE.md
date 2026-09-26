@@ -15,6 +15,7 @@ python3 verificar/referencias.py && \
 python3 verificar/retos.py       && \
 python3 verificar/salidas.py     && \
 python3 verificar/formato.py     && \
+python3 verificar/tono.py --estricto && \
 python3 verificar/visuales.py --estricto
 ```
 
