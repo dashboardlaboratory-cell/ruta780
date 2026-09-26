@@ -4448,7 +4448,7 @@ mejor de la lección.
 
 El sitio queda en **147 lecciones, 824 celdas, 3351 afirmaciones**, y el bloque de diseño experimental —05, 07 y 08— cerrado.
 
-### 3.81 El módulo de atributos, y su Lección 01 (25-09-2026)
+### 3.81 El módulo de Feature Engineering, y su Lección 01 (25-09-2026)
 
 **El octavo módulo del sitio**, y la cuarta pieza del encargo de INCAE. Luis lo
 pidió así: *muy práctico y dinámico, con niveles, mezclando retos de creatividad,
@@ -4521,6 +4521,128 @@ primero no bastaba, y el síntoma era silencioso —decía «los cuadernos está
 día» sin haber escrito nada—, que es peor que un error.
 
 El sitio queda en **148 lecciones, 830 celdas, 3366 afirmaciones**, y el módulo nuevo en 1 de 16.
+
+**El módulo se llama «Feature Engineering», no «Ingeniería de atributos».** Lo
+pidió Luis el mismo día en que se publicó la primera lección. El nombre visible
+cambia en el título del módulo, el subtítulo de cada lección, la barra lateral y
+la fila de la portada; **la ruta sigue siendo `atributos/`** y no se toca, porque
+renombrarla rompería los enlaces ya publicados. La palabra «atributo» se queda
+como término técnico —cada columna que recibe el modelo— y está así en el
+glosario.
+
+### 3.82 Atributos 02, y las tres fugas en la misma unidad (25-09-2026)
+
+**Atributos 02, El proceso y por dónde entra la fuga (L2, FES 3).** La lección
+que tiene que ir antes de cualquier otra del módulo, porque sin ella todas las
+mediciones siguientes son opinables.
+
+**La linea base primero.** Sin ningún paso previo, la validación cruzada estima
+con un sesgo de **−0,0043** con dos pliegues y **+0,0070** con veinte: vive en la
+tercera cifra. Eso es lo que convierte al resto de la lección en un argumento:
+cualquier discrepancia de centésimas que aparezca después tiene otra causa.
+
+**Las tres fugas, puestas en la misma unidad para que se puedan comparar.**
+
+· **Elegir columnas antes de partir: 0,2673 de AUC inventado.** Con 100 filas,
+500 columnas de ruido puro y un objetivo sorteado a cara o cruz, la validación
+cruzada informa de un **76,73 %** de acierto. Eligiendo dentro del pliegue cae a
+0,4812. **Es el único número de la lección que no admite discusión**, porque la
+respuesta correcta se conoce de antemano: 0,5.
+
+· **Transformación ajustada fuera: 0,1548 con la codificación por el objetivo y
+0,0000 con la estandarización.** Las dos en la misma tabla, que es lo que
+convierte la regla en una cifra: **el tamaño de la fuga mide cuánto mira la
+transformación al objetivo**, no lo complicada que sea.
+
+· **Partir por la unidad equivocada: 0,1560.** Con 80 clientes de 6 filas y un
+$k$-NN de 5 vecinos, partir filas informa de 0,7009 donde la verdad con clientes
+nuevos vale 0,5449. Partiendo clientes sale 0,5396, que la clava. El mecanismo
+se ve solo: cada fila de prueba encuentra entre sus cinco vecinos a las otras
+cinco filas de su propio cliente. **El modelo no predice, reconoce.**
+
+**La forma cerrada que salió de camino.** Una codificación por la media del
+objetivo ajustada sobre todo difiere de la honesta en exactamente
+$(y_i-\bar y^{(-i)})/m$ —una copia de la respuesta de la fila dividida por el
+tamaño del nivel—, y la desviación de ese término vale **$1/\sqrt{m-1}$** veces
+la de la propia columna, **sin depender de la frecuencia de la clase**. Con las
+7,5 filas por nivel de la celda, el **39 %** de la columna es copia del
+objetivo. Eso convierte «la codificación por el objetivo filtra» en un número
+que se mira antes de usarla, y es lo que la Lección 09 arreglará.
+
+**El gate de visuales volvió a encontrar algo, y esta vez el arreglo mejoró la
+lección.** El control de los pliegues no movía el dibujo, y no lo movía **a
+propósito**: la tesis del visual es que subir los pliegues no toca ni un poco lo
+que se ejecutó antes de partir. La regla 19b permite declararlo en `QUIETOS`,
+pero salió mejor añadir una **segunda barra** —con cuántas filas entrena cada
+modelo— que sí depende de los pliegues. Ahora el dibujo enseña de un vistazo que
+$V$ mueve una barra y deja la otra quieta, que es exactamente lo que había que
+decir.
+
+**Dos cosas que cazaron los otros gates.** `formato.py` encontró la palabra
+«tiendas» en el bloque de Reto, que es contexto de empresa de la regla 15;
+cambiada por hogares y sensores. Y **`remuestreo` ya estaba en el glosario** con
+el sentido de Python 14 —cambiar la frecuencia de una serie—, que no tiene nada
+que ver con el de aquí. Siguiendo la regla 21b, la entrada global pasa a decir
+que está sobrecargado, nombra los dos sentidos y remata con que manda la tabla
+de notación de la lección que se esté leyendo.
+
+El sitio queda en **CONTEO**.
+
+### 3.83 El sistema tipográfico nuevo (25-09-2026)
+
+Luis pidió el lenguaje visual de **palantir.com**. Se fue a la página y se
+sacaron los valores reales en vez de escribirlos de memoria:
+
+| | la referencia | Ruta 780 |
+|---|---|---|
+| Titular | Alliance No.2, **peso 400**, tracking **−3,4 px** = −0,042em, interlineado 0,975 | Geist 400, −0,042em, 0,95 |
+| Cuerpo | Alliance No.1 400, 18 px / 25 px | Geist 400, 17 px / 1,68 |
+| Rótulo | Apercu Mono Pro 500, versales, tracking ancho | Geist Mono 500, versales, 0,17em |
+| Tinta | `#1E2124` | `#1E2124` |
+| Fondo | `#EFEFEF` | `#FAFAFA` |
+| Transición | 0,25–0,35 s ease-in-out | igual |
+
+**Las fuentes de la referencia son de licencia comercial** —Alliance No.1 y
+No.2, Apercu Mono Pro y Rosart—, así que no se pueden usar. Se puso **Geist y
+Geist Mono**, ambas MIT y servidas por Google Fonts, que es la grotesca abierta
+más cercana a Alliance.
+
+**La firma del sistema, y lo único que hay que entender para mantenerlo:** el
+titular va en **peso regular** a tamaño de cartel, y lo que le da presencia no
+es la negrita sino el **tracking negativo que se aprieta conforme sube el
+cuerpo** —−0,042em en h1, −0,028 en h2, −0,018 en h3, −0,010 en h4—. Por debajo
+de 1,1 rem el tracking vuelve a cero o el texto deja de leerse.
+
+**Los pesos, que no son los de la referencia a propósito.** El título de página
+va en 400 como allí, pero los encabezados de sección van en **500** y no en 400:
+una lección de este sitio tiene cinco secciones con proposiciones y
+demostraciones dentro, y con todo en regular la jerarquía desaparece. La
+referencia es una portada; esto es un libro de texto.
+
+**Newsreader no se fue del todo.** Queda como `$editorial-font-family` para dos
+cosas: la cursiva de «fundamentos» del titular de portada y las citas. Una
+grotesca en cursiva no dice nada; una serif en cursiva, sí. La referencia hace
+lo mismo con Rosart.
+
+**Lo que NO se copió, y por qué.**
+
+· **El acento teal se queda.** `--r-acento` lo consumen los más de 300 visuales
+de las 149 lecciones; cambiarlo movería todos los dibujos del sitio.
+
+· **Nada de animaciones de entrada por scroll**, que es lo primero que pide
+cualquier guía de diseño de este tipo. La **regla 10** las prohíbe con
+`opacity: 0` desde que dejaron el índice invisible. El movimiento vive en hover
+y foco: la flecha ↗ de cada módulo se desplaza en diagonal, con su apagado bajo
+`prefers-reduced-motion`.
+
+· **Ningún rótulo nuevo en el titular de portada.** Luis pidió «simplemente
+título» el 24-09 y eso sigue mandando.
+
+**Un detalle que costó encontrar.** El tracking no se aplicaba: había una regla
+vieja `h1, h2, h3 { letter-spacing: -0.014em; }` escrita para la serif, cincuenta
+líneas por debajo de la escala nueva, que la pisaba entera. En SCSS el orden
+manda; al tocar tipografía conviene buscar **todas** las reglas que fijan la
+misma propiedad antes de añadir una.
 
 ## 4. Cómo se escribe una lección
 
