@@ -44,7 +44,7 @@ def fila(k, v, es_simbolo):
     else:
         enlace = ""
     cls = ' class="es-simbolo"' if es_simbolo else ""
-    return (f'<dt id="g-{clave(k).replace(" ", "-")}"{cls}>{k}{marca}</dt>',
+    return (f'<dt id="g-{clave(k).replace(" ", "-").replace("#", "cardinal")}"{cls}>{k}{marca}</dt>',
             f'<dd>{v["def"]}{enlace}</dd>')
 
 L = ["---", 'title: "Glosario"',

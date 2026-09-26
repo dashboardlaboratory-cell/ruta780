@@ -18,7 +18,7 @@ if sys.argv[1:]:
 else:
     _g = json.loads((RAIZ / "glosario" / "glosario.json").read_text(encoding="utf-8"))
     SIMBOLOS = [k for k, v in _g.items() if isinstance(v, dict) and v.get("tipo") == "simbolo"
-                and len(k) == 1 and k.isalpha()]
+                and len(k) == 1 and (k.isalpha() or k == "#")]
 
 def bloques_math(t):
     """Trozos que KaTeX renderiza: $...$ y $$...$$."""
@@ -38,6 +38,8 @@ LATEX = {"α":"alpha","β":"beta","γ":"gamma","δ":"delta","ε":"epsilon","θ":
 def patron(s):
     # La constante pi no es notacion de nadie: en 2\pi de la densidad normal no
     # hay nada que declarar. Solo cuenta cuando actua como funcion, pi(theta).
+    if s == "#":                                   # en el .qmd se escribe \#
+        return re.compile(r"\\#")
     if s == "\u03c0":
         return re.compile(r"\\pi\s*[\(\{]|\\pi_")
     formas = [r"(?<![A-Za-z\\])" + re.escape(s) + r"(?![A-Za-z])"]
