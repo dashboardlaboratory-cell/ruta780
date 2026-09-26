@@ -5030,6 +5030,39 @@ gate.
 El sitio queda en **155 lecciones, 872 celdas, 3474 afirmaciones**, y Feature
 Engineering en **8 de 16**.
 
+### 3.93 Auditoría de tono y de contenido en todo el sitio (26-09-2026)
+
+Luis marcó el tono de las lecciones como literario y poco académico («El
+cimiento sin el cual ESL es ilegible», títulos que afirman una tesis,
+contrastes «no es X sino Y»). El modelo pasa a ser un apunte universitario:
+regla 14b en CLAUDE.md.
+
+Tres pasadas, con verificadores que garantizan que el contenido no cambia:
+`verificar/tono.py` cuenta los vicios en la prosa; `verificar/conserva.py`
+compara la prosa contra git (números, código, glosario, enlaces, etiquetas);
+`verificar/conserva_celdas.py` exige que en las celdas solo cambien los `print`
+y que no aparezcan cifras nuevas; `verificar/conserva_html.py` hace lo mismo con
+los textos de los visuales. `salidas.py` acepta ya lecciones sueltas.
+
+1. **Prosa de las 155 lecciones**, portada, índices de módulo y glosario: el
+   detector pasa de unas 3100 marcas a 25, todas justificadas.
+2. **Salidas de las celdas**: fuera unos 1900 párrafos de conclusión impresos;
+   unos 110 rótulos reescritos junto con su afirmación.
+3. **Errores de contenido** que los agentes encontraron al leer: unos 90
+   corregidos, cada uno contra la salida de la celda o el índice. Los de más
+   peso: el sMAPE tiende a 3, no a infinito (Series 11); E[d] = k²/(k²−1) y no
+   1+2/k (Series 07, en prosa, ejercicio y visual); el factor de Bayes con un
+   factor sobrante (Estadística 21); −2 log L con varianza conocida (ML 28);
+   115 pasos por dígito y no 230 (Álgebra 16); 112 capas y no 74 (ML 41); unas
+   40 remisiones a lecciones o proposiciones con el número mal, entre ellas las
+   de Estadística 01–06, desfasadas en uno.
+
+**Error propio durante el trabajo:** un `git stash` coló en un comando de
+diagnóstico guardó aparte los 148 archivos modificados mientras el gate
+completo corría. Se recuperaron al momento con `git stash pop` y el gate se
+relanzó desde cero. Para comparar con la versión comiteada se usa
+`git archive HEAD | tar -x -C $TMPDIR/head`, que no toca el árbol de trabajo.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
