@@ -44,6 +44,51 @@ GOLPE = re.compile(r"\b[Nn]o (?:es|son|era|fue|fueron)\b(?![^.;:]*\bsino\b)"
 # Solo formas inequívocamente imperativas o de tuteo. «se mira», «quien mira» y
 # «mira dónde cae» son tercera persona y NO entran: la primera versión de esta
 # expresión las cazaba y daba cuatro falsos positivos.
+# Encabezados que argumentan en lugar de nombrar. Los dos primeros patrones
+# son la construccion prohibida por la regla 14 —«X, no Y» y «en vez de Y»—; el
+# tercero, la afirmacion con verbo conjugado que convierte el titulo en una
+# tesis. Las secciones estructurales del molde van aparte: «Lo que esta leccion
+# no resuelve» lleva una negacion y es el nombre que usa el sitio entero.
+TITULO_GOLPE = re.compile(
+    r",\s*(?:y\s+)?no\s+\w"
+    r"|\ben (?:vez|lugar) de\b"
+    r"|\b(?:no (?:es|son|basta|tiene|sirve|hay que|dice)|tambi[eé]n es|siempre es|nunca es)\b",
+    re.I)
+ESTRUCTURAL = re.compile(r"^\d+\.\s+Lo que (?:esta lecci[oó]n|el|la)\b", re.I)
+
+# Los encabezados anteriores al 25-09-2026 que incumplen y todavia no se han
+# reescrito. La lista es deuda declarada, igual que MIGRADAS: sirve para que
+# --estricto no falle por lo viejo y para que se vea cuanto queda.
+TITULOS_HEREDADOS = {
+    ('estadistica/01-variables-aleatorias.qmd', '3. El estadístico también es aleatorio'),
+    ('estadistica/03-distribuciones-analiticas.qmd', '7. Por qué la cola no es evidencia'),
+    ('estadistica/13-regresion-primeros-principios.qmd', '1. El modelo, y lo que no es'),
+    ('estadistica/13-regresion-primeros-principios.qmd', '3. Hay dos rectas, no una'),
+    ('estadistica/13-regresion-primeros-principios.qmd', '4. La descomposición, $R^2$, y lo que $R^2$ no dice'),
+    ('estadistica/17-p-hacking.qmd', '1. El mejor de muchos no es uno cualquiera'),
+    ('estadistica/20-distribuciones-predictivas.qmd', '4. La predictiva siempre es más ancha'),
+    ('estadistica/21-comparacion-de-modelos.qmd', '3. La navaja de Occam no hay que añadirla'),
+    ('fundamentos/04-listas-y-sus-metodos.qmd', '4. Copiar, y no copiar'),
+    ('matematica/17-metodo-de-newton.qmd', '1. Minimizar el modelo en vez de la función'),
+    ('ml/03-regresion-logistica.qmd', '1. Por qué no sirve la recta'),
+    ('ml/06-validacion-cruzada.qmd', '1. Dos errores que no son el mismo'),
+    ('ml/09-alta-dimension.qmd', '1. Ajustar sin error no es ajustar bien'),
+    ('ml/11-suavizado-y-gams.qmd', '2. Mirar cerca en vez de penalizar'),
+    ('ml/17-censura-y-kaplan-meier.qmd', '1. Lo que se observa no es lo que se quiere'),
+    ('python/05-entorno-uv-git.qmd', '2. Especificar no es fijar'),
+    ('python/10-carga-formatos-y-limpieza.qmd', '2. La inferencia mira filas, no columnas'),
+    ('python/11-wrangling-joins-y-reshape.qmd', '4. Cuando el par no es único'),
+    ('python/13-visualizacion.qmd', '1. Un gráfico es un objeto, no una imagen'),
+    ('python/14-series-de-tiempo.qmd', '3. El tiempo no es una recta de números'),
+    ('python/16-anatomia-de-un-proyecto.qmd', '1. Reproducible no es lo mismo que determinista'),
+    ('python/19-tipado-gradual.qmd', '1. La anotación es un dato, no una comprobación'),
+    ('python/21-sql-desde-python.qmd', '3. `NULL` no es un valor'),
+    ('python/24-pruebas.qmd', '2. Comprobar una propiedad en lugar de un ejemplo'),
+    ('python/25-depuracion.qmd', '3. Bisecar en lugar de buscar'),
+    ('python/26-perfilado.qmd', '1. Contar en lugar de cronometrar'),
+    ('python/30-zonas-horarias.qmd', '1. Un reloj de pared no es un instante'),
+}
+
 SEGUNDA_PERSONA = re.compile(
     r"(?:\b[Ff]íjate\b|\b[Rr]etén\b|\b[Dd]etente\b|\b[Ll]éelo\b|\bverás\b|"
     r"\bvas a (?:ver|usar|necesitar|encontrar|hacer)\b|\btus datos\b|\btu tabla\b|"
@@ -303,6 +348,26 @@ def revisa(ruta):
         faltas.append(f"prosa de golpe «no es X, es Y» (regla 14): {'; '.join(golpes[:3])}")
     if tuteos:
         faltas.append(f"segunda persona (regla 14): {'; '.join(tuteos[:3])}")
+
+    # --- regla 14: los encabezados nombran, no argumentan ---
+    # Lo encontró Luis el 25-09-2026 sobre «El techo lo pone la representación,
+    # no la muestra». La comprobación de prosa de arriba no mira los
+    # encabezados, así que la construcción prohibida entraba por el título.
+    # El molde son los de estadistica/04: «Esperanza», «Varianza y desviación
+    # estándar», «La media como punto de equilibrio». Nombran el objeto.
+    titulares = []
+    for i, linea in enumerate(t.splitlines(), 1):
+        if not linea.startswith("## "):
+            continue
+        tit = linea[3:].strip()
+        if ESTRUCTURAL.match(tit):
+            continue
+        m = TITULO_GOLPE.search(tit)
+        if m and (rel, tit) not in TITULOS_HEREDADOS:
+            titulares.append(f"línea {i}: «{tit[:64]}»")
+    if titulares:
+        faltas.append(f"encabezado que argumenta en vez de nombrar (regla 14): "
+                      f"{'; '.join(titulares[:3])}")
 
     # --- regla 15: cero contexto de la empresa ---
     hallado = sorted({m.group(0).lower() for m in EMPRESA.finditer(t)})

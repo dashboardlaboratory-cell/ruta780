@@ -4686,6 +4686,50 @@ el reloj de animación. Adelantando `currentTime` a mano el barrido aparecía en
 x = 171 con opacidad 0,55, que es lo correcto. **Antes de dar por rota una
 animación conviene mirar `document.visibilityState`.**
 
+### 3.85 Los encabezados también son prosa (25-09-2026)
+
+Luis, señalando dos títulos de Atributos 01: **«esto no cumple regla, esto
+tampoco… me preocupa que no estás siguiendo el parámetro»**. Los dos eran
+«1. El mismo modelo, cuatro representaciones» y «2. El techo lo pone la
+representación, **no** la muestra».
+
+Tenía razón, y el segundo es literalmente la construcción que prohíbe la regla
+14 —«no es X, es Y»— puesta en un título. **`formato.py` solo miraba la prosa**,
+así que la construcción prohibida entraba por el encabezado sin que nada la
+viera.
+
+**La auditoría del sitio entero, que es lo que hacía falta antes de tocar
+nada.** Filtrando «Lo que esta lección no resuelve» —que es el nombre
+estructural de sección del proyecto y lleva una negación legítima— quedan **32
+encabezados** que argumentan en vez de nombrar: **7 de esta tanda y 25
+anteriores**. No es un desliz reciente: es deriva acumulada.
+
+**Reescritos 25 encabezados** de las lecciones de esta tanda y de las de
+septiembre que estaban a mano. El criterio es el molde de `estadistica/04`
+—«Esperanza», «Varianza y desviación estándar», «La media como punto de
+equilibrio»—: **el encabezado nombra el objeto de la sección, no defiende una
+tesis sobre él**. Ejemplos del cambio: «El techo lo pone la representación, no
+la muestra» pasa a «El techo de una representación»; «Medir la interferencia en
+vez de suponerla», a «El diseño por saturación»; «Parar antes de tiempo también
+es regularizar», a «La parada temprana».
+
+**Y el gate**, que es lo que impide que vuelva. `formato.py` recorre ahora los
+`##` y busca tres patrones: «X, no Y», «en vez de / en lugar de» y la afirmación
+con verbo conjugado —«también es», «no basta», «siempre es»—. Probado en
+negativo con las tres formas, y con el título bueno para comprobar que no da
+falsos positivos.
+
+**Los 25 anteriores van en `TITULOS_HEREDADOS`**, una lista de deuda declarada
+al estilo de `MIGRADAS`: `--estricto` no falla por ellos, y a la vez se ve
+exactamente cuánto queda y dónde. Algunos son discutibles —«`NULL` no es un
+valor» es el contenido técnico de esa sección, no un titular— y por eso la
+decisión de reescribirlos es de Luis y no automática.
+
+**Lo que esto enseña sobre los gates de este proyecto:** una comprobación que
+mira «la prosa» tiene que decir qué cuenta como prosa. Aquí `prosa()` excluía
+los encabezados por venir de una función pensada para las celdas, y esa
+exclusión silenciosa dejó pasar 32 casos durante meses.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
