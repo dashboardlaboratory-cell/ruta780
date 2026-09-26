@@ -91,6 +91,33 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
     proposición → demostración → ejemplo. Sin títulos-golpe, sin "no es X,
     es Y", sin "Fíjate", sin párrafos de una línea para efecto, sin
     metáforas apiladas. El molde es `estadistica/04`.
+14b. **Tono frío de manual universitario (crítica de Luis, 26-09-2026).** El
+    modelo es un apunte de estadística en español: «En el capítulo anterior
+    introducimos…», «Definición. El valor esperado de una variable aleatoria…»,
+    «Esta fórmula nos dice que…», «Consideremos un juego…». Frases
+    declarativas, una afirmación por frase, sin intención literaria.
+    Prohibido, y `verificar/tono.py` lo cuenta:
+
+    · **Títulos que afirman una tesis** («El techo lo pone la representación»,
+      «El cimiento sin el cual ESL es ilegible»). Un título nombra el tema:
+      «Variables ficticias y rango de la matriz de diseño». Igual los títulos
+      entre paréntesis de proposiciones y definiciones.
+    · **Contrastes** «no es X sino Y», «X, no Y» y sus variantes partidas en dos
+      frases, salvo que las dos mitades sean información matemática.
+    · **Rayas (—) como conector.** Coma, paréntesis, dos puntos o punto.
+    · **Sentencias y metáforas**: «el hallazgo útil», «la cuenta honesta», «el
+      piso de abajo», «lo que hace falta no es X sino Y», cierres de párrafo
+      que repiten la idea.
+    · **Intensificadores y valorativos**: exactamente (salvo sentido
+      matemático), justo, de verdad, de paso, precisamente, honesto, limpio,
+      barato.
+    · **Negrita sobre frases.** Solo para el término que se define y las
+      etiquetas (Definición, Proposición, Modo de falla, bloques de Fuentes).
+
+    Al reescribir, `verificar/conserva.py ruta.qmd` compara contra git y falla
+    si cambió cualquier número de la prosa, bloque de código o de HTML, término
+    de glosario, enlace, etiqueta o valla. El piloto es `atributos/08`.
+
 15. **Cero contexto de su empresa.** Nada de CBTL, tiendas, tickets,
     sucursales, Multiplaza, café. Ejemplos neutros y clásicos: dados, pesos
     al nacer, ingresos, los datasets que usan los propios libros.
