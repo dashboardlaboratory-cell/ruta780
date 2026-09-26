@@ -4788,6 +4788,102 @@ y las tres rotando— y eligió quedarse con k-means.
 El sitio queda en **150 lecciones, 842 celdas, 3397 afirmaciones**, y el módulo
 de Feature Engineering en **3 de 16**.
 
+### 3.87 Atributos 04: la invariancia del árbol, demostrada (25-09-2026)
+
+**Atributos 04, Transformaciones 1:1 (L3, FES 6).** Box-Cox y Yeo-Johnson
+escritas a mano, con su verosimilitud y su jacobiano.
+
+**Lo que Box-Cox maximiza, y el término que nadie mira.** La log-verosimilitud
+lleva $-\tfrac n2\log\widehat{\operatorname{Var}}z(\lambda)$ **más el
+jacobiano** $(\lambda-1)\sum\log x_i$. Sin ese segundo término la respuesta es
+trivial: $\lambda\to-\infty$ encoge la varianza hasta cero y gana siempre. Con
+él, la estimación recupera el exponente que generó los datos con un error de
+entre **−0,06 y +0,07** en todo el rango de −1 a 1,5, y la asimetría cae de
+2,1109 a **−0,0031**.
+
+**El hallazgo de la lección, que resultó ser un teorema de una línea.** Un árbol
+solo usa comparaciones $x_i\le c$, y si $f$ crece, $x_i\le c\iff f(x_i)\le
+f(c)$: la familia de particiones alcanzables es **la misma**. Las predicciones
+del árbol sobre $x$ y sobre $\log x$ no se parecen, **son el mismo vector**;
+`np.array_equal` devuelve `True`. Para el modelo lineal, en cambio, el mismo
+logaritmo vale **+0,2345** de $R^2$ con un mecanismo y **−0,2209** con otro.
+
+De ahí la regla operativa que sustituye a «normaliza siempre»: **la
+transformación numérica solo existe para los modelos que tienen forma**. Con un
+árbol o un bosque es literalmente inobservable; con coeficientes es la decisión
+de la Lección 01 y hay que medirla.
+
+**Yeo-Johnson, con su letra pequeña medida.** Vale para cualquier dato, pero
+simetriza hasta **0,0266** mientras la masa está de un lado y solo hasta
+**0,5230** cuando se reparte entre las dos ramas, porque una comprime con
+exponente $\lambda$ y la otra con $2-\lambda$. Poder aplicarse siempre y
+funcionar igual de bien siempre son cosas distintas.
+
+**Y $\lambda$ es un parámetro estimado.** Con 30 filas su desviación vale
+**0,2366** y se mueve entre −0,69 y 0,54 —de la inversa de la raíz a la raíz—;
+con 1600, 0,0294. Nótese que **no filtra nada**: $\lambda$ no mira al objetivo,
+así que es el caso de la Lección 02 con fuga cero. Lo que está en juego es la
+coherencia de la columna, no la honestidad de la estimación.
+
+**Tres cosas que cazaron los gates, y las tres eran mías.**
+
+· `formato.py` encontró un «no es X, es Y» en una demostración. Reescrito.
+
+· El mismo gate avisó de **7 resultados y ningún visual** (regla 20). Se
+añadieron dos: la curva de verosimilitud con su máximo —donde se ve que con 15
+filas la cima es casi plana— y las dos ramas de Yeo-Johnson pegadas en el cero,
+con la franja de los datos moviéndose sobre ellas.
+
+· El visual reventó con `Unexpected number`. La causa: la muestra de 200 valores
+se inyectó con `.replace("[MUESTRA]", numeros)`, que **se comió los corchetes**
+del array y dejó `var X = 2.061,3.270,…;`. Marcador de plantilla con corchetes
+dentro de código que también los usa: mala combinación.
+
+### 3.88 La auditoría tipográfica después del cambio de fuente (25-09-2026)
+
+Luis, con una captura de la Proposición 1.2 de Atributos 01: **«toca revisar
+formatos de números y fuentes, distancias, espacios que se pudieron corromper
+con el cambio de estilo»**. En la captura, las cifras en negrita del enunciado
+—**0,824606**— salían en Geist Mono, a 12 px, en versales y con tracking ancho.
+
+**El fallo más grande no lo introdujo el cambio de fuente: lo destapó.** La
+regla `.proposicion > p:first-child strong` estaba pensada para la etiqueta
+«Proposición 1.2 (…).», pero alcanzaba **a todas las negritas del primer
+párrafo**. Con IBM Plex Mono pasaba casi desapercibido; con el cero punteado de
+Geist Mono saltaba a la vista. Afectaba a **1564 bloques** de definiciones y
+proposiciones del sitio. Arreglado con `strong:first-of-type`, que selecciona
+solo la primera negrita del párrafo aunque haya otros elementos delante.
+
+**Lo demás, medido con estilos calculados en el navegador y no a ojo:**
+
+· **Interlineado de encabezados a 1,02.** El valor global se puso para el
+titular de portada, y un `h2` de lección que ocupa dos líneas las juntaba. Ahora
+`h1.title` 1,08, `h2` 1,16 y `h3`/`h4` 1,24: más apretado cuanto mayor es el
+cuerpo, que es la misma lógica del tracking.
+
+· **La barra lateral a 0,98.** «Fundamentos de Python» ocupa dos líneas y con
+ese interlineado se tocaban. Ahora 1,30 y peso 500.
+
+· **Tres rótulos que eran serif en 600** —«Derivación», el título de los
+tooltips del glosario y los términos de la página del glosario— quedaban
+pesados en Geist frente al sistema de 400/500. Pasan a 500.
+
+· **Cifras tabulares** en tablas, salidas de celda y datos de módulo: Geist trae
+cifras proporcionales por omisión y en una tabla de resultados los decimales
+dejaban de alinearse en vertical.
+
+· **El logo ∇f = 0** parecía montado en las capturas; medido, «∇f» termina en
+x = 69 y «= 0» empieza en x = 75. No se solapan: el tono claro es del diseño.
+
+**Y los títulos planeados del índice de Feature Engineering**, que tenían el
+mismo tic que se corrigió en los encabezados: «a qué modelos les importa **y a
+cuáles no**», «buscarlas con criterio **en vez de** multiplicar todo», «y
+**cuándo imputar hace daño**». `formato.py` no los ve porque son filas de un
+índice y no `##`. Ocho reescritos antes de escribir las lecciones.
+
+El sitio queda en **151 lecciones, 848 celdas, 3409 afirmaciones**, y Feature
+Engineering en **4 de 16**.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

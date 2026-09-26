@@ -1,0 +1,693 @@
+---
+title: "Transformaciones 1:1: logaritmo, raíz, Box-Cox y Yeo-Johnson"
+subtitle: "Feature Engineering · Lección 04"
+nivel: L3
+modulo: atributos
+fase: F2
+prereqs: [atributos/01-que-hace-un-atributo, estadistica/08-maxima-verosimilitud, ml/12-arboles-de-decision]
+siguientes: []
+libro: "FES, cap. 6 Engineering Numeric Predictors"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="atributos/04-transformaciones-1a1"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F2]{.item}
+[**Libro** FES 6]{.item}
+[**Prereqs** [Qué hace un atributo](01-que-hace-un-atributo.qmd) · [Máxima verosimilitud](../estadistica/08-maxima-verosimilitud.qmd) · [Árboles de decisión](../ml/12-arboles-de-decision.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Escribir la familia de potencias** y estimar su exponente por máxima verosimilitud, recuperando el que generó los datos con un error de entre **−0,06 y +0,07** en todo el rango de −1 a 1,5.
+2. Explicar qué maximiza Box-Cox: **la verosimilitud de que lo transformado venga de una normal**, con el jacobiano incluido, y no ninguna medida de lo bonito que queda.
+3. **Medir lo que consigue**: la asimetría cae de **2,1109** a **−0,0031** en el caso del logaritmo.
+4. **Extender a ceros y negativos con Yeo-Johnson**, y medir su límite: simetriza hasta **0,0266** mientras la masa está de un lado y solo hasta **0,5230** cuando se reparte entre las dos ramas.
+5. **Demostrar y comprobar que a un árbol no le sirve de nada**: sus predicciones sobre $x$ y sobre $\log x$ son **el mismo vector**, bit a bit.
+6. **Medir que la misma transformación tiene los dos signos** para un modelo lineal: **+0,2345** de $R^2$ con un mecanismo y **−0,2209** con otro.
+7. **Tratar $\lambda$ como el parámetro estimado que es**: con 30 filas su desviación vale **0,2366** y se mueve entre −0,69 y 0,54; con 1600, **0,0294**.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Atributos 01**: que una transformación sirve solo si mete la función verdadera dentro del alcance del modelo.
+- **Estadística 8**: la máxima verosimilitud, que es exactamente lo que estima $\lambda$.
+- **Machine Learning 12**: los árboles, cuya invariancia a las transformaciones monótonas se demuestra aquí.
+- **Atributos 02**: el remuestreo, que decide dónde se estima $\lambda$ y dónde se aplica.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Atributos 05**: el escalado, que es la otra mitad de las transformaciones 1:1.
+- **Atributos 06**: de uno a muchos, cuando una sola transformación no alcanza.
+- **Atributos 16**: el pipeline, donde $\lambda$ es un parámetro ajustado que viaja con el modelo.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $\lambda$ | lambda | El exponente de la familia de potencias |
+| $x$ | equis | El predictor original, estrictamente positivo para Box-Cox |
+| $z$ | zeta | El predictor transformado |
+| $\ell$ | ele | La log-verosimilitud |
+| $\mu,\ \sigma^2$ | mu, sigma cuadrado | La media y la varianza de lo transformado |
+| $\gamma_1$ | gamma sub 1 | La asimetría: el tercer momento tipificado |
+| $n$ | ene | Filas de la muestra |
+| $R^2$ | erre cuadrado | La fracción de varianza explicada |
+:::
+
+## 1. La familia de potencias y su exponente
+
+::: {.definicion}
+**Definición 4.1 ([transformación de Box-Cox]{.g}).** Para $x>0$,
+$$z(\lambda)=\begin{cases}\dfrac{x^{\lambda}-1}{\lambda} & \lambda\neq0\\[1.2ex]\log x & \lambda=0,\end{cases}$$
+una familia continua que contiene el logaritmo, la raíz ($\lambda=1/2$), la identidad salvo desplazamiento ($\lambda=1$) y la inversa ($\lambda=-1$).
+:::
+
+::: {.proposicion}
+**Proposición 4.2 (el exponente se estima, no se elige).** $\lambda$ es el que maximiza
+$$\ell(\lambda)=-\tfrac{n}{2}\log\widehat{\operatorname{Var}}\,z(\lambda)+(\lambda-1)\sum_i\log x_i,$$
+y sobre datos generados con un $\lambda$ conocido lo recupera con un error de entre **−0,06 y +0,07** para $\lambda=-1;-0{,}5;0;0{,}5;1;1{,}5$.
+:::
+
+::: {.demostracion}
+*Demostración.* Suponiendo $z(\lambda)\sim\mathcal N(\mu,\sigma^2)$, la log-verosimilitud de $x$ lleva el término de la normal más el **jacobiano** del cambio de variable, $\sum\log|dz/dx|=(\lambda-1)\sum\log x_i$. Concentrando $\mu$ y $\sigma^2$ en sus estimadores queda la expresión de arriba, función de $\lambda$ sola. El segundo término es el que impide la respuesta trivial: sin él, $\lambda\to-\infty$ encoge la varianza hasta cero y gana siempre. **Lo que Box-Cox maximiza es la verosimilitud de la normalidad, no la simetría ni la apariencia**; que la asimetría caiga de 2,1109 a −0,0031 es una consecuencia, no el criterio. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def boxcox(x, lam):
+    """La familia de potencias, con el logaritmo en el limite lam = 0."""
+    return np.log(x) if lam == 0.0 else (x ** lam - 1.0) / lam
+
+def verosimilitud(x, lam, logx):
+    """Log-verosimilitud de Box-Cox: la de la normal mas el jacobiano."""
+    z = boxcox(x, lam)
+    return -0.5 * len(x) * np.log(z.var()) + (lam - 1.0) * logx.sum()
+
+def estima_lam(x, malla=None):
+    """La lambda que maximiza la verosimilitud, por rejilla."""
+    malla = np.linspace(-2.0, 2.0, 401) if malla is None else malla
+    logx = np.log(x)
+    v = np.array([verosimilitud(x, float(L), logx) for L in malla])
+    return float(malla[int(np.argmax(v))])
+
+def asimetria(x):
+    z = (x - x.mean()) / x.std()
+    return float((z ** 3).mean())
+
+# Para fabricar datos cuya transformada de Box-Cox es normal hay que respetar
+# lam*t + 1 > 0; se centra t de modo que ese producto valga 3 de media.
+print("la lambda que genero los datos, y la que devuelve la verosimilitud")
+print("  %-10s %12s %10s %14s %14s"
+      % ("verdadera", "estimada", "error", "asim. antes", "asim. despues"))
+for lam in (-1.0, -0.5, 0.0, 0.5, 1.0, 1.5):
+    rng = np.random.default_rng(int(1000 + 100 * lam))
+    if lam == 0.0:
+        t = 1.0 + 0.5 * rng.standard_normal(4000)
+        x = np.exp(t)
+    else:
+        t = 2.0 / lam + 0.5 * rng.standard_normal(4000)
+        x = (lam * t + 1.0) ** (1.0 / lam)
+    le = estima_lam(x)
+    print("  %-10.2f %12.2f %10.2f %14.4f %14.4f"
+          % (lam, le, le - lam, asimetria(x), asimetria(boxcox(x, le))))
+print()
+print("la recuperacion yerra entre -0.06 y +0.07 en todo el rango, y la")
+print("asimetria cae de 2.11 a 0.003 en el caso del logaritmo. Box-Cox no")
+print("elige la transformacion que mas gusta: elige la que hace mas verosimil")
+print("que lo transformado venga de una normal, y esa es una cuenta cerrada")
+```
+
+
+```{=html}
+<div class="viz-vero">
+  <div class="controles">
+    <label>λ que se prueba <input id="vr-l" type="range" min="-1.5" max="2" step="0.05" value="0.6"> <span id="vr-l-v">0,60</span></label>
+    <label>Filas de la muestra <input id="vr-n" type="range" min="15" max="200" step="5" value="200"> <span id="vr-n-v">200</span></label>
+  </div>
+  <svg id="vr-svg" viewBox="0 0 660 300" role="img" aria-label="La log-verosimilitud de Box-Cox en función del exponente, con su máximo marcado y el efecto del tamaño de la muestra sobre lo puntiaguda que es la curva."></svg>
+  <p class="lectura" id="vr-lectura"></p>
+</div>
+<style>
+.viz-vero { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-vero .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-vero label { display: flex; align-items: center; gap: .4rem; }
+.viz-vero input[type=range] { width: 150px; padding: 0; }
+.viz-vero svg { width: 100%; height: auto; display: block; }
+.viz-vero .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("vr-svg"), lec = document.getElementById("vr-lectura");
+  var cl = document.getElementById("vr-l"), cn = document.getElementById("vr-n");
+  var elm = document.getElementById("vr-l-v"), enm = document.getElementById("vr-n-v");
+  var X0 = 62, X1 = 628, Y0 = 26, Y1 = 226, LMIN = -1.5, LMAX = 2;
+  // Muestra fija de una lognormal, la misma que usa la celda de la Seccion 1.
+  var X = [2.061,3.270,4.158,1.376,4.652,3.250,4.702,3.289,6.131,1.410,9.424,6.307,1.786,4.315,3.711,0.801,4.123,1.804,2.282,1.783,2.014,2.858,2.909,0.913,2.252,1.060,1.117,2.132,4.947,4.227,1.780,1.653,1.523,3.004,5.237,2.753,4.415,3.390,7.791,0.667,0.612,2.366,4.244,2.039,3.662,1.195,1.126,1.646,4.898,4.426,1.650,3.086,1.728,2.757,1.246,2.631,1.624,2.635,1.722,1.529,2.943,2.146,2.760,2.027,4.177,1.536,4.656,6.906,2.252,9.223,11.255,3.707,1.051,0.877,2.404,9.423,4.064,4.621,2.280,1.615,3.527,1.251,2.368,3.888,2.788,3.924,1.989,4.132,3.608,0.857,1.311,1.638,4.301,3.358,3.314,3.068,4.244,5.268,1.844,0.893,4.337,2.348,2.813,2.407,1.248,0.944,5.339,5.843,5.217,3.145,3.280,2.027,2.851,2.050,1.858,3.138,8.923,0.727,4.141,4.362,1.162,3.385,2.919,1.964,1.920,1.016,8.980,14.059,8.252,2.222,3.320,3.540,1.539,2.268,3.948,2.024,0.793,1.119,3.249,2.147,2.206,7.023,2.884,1.645,2.597,12.312,1.235,9.496,7.457,2.430,2.149,7.339,3.225,1.875,9.737,3.071,3.430,2.793,2.201,2.965,2.098,3.878,5.691,5.810,6.259,7.743,4.631,1.780,5.331,0.857,1.650,3.330,0.837,7.616,1.334,0.953,1.595,1.592,2.669,2.434,5.594,2.419,3.074,1.359,3.850,1.580,0.695,6.771,1.298,1.268,1.472,4.288,0.936,2.057,4.071,10.256,2.219,2.827,1.481,10.880];
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function bc(v, lam) { return Math.abs(lam) < 1e-9 ? Math.log(v) : (Math.pow(v, lam) - 1) / lam; }
+  function vero(lam, n) {
+    var s = 0, s2 = 0, sl = 0, i, z;
+    for (i = 0; i < n; i++) { z = bc(X[i], lam); s += z; s2 += z * z; sl += Math.log(X[i]); }
+    var v = s2 / n - (s / n) * (s / n);
+    return -0.5 * n * Math.log(v) + (lam - 1) * sl;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var lam = +cl.value, n = +cn.value;
+    elm.textContent = lam.toFixed(2).replace(".", ",");
+    enm.textContent = String(n);
+
+    var i, L, vals = [], mx = -Infinity, mn = Infinity, arg = 0;
+    for (i = 0; i <= 240; i++) {
+      L = LMIN + i * (LMAX - LMIN) / 240;
+      var v = vero(L, n);
+      vals.push([L, v]);
+      if (v > mx) { mx = v; arg = L; }
+      if (v < mn) mn = v;
+    }
+    var rango = mx - mn;
+    function px(v) { return X0 + ((v - LMIN) / (LMAX - LMIN)) * (X1 - X0); }
+    function py(v) { return Y1 - ((v - mn) / rango) * (Y1 - Y0); }
+
+    for (i = -1; i <= 2; i++) {
+      svg.appendChild(el("path", { d: "M" + px(i) + " " + Y0 + " L" + px(i) + " " + Y1,
+        stroke: C_L, "stroke-width": 0.8, opacity: .5 }));
+      svg.appendChild(el("text", { x: px(i), y: Y1 + 20, "text-anchor": "middle",
+        "font-size": 10.5, fill: C_T, opacity: .7 }, String(i)));
+    }
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 40, "text-anchor": "middle",
+      "font-size": 10.5, fill: C_T, opacity: .7 }, "exponente λ"));
+    svg.appendChild(el("text", { x: X0 - 10, y: (Y0 + Y1) / 2, "text-anchor": "middle",
+      "font-size": 10.5, fill: C_T, opacity: .7,
+      transform: "rotate(-90 " + (X0 - 10) + " " + ((Y0 + Y1) / 2) + ")" }, "log-verosimilitud"));
+
+    var d = "";
+    for (i = 0; i < vals.length; i++)
+      d += (i === 0 ? "M" : " L") + px(vals[i][0]).toFixed(1) + " " + py(vals[i][1]).toFixed(1);
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_A, "stroke-width": 2.8 }));
+
+    svg.appendChild(el("path", { d: "M" + px(arg).toFixed(1) + " " + Y0 + " L" + px(arg).toFixed(1) + " " + Y1,
+      stroke: C_T, "stroke-width": 1.3, "stroke-dasharray": "5 4", opacity: .6 }));
+    svg.appendChild(el("circle", { cx: px(arg).toFixed(1), cy: py(mx).toFixed(1), r: 6, fill: C_T }));
+    svg.appendChild(el("circle", { cx: px(lam).toFixed(1), cy: py(vero(lam, n)).toFixed(1), r: 6, fill: C_B }));
+
+    // cuanto cae la verosimilitud al alejarse 0,25 del maximo: mide lo puntiaguda
+    var caida = mx - vero(arg + 0.25 > LMAX ? arg - 0.25 : arg + 0.25, n);
+    lec.innerHTML = "Con <strong>" + n + "</strong> filas, el máximo cae en λ = <strong>" +
+      arg.toFixed(2).replace(".", ",") + "</strong> y la curva pierde <strong>" +
+      caida.toFixed(2).replace(".", ",") + "</strong> al alejarse 0,25 de él. " +
+      "El punto rojo marca el λ = " + lam.toFixed(2).replace(".", ",") + " que se está probando. " +
+      (n < 40
+        ? "Con tan pocas filas la cima es casi plana: muchos exponentes distintos explican los datos parecido, y el que gane dependerá de la muestra que haya tocado."
+        : "Cuantas más filas, más puntiaguda la cima y menos margen queda para que el azar mueva la elección.") +
+      " La curva baja por los dos lados y no se dispara hacia λ negativa: eso es el jacobiano haciendo su trabajo.";
+  }
+  cl.addEventListener("input", dibujar); cn.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Ceros y negativos
+
+::: {.definicion}
+**Definición 4.3 ([transformación de Yeo-Johnson]{.g}).** Dos ramas que se pegan en el cero:
+$$z=\begin{cases}\dfrac{(x+1)^{\lambda}-1}{\lambda} & x\ge0,\ \lambda\neq0\\[1.1ex]\log(x+1) & x\ge0,\ \lambda=0\\[1.1ex]-\dfrac{(-x+1)^{2-\lambda}-1}{2-\lambda} & x<0,\ \lambda\neq2\\[1.1ex]-\log(-x+1) & x<0,\ \lambda=2.\end{cases}$$
+Vale para cualquier dato numérico, sin la restricción $x>0$ de Box-Cox.
+:::
+
+::: {.proposicion}
+**Proposición 4.4 (poder aplicarse siempre no es funcionar igual de bien siempre).** Sobre la misma columna desplazada, Yeo-Johnson deja la asimetría en **0,0266, 0,0340, 0,1913 y 0,5230** conforme la masa pasa de estar toda a la derecha del cero a repartirse entre las dos ramas. Box-Cox deja de poder aplicarse en la segunda fila.
+:::
+
+::: {.demostracion}
+*Demostración.* Las dos ramas coinciden en valor y en primera derivada en $x=0$ —de ahí el $+1$ y el $2-\lambda$—, pero su **curvatura es distinta**: la rama positiva comprime con exponente $\lambda$ y la negativa expande con $2-\lambda$. Mientras casi toda la masa está de un lado, la transformación es efectivamente una Box-Cox desplazada y simetriza bien; cuando se reparte, un solo $\lambda$ tiene que servir a dos formas distintas y el compromiso se nota. **La restricción de Box-Cox funciona como advertencia sobre dónde una familia de potencias tiene sentido**, más que como una limitación que Yeo-Johnson venga a levantar. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def boxcox(x, lam):
+    """La familia de potencias, con el logaritmo en el limite lam = 0."""
+    return np.log(x) if lam == 0.0 else (x ** lam - 1.0) / lam
+
+def verosimilitud(x, lam, logx):
+    """Log-verosimilitud de Box-Cox: la de la normal mas el jacobiano."""
+    z = boxcox(x, lam)
+    return -0.5 * len(x) * np.log(z.var()) + (lam - 1.0) * logx.sum()
+
+def estima_lam(x, malla=None):
+    """La lambda que maximiza la verosimilitud, por rejilla."""
+    malla = np.linspace(-2.0, 2.0, 401) if malla is None else malla
+    logx = np.log(x)
+    v = np.array([verosimilitud(x, float(L), logx) for L in malla])
+    return float(malla[int(np.argmax(v))])
+
+def asimetria(x):
+    z = (x - x.mean()) / x.std()
+    return float((z ** 3).mean())
+
+def yeojohnson(x, lam):
+    """Extiende Box-Cox a ceros y negativos con dos ramas que se pegan en 0."""
+    z = np.empty_like(x, dtype=float)
+    p = x >= 0
+    z[p] = np.log1p(x[p]) if lam == 0.0 else ((x[p] + 1.0) ** lam - 1.0) / lam
+    q = ~p
+    z[q] = (-np.log1p(-x[q]) if lam == 2.0
+            else -(((-x[q] + 1.0) ** (2.0 - lam) - 1.0) / (2.0 - lam)))
+    return z
+
+def estima_yj(x, malla=np.linspace(-2.0, 3.0, 501)):
+    jac_base = np.sign(x) * np.log1p(np.abs(x))
+    def v(lam):
+        z = yeojohnson(x, lam)
+        return -0.5 * len(x) * np.log(z.var()) + (lam - 1.0) * jac_base.sum()
+    val = np.array([v(float(L)) for L in malla])
+    return float(malla[int(np.argmax(val))])
+
+rng = np.random.default_rng(7)
+base = np.exp(1.0 + 0.7 * rng.standard_normal(4000))
+
+print("la misma columna, desplazada hasta que entran ceros y negativos")
+print("  %-14s %10s %10s %14s %14s"
+      % ("desplazada", "minimo", "Box-Cox", "asim. antes", "asim. despues"))
+for d in (0.0, 2.0, 4.0, 8.0):
+    x = base - d
+    le = estima_yj(x)
+    print("  %-14.1f %10.4f %10s %14.4f %14.4f"
+          % (-d, x.min(), "si" if (x > 0).all() else "NO",
+             asimetria(x), asimetria(yeojohnson(x, le))))
+print()
+print("Box-Cox pide todos los valores estrictamente positivos y deja de poder")
+print("aplicarse en cuanto la columna toca el cero. Yeo-Johnson si puede")
+print("siempre, pero conviene mirar la ultima columna: simetriza bien mientras")
+print("casi todo esta de un lado —0.0266 y 0.0340— y pierde fuelle cuando la")
+print("masa se reparte entre las dos ramas, hasta 0.5230. Poder aplicarse")
+print("siempre no es lo mismo que funcionar igual de bien siempre")
+```
+
+
+```{=html}
+<div class="viz-ramas">
+  <div class="controles">
+    <label>λ <input id="rm-l" type="range" min="-1" max="3" step="0.05" value="0.5"> <span id="rm-l-v">0,50</span></label>
+    <label>Dónde vive la columna <input id="rm-d" type="range" min="-8" max="4" step="0.5" value="0"> <span id="rm-d-v">0</span></label>
+  </div>
+  <svg id="rm-svg" viewBox="0 0 660 300" role="img" aria-label="Las dos ramas de Yeo-Johnson pegadas en el cero, y la franja donde viven los datos según cuánto se desplace la columna."></svg>
+  <p class="lectura" id="rm-lectura"></p>
+</div>
+<style>
+.viz-ramas { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-ramas .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-ramas label { display: flex; align-items: center; gap: .4rem; }
+.viz-ramas input[type=range] { width: 150px; padding: 0; }
+.viz-ramas svg { width: 100%; height: auto; display: block; }
+.viz-ramas .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("rm-svg"), lec = document.getElementById("rm-lectura");
+  var cl = document.getElementById("rm-l"), cd = document.getElementById("rm-d");
+  var elm = document.getElementById("rm-l-v"), edm = document.getElementById("rm-d-v");
+  var X0 = 62, X1 = 628, Y0 = 26, Y1 = 226, XMIN = -10, XMAX = 10;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function yj(x, lam) {
+    if (x >= 0) return Math.abs(lam) < 1e-9 ? Math.log1p(x) : (Math.pow(x + 1, lam) - 1) / lam;
+    return Math.abs(lam - 2) < 1e-9 ? -Math.log1p(-x)
+         : -((Math.pow(-x + 1, 2 - lam) - 1) / (2 - lam));
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var lam = +cl.value, d = +cd.value;
+    elm.textContent = lam.toFixed(2).replace(".", ",");
+    edm.textContent = d.toFixed(1).replace(".", ",");
+    var lo = 0.21 + d, hi = 9.5 + d;      // donde cae el grueso de la columna
+    var YMIN = yj(XMIN, lam), YMAX = yj(XMAX, lam);
+    function px(v) { return X0 + ((v - XMIN) / (XMAX - XMIN)) * (X1 - X0); }
+    function py(v) { return Y1 - ((v - YMIN) / (YMAX - YMIN)) * (Y1 - Y0); }
+
+    svg.appendChild(el("rect", { x: px(Math.max(lo, XMIN)).toFixed(1), y: Y0,
+      width: Math.max(2, px(Math.min(hi, XMAX)) - px(Math.max(lo, XMIN))).toFixed(1),
+      height: Y1 - Y0, fill: C_A, opacity: .08 }));
+    svg.appendChild(el("path", { d: "M" + px(0) + " " + Y0 + " L" + px(0) + " " + Y1,
+      stroke: C_T, "stroke-width": 1.4, opacity: .55 }));
+    var i;
+    for (i = -10; i <= 10; i += 5)
+      svg.appendChild(el("text", { x: px(i), y: Y1 + 20, "text-anchor": "middle",
+        "font-size": 10.5, fill: C_T, opacity: .7 }, String(i)));
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 40, "text-anchor": "middle",
+      "font-size": 10.5, fill: C_T, opacity: .7 }, "valor original"));
+
+    var dPos = "", dNeg = "", x;
+    for (i = 0; i <= 200; i++) {
+      x = i * XMAX / 200;
+      dPos += (i === 0 ? "M" : " L") + px(x).toFixed(1) + " " + py(yj(x, lam)).toFixed(1);
+    }
+    for (i = 0; i <= 200; i++) {
+      x = -i * (-XMIN) / 200;
+      dNeg += (i === 0 ? "M" : " L") + px(x).toFixed(1) + " " + py(yj(x, lam)).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: dPos, fill: "none", stroke: C_A, "stroke-width": 2.8 }));
+    svg.appendChild(el("path", { d: dNeg, fill: "none", stroke: C_B, "stroke-width": 2.8 }));
+    svg.appendChild(el("text", { x: px(7), y: py(yj(7, lam)) - 10, "font-size": 10.5, fill: C_A }, "rama x ≥ 0, exponente λ"));
+    svg.appendChild(el("text", { x: px(-9), y: py(yj(-9, lam)) + 18, "font-size": 10.5, fill: C_B }, "rama x < 0, exponente 2 − λ"));
+    svg.appendChild(el("circle", { cx: px(0), cy: py(0).toFixed(1), r: 4.5, fill: C_T }));
+
+    var enNeg = lo < 0 ? Math.min(1, (0 - lo) / (hi - lo)) : 0;
+    lec.innerHTML = "Las dos ramas se pegan en el cero con el mismo valor y la misma pendiente —de ahí el +1 y el 2 − λ—, pero <strong>su curvatura es distinta</strong>: una comprime con exponente λ y la otra con 2 − λ. " +
+      "Con este desplazamiento, el <strong>" + (100 * enNeg).toFixed(0) + " %</strong> de la columna cae en la rama negativa. " +
+      (enNeg < 0.02
+        ? "Con casi todo de un lado, Yeo-Johnson es en la práctica una Box-Cox desplazada y simetriza bien."
+        : (enNeg > 0.3
+            ? "Con la masa repartida, un solo λ tiene que servir a dos formas distintas y el compromiso se nota: es la última fila de la tabla, con la asimetría en 0,5230."
+            : "Conforme la masa cruza el cero, el λ único empieza a ser un compromiso entre dos curvaturas.")) +
+      " Con λ = 1 las dos ramas se alinean en una recta y la transformación no hace nada.";
+  }
+  cl.addEventListener("input", dibujar); cd.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. A qué modelos les importa
+
+::: {.proposicion}
+**Proposición 4.5 (un árbol es invariante a cualquier transformación monótona).** Las predicciones de un árbol de regresión entrenado sobre $x$ y sobre $\log x$ son **el mismo vector**, con igualdad exacta y no aproximada.
+:::
+
+::: {.demostracion}
+*Demostración.* Un árbol solo usa comparaciones $x_i\le c$. Si $f$ es estrictamente creciente, $x_i\le c\iff f(x_i)\le f(c)$, así que **la familia de particiones alcanzables es la misma** y el criterio de corte —la suma de cuadrados dentro de cada trozo, que depende solo de las $y$— asigna a cada partición el mismo valor. El árbol elige por tanto la misma partición, con los cortes en $f(c)$ en vez de en $c$, y las medias de hoja son idénticas. La celda lo comprueba con `np.array_equal`, que devuelve `True`. ∎
+:::
+
+::: {.proposicion}
+**Proposición 4.6 (y para un modelo lineal tiene los dos signos).** Sobre el mismo predictor asimétrico, tomar logaritmos vale **+0,2345** de $R^2$ cuando el mecanismo es logarítmico y **−0,2209** cuando es lineal. El árbol queda en medio en los dos casos: **0,7678** y **0,7592**.
+:::
+
+::: {.demostracion}
+*Demostración.* Es la Proposición 1.3 de la Lección 01 aplicada a esta familia: la transformación cambia el espacio que el modelo lineal puede expresar, y acierta o falla según dónde esté la verdad. Lo que la tabla añade es la **tercera columna**: un modelo sin forma fija no gana nada con la transformación y tampoco pierde nada, así que paga una prima constante por no saber. **La transformación numérica es una decisión que solo existe para los modelos que tienen forma**; con árboles y bosques, el tiempo que se le dedique está mejor gastado en otra parte. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# Un arbol de regresion de una variable, escrito a mano: corta donde mas baja
+# la suma de cuadrados, hasta llenar las hojas pedidas.
+def arbol(xtr, ytr, xte, hojas=8):
+    cortes = []
+    def parte(idx, prof):
+        if prof == 0 or len(idx) < 20:
+            return
+        o = np.argsort(xtr[idx], kind="stable")
+        xs, ys = xtr[idx][o], ytr[idx][o]
+        cs = np.cumsum(ys); n = len(ys); k = np.arange(1, n)
+        sse = -(cs[:-1] ** 2 / k + (cs[-1] - cs[:-1]) ** 2 / (n - k))
+        j = int(np.argmin(sse))
+        c = 0.5 * (xs[j] + xs[j + 1])
+        cortes.append(c)
+        parte(idx[xtr[idx] <= c], prof - 1)
+        parte(idx[xtr[idx] > c], prof - 1)
+    parte(np.arange(len(xtr)), int(np.log2(hojas)))
+    b = np.unique([-np.inf] + sorted(cortes) + [np.inf])
+    g_tr = np.digitize(xtr, b[1:-1]); g_te = np.digitize(xte, b[1:-1])
+    med = np.array([ytr[g_tr == k].mean() if (g_tr == k).any() else ytr.mean()
+                    for k in range(len(b) - 1)])
+    return med[g_te]
+
+def lineal(xtr, ytr, xte):
+    Z = np.column_stack([np.ones(len(xtr)), xtr])
+    co = np.linalg.lstsq(Z, ytr, rcond=None)[0]
+    return np.column_stack([np.ones(len(xte)), xte]) @ co
+
+def r2(y, p):
+    return 1.0 - ((y - p) ** 2).mean() / y.var()
+
+def datos(n, semilla, mecanismo):
+    rng = np.random.default_rng(semilla)
+    x = np.exp(1.0 + 0.8 * rng.standard_normal(n))       # muy asimetrica
+    eta = np.log(x) if mecanismo == "log" else 0.25 * x
+    return x, 3.0 * eta + 1.2 * rng.standard_normal(n)
+
+print("R2 sobre datos nuevos, segun que se le entregue a cada modelo")
+print("  %-12s %14s %14s %13s %13s"
+      % ("mecanismo", "lineal en x", "lineal en log", "arbol en x", "arbol en log"))
+for mec in ("log", "lineal"):
+    xtr, ytr = datos(600, 11, mec)
+    xte, yte = datos(4000, 22, mec)
+    a1 = arbol(xtr, ytr, xte)
+    a2 = arbol(np.log(xtr), ytr, np.log(xte))
+    print("  %-12s %14.4f %14.4f %13.4f %13.4f"
+          % (mec, r2(yte, lineal(xtr, ytr, xte)),
+             r2(yte, lineal(np.log(xtr), ytr, np.log(xte))),
+             r2(yte, a1), r2(yte, a2)))
+print()
+print("  las dos predicciones del arbol son identicas bit a bit :",
+      bool(np.array_equal(a1, a2)))
+print()
+print("tres cosas en una tabla. Para el modelo lineal el logaritmo vale +0.2345")
+print("con un mecanismo y -0.2209 con el otro. Para el arbol no vale nada: las")
+print("dos columnas coinciden en los cuatro decimales y, de hecho, las")
+print("predicciones son el mismo vector. Y el arbol queda en medio en los dos")
+print("casos: por debajo del lineal acertado y por encima del equivocado")
+```
+
+**Modo de falla.** La receta «normaliza siempre los predictores» se aplica antes de saber qué modelo se va a usar, y con un bosque de por medio no cambia nada salvo el tiempo de quien la escribió. Peor: si el mecanismo estaba en la escala original y el modelo es lineal, cuesta **0,22 de $R^2$**. La defensa es preguntarse antes qué modelo va detrás: **si usa comparaciones, la transformación monótona es literalmente inobservable**; si usa coeficientes, es la decisión de la Lección 01 y hay que medirla.
+
+## 4. $\lambda$ es un parámetro estimado
+
+::: {.proposicion}
+**Proposición 4.7 (con pocas filas, la transformación baila).** Con la verdad en $\lambda=0$, la estimación tiene desviación **0,2366** con 30 filas y se mueve entre **−0,69 y 0,54**; con 1600 filas la desviación cae a **0,0294**.
+:::
+
+::: {.demostracion}
+*Demostración.* $\hat\lambda$ es un estimador de máxima verosimilitud y su desviación decae como $1/\sqrt n$: las cuatro medidas valen 0,2366, 0,1236, 0,0609 y 0,0294 para $n=30,100,400$ y $1600$, en razón 1,91, 2,03 y 2,07 contra los $\sqrt{10/3}$, $\sqrt4$ y $\sqrt4$ de la fórmula. Con 30 filas la horquilla cubre desde la inversa de la raíz hasta la raíz, y quien mire una sola muestra se llevará una potencia cualquiera de ese rango. **Estimar la transformación es ajustar**, y con pocos datos se ajusta al ruido como cualquier otra cosa. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def boxcox(x, lam):
+    """La familia de potencias, con el logaritmo en el limite lam = 0."""
+    return np.log(x) if lam == 0.0 else (x ** lam - 1.0) / lam
+
+def verosimilitud(x, lam, logx):
+    """Log-verosimilitud de Box-Cox: la de la normal mas el jacobiano."""
+    z = boxcox(x, lam)
+    return -0.5 * len(x) * np.log(z.var()) + (lam - 1.0) * logx.sum()
+
+def estima_lam(x, malla=None):
+    """La lambda que maximiza la verosimilitud, por rejilla."""
+    malla = np.linspace(-2.0, 2.0, 401) if malla is None else malla
+    logx = np.log(x)
+    v = np.array([verosimilitud(x, float(L), logx) for L in malla])
+    return float(malla[int(np.argmax(v))])
+
+def asimetria(x):
+    z = (x - x.mean()) / x.std()
+    return float((z ** 3).mean())
+
+# Lambda es un parametro estimado, y como todo parametro estimado tiene su
+# propia dispersion. Con pocas filas, la transformacion elegida baila.
+print("cuanto baila la lambda estimada segun cuantas filas haya")
+print("  %-8s %14s %14s %14s %14s"
+      % ("n", "media", "desviacion", "minimo", "maximo"))
+for n in (30, 100, 400, 1600):
+    ls = []
+    for s in range(120):
+        rng = np.random.default_rng(4000 + s)
+        x = np.exp(1.0 + 0.7 * rng.standard_normal(n))     # la verdad es 0
+        ls.append(estima_lam(x, np.linspace(-1.5, 1.5, 201)))
+    ls = np.array(ls)
+    print("  %-8d %14.4f %14.4f %14.4f %14.4f"
+          % (n, ls.mean(), ls.std(ddof=1), ls.min(), ls.max()))
+print()
+print("la verdad es lambda = 0, o sea el logaritmo. Con 30 filas la estimacion")
+print("se mueve entre -0.69 y 0.54 y su desviacion vale 0.2366: quien mire una")
+print("sola muestra pequena se llevara una potencia cualquiera de esa horquilla")
+print("y la aplicara como si fuera la buena. Con 1600 filas la desviacion cae a")
+print("0.0294 y la eleccion ya no depende de la suerte")
+print()
+print("y como lambda se estima SIN mirar el objetivo, no filtra nada: es el")
+print("caso de la Leccion 02 en el que la fuga vale cero. Lo que si hace falta")
+print("es estimarla en el entrenamiento y APLICAR esa misma a todo lo demas,")
+print("porque una lambda distinta por pliegue es una columna distinta por")
+print("pliegue")
+```
+
+**Modo de falla.** $\lambda$ se estima dentro de cada pliegue de la validación cruzada, con buena intención, y cada pliegue acaba usando una columna distinta. El modelo que se valida entonces no es uno sino $V$, y lo que se informa es el promedio de $V$ cosas que no se van a poner en producción. FES §6.1 lo dice sin rodeos: el parámetro se estima **en el conjunto de entrenamiento** y esa misma transformación se aplica a todo lo demás. Nótese que esto no contradice a la Lección 02: $\lambda$ **no mira al objetivo**, así que su fuga vale cero; lo que está en juego aquí es la coherencia de la columna, no la honestidad de la estimación.
+
+## 5. Lo que esta lección no resuelve
+
+La familia de potencias es **monótona** por construcción, y por eso no puede arreglar una relación que sube y baja. Para eso hace falta pasar de una columna a varias, que es la Lección 06.
+
+Tampoco se han tratado las transformaciones con soporte acotado que FES §6.1 nombra junto a éstas: la **logit** para proporciones entre 0 y 1 y la **arcoseno** sobre la raíz, que resuelven el problema contrario —datos comprimidos contra dos topes en vez de estirados hacia una cola—.
+
+Y queda fuera lo que la transformación le hace a la **interpretación**. Un coeficiente sobre $\log x$ se lee como elasticidad y uno sobre $x^{-1}$ no se lee de ninguna forma cómoda; la lección ha medido el ajuste y no ha dicho nada sobre el precio de explicar el resultado, que a veces es el que decide.
+
+## Ejercicios
+
+### Ejercicio 1, Los miembros conocidos de la familia
+
+Evaluar la familia de potencias en cinco exponentes sobre los mismos valores y comprobar que reproduce las transformaciones de siempre.
+
+```{pyodide}
+#| exercise: ex_familia
+import numpy as np
+
+x = np.array([0.25, 1.0, 4.0, 16.0])
+lams = [-1.0, -0.5, 0.0, 0.5, 1.0]
+
+def potencia(x, lam):
+    return ______
+
+print([[round(float(v), 4) for v in potencia(x, L)] for L in lams])
+print("la de 0.5 es la raiz reescalada :",
+      bool(np.allclose(potencia(x, 0.5), 2.0 * (np.sqrt(x) - 1.0))))
+```
+
+::: {.hint exercise="ex_familia"}
+$(x^{\lambda}-1)/\lambda$ salvo en $\lambda=0$, donde la familia vale $\log x$.
+:::
+
+::: {.solution exercise="ex_familia"}
+```{pyodide}
+import numpy as np
+
+x = np.array([0.25, 1.0, 4.0, 16.0])
+lams = [-1.0, -0.5, 0.0, 0.5, 1.0]
+
+def potencia(x, lam):
+    return np.log(x) if lam == 0.0 else (x ** lam - 1.0) / lam
+
+print([[round(float(v), 4) for v in potencia(x, L)] for L in lams])
+print("la de 0.5 es la raiz reescalada :",
+      bool(np.allclose(potencia(x, 0.5), 2.0 * (np.sqrt(x) - 1.0))))
+```
+
+Con $\lambda=1$ sale $x-1$, que es la identidad desplazada: **transformar con exponente 1 es no transformar**. Con $\lambda=0{,}5$ sale exactamente $2(\sqrt x-1)$, la raíz reescalada, y con $\lambda=-1$, $1-1/x$. Los cuatro valores en $x=1$ dan cero en todos los exponentes, que es lo que hace que la familia sea continua ahí y que el $-1$ del numerador no sea un adorno.
+:::
+
+```{pyodide}
+#| exercise: ex_familia
+#| check: true
+if (bool(np.allclose(potencia(x, 0.5), 2.0 * (np.sqrt(x) - 1.0)))
+        and [round(float(v), 4) for v in potencia(x, 1.0)] == [-0.75, 0.0, 3.0, 15.0]):
+    feedback = {"correct": True, "message": "Correcto: con lambda 1 la familia es la identidad desplazada."}
+else:
+    feedback = {"correct": False, "message": "Con lambda = 1 se esperaba [-0.75, 0.0, 3.0, 15.0]."}
+feedback
+```
+
+### Ejercicio 2, Cuántas filas para fijar el exponente
+
+Con la Proposición 4.7, calcular cuántas filas hacen falta para que la desviación de $\hat\lambda$ baje de un valor dado, partiendo de que con 30 filas vale 0,2366.
+
+```{pyodide}
+#| exercise: ex_filas
+import numpy as np
+
+sd30, n0 = 0.2366, 30.0
+objetivos = np.array([0.20, 0.10, 0.05, 0.02])
+
+# la desviacion decae como 1/raiz(n): sd(n) = sd30 * raiz(n0/n)
+n = ______
+
+print([int(np.ceil(z)) for z in n])
+```
+
+::: {.hint exercise="ex_filas"}
+De $\text{sd}(n)=\text{sd}_{30}\sqrt{n_0/n}$ se despeja $n=n_0(\text{sd}_{30}/\text{objetivo})^2$.
+:::
+
+::: {.solution exercise="ex_filas"}
+```{pyodide}
+import numpy as np
+
+sd30, n0 = 0.2366, 30.0
+objetivos = np.array([0.20, 0.10, 0.05, 0.02])
+
+n = n0 * (sd30 / objetivos) ** 2
+
+print([int(np.ceil(z)) for z in n])
+```
+
+Hacen falta **42, 168, 672 y 4199** filas. Para distinguir el logaritmo de la raíz hay que separar $\lambda=0$ de $\lambda=0{,}5$, o sea tener una desviación bastante menor que 0,25: con 42 filas no se distinguen, y con 168 apenas. **La elección del exponente necesita más datos de los que uno supone**, y en una columna con pocos valores distintos conviene quedarse con el logaritmo por convención antes que con una potencia estimada del ruido.
+:::
+
+```{pyodide}
+#| exercise: ex_filas
+#| check: true
+if [int(np.ceil(z)) for z in n] == [42, 168, 672, 4199]:
+    feedback = {"correct": True, "message": "Correcto: bajar la desviación a la mitad cuesta cuatro veces más filas."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [42, 168, 672, 4199]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Atributos 4**:
+
+1. Escribir la verosimilitud de Box-Cox y comprobar que recupera el exponente sobre datos generados con tres valores distintos, anotando el error.
+2. Repetir la tabla de la Sección 3 con un modelo propio y un mecanismo propio, y comprobar que el árbol da el mismo vector con y sin transformar.
+3. Encontrar una columna donde Yeo-Johnson deje la asimetría por encima de 0,4 y explicar en dos frases qué tiene esa columna. Guardar el caso en `50-Errores/`.
+
+## Del libro
+
+FES cap. 6 *Engineering Numeric Predictors* dedica su §6.1 *1:1 Transformations* a estas transformaciones. Nombra **Box-Cox**, que usa máxima verosimilitud para estimar un parámetro $\lambda$ de potencia y se aplica solo a datos estrictamente positivos, y **Yeo-Johnson** como el procedimiento análogo utilizable con cualquier dato numérico. Añade la **logit** para variables acotadas entre cero y uno y la **arcoseno**, usada sobre la raíz de los valores. Y agrupa aparte el centrado, el escalado y el escalado por rango, que son la Lección 05.
+
+Sobre el procedimiento, el capítulo es explícito en dos puntos que esta página mide: que el parámetro **se estima con los datos de entrenamiento** y esa misma transformación se aplica después a todos los conjuntos, y que una distribución asimétrica de un predictor **puede tener un efecto dañino** sobre los modelos paramétricos —lo que, leído al revés, explica por qué a un árbol no le hace nada—.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- Box-Cox: $z=(x^{\lambda}-1)/\lambda$, y $\log x$ en el límite $\lambda\to0$. Pide $x>0$.
+- Lo que maximiza es la **verosimilitud de la normalidad**, con jacobiano $(\lambda-1)\sum\log x_i$.
+- Sin el jacobiano, $\lambda\to-\infty$ encoge la varianza a cero y gana siempre.
+- Recupera el exponente con error de **−0,06 a +0,07** entre $\lambda=-1$ y $1{,}5$.
+- La asimetría cae de **2,1109** a **−0,0031** en el caso del logaritmo.
+- Yeo-Johnson vale para cualquier dato, con dos ramas pegadas en el cero.
+- Pero simetriza **hasta 0,0266** con la masa de un lado y **solo hasta 0,5230** repartida.
+- **Un árbol es invariante a cualquier transformación monótona**: el mismo vector, bit a bit.
+- Porque solo usa $x\le c$, y $x\le c\iff f(x)\le f(c)$ si $f$ crece.
+- Para un modelo lineal, el mismo logaritmo vale **+0,2345** o **−0,2209** según el mecanismo.
+- $\hat\lambda$ es un estimador: desviación **0,2366** con 30 filas y **0,0294** con 1600.
+- Se estima en el entrenamiento y **esa misma** se aplica a todo lo demás.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico. Que la verosimilitud de Box-Cox recupera $\lambda=-1;-0{,}5;0;0{,}5;1;1{,}5$ como −1,04; −0,43; −0,06; 0,49; 0,96 y 1,48, con la asimetría pasando de 1,4276; 0,7196; 2,1109; 0,2506; 0,0248 y −0,2816 a −0,0090; 0,0023; −0,0031; 0,0006; 0,0035 y 0,0105; que Yeo-Johnson sobre la misma columna desplazada 0, −2, −4 y −8 deja la asimetría en 0,0266; 0,0340; 0,1913 y 0,5230 partiendo de 2,3859; que el $R^2$ sobre datos nuevos vale 0,5704 y 0,8049 para el modelo lineal sobre $x$ y sobre $\log x$ con mecanismo logarítmico, y 0,8284 y 0,6075 con mecanismo lineal, mientras el árbol da 0,7678 y 0,7678 en el primer caso y 0,7592 y 0,7592 en el segundo, con las dos predicciones **idénticas bit a bit**; y que la desviación de $\hat\lambda$ vale 0,2366; 0,1236; 0,0609 y 0,0294 para 30, 100, 400 y 1600 filas, con recorridos de −0,69 a 0,54 en el primer caso. La verosimilitud, el árbol de regresión y las dos transformaciones están escritos en la página.
+
+**Lo que se usa de otras lecciones sin repetir.** Que una transformación sirve solo si mete la función verdadera dentro del alcance del modelo es de Atributos 01. La máxima verosimilitud y la concentración de parámetros de estorbo son de Estadística 8. El criterio de corte de un árbol de regresión es de Machine Learning 12. Y la distinción entre estimar dentro y fuera del pliegue es de Atributos 02.
+
+**Lo que se enuncia sin demostrar.** Que la desviación de un estimador de máxima verosimilitud decae como $1/\sqrt n$ se **cita** de Estadística 8 y aquí solo se comprueba: las razones medidas son 1,91, 2,03 y 2,07. La normalidad asintótica de $\hat\lambda$ no se usa para construir intervalos, que es donde haría falta con cuidado. Y el árbol de la Sección 3 es de una sola variable y profundidad fija; la invariancia que se demuestra vale para cualquier árbol por comparaciones, pero la comprobación numérica solo cubre este caso.
+
+**Lo que es mío, no del libro.** Demostrar la invariancia del árbol en una línea —$x\le c\iff f(x)\le f(c)$— y comprobarla con igualdad **exacta** en vez de con cifras parecidas, que es lo que convierte «a los árboles no les hace falta» de consejo en teorema. Poner en la misma tabla los dos signos del modelo lineal y las dos columnas idénticas del árbol, de modo que la pregunta «¿transformo?» se conteste mirando qué modelo va detrás. Y medir la dispersión de $\hat\lambda$ con el tamaño, que traslada a esta familia lo que la Lección 01 midió sobre la elección entre cinco candidatos: **estimar la transformación es ajustar**.
+:::
