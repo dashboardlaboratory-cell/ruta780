@@ -29,7 +29,7 @@ def partes(t):
         "fórmulas": sorted(formulas),
         "código en línea": sorted(re.findall(r"`[^`\n]+`", prosa)),
         "números de la prosa": sorted(numeros),
-        "términos de glosario": sorted(re.findall(r"\[[^\]]+\]\{\.g[^}]*\}", prosa)),
+        "términos de glosario": sorted(re.findall(r"\[[^\]\[\n]+\]\{\.g[^}]*\}", prosa)),
         "enlaces": sorted(re.findall(r"\]\(([^)]*)\)", prosa)),
         "etiquetas": sorted(re.findall(r"\*\*((?:Definición|Proposición|Teorema|Lema|Corolario|Ejemplo) [\d.]+)", prosa)),
         "vallas :::": sorted(re.findall(r"^:{3,}.*$", prosa, re.M)),

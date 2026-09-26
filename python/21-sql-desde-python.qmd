@@ -21,31 +21,31 @@ engine: markdown
 
 Al terminar esta lección se puede:
 
-1. Consultar una base con `sqlite3`, y distinguir el [cursor]{.g} de las filas que entrega.
-2. **Demostrar por qué un valor va como [parámetro]{.g data-t="parámetro de consulta"} y no pegado en el texto**, con un apellido que lleva comilla.
-3. Explicar por qué un parámetro **no sirve** para un nombre de columna, y qué hacer en su lugar.
-4. **Demostrar que `NULL` no es un valor**: dos filas que no salen ni en `nota = 5` ni en `nota <> 5`.
-5. Distinguir `COUNT(*)` de `COUNT(columna)`, y **exhibir dos medias que difieren por un factor de dos**.
-6. **Medir dónde conviene hacer el trabajo**: 10 000 filas cruzando contra 654 contra **1**.
+1. Consultar una base con `sqlite3` y distinguir el [cursor]{.g} de las filas que entrega.
+2. Demostrar, con un apellido que lleva comilla, por qué un valor se pasa como [parámetro]{.g data-t="parámetro de consulta"} en lugar de insertarse en el texto de la consulta.
+3. Explicar por qué un parámetro no puede designar un nombre de columna, y qué se hace en ese caso.
+4. Demostrar que `NULL` representa la ausencia de valor: dos filas que no aparecen en `nota = 5` ni en `nota <> 5`.
+5. Distinguir `COUNT(*)` de `COUNT(columna)` y exhibir dos medias que difieren en un factor de dos.
+6. Medir cuántas filas cruzan de la base al programa según dónde se filtra y se agrega: 10 000, 654 o 1.
 7. Usar una [transacción]{.g} para que dos cambios ocurran juntos o no ocurra ninguno.
 
 :::: {.hilo}
 ::: {}
 #### De dónde viene
 
-- **Python 4**: los gestores de contexto, que aquí son la transacción.
-- **Python 20**: la codificación del texto, que viaja entre el programa y la base.
-- **Python 9**: los `DataFrame`, que son el destino habitual de lo que una consulta devuelve.
-- **Fundamentos 12**: contar operaciones, que aquí se aplica a filas que cruzan una frontera.
+- **Python 4**: gestores de contexto, que aquí implementan la transacción.
+- **Python 20**: codificación del texto que se transmite entre el programa y la base.
+- **Python 9**: `DataFrame`, destino habitual del resultado de una consulta.
+- **Fundamentos 12**: conteo de operaciones, aplicado aquí a las filas que cruzan de la base al programa.
 :::
 
 ::: {}
 #### Para qué sirve después
 
-- **Python 22**: las APIs, que traen datos que acaban en una tabla.
-- **Python 23**: Parquet y Arrow, el otro camino para datos que no caben en memoria.
-- **Python 28**: los datos que no caben, donde esta misma medición decide la arquitectura.
-- **Estadística 17**: el `p-hacking`, donde filtrar antes de mirar tiene consecuencias distintas.
+- **Python 22**: APIs, que devuelven datos que se almacenan en tablas.
+- **Python 23**: Parquet y Arrow, otro formato para datos que no caben en memoria.
+- **Python 28**: datos que no caben en memoria, donde esta misma medición determina la arquitectura.
+- **Estadística 17**: `p-hacking`, donde filtrar antes de mirar los datos tiene otras consecuencias.
 :::
 ::::
 
@@ -63,10 +63,10 @@ Al terminar esta lección se puede:
 | `N` | ene mayúscula | El número de filas de la tabla |
 :::
 
-## 1. La conexión, el cursor y las filas
+## 1. Conexión, cursor y filas
 
 :::: {.definicion}
-**Definición 21.1 (conexión y cursor).** Una **conexión** representa la sesión abierta con la base. `con.execute` devuelve un **cursor**, que entrega las filas **según se piden**: recorrerlo con un `for` trae de poco en poco, y `fetchall` las trae todas a memoria de una vez. Un cursor recorrido queda agotado.
+**Definición 21.1 (conexión y cursor).** Una **conexión** representa la sesión abierta con la base. `con.execute` devuelve un **cursor**, que entrega las filas a medida que se piden: recorrerlo con un `for` las trae de forma incremental, y `fetchall` las carga todas en memoria. Un cursor ya recorrido queda agotado.
 ::::
 
 :::: {.proposicion}
@@ -77,7 +77,7 @@ Al terminar esta lección se puede:
 *Demostración.* El protocolo estándar solo garantiza que una fila sea una secuencia, y la implementación por defecto usa tuplas. `sqlite3.Row` es una clase que conserva los nombres de las columnas del cursor y define el acceso por clave además del posicional, de modo que las dos formas funcionan sobre el mismo objeto. La celda comprueba que `fila['ciudad']` y `fila[0]` devuelven lo mismo, y que `keys()` enumera las columnas. ∎
 ::::
 
-**Modo de falla.** Acceder por puesto ata el programa al orden de las columnas del `SELECT`. El día que alguien añade una columna en medio, `fila[2]` sigue funcionando y devuelve otra cosa, sin levantar ningún error: los importes pasan a leerse de la columna de fechas y el informe sale con números absurdos. La defensa es escribir siempre las columnas en el `SELECT` —nunca `*`— y leerlas por nombre.
+**Modo de falla.** El acceso por posición hace depender el programa del orden de las columnas del `SELECT`. Si se añade una columna intermedia, `fila[2]` sigue funcionando y devuelve otra columna sin levantar ningún error: los importes se leen de la columna de fechas y el informe contiene valores absurdos. Para evitarlo se enumeran las columnas en el `SELECT`, sin usar `*`, y se leen por nombre.
 
 ```{pyodide}
 import sqlite3
@@ -122,29 +122,29 @@ print("con cinco filas da igual; con cinco millones, fetchall las quiere")
 print("todas en memoria a la vez y recorrer el cursor no")
 ```
 
-## 2. Los valores van aparte
+## 2. Parámetros de consulta
 
 :::: {.definicion}
-**Definición 21.3 (parámetro de consulta).** Un **parámetro** es un hueco en la consulta, `?` o `:nombre`, cuyo valor se pasa **aparte** en una tupla o un diccionario. El motor recibe la consulta y los valores por separado, de modo que un valor nunca puede leerse como parte de la consulta.
+**Definición 21.3 (parámetro de consulta).** Un **parámetro** es un hueco en la consulta, `?` o `:nombre`, cuyo valor se pasa por separado en una tupla o un diccionario. El motor recibe la consulta y los valores por separado, de modo que un valor no puede interpretarse como parte de la consulta.
 ::::
 
 :::: {.proposicion}
-**Proposición 21.4.** Pegar un valor dentro del texto de la consulta falla en cuanto el valor contiene una comilla. El apellido `O'Brien` basta.
+**Proposición 21.4.** Insertar un valor en el texto de la consulta produce un error cuando el valor contiene una comilla. El apellido `O'Brien` es un ejemplo.
 ::::
 
 :::: {.demostracion}
-*Demostración.* Al construir el texto por sustitución, la comilla del dato cierra la que delimitaba el literal, y lo que sigue deja de leerse como valor: el resultado es un texto que el analizador no reconoce y que levanta `OperationalError`. Con un parámetro no hay ningún texto que cerrar, porque el valor no forma parte de la consulta. La celda ejecuta las dos formas con el mismo apellido: la pegada levanta la excepción y la parametrizada devuelve `[('Quito',)]`. ∎
+*Demostración.* Al construir el texto por sustitución, la comilla del dato cierra la que delimitaba el literal, y el resto deja de leerse como valor: el resultado es un texto que el analizador no reconoce y que levanta `OperationalError`. Con un parámetro no hay ningún literal que cerrar, porque el valor no forma parte del texto de la consulta. La celda ejecuta las dos formas con el mismo apellido: la versión con el valor insertado levanta la excepción y la parametrizada devuelve `[('Quito',)]`. ∎
 ::::
 
 :::: {.proposicion}
-**Proposición 21.5.** Un parámetro es un **valor** y no un nombre. `SELECT ? FROM clientes` con `'nombre'` devuelve la cadena `'nombre'` repetida una vez por fila, y no el contenido de esa columna.
+**Proposición 21.5.** Un parámetro representa un valor. `SELECT ? FROM clientes` con `'nombre'` devuelve la cadena `'nombre'` repetida una vez por fila, en lugar del contenido de esa columna.
 ::::
 
 :::: {.demostracion}
-*Demostración.* La consulta se analiza **antes** de recibir los valores, de modo que en ese momento el `?` ya ocupa la posición de una expresión y no puede convertirse en un identificador; al llegar el valor, se usa como constante. La celda lo comprueba: el resultado son tres tuplas con la cadena `'nombre'`, una por cada fila de la tabla, en lugar de los tres nombres. ∎
+*Demostración.* La consulta se analiza antes de recibir los valores. En ese momento el `?` ocupa la posición de una expresión y no puede convertirse en un identificador; el valor recibido después se usa como constante. La celda lo comprueba: el resultado son tres tuplas con la cadena `'nombre'`, una por fila de la tabla, en lugar de los tres nombres. ∎
 ::::
 
-**Modo de falla.** Lo que la Proposición 21.4 exhibe como un error ruidoso es la forma benigna del problema; la forma dañina es que el texto pegado sí resulte una consulta válida y distinta de la pretendida. Por eso la regla no admite excepciones «cuando el dato es de confianza»: un dato interno hoy es un dato de formulario mañana. Cuando lo que varía es un **nombre** de tabla o de columna, se elige de una lista fija escrita en el programa y se comprueba la pertenencia antes de construir el texto; nunca se interpola lo que llegue de fuera.
+**Modo de falla.** El error de la Proposición 21.4 es visible. El caso más grave es aquel en que el texto resultante es una consulta válida y distinta de la pretendida. Por eso la regla se aplica también a los datos considerados «de confianza», ya que un dato interno puede pasar a llegar de un formulario. Cuando lo que varía es un nombre de tabla o de columna, se elige de una lista fija escrita en el programa y se comprueba la pertenencia antes de construir el texto; los valores que llegan del exterior no se interpolan.
 
 ```{pyodide}
 import sqlite3
@@ -207,10 +207,10 @@ print("varia es un nombre de columna, hay que elegirlo de una lista fija")
 print("escrita en el programa, nunca construirlo con lo que llegue de fuera")
 ```
 
-## 3. `NULL` no es un valor
+## 3. Semántica de `NULL`
 
 :::: {.definicion}
-**Definición 21.6 (`NULL`).** `NULL` representa la **ausencia** de valor. Comparar cualquier cosa con `NULL` no devuelve ni verdadero ni falso: devuelve `NULL`. Una fila entra en un resultado solo cuando la condición del `WHERE` resulta **verdadera**, de modo que las filas con `NULL` en la columna comparada quedan fuera de las dos ramas de cualquier igualdad.
+**Definición 21.6 (`NULL`).** `NULL` representa la ausencia de valor. La comparación de cualquier expresión con `NULL` devuelve `NULL`, que no es verdadero ni falso. Una fila entra en un resultado solo cuando la condición del `WHERE` es verdadera, de modo que las filas con `NULL` en la columna comparada quedan fuera de las dos ramas de cualquier igualdad.
 ::::
 
 :::: {.proposicion}
@@ -218,18 +218,18 @@ print("escrita en el programa, nunca construirlo con lo que llegue de fuera")
 ::::
 
 :::: {.demostracion}
-*Demostración.* Por la Definición 21.6 las dos comparaciones valen `NULL` para esas filas, y `NULL` no es verdadero, de modo que ninguna de las dos las admite. La única forma de encontrarlas es `IS NULL`, que sí responde con un valor de verdad. La celda cuenta las cuatro cantidades y comprueba que las dos condiciones opuestas suman 2 de 4. ∎
+*Demostración.* Por la Definición 21.6 las dos comparaciones valen `NULL` para esas filas, y `NULL` no es verdadero, de modo que ninguna de las dos las admite. Para encontrarlas se usa `IS NULL`, que devuelve verdadero o falso. La celda cuenta las cuatro cantidades y comprueba que las dos condiciones opuestas suman 2 de 4. ∎
 ::::
 
 :::: {.proposicion}
-**Proposición 21.8.** `COUNT(*)` cuenta filas y `COUNT(columna)` cuenta valores presentes. En consecuencia `AVG` divide entre los valores que hay, no entre las filas: sobre la misma tabla, `AVG(nota)` vale **7,0** y `AVG(COALESCE(nota, 0))` vale **3,5**.
+**Proposición 21.8.** `COUNT(*)` cuenta filas y `COUNT(columna)` cuenta valores presentes. En consecuencia `AVG` divide entre el número de valores presentes: sobre la misma tabla, `AVG(nota)` vale 7,0 y `AVG(COALESCE(nota, 0))` vale 3,5.
 ::::
 
 :::: {.demostracion}
-*Demostración.* Las funciones de agregación ignoran los `NULL`, de modo que `SUM(nota)` vale 14 sobre los dos valores presentes y `AVG` lo divide entre 2 y no entre 4. `COALESCE(nota, 0)` sustituye cada ausencia por un cero **antes** de agregar, con lo que la suma sigue siendo 14 pero el divisor pasa a 4. Las dos medias son correctas y responden a preguntas distintas: la primera es la nota media de quienes tienen nota, la segunda la de todos contando al ausente como cero. La celda exhibe las dos. ∎
+*Demostración.* Las funciones de agregación ignoran los `NULL`, de modo que `SUM(nota)` vale 14 sobre los dos valores presentes y `AVG` la divide entre 2 y no entre 4. `COALESCE(nota, 0)` sustituye cada ausencia por un cero antes de agregar; la suma sigue siendo 14 y el divisor pasa a 4. Las dos medias responden a preguntas distintas: la primera es la nota media de quienes tienen nota, y la segunda la media de todos contando al ausente como cero. La celda exhibe las dos. ∎
 ::::
 
-**Modo de falla.** La diferencia entre 7,0 y 3,5 es un factor de dos, y aparece sin que nadie haya elegido nada: `AVG` tiene un comportamiento por defecto y el informe sale con uno de los dos números. El síntoma es una media que no cuadra con la que calcula otro equipo sobre los mismos datos, y la causa es que uno rellenó los ausentes y el otro no. La defensa es decidir explícitamente qué significa el ausente —y escribirlo en la consulta— en lugar de aceptar el valor por defecto.
+**Modo de falla.** La diferencia entre 7,0 y 3,5 es un factor de dos y aparece sin una elección explícita: `AVG` tiene un comportamiento por defecto y el informe contiene uno de los dos números. El síntoma es una media que no coincide con la que calcula otro equipo sobre los mismos datos; la causa es que uno sustituyó los ausentes y el otro no. Para evitarlo se decide qué significa el ausente y se escribe esa decisión en la consulta.
 
 ```{pyodide}
 import sqlite3
@@ -368,18 +368,18 @@ print("  AVG(COALESCE(nota, 0)) = %r" % uno("SELECT AVG(COALESCE(nota, 0)) FROM 
 </script>
 ```
 
-## 4. Dónde ocurre el trabajo
+## 4. Filtrado en la base y transacciones
 
 :::: {.definicion}
-**Definición 21.9 (transacción).** Una **transacción** agrupa varios cambios de modo que o entran todos o no entra ninguno. `with con:` abre una: al salir sin excepción confirma, y si se levanta una excepción deshace todo lo hecho dentro.
+**Definición 21.9 (transacción).** Una **transacción** agrupa varios cambios de modo que se aplican todos o ninguno. `with con:` abre una transacción: al salir sin excepción la confirma, y si se levanta una excepción deshace los cambios hechos dentro.
 ::::
 
 :::: {.proposicion}
-**Proposición 21.10.** Filtrar y agregar en SQL reduce las filas que cruzan desde la base al programa. Sobre una tabla de 10 000, traer todo y filtrar en Python hace cruzar **10 000** filas, filtrar en SQL hace cruzar **654**, y dejar también la suma a la base hace cruzar **1**. Las tres dan el mismo total.
+**Proposición 21.10.** Filtrar y agregar en SQL reduce las filas que cruzan desde la base al programa. Sobre una tabla de 10 000 filas, traerlas todas y filtrar en Python hace cruzar 10 000, filtrar en SQL hace cruzar 654, y delegar también la suma en la base hace cruzar 1. Las tres versiones dan el mismo total.
 ::::
 
 :::: {.demostracion}
-*Demostración.* Cada fila que cruza se convierte en objetos de Python, y ese coste se paga aunque la fila se descarte a continuación. El `WHERE` descarta antes de convertir, y una agregación reduce el resultado a una sola fila. La celda cuenta las filas recibidas en las tres versiones y comprueba que las tres sumas coinciden: la primera trae **15 veces** más filas que la segunda para producir el mismo número. ∎
+*Demostración.* Cada fila que cruza se convierte en objetos de Python, y ese coste se produce aunque la fila se descarte después. El `WHERE` descarta filas antes de la conversión, y una agregación reduce el resultado a una sola fila. La celda cuenta las filas recibidas en las tres versiones y comprueba que las tres sumas coinciden: la primera recibe 15 veces más filas que la segunda para el mismo resultado. ∎
 ::::
 
 :::: {.proposicion}
@@ -390,7 +390,7 @@ print("  AVG(COALESCE(nota, 0)) = %r" % uno("SELECT AVG(COALESCE(nota, 0)) FROM 
 *Demostración.* El gestor de contexto de la conexión confirma al salir normalmente y deshace al salir por excepción, que es el protocolo de la Lección 4. Como el descuento y el abono están dentro del mismo bloque, una excepción entre ambos deshace el descuento y ninguno de los dos queda escrito. La celda interrumpe una transferencia entre los dos pasos y comprueba que el total sigue valiendo 150; después la ejecuta entera y comprueba que los saldos cambian y el total se conserva. ∎
 ::::
 
-**Modo de falla.** Sin transacción, una interrupción entre los dos cambios deja el dinero descontado y no abonado, y el error no es visible en ninguna fila: cada una es correcta por separado y solo el total delata la pérdida. La defensa es que los cambios que tienen que ocurrir juntos estén dentro del mismo bloque, y que las comprobaciones de invariantes —como que el total se conserve— se hagan explícitas.
+**Modo de falla.** Sin transacción, una interrupción entre los dos cambios deja el importe descontado y no abonado, y el error no es visible en ninguna fila: cada fila es correcta por separado y solo el total revela la pérdida. Para evitarlo, los cambios que deben ocurrir juntos se escriben dentro del mismo bloque, y las comprobaciones de invariantes, como la conservación del total, se hacen explícitas.
 
 ```{pyodide}
 import sqlite3
@@ -565,15 +565,15 @@ print("  saldos: %s   total %d" % (con.execute("SELECT quien, cuanto FROM saldos
 </script>
 ```
 
-## 5. Lo que esta lección no resuelve
+## 5. Limitaciones
 
-No se ha hablado de índices. La Proposición 21.10 mide las filas que **cruzan**, no las que la base tiene que mirar para encontrarlas; sin un índice adecuado, un `WHERE` recorre la tabla entera aunque devuelva una fila. Es el mismo asunto de la Lección 7 de Fundamentos, con la diferencia de que aquí el índice se declara y se mantiene.
+No se han tratado los índices. La Proposición 21.10 mide las filas que cruzan hacia el programa y no las que la base examina para encontrarlas; sin un índice adecuado, un `WHERE` recorre la tabla entera aunque devuelva una fila. Es el tema de la Lección 7 de Fundamentos, con la diferencia de que aquí el índice se declara y se mantiene.
 
-Tampoco se ha tratado la diferencia entre SQLite y los motores que corren en un servidor, donde la conexión es de red, varios programas escriben a la vez y una transacción tiene que decidir qué ve cada uno. Los tipos también difieren: SQLite acepta casi cualquier valor en cualquier columna y los demás no.
+Tampoco se ha tratado la diferencia entre SQLite y los motores que se ejecutan en un servidor, donde la conexión es de red, varios programas escriben a la vez y una transacción tiene que decidir qué cambios ve cada uno. Los tipos también difieren: SQLite acepta casi cualquier valor en cualquier columna y los demás motores no.
 
 ## Ejercicios
 
-### Ejercicio 1, El apellido con comilla
+### Ejercicio 1, Apellido con comilla
 
 Con la Proposición 21.4, buscar un cliente cuyo apellido lleva comilla, usando un parámetro.
 
@@ -592,7 +592,7 @@ print(ciudad)
 ```
 
 ::: {.hint exercise="ex_param"}
-El hueco se escribe `?` dentro del texto, y el valor se pasa en una **tupla** como segundo argumento. Una tupla de un solo elemento lleva coma, por la Proposición 6.2.
+El hueco se escribe `?` dentro del texto y el valor se pasa en una tupla como segundo argumento. Una tupla de un solo elemento lleva coma, por la Proposición 6.2.
 :::
 
 ::: {.solution exercise="ex_param"}
@@ -609,7 +609,7 @@ ciudad = con.execute("SELECT ciudad FROM c WHERE nombre = ?", (buscado,)).fetcho
 print(ciudad)
 ```
 
-Devuelve `Quito`. El error más frecuente al empezar es escribir `(buscado)` sin la coma: eso no es una tupla sino la cadena entre paréntesis, y `sqlite3` la interpreta como siete parámetros, uno por carácter.
+Devuelve `Quito`. Un error frecuente es escribir `(buscado)` sin la coma. Esa expresión es la cadena entre paréntesis, y `sqlite3` la interpreta como siete parámetros, uno por carácter.
 :::
 
 ```{pyodide}
@@ -622,7 +622,7 @@ else:
 feedback
 ```
 
-### Ejercicio 2, Las dos medias
+### Ejercicio 2, Media con valores ausentes
 
 Con la Proposición 21.8, calcular la media de una columna con ausentes de las dos formas, y comprobar que difieren.
 
@@ -641,7 +641,7 @@ print(media_presentes, media_con_ceros)
 ```
 
 ::: {.hint exercise="ex_null"}
-`AVG` ignora los `NULL` por su cuenta. Para contar el ausente como cero hay que sustituirlo antes de agregar, con `COALESCE`.
+`AVG` ignora los `NULL`. Para contar el ausente como cero se sustituye antes de agregar, con `COALESCE`.
 :::
 
 ::: {.solution exercise="ex_null"}
@@ -658,7 +658,7 @@ media_con_ceros = con.execute("SELECT AVG(COALESCE(nota, 0)) FROM t").fetchone()
 print(media_presentes, media_con_ceros)
 ```
 
-6,0 y 3,0: la suma es 12 en los dos casos y el divisor pasa de 2 a 4. Las dos son correctas y responden a preguntas distintas; lo que no es correcto es no haber elegido.
+6,0 y 3,0: la suma es 12 en los dos casos y el divisor pasa de 2 a 4. Las dos medias responden a preguntas distintas, y la consulta debe indicar cuál se calcula.
 :::
 
 ```{pyodide}
@@ -676,7 +676,7 @@ feedback
 En `proyectos/notebooks/F2-retos.ipynb`, sección **Python 21**:
 
 1. Cargar una tabla con ausentes y calcular un promedio por grupo de las dos formas de la Proposición 21.8. Anotar cuál de las dos coincide con lo que devuelve `pandas` por defecto, y por qué.
-2. Escribir la misma consulta pegando el valor en el texto y pasándolo como parámetro, sobre un dato con comilla. Guardar en `50-Errores/` el mensaje de la versión pegada y la línea exacta que la arregla.
+2. Escribir la misma consulta insertando el valor en el texto y pasándolo como parámetro, sobre un dato con comilla. Guardar en `50-Errores/` el mensaje de la versión con el valor insertado y la línea que la corrige.
 3. Medir, contando filas como hace la celda, cuánto cruza una agregación por grupo hecha en SQL frente a la misma hecha en Python sobre la tabla entera. Anotar cuántas filas cruzan en cada caso y confirmar que los resultados coinciden.
 
 ## Del libro
@@ -685,14 +685,14 @@ Esta lección no se apoya en ninguno de los libros del plan. El material de refe
 
 ## Para el Cerebro
 
-- `con.execute` devuelve un **cursor**; recorrerlo trae de poco en poco y `fetchall` lo trae todo.
-- Las filas son tuplas; con `sqlite3.Row` se accede **por nombre**. Nunca `SELECT *`.
-- Los valores van **aparte**, como parámetros. `O'Brien` rompe la consulta pegada.
-- Un parámetro es un **valor**, no un nombre de columna: `SELECT ?` devuelve la cadena.
-- `NULL` no es un valor: las filas con `NULL` no salen **ni** en `= 5` **ni** en `<> 5`.
-- `COUNT(*)` cuenta filas, `COUNT(col)` cuenta valores. `AVG(nota)` = **7,0** y `AVG(COALESCE(nota,0))` = **3,5**.
-- Filtrar en SQL: **10 000** filas cruzando contra **654** contra **1**, con el mismo total.
-- `with con:` deshace todo si algo falla en medio.
+- `con.execute` devuelve un cursor; recorrerlo trae las filas de forma incremental y `fetchall` las trae todas.
+- Las filas son tuplas; con `sqlite3.Row` se accede por nombre. Se evita `SELECT *`.
+- Los valores se pasan por separado, como parámetros. `O'Brien` produce un error en la consulta con el valor insertado.
+- Un parámetro es un valor y no puede ser un nombre de columna: `SELECT ?` devuelve la cadena.
+- `NULL` es ausencia de valor: las filas con `NULL` no aparecen en `= 5` ni en `<> 5`.
+- `COUNT(*)` cuenta filas y `COUNT(col)` cuenta valores. `AVG(nota)` = 7,0 y `AVG(COALESCE(nota,0))` = 3,5.
+- Filtrar en SQL: cruzan 10 000, 654 o 1 filas según dónde se filtra y se agrega, con el mismo total.
+- `with con:` deshace todos los cambios si se produce un error en medio.
 
 ### Fuentes
 
@@ -701,5 +701,5 @@ Esta lección no se apoya en ninguno de los libros del plan. El material de refe
 
 **Lo que viene de los libros.** Nada. Ninguno de los libros verificados del plan trata SQL.
 
-**Lo que es mío, no del libro.** La organización en cuatro secciones, la decisión de justificar los parámetros con un apellido corriente en lugar de con una amenaza —el argumento de corrección llega antes y no admite la excusa de «este dato es de confianza»—; la elección de exhibir la semántica de `NULL` por las **dos** condiciones opuestas que no suman el total; las dos medias que difieren por un factor de dos como forma de mostrar que hay una decisión que nadie tomó; la medición del trabajo en **filas que cruzan la frontera**; y los dos visuales, uno donde la barra del divisor se acorta con cada ausente y otro donde el grosor del caño y la posición del embudo cambian con dónde se filtra.
+**Lo que es mío, no del libro.** La organización en cuatro secciones; la decisión de justificar los parámetros con un apellido corriente en lugar de con una amenaza, porque el argumento de corrección aparece antes y no depende de que el dato sea «de confianza»; la elección de exhibir la semántica de `NULL` mediante las dos condiciones opuestas que no suman el total; las dos medias que difieren en un factor de dos, para mostrar que hay una decisión implícita; la medición del trabajo en filas que cruzan de la base al programa; y los dos visuales, uno donde la barra del divisor se acorta con cada ausente y otro donde el grosor del caño y la posición del embudo cambian según dónde se filtra.
 :::

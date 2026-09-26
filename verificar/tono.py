@@ -15,12 +15,12 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 VICIOS = {
     "contraste": re.compile(r"\bno (?:es|son|era|está|están|hace|mide|dice|depende|viene|cambia|basta|hay|se|lo|la|le|tiene|sirve|significa|consiste|trata|falla|importa)\b[^.;:\n]{0,90}?\bsino\b|\bno es [^.\n]{2,60}\. (?:Es|Son) ", re.I),
     "raya": re.compile(r"—"),
-    "intensificador": re.compile(r"\b(?:exactamente|justo|de verdad|de paso|precisamente|literalmente|simplemente|sin más|de golpe|de siempre|a secas)\b", re.I),
+    "intensificador": re.compile(r"\b(?:exactamente|justo|(?<!valor )de verdad|(?<!longitud )de paso|precisamente|literalmente|simplemente|sin más|de golpe|de siempre|a secas)\b", re.I),
     "sentencia": re.compile(r"\b(?:el cimiento|el piso|el techo|el hallazgo|la moraleja|el secreto|el truco|lo que importa|lo único que|de una línea|la cuenta honesta|lo que se quiere|el precio de|la lección es|la pregunta es|el problema nunca|nunca fue)\b", re.I),
-    "valorativo": re.compile(r"\b(?:honest[oa]s?|limpi[oa]s?|barat[oa]s?|ridícul[oa]s?|elegante|brutal|mágic[oa]|obvi[oa]s?|trivialmente)\b", re.I),
+    "valorativo": re.compile(r"\b(?:(?<!árboles )(?<!árbol )(?<!bosques )honest[oa]s?|limpi[oa]s?|barat[oa]s?|ridícul[oa]s?|elegante|brutal|mágic[oa]|obvi[oa]s?|trivialmente)\b", re.I),
 }
 NEGRITA = re.compile(r"\*\*(.+?)\*\*")
-ETIQUETA = re.compile(r"^(?:Definición|Proposición|Teorema|Lema|Corolario|Ejemplo|Observación|Modo de falla|Ejercicio|Lo que esta página|Lo que se usa|Lo que viene|Lo que se enuncia|Lo que es mío)\b")
+ETIQUETA = re.compile(r"^(?:Definición|Proposición|Procedimiento|Algoritmo|Teorema|Lema|Corolario|Ejemplo|Observación|Modo de falla|Ejercicio|Preguntas|Lo que NO se afirma|Nota de versión|Lo que esta página|Lo que se usa|Lo que viene|Lo que se enuncia|Lo que es mío)\b")
 TITULO = re.compile(r"^(#{2,4}) +(.*)$")
 TITULO_TESIS = re.compile(r"\b(?:es|son|pone|decide|manda|gana|pierde|miente|engaña|no|sin el cual|nunca|siempre)\b", re.I)
 
@@ -38,6 +38,7 @@ def prosa(texto):
         if l.strip() == "$$": mathblk = not mathblk; continue
         if mathblk or l.strip().startswith("$$"): continue
         if l.startswith("|") or l.startswith("<"): continue
+        if l.startswith("[") and "{.item}" in l: continue
         if l.startswith("::: {.cita-libro"): cita = 1; continue
         if cita:
             if l.startswith(":::"): cita = 0

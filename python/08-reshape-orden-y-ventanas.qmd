@@ -25,29 +25,29 @@ pyodide:
 Al terminar esta lección se puede:
 
 1. Definir el [orden C]{.g data-t="orden de almacenamiento"} y el orden F por sus pasos, y demostrar que transponer intercambia el uno por el otro.
-2. Enunciar el criterio que decide si `reshape` puede devolver una [vista]{.g}, y demostrar que sobre la transpuesta de un array contiguo ninguna elección de pasos sirve.
-3. Distinguir `ravel` de `flatten` por ese criterio, y saber qué argumento recupera la vista.
+2. Enunciar el criterio que determina si `reshape` puede devolver una [vista]{.g}, y demostrar que sobre la transpuesta de un array contiguo ninguna elección de pasos lo cumple.
+3. Distinguir `ravel` de `flatten` por ese criterio, e identificar el argumento que recupera la vista.
 4. Demostrar que las [ventanas deslizantes]{.g} de tamaño $w$ son una vista de forma $(n-w+1,\,w)$ y pasos $(s,s)$, y que por tanto no duplican memoria.
-5. Calcular el byte más lejano que toca una vista a partir de su forma y sus pasos, y usar esa cota para saber si una descripción se sale del búfer.
-6. Construir ventanas con `as_strided` y empatar con `sliding_window_view`.
+5. Calcular el byte más lejano que toca una vista a partir de su forma y sus pasos, y usar esa cota para determinar si una descripción se sale del búfer.
+6. Construir ventanas con `as_strided` y obtener el mismo resultado que `sliding_window_view`.
 
 :::: {.hilo}
 ::: {}
 #### De dónde viene
 
-- **Python 6, Definición 6.1**: el desplazamiento de un elemento es $\sum_k i_k s_k$. Toda esta lección son consecuencias de esa fórmula.
-- **Python 6, Proposición 6.3**: la indexación avanzada copia porque una selección arbitraria no se describe con paso constante. Aquí aparece el caso recíproco: una selección que sí se describe, aunque repita elementos.
-- **Python 7, Proposición 7.2**: la numeración de los ejes y su corrimiento, que es lo que hay que seguir al cambiar de forma.
+- **Python 6, Definición 6.1**: el desplazamiento de un elemento es $\sum_k i_k s_k$. Los resultados de esta lección son consecuencias de esa fórmula.
+- **Python 6, Proposición 6.3**: la indexación avanzada copia porque una selección arbitraria no se describe con paso constante. Aquí aparece el caso recíproco: una selección que se describe con paso constante aunque repita elementos.
+- **Python 7, Proposición 7.2**: la numeración de los ejes y su corrimiento, que hay que seguir al cambiar de forma.
 - **Python 1, Proposición 1.5**: la mutación se observa por todos los alias. Una ventana deslizante tiene $w$ alias de cada elemento.
 :::
 
 ::: {}
 #### Para qué sirve después
 
-- **Python 13 y 14**: las medias móviles y los `rolling` de pandas, que son esta vista con otro nombre.
-- **Python 15**: vectorizar contra iterar, donde la ventana sin copia es el ejemplo mayor del ahorro.
+- **Python 13 y 14**: las medias móviles y los `rolling` de pandas, que usan esta vista.
+- **Python 15**: vectorizar contra iterar, donde la ventana sin copia es el ejemplo de mayor ahorro.
 - **Machine Learning 41**: la convolución, que es una ventana deslizante contraída contra un núcleo.
-- **Series de tiempo**: los rezagos y las ventanas móviles son el material de todo el módulo.
+- **Series de tiempo**: los rezagos y las ventanas móviles se usan en todo el módulo.
 :::
 ::::
 
@@ -66,29 +66,29 @@ Al terminar esta lección se puede:
 | $p$ | pe | El número de columnas de la matriz |
 :::
 
-## 1. Dos maneras de recorrer el mismo búfer
+## 1. Orden C y orden F
 
 ::: {.definicion}
 **Definición 8.1 (orden C y orden F).** Un array de forma $(n_0,\dots,n_{d-1})$ y elementos de $t$ bytes está en **orden C** cuando sus pasos valen
 $$s_k \;=\; t\prod_{m>k} n_m,$$
-es decir cuando el último índice es el que avanza de uno en uno por el búfer. Está en **orden F** cuando
+es decir, cuando el último índice avanza de uno en uno por el búfer. Está en **orden F** cuando
 $$s_k \;=\; t\prod_{m<k} n_m,$$
-y entonces es el primer índice el que avanza de uno en uno.
+y entonces el primer índice avanza de uno en uno.
 
-Los dos órdenes describen el mismo conjunto de elementos sobre el mismo búfer; lo que cambia es en qué posición está cada uno.
+Los dos órdenes describen el mismo conjunto de elementos sobre el mismo búfer y difieren en la posición de cada elemento.
 :::
 
 ::: {.proposicion}
-**Proposición 8.2 (transponer intercambia los dos órdenes).** Si $a$ está en orden C, su transpuesta está en orden F, y recíprocamente. En particular, una transpuesta no es contigua por filas salvo que alguna dimensión valga $1$.
+**Proposición 8.2 (transposición y orden de almacenamiento).** Si $a$ está en orden C, su transpuesta está en orden F, y recíprocamente. En particular, una transpuesta no es contigua por filas salvo que alguna dimensión valga $1$.
 :::
 
 ::: {.demostracion}
-*Demostración.* Transponer permuta los ejes sin mover datos: el paso del eje $k$ de la transpuesta es el paso del eje $d-1-k$ del original (Proposición 6.4). Si $a$ está en orden C, ese paso vale $t\prod_{m>d-1-k} n_m$, que es el producto de los tamaños de los ejes que en la transpuesta quedan **antes** del $k$, porque la permutación invierte el orden de los ejes. Esa es exactamente la fórmula del orden F de la Definición 8.1.
+*Demostración.* Transponer permuta los ejes sin mover datos: el paso del eje $k$ de la transpuesta es el paso del eje $d-1-k$ del original (Proposición 6.4). Si $a$ está en orden C, ese paso vale $t\prod_{m>d-1-k} n_m$, que es el producto de los tamaños de los ejes que en la transpuesta quedan antes del $k$, porque la permutación invierte el orden de los ejes. Esa es la fórmula del orden F de la Definición 8.1.
 
 El recíproco se obtiene aplicando lo anterior a la transpuesta, ya que transponer dos veces devuelve el original. [∎]{.fin-demo}
 :::
 
-## 2. Cuándo `reshape` puede devolver una vista
+## 2. Criterio para que `reshape` devuelva una vista
 
 ::: {.proposicion}
 **Proposición 8.3 (criterio de la vista).** `reshape` devuelve una vista si y solo si existe una tupla de pasos para la nueva forma que produzca, mediante la fórmula de la Definición 6.1, los mismos desplazamientos que el recorrido pedido. Si $a$ es contigua, tal tupla existe siempre; sobre la transpuesta de la matriz $3\times4$ de enteros de ocho bytes, con el recorrido por filas, no existe ninguna.
@@ -97,11 +97,11 @@ El recíproco se obtiene aplicando lo anterior a la transpuesta, ya que transpon
 ::: {.demostracion}
 *Demostración.* La primera parte es la definición de vista: un array es vista de otro cuando comparte búfer y describe sus elementos con una forma y unos pasos.
 
-Si $a$ es contigua en orden C, el desplazamiento del elemento que ocupa la posición $\ell$ del recorrido vale $\ell t$. Para una forma nueva $(m_0,\dots,m_{e-1})$ con el mismo número de elementos, la tupla de pasos del orden C de esa forma reproduce ese desplazamiento, porque la fórmula del orden C es precisamente la que convierte índices en posición del recorrido.
+Si $a$ es contigua en orden C, el desplazamiento del elemento que ocupa la posición $\ell$ del recorrido vale $\ell t$. Para una forma nueva $(m_0,\dots,m_{e-1})$ con el mismo número de elementos, la tupla de pasos del orden C de esa forma reproduce ese desplazamiento, porque la fórmula del orden C es la que convierte índices en posición del recorrido.
 
 Para la segunda parte, sea $a$ de forma $(3,4)$ y pasos $(32,8)$. Su transpuesta tiene forma $(4,3)$ y pasos $(8,32)$. Recorrerla por filas visita los elementos $(0,0),(0,1),(0,2),(1,0),\dots$, cuyos desplazamientos son
 $$0,\;32,\;64,\;8,\;40,\;72,\;16,\dots$$
-Aplanarla a la forma $(12,)$ como vista exigiría un único paso $p$ con el $\ell$-ésimo desplazamiento igual a $\ell p$, es decir una progresión aritmética. Las diferencias sucesivas de la lista anterior valen $32,32,-56,32,32,-56,\dots$, que no son constantes. No hay tal $p$, de modo que ninguna vista describe ese recorrido y NumPy está obligado a copiar. [∎]{.fin-demo}
+Aplanarla a la forma $(12,)$ como vista exigiría un único paso $p$ con el $\ell$-ésimo desplazamiento igual a $\ell p$, es decir una progresión aritmética. Las diferencias sucesivas de la lista anterior valen $32,32,-56,32,32,-56,\dots$, que no son constantes. No hay tal $p$, de modo que ninguna vista describe ese recorrido y NumPy debe copiar. [∎]{.fin-demo}
 :::
 
 ::: {.proposicion}
@@ -111,7 +111,7 @@ Aplanarla a la forma $(12,)$ como vista exigiría un único paso $p$ con el $\el
 ::: {.demostracion}
 *Demostración.* Las dos primeras afirmaciones son el contrato documentado de cada función, y la primera se apoya en la Proposición 8.3 para decidir el caso.
 
-Para la tercera: por la Proposición 8.2, la transpuesta de un array en orden C está en orden F. Recorrerla en orden F visita sus elementos siguiendo el primer índice, y sobre el búfer eso da los desplazamientos $0,8,16,\dots$, una progresión aritmética de paso $8$. La tupla de pasos $(8,)$ para la forma $(12,)$ los reproduce, así que el criterio se cumple y el resultado es una vista. [∎]{.fin-demo}
+Para la tercera: por la Proposición 8.2, la transpuesta de un array en orden C está en orden F. Recorrerla en orden F visita sus elementos siguiendo el primer índice, y sobre el búfer eso da los desplazamientos $0,8,16,\dots$, una progresión aritmética con diferencia $8$. La tupla de pasos $(8,)$ para la forma $(12,)$ los reproduce, así que el criterio se cumple y el resultado es una vista. [∎]{.fin-demo}
 :::
 
 ```{pyodide}
@@ -136,7 +136,7 @@ print("la formula coincide con la direccion real  :",
       t[0:1, 1:2].__array_interface__["data"][0] - base == desp[1])
 ```
 
-La lista de desplazamientos es la prueba de la Proposición 8.3 hecha a mano: sus diferencias no son constantes, así que ningún paso único las genera.
+La lista de desplazamientos reproduce la prueba de la Proposición 8.3: sus diferencias no son constantes, así que ningún paso único las genera.
 
 ```{=html}
 <div class="viz-orden">
@@ -227,7 +227,7 @@ La lista de desplazamientos es la prueba de la Proposición 8.3 hecha a mano: su
 </script>
 ```
 
-## 3. La ventana que no copia
+## 3. Ventanas deslizantes como vistas
 
 ::: {.definicion}
 **Definición 8.5 (ventanas deslizantes).** Dado un array unidimensional $x$ de $n$ elementos y un ancho $w\le n$, la **matriz de ventanas deslizantes** es el array $V$ de forma $(n-w+1,\,w)$ definido por
@@ -236,21 +236,21 @@ Su fila $i$ es el tramo de $x$ que empieza en la posición $i$ y tiene $w$ eleme
 :::
 
 ::: {.proposicion}
-**Proposición 8.6 (las ventanas son una vista).** Si $x$ tiene paso $s$, entonces $V$ es una vista de $x$ con forma $(n-w+1,\,w)$ y pasos $(s,s)$. No se copia ningún byte, pese a que $V$ tiene $w(n-w+1)$ elementos y $x$ tiene $n$.
+**Proposición 8.6 (ventanas deslizantes sin copia).** Si $x$ tiene paso $s$, entonces $V$ es una vista de $x$ con forma $(n-w+1,\,w)$ y pasos $(s,s)$. No se copia ningún byte, pese a que $V$ tiene $w(n-w+1)$ elementos y $x$ tiene $n$.
 :::
 
 ::: {.demostracion}
 *Demostración.* Por la Definición 8.5, el elemento $V_{ij}$ es $x_{i+j}$, cuyo desplazamiento dentro del búfer de $x$ vale $(i+j)s$. Separando,
 $$(i+j)s \;=\; i\,s + j\,s,$$
-que es exactamente la fórmula de la Definición 6.1 con pasos $s_0=s$ y $s_1=s$. La descripción existe, así que $V$ se construye sobre el búfer de $x$ sin copiar.
+que es la fórmula de la Definición 6.1 con pasos $s_0=s$ y $s_1=s$. La descripción existe, así que $V$ se construye sobre el búfer de $x$ sin copiar.
 
-El número de elementos de $V$ excede al de $x$ en cuanto $w>1$, y eso no supone contradicción: cada elemento de $x$ aparece en hasta $w$ posiciones de $V$, todas leyendo el mismo byte. Es el aliasing de la Proposición 1.5 llevado al extremo. [∎]{.fin-demo}
+El número de elementos de $V$ excede al de $x$ en cuanto $w>1$, sin contradicción: cada elemento de $x$ aparece en hasta $w$ posiciones de $V$, todas leyendo el mismo byte. Es el caso límite del aliasing de la Proposición 1.5. [∎]{.fin-demo}
 :::
 
-Que el mismo paso se repita en las dos dimensiones es lo que hace posible el truco, y también lo que lo vuelve peligroso: nada en la fórmula obliga a que el último índice se quede dentro del búfer.
+La repetición del mismo paso en las dos dimensiones permite construir la vista, y también permite describir posiciones fuera del búfer: la fórmula no obliga a que el último índice quede dentro de él.
 
 ::: {.proposicion}
-**Proposición 8.7 (la cota del último byte).** Una vista de forma $(n_0,\dots,n_{d-1})$, pasos $(s_0,\dots,s_{d-1})$ no negativos y elementos de $t$ bytes toca como mucho el byte
+**Proposición 8.7 (cota del último byte).** Una vista de forma $(n_0,\dots,n_{d-1})$, pasos $(s_0,\dots,s_{d-1})$ no negativos y elementos de $t$ bytes toca como mucho el byte
 $$\text{último} \;=\; \sum_{k} (n_k-1)\,s_k \;+\; t.$$
 La descripción es válida si y solo si esa cantidad no excede el tamaño del búfer. `as_strided` no la comprueba.
 :::
@@ -286,7 +286,7 @@ print("con una fila de mas: ultimo byte %d, bufer %d bytes -> cabe: %s"
          ultimo_byte((len(x) - w + 2, w), (s, s), x.itemsize) <= x.nbytes))
 ```
 
-La fila de más pide el byte $88$ de un búfer de $80$: `as_strided` la construiría sin protestar y leería memoria ajena. La comprobación de la Proposición 8.7 cuesta una línea y es la que convierte el truco en algo publicable.
+La fila adicional pide el byte $88$ de un búfer de $80$: `as_strided` la construiría sin error y leería memoria fuera del búfer. La comprobación de la Proposición 8.7 ocupa una línea y evita ese acceso.
 
 ```{=html}
 <div class="viz-ventana">
@@ -370,7 +370,7 @@ La fila de más pide el byte $88$ de un búfer de $80$: `as_strided` la construi
 
 ## 4. Contraste con la librería
 
-Esta lección es de nivel **L3**, y ese nivel promete implementar el resultado en NumPy puro y empatar con la librería. Lo que se implementa es la Proposición 8.6 con la comprobación de la Proposición 8.7 delante, y se contrasta contra `sliding_window_view`, que es la función que NumPy ofrece precisamente para no tener que escribir `as_strided` a mano.
+Esta lección es de nivel L3, que exige implementar el resultado en NumPy puro y obtener los mismos valores que la librería. Se implementa la Proposición 8.6 precedida de la comprobación de la Proposición 8.7, y se contrasta contra `sliding_window_view`, la función de NumPy que evita escribir `as_strided` a mano.
 
 ```{pyodide}
 import numpy as np
@@ -400,11 +400,11 @@ x[0] = 100
 print("tras escribir x[0] = 100, la primera fila es:", mia[0])
 ```
 
-La última línea cierra el argumento: escribir en el array de partida se ve desde la ventana, porque son el mismo búfer. La media móvil se calcula con una reducción por el eje $1$, que es la Definición 7.1 de la lección anterior aplicada a una vista que no costó memoria.
+La última línea completa el argumento: lo que se escribe en el array de partida se observa desde la ventana, porque ambos usan el mismo búfer. La media móvil se calcula con una reducción por el eje $1$, que es la Definición 7.1 de la lección anterior aplicada a una vista sin memoria adicional.
 
 ## Ejercicios
 
-### Ejercicio 1, La vista que sí se puede
+### Ejercicio 1, Aplanado de la transpuesta como vista
 
 Aplanar la transpuesta de `a` sin copiar ningún byte. La forma debe ser `(12,)` y `np.shares_memory` con `a` debe dar `True`.
 
@@ -421,7 +421,7 @@ bool(np.shares_memory(plano, a)) and plano.shape == (12,)
 ```
 
 ::: {.hint exercise="ex_ravel"}
-La transpuesta está en orden F (Proposición 8.2). Recorrerla en ese mismo orden sí da una progresión aritmética.
+La transpuesta está en orden F (Proposición 8.2). Recorrerla en ese mismo orden da una progresión aritmética.
 :::
 
 ::: {.solution exercise="ex_ravel"}
@@ -447,7 +447,7 @@ else:
 feedback
 ```
 
-### Ejercicio 2, El último byte
+### Ejercicio 2, Último byte de una vista
 
 Calcular el último byte que tocaría una vista de forma $(8,4)$ y pasos $(8,8)$ sobre elementos de $8$ bytes, y decidir si cabe en un búfer de $80$ bytes.
 
@@ -491,22 +491,22 @@ feedback
 En `proyectos/notebooks/F1-retos.ipynb`, sección **Python 8**:
 
 1. Extender `ventanas` a dos dimensiones: ventanas de $h\times w$ sobre una matriz, con cuatro pasos. Deducir la forma y los pasos con la Definición 6.1 antes de escribir nada, y contrastar contra `sliding_window_view` con `axis` doble.
-2. Construir a propósito una vista que se salga del búfer y comprobar que la cota de la Proposición 8.7 la detecta. Anotar en `50-Errores/` qué imprime NumPy al leerla, y por qué la basura no es reproducible.
-3. Medir el ahorro de la Proposición 8.6 contando, no cronometrando: comparar `nbytes` de la vista de ventanas contra el de la matriz materializada con `np.array(...)`, para $n$ creciente, y comprobar que la razón tiende a $w$.
+2. Construir deliberadamente una vista que se salga del búfer y comprobar que la cota de la Proposición 8.7 la detecta. Anotar en `50-Errores/` qué imprime NumPy al leerla, y por qué esos valores no son reproducibles.
+3. Medir el ahorro de la Proposición 8.6 contando bytes, sin cronómetro: comparar `nbytes` de la vista de ventanas contra el de la matriz materializada con `np.array(...)`, para $n$ creciente, y comprobar que la razón tiende a $w$.
 
 ## Del libro
 
 *Python for Data Analysis* 3E trata este material en su capítulo 4, *NumPy Basics: Arrays and Vectorized Computation*. El sitio del libro declara que su contenido no se puede copiar ni reproducir, así que se cita número y título y no se le atribuye ninguna frase.
 
-**Preguntas para leer el capítulo 4 con lápiz:**
+Preguntas para la lectura del capítulo 4:
 
 1. El capítulo presenta `reshape` y su argumento `order`. Con la Proposición 8.3, ¿qué tiene que cumplir el recorrido pedido para que no haga falta copiar, y por qué el argumento `order` puede cambiar la respuesta sin cambiar los datos?
 2. El capítulo distingue `ravel` de `flatten` en una frase. Con la Proposición 8.4, ¿en qué caso concreto las dos devuelven lo mismo y en cuál no, y cómo se comprueba cuál ocurrió?
-3. El capítulo trata la transposición y `swapaxes` como operaciones sin costo. Con la Proposición 8.2, ¿qué pasa con la contigüidad después de esa operación gratuita, y qué operación posterior paga la factura?
+3. El capítulo trata la transposición y `swapaxes` como operaciones sin costo. Con la Proposición 8.2, ¿qué ocurre con la contigüidad después de esa operación, y qué operación posterior asume el coste?
 
 ## Para el Cerebro
 
-Nota nueva en `10-Conceptos/ventanas-y-strides.md`, enlazada a [[arrays-y-vistas]], [[ejes-y-reducciones]] y [[orden-de-almacenamiento]]. Conviene rehacer a mano la demostración de la Proposición 8.6: son dos líneas, $(i+j)s = is + js$, y de ahí sale que una matriz con más elementos que su origen no ocupe memoria. Es el resultado más rentable de todo el módulo de NumPy.
+Nota nueva en `10-Conceptos/ventanas-y-strides.md`, enlazada a [[arrays-y-vistas]], [[ejes-y-reducciones]] y [[orden-de-almacenamiento]]. Conviene rehacer a mano la demostración de la Proposición 8.6: consiste en la igualdad $(i+j)s = is + js$, de la que se sigue que una matriz con más elementos que su origen no ocupe memoria adicional.
 
 ```
 ¿Qué es el orden C?::Los pasos crecen de derecha a izquierda: el último índice avanza de uno en uno por el búfer
@@ -530,13 +530,13 @@ Nota nueva en `10-Conceptos/ventanas-y-strides.md`, enlazada a [[arrays-y-vistas
 
 **Lo que se usa de otras lecciones sin repetir.** La fórmula del desplazamiento es la Definición 6.1, y que transponer permuta los pasos sin mover datos es la Proposición 6.4. Que la mutación se observa por todos los alias es la Proposición 1.5, aquí con $w$ alias por elemento. La media móvil se calcula con la reducción por un eje de la Definición 7.1.
 
-**Lo que se enuncia sin demostrar.** El contrato de `ravel` y `flatten` se toma de la documentación de NumPy: la página demuestra cuándo la vista **puede** existir y comprueba cuál devuelve cada función, pero la decisión es de la implementación. Que `sliding_window_view` haga internamente la comprobación de la Proposición 8.7 se toma también de su documentación, y aquí solo se contrasta que sus resultados coinciden.
+**Lo que se enuncia sin demostrar.** El contrato de `ravel` y `flatten` se toma de la documentación de NumPy: la página demuestra cuándo la vista puede existir y comprueba cuál devuelve cada función, pero la decisión es de la implementación. Que `sliding_window_view` haga internamente la comprobación de la Proposición 8.7 se toma también de su documentación, y aquí solo se contrasta que sus resultados coinciden.
 
 **Lo que viene de los libros.**
 
-- [*Python for Data Analysis*, 3ª edición](https://wesmckinney.com/book/) (Wes McKinney, O'Reilly, 2022), capítulo 4 *NumPy Basics: Arrays and Vectorized Computation* — citado por número y título, sin transcribir texto.
+- [*Python for Data Analysis*, 3ª edición](https://wesmckinney.com/book/) (Wes McKinney, O'Reilly, 2022), capítulo 4 *NumPy Basics: Arrays and Vectorized Computation*, citado por número y título, sin transcribir texto.
 
-**Lo que es mío, no del libro.** La Proposición 8.3 escrita como un criterio con una imposibilidad concreta demostrada —la lista de desplazamientos y sus diferencias—, en lugar de la regla empírica «a veces copia». La Proposición 8.7 y su uso como comprobación previa, que convierte `as_strided` en algo que se puede publicar sin avisos. Y la Proposición 8.6 presentada como el caso recíproco de la 6.3: allí una selección arbitraria no se describía con paso constante y había que copiar; aquí una selección con elementos repetidos sí se describe, y no hay que copiar nada.
+**Lo que es mío, no del libro.** La Proposición 8.3 escrita como un criterio con una imposibilidad concreta demostrada (la lista de desplazamientos y sus diferencias), en lugar de la regla empírica «a veces copia». La Proposición 8.7 y su uso como comprobación previa, que permite usar `as_strided` con una garantía de no salir del búfer. Y la Proposición 8.6 presentada como el caso recíproco de la 6.3: allí una selección arbitraria no se describía con paso constante y había que copiar; aquí una selección con elementos repetidos se describe con paso constante y no se copia nada.
 
 [Índice de McKinney verificado el 12-09-2026 contra el índice publicado del sitio oficial del libro.]{.sello}
 :::

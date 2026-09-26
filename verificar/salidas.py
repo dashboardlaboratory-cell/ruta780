@@ -37,9 +37,13 @@ def celdas_ejecutables(texto):
 
 
 def main():
-    lecciones = sorted(
-        p for p in RAIZ.glob("*/[0-9]*.qmd") if p.parent.name != "_templates"
-    )
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if args:                       # rutas sueltas: revisar solo esas lecciones
+        lecciones = sorted((RAIZ / a).resolve() for a in args)
+    else:
+        lecciones = sorted(
+            p for p in RAIZ.glob("*/[0-9]*.qmd") if p.parent.name != "_templates"
+        )
     fallos = []
     corridas = 0
     comprobadas = 0

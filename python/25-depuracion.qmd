@@ -21,30 +21,30 @@ engine: markdown
 
 Al terminar esta lección se puede:
 
-1. Leer una [traza]{.g data-t="traza de llamadas"} como lo que es —una lista de marcos— y recorrerla desde el programa.
-2. **Demostrar que donde revienta no es donde está el fallo**, y localizar el marco donde nace el valor malo.
-3. **Inspeccionar las variables locales de cada marco** sin escribir ningún `print`, que es lo que hace un depurador.
-4. Explicar por qué `except Exception: pass` destruye la información, y **capturar solo lo que se espera**.
-5. Distinguir `__cause__` de `__context__`, y saber qué añade escribir `from e`.
-6. **Medir la bisección**: 96 pasos localizados en **6** comprobaciones frente a 96.
-7. **Medir lo que ahorra registrar solo lo que se sale**: 5000 líneas contra **21**.
+1. Leer una [traza]{.g data-t="traza de llamadas"} como una lista de marcos y recorrerla desde el programa.
+2. Demostrar que el punto donde se levanta la excepción puede ser distinto del punto donde está el fallo, y localizar el marco donde se origina el valor incorrecto.
+3. Inspeccionar las variables locales de cada marco sin escribir ningún `print`, que es la función de un depurador.
+4. Explicar por qué `except Exception: pass` destruye la información del fallo, y capturar solo los errores esperados.
+5. Distinguir `__cause__` de `__context__` y explicar qué añade escribir `from e`.
+6. Medir la bisección: 96 pasos, con el fallo localizado en 6 comprobaciones frente a 96.
+7. Medir la reducción que produce registrar solo los valores anómalos: 5000 líneas frente a 21.
 
 :::: {.hilo}
 ::: {}
 #### De dónde viene
 
-- **Python 24**: los invariantes, que son lo que hace posible bisecar.
-- **Python 4**: las excepciones y los contextos, que aquí se leen por dentro.
-- **Fundamentos 12**: la búsqueda binaria, que aquí busca un paso en lugar de un valor.
-- **Fundamentos 1**: que entero por texto repita el texto, que es por qué este fallo tarda en aparecer.
+- **Python 24**: invariantes, que son la condición necesaria para bisecar.
+- **Python 4**: excepciones y gestores de contexto, cuya estructura interna se examina aquí.
+- **Fundamentos 12**: búsqueda binaria, que aquí localiza un paso en lugar de un valor.
+- **Fundamentos 1**: el producto de un entero por un texto repite el texto, lo que explica que este fallo tarde en manifestarse.
 :::
 
 ::: {}
 #### Para qué sirve después
 
-- **Python 26**: el perfilado, que responde «dónde se va el tiempo» con el mismo tipo de instrumentación.
-- **Python 27**: el GIL, donde los fallos dependen del orden y la traza no basta.
-- **Python 16**: la anatomía de un proyecto, donde viven los registros.
+- **Python 26**: perfilado, que determina en qué partes se consume el tiempo con el mismo tipo de instrumentación.
+- **Python 27**: GIL, donde los fallos dependen del orden de ejecución y la traza es insuficiente.
+- **Python 16**: estructura de un proyecto, donde se configuran los registros.
 :::
 ::::
 
@@ -61,29 +61,29 @@ Al terminar esta lección se puede:
 | `n` | ene | El número de pasos de una transformación |
 :::
 
-## 1. Una traza es una lista de marcos
+## 1. Estructura de una traza
 
 :::: {.definicion}
-**Definición 25.1 (traza de llamadas).** Una **traza** es la cadena de llamadas en curso en el momento del error. Se lee **de abajo arriba**: la última línea dice qué pasó, y las de encima cómo se llegó hasta ahí. Se guarda como una estructura en `e.__traceback__`, que el programa puede recorrer, y el texto que se imprime en pantalla es solo una de sus representaciones.
+**Definición 25.1 (traza de llamadas).** Una **traza** es la cadena de llamadas en curso en el momento del error. Se lee de abajo arriba: la última línea indica qué ocurrió y las anteriores cómo se llegó a ese punto. Se guarda como una estructura en `e.__traceback__`, que el programa puede recorrer, y el texto que se imprime en pantalla es una de sus representaciones.
 ::::
 
 :::: {.proposicion}
-**Proposición 25.2.** El marco donde revienta no es el marco donde está el fallo. Un valor incorrecto creado en una función puede atravesar varias llamadas antes de encontrar la operación que no lo admite.
+**Proposición 25.2.** El marco donde se levanta la excepción puede ser distinto del marco donde está el fallo. Un valor incorrecto creado en una función puede atravesar varias llamadas antes de llegar a una operación que no lo admite.
 ::::
 
 :::: {.demostracion}
-*Demostración.* Una operación falla cuando recibe un valor que no admite, y ese valor puede haberse creado en cualquier punto anterior y haber pasado por operaciones que sí lo admitían. La celda construye el caso: `lee_config` devuelve un texto donde debía devolver un número, `prepara` lo pasa adelante sin mirarlo, y la excepción se levanta en `escala`. Con enteros ni siquiera habría fallado ahí, porque por la Proposición 1.2 entero por texto repite el texto; falla porque los valores son decimales. **El fallo está en el primer marco y la excepción en el último.** ∎
+*Demostración.* Una operación falla cuando recibe un valor que no admite, y ese valor puede haberse creado en cualquier punto anterior y haber pasado por operaciones que lo admitían. La celda construye el caso: `lee_config` devuelve un texto donde debía devolver un número, `prepara` lo transmite sin examinarlo y la excepción se levanta en `escala`. Con enteros no se habría producido el error en ese punto, porque por la Proposición 1.2 el producto de un entero por un texto repite el texto; el error se produce porque los valores son decimales. El fallo está en el primer marco y la excepción en el último. ∎
 ::::
 
 :::: {.proposicion}
-**Proposición 25.3.** Las variables locales de cada marco siguen accesibles después del error, recorriendo `tb_next` y leyendo `tb_frame.f_locals`. Es lo que un depurador muestra al detenerse, y no requiere haber escrito ningún `print`.
+**Proposición 25.3.** Las variables locales de cada marco siguen accesibles después del error, recorriendo `tb_next` y leyendo `tb_frame.f_locals`. Es la información que muestra un depurador al detenerse, y no requiere ningún `print`.
 ::::
 
 :::: {.demostracion}
-*Demostración.* La excepción conserva una referencia a la cadena de marcos, y cada marco conserva su diccionario de locales tal como estaban al propagarse el error. Recorriendo la cadena se obtiene, para cada nivel, el estado exacto de ese momento. La celda lo imprime: en el marco de `prepara` se ve `cfg` valiendo `{'factor': '2'}`, con el texto dentro, **antes** de llegar al sitio donde revienta. ∎
+*Demostración.* La excepción conserva una referencia a la cadena de marcos, y cada marco conserva su diccionario de variables locales en el estado que tenía al propagarse el error. Recorriendo la cadena se obtiene, para cada nivel, el estado en ese momento. La celda lo imprime: en el marco de `prepara` aparece `cfg` con el valor `{'factor': '2'}`, que contiene el texto, antes del punto donde se levanta la excepción. ∎
 ::::
 
-**Modo de falla.** Un `print` añadido para ver qué pasa se ejecuta **antes** del error y muestra el estado de una vuelta anterior, no de la que falló; y cuando el fallo ocurre una vez cada mil, hay que filtrar mil salidas para encontrarla. La traza, en cambio, guarda el estado del momento exacto. La defensa es mirar primero lo que ya está guardado y añadir instrumentación solo cuando la traza no basta.
+**Modo de falla.** Un `print` añadido para diagnosticar se ejecuta antes del error y muestra el estado de una iteración anterior a la que falló; y cuando el fallo ocurre una vez cada mil, hay que filtrar mil salidas para encontrarlo. La traza guarda el estado en el momento del error. Por eso se examina primero la información ya guardada, y se añade instrumentación solo cuando la traza es insuficiente.
 
 ```{pyodide}
 import traceback
@@ -230,29 +230,29 @@ print("estaba en la traza, guardada dentro del objeto de la excepcion")
 </script>
 ```
 
-## 2. Capturar sin destruir la información
+## 2. Captura de excepciones y encadenamiento
 
 :::: {.proposicion}
-**Proposición 25.4.** `except Exception` seguido de continuar destruye la información del fallo: el programa sigue con el mismo resultado y no queda rastro de qué dato falló ni por qué. Capturar solo el error esperado y anotar el dato produce el **mismo total** y conserva todo.
+**Proposición 25.4.** `except Exception` seguido de continuar destruye la información del fallo: el programa sigue con el mismo resultado y no queda registro de qué dato falló ni por qué. Capturar solo el error esperado y anotar el dato produce el mismo total y conserva la información.
 ::::
 
 :::: {.demostracion}
-*Demostración.* La excepción lleva dentro el tipo, el mensaje y la traza; descartarla sin leerla descarta las tres cosas, y el contador de fallos que suele ponerse en su lugar solo conserva cuántos hubo. Capturar `ValueError` —el único que la conversión puede levantar por un dato malo— deja pasar cualquier otro error, que es lo que se quiere: un nombre mal escrito o una interrupción no deben confundirse con un dato sucio. La celda procesa las mismas tres filas de las dos formas: los dos totales valen `30.5`, y la segunda además indica que falló el importe `'n/d'` con `ValueError`. ∎
+*Demostración.* La excepción contiene el tipo, el mensaje y la traza; descartarla sin leerla descarta los tres, y el contador de fallos que suele sustituirla solo conserva el número de fallos. Capturar `ValueError`, el único error que la conversión puede levantar por un dato incorrecto, deja pasar cualquier otro error: un nombre mal escrito o una interrupción no se confunden con un dato con defectos. La celda procesa las mismas tres filas de las dos formas: los dos totales valen `30.5`, y la segunda indica además que falló el importe `'n/d'` con `ValueError`. ∎
 ::::
 
 :::: {.definicion}
-**Definición 25.5 (causa y contexto).** Cuando se levanta una excepción mientras se maneja otra, Python guarda la original en **`__context__`** por su cuenta. Escribir `raise … from e` la guarda además en **`__cause__`**, que es el campo que declara explícitamente la relación entre las dos.
+**Definición 25.5 (causa y contexto).** Cuando se levanta una excepción mientras se maneja otra, Python guarda automáticamente la original en **`__context__`**. Escribir `raise … from e` la guarda además en **`__cause__`**, el campo que declara explícitamente la relación entre las dos.
 ::::
 
 :::: {.proposicion}
-**Proposición 25.6.** `raise … from e` guarda el error original en `__cause__`; sin `from`, Python lo guarda igualmente en `__context__`. La diferencia es que `__cause__` **declara** la relación y `__context__` solo la registra.
+**Proposición 25.6.** `raise … from e` guarda el error original en `__cause__`; sin `from`, Python lo guarda igualmente en `__context__`. La diferencia es que `__cause__` declara la relación y `__context__` solo la registra.
 ::::
 
 :::: {.demostracion}
-*Demostración.* Python conserva automáticamente la excepción que se estaba manejando en `__context__`, de modo que la información no se pierde en ningún caso; `from e` la copia además en `__cause__`, que es el campo que las herramientas leen como «esto fue causado por aquello». La celda comprueba las dos versiones: con `from`, `__cause__` y `__context__` valen ambos `ValueError`; sin `from`, `__cause__` vale `None` y `__context__` sigue siendo `ValueError`. ∎
+*Demostración.* Python conserva automáticamente en `__context__` la excepción que se estaba manejando, de modo que la información no se pierde en ningún caso; `from e` la copia además en `__cause__`, el campo que las herramientas interpretan como «esto fue causado por aquello». La celda comprueba las dos versiones: con `from`, `__cause__` y `__context__` valen ambos `ValueError`; sin `from`, `__cause__` vale `None` y `__context__` sigue siendo `ValueError`. ∎
 ::::
 
-**Modo de falla.** El `except` demasiado ancho no solo oculta el dato sucio: oculta también los errores del propio programa. Un nombre mal escrito dentro del `try` levanta `NameError`, queda atrapado por `except Exception`, y el programa informa de un «dato inválido» que no existe. El síntoma es un recuento de filas descartadas que crece sin que ninguna de ellas tenga nada malo. La defensa es nombrar el error que se espera.
+**Modo de falla.** Un `except` demasiado amplio oculta también los errores del propio programa. Un nombre mal escrito dentro del `try` levanta `NameError`, que `except Exception` captura, y el programa informa de un «dato inválido» inexistente. El síntoma es un recuento de filas descartadas que crece sin que ninguna tenga defectos. Para evitarlo se nombra el error que se espera.
 
 ```{pyodide}
 import traceback
@@ -328,21 +328,21 @@ print("lo guarda solo; pero __cause__ vacio le dice al que lea la traza que")
 print("nadie declaro la relacion. Escribir 'from e' es declararla")
 ```
 
-## 3. Bisecar en lugar de buscar
+## 3. Bisección
 
 :::: {.definicion}
-**Definición 25.7 (bisección).** **Bisecar** es localizar el punto en que algo dejó de cumplirse partiendo por la mitad el tramo donde puede estar. Exige un invariante en el sentido de la Definición 24.7: una comprobación barata que responda **sí o no** sobre un punto concreto.
+**Definición 25.7 (bisección).** **Bisecar** es localizar el punto en que una condición deja de cumplirse dividiendo por la mitad el tramo donde puede estar. Requiere un invariante en el sentido de la Definición 24.7: una comprobación de bajo coste que responda sí o no sobre un punto concreto.
 ::::
 
 :::: {.proposicion}
-**Proposición 25.8.** Localizar el paso que rompe un invariante en una transformación de `n` pasos cuesta `n` comprobaciones mirando uno por uno en el peor caso, y `⌈log₂ n⌉` bisecando. Sobre 96 pasos, la medición da **96 contra 6**.
+**Proposición 25.8.** Localizar el paso que rompe un invariante en una transformación de `n` pasos cuesta `n` comprobaciones en el peor caso examinando los pasos uno por uno, y `⌈log₂ n⌉` bisecando. Sobre 96 pasos, la medición da 96 frente a 6.
 ::::
 
 :::: {.demostracion}
-*Demostración.* Si el invariante se cumple antes del paso culpable y no después, la sucesión de respuestas es monótona y la Proposición 12.3 se aplica directamente. Mirar uno por uno recorre los pasos hasta dar con él, lo que en el peor caso —el culpable al final— son `n` comprobaciones; bisecar descarta la mitad del tramo en cada una. La celda mide las dos formas sobre 12 pasos con el fallo en el séptimo —8 comprobaciones contra 4, mismo culpable— y tabula el peor caso para 12, 24, 48 y 96 pasos. **Doblar la longitud añade una sola comprobación.** ∎
+*Demostración.* Si el invariante se cumple antes del paso culpable y no después, la sucesión de respuestas es monótona y se aplica la Proposición 12.3. El examen uno por uno recorre los pasos hasta encontrarlo, lo que en el peor caso (el culpable al final) son `n` comprobaciones; la bisección descarta la mitad del tramo en cada una. La celda mide las dos formas sobre 12 pasos con el fallo en el séptimo (8 comprobaciones frente a 4, con el mismo culpable) y tabula el peor caso para 12, 24, 48 y 96 pasos. Duplicar la longitud añade una sola comprobación. ∎
 ::::
 
-**Modo de falla.** Sin invariante no hay nada que bisecar: «el resultado se ve raro» no responde sí o no sobre un paso concreto, y la búsqueda degenera en mirar todo otra vez. Y un invariante que se rompe en **dos** puntos distintos rompe la monotonía, de modo que la bisección converge a uno cualquiera de ellos y da por resuelto el problema cuando queda la mitad. La defensa es elegir una comprobación barata y precisa, y volver a bisecar después de arreglar lo encontrado.
+**Modo de falla.** Sin invariante no hay nada que bisecar: «el resultado parece anómalo» no responde sí o no sobre un paso concreto, y la búsqueda se reduce a examinar todo de nuevo. Un invariante que se rompe en dos puntos distintos rompe la monotonía; la bisección converge a uno de ellos y el problema se da por resuelto cuando queda la mitad. Para evitarlo se elige una comprobación de bajo coste y precisa, y se vuelve a bisecar después de corregir el fallo encontrado.
 
 ```{pyodide}
 # Un dato pasa por doce pasos y sale mal. Encontrar en cual se estropeo
@@ -508,25 +508,25 @@ print("responde si o no sobre un paso concreto")
 </script>
 ```
 
-## 4. Registrar lo que se sale
+## 4. Registro de valores anómalos
 
 :::: {.proposicion}
-**Proposición 25.9.** Un mensaje por fila produce tantas líneas como filas y no se puede leer. Registrar solo lo que incumple una condición, más un resumen, produce **21 líneas frente a 5000**: un cociente de 238 a 1, y son las líneas que dicen algo.
+**Proposición 25.9.** Un mensaje por fila produce tantas líneas como filas, y el registro resultante no es legible. Registrar solo las filas que incumplen una condición, más un resumen, produce 21 líneas frente a 5000: un cociente de 238 a 1, formado por las líneas informativas.
 ::::
 
 :::: {.demostracion}
-*Demostración.* El número de líneas de la primera forma es el número de filas por construcción; el de la segunda es el número de filas anómalas más el resumen, que sobre datos sanos es una fracción pequeña. La celda procesa 5000 filas de las que 20 son negativas, produce 21 líneas, y muestra tres ejemplos concretos con su identificador. Un recuento por categoría en una sola pasada —la Proposición 7.5— añade la forma del problema: 20 negativas, 500 por encima de 45 y 4480 normales. ∎
+*Demostración.* El número de líneas de la primera forma es, por construcción, el número de filas; el de la segunda es el número de filas anómalas más el resumen, que sobre datos correctos es una fracción pequeña. La celda procesa 5000 filas de las que 20 son negativas, produce 21 líneas y muestra tres ejemplos concretos con su identificador. Un recuento por categoría en una sola pasada (Proposición 7.5) añade la distribución del problema: 20 negativas, 500 por encima de 45 y 4480 normales. ∎
 ::::
 
 :::: {.proposicion}
-**Proposición 25.10.** Un nivel asociado a cada mensaje permite que el mismo código escriba mucho o poco **sin cambiar ninguna línea**: en producción calla y al depurar habla.
+**Proposición 25.10.** Un nivel asociado a cada mensaje permite que el mismo código escriba más o menos mensajes sin modificar ninguna línea: en producción se omiten los detalles y al depurar se muestran.
 ::::
 
 :::: {.demostracion}
-*Demostración.* Cada mensaje se emite con un nivel y solo se escribe si ese nivel alcanza el umbral configurado, de modo que subir el umbral silencia los mensajes de detalle y deja los errores. La celda ejecuta el mismo bucle con tres umbrales y obtiene 5, 1 y 1 líneas. **Lo que no se hace es borrar los mensajes**, que es perder el trabajo de haberlos escrito y quedarse sin nada la próxima vez. ∎
+*Demostración.* Cada mensaje se emite con un nivel y solo se escribe si ese nivel alcanza el umbral configurado, de modo que subir el umbral suprime los mensajes de detalle y conserva los errores. La celda ejecuta el mismo bucle con tres umbrales y obtiene 5, 1 y 1 líneas. Los mensajes se conservan en el código y se controlan con el umbral, de modo que están disponibles en la depuración siguiente. ∎
 ::::
 
-**Modo de falla.** Un mensaje de detalle que construye su texto con una operación cara se paga aunque el nivel lo descarte después, porque el argumento se evalúa antes de la llamada. Sobre un millón de vueltas, el coste de formatear un texto que nadie va a ver puede superar al del propio cálculo. La defensa es que el mensaje se construya solo si va a escribirse, dejando el formateo en manos de quien decide el nivel.
+**Modo de falla.** Un mensaje de detalle que construye su texto con una operación costosa consume ese coste aunque el nivel lo descarte, porque el argumento se evalúa antes de la llamada. Sobre un millón de iteraciones, el coste de formatear textos que no se escriben puede superar al del propio cálculo. Para evitarlo, el mensaje se construye solo si va a escribirse, y el formateo se delega en el componente que decide el nivel.
 
 ```{pyodide}
 # Un print dentro de un bucle de un millon de vueltas no ayuda: produce
@@ -599,15 +599,15 @@ print("al depurar se baja a 'detalle' y habla. Lo que no se hace es")
 print("borrar los mensajes, que es perder el trabajo de haberlos escrito")
 ```
 
-## 5. Lo que esta lección no resuelve
+## 5. Limitaciones
 
-No se ha usado un depurador interactivo, porque una página no puede detenerse a esperar órdenes. Lo que `pdb` añade sobre lo de aquí es poder **moverse** por los marcos y ejecutar código en cada uno mientras el programa está detenido; `pdb.post_mortem` hace exactamente lo de la Proposición 25.3 de forma interactiva, y un punto de ruptura permite detenerse **antes** de que el error ocurra.
+No se ha usado un depurador interactivo, porque una página no puede detenerse a esperar órdenes. `pdb` añade la posibilidad de desplazarse por los marcos y ejecutar código en cada uno mientras el programa está detenido; `pdb.post_mortem` realiza de forma interactiva lo de la Proposición 25.3, y un punto de ruptura permite detenerse antes de que ocurra el error.
 
-Tampoco se ha tratado el caso más difícil: un fallo que no se reproduce. Depende del orden de dos hilos, de la hora, de un diccionario ajeno, de un archivo que ya no existe. La bisección no sirve cuando la misma entrada da resultados distintos, y lo primero es conseguir que el fallo ocurra siempre —fijando semillas, congelando la hora, aislando el estado— que es lo que la Lección 24 llamaba hacer la prueba reproducible.
+Tampoco se ha tratado el caso de un fallo que no se reproduce, porque depende del orden de dos hilos, de la hora, de un diccionario externo o de un archivo que ya no existe. La bisección no es aplicable cuando la misma entrada da resultados distintos, y el primer paso es conseguir que el fallo ocurra siempre (fijando semillas, congelando la hora, aislando el estado), lo que la Lección 24 llamaba hacer la prueba reproducible.
 
 ## Ejercicios
 
-### Ejercicio 1, El marco donde nace
+### Ejercicio 1, Marco de origen del fallo
 
 Con la Proposición 25.2, recorrer la traza y dejar en `donde_revienta` el nombre del último marco y en `cuantos` el número de marcos.
 
@@ -659,7 +659,7 @@ cuantos = len(marcos)
 print(donde_revienta, cuantos)
 ```
 
-Revienta en `c` y hay 4 marcos: el módulo, `a`, `b` y `c`. El valor malo entró en `a`, tres marcos antes de que nadie protestara, que es la Proposición 25.2 en su forma más corta.
+La excepción se levanta en `c` y hay 4 marcos: el módulo, `a`, `b` y `c`. El valor incorrecto entró en `a`, tres marcos antes del error, que es el caso más corto de la Proposición 25.2.
 :::
 
 ```{pyodide}
@@ -672,9 +672,9 @@ else:
 feedback
 ```
 
-### Ejercicio 2, Cuántas comprobaciones
+### Ejercicio 2, Número de comprobaciones
 
-Con la Proposición 25.8, calcular cuántas comprobaciones hacen falta en el peor caso para localizar el paso culpable de una transformación de 64 pasos, de las dos formas.
+Con la Proposición 25.8, calcular cuántas comprobaciones se necesitan en el peor caso para localizar el paso culpable de una transformación de 64 pasos, de las dos formas.
 
 ```{pyodide}
 #| exercise: ex_bisecar
@@ -692,7 +692,7 @@ print(uno_por_uno, bisecando)
 ```
 
 ::: {.hint exercise="ex_bisecar"}
-El peor caso de mirar uno por uno es que el culpable esté al final. Y cada bisección parte el tramo por la mitad, con `//`.
+El peor caso del examen uno por uno es que el culpable esté al final. Cada bisección divide el tramo por la mitad, con `//`.
 :::
 
 ::: {.solution exercise="ex_bisecar"}
@@ -710,7 +710,7 @@ while tramo > 1:
 print(uno_por_uno, bisecando)
 ```
 
-64 contra 6. Y sobre 128 pasos serían 128 contra **7**: doblar la transformación dobla el coste de una forma y añade una sola comprobación a la otra.
+64 frente a 6. Sobre 128 pasos serían 128 frente a 7: duplicar la transformación duplica el coste de una forma y añade una sola comprobación a la otra.
 :::
 
 ```{pyodide}
@@ -727,9 +727,9 @@ feedback
 
 En `proyectos/notebooks/F2-retos.ipynb`, sección **Python 25**:
 
-1. Provocar un error en una transformación propia de varios pasos, recorrer la traza e imprimir las locales de cada marco. Anotar en qué marco nace el valor malo y cuántos marcos lo separan del que revienta.
-2. Tomar un `except Exception` de un trabajo propio y estrecharlo al error que de verdad se espera. Guardar en `50-Errores/` cualquier excepción distinta que aparezca al hacerlo, porque estaba oculta.
-3. Elegir un invariante barato para una transformación de al menos ocho pasos y bisecar un fallo introducido a propósito. Anotar las comprobaciones que costó y compararlas con `log₂ n`.
+1. Provocar un error en una transformación propia de varios pasos, recorrer la traza e imprimir las variables locales de cada marco. Anotar en qué marco se origina el valor incorrecto y cuántos marcos lo separan del marco donde se levanta la excepción.
+2. Tomar un `except Exception` de un código propio y restringirlo al error que se espera. Guardar en `50-Errores/` cualquier excepción distinta que aparezca al hacerlo, porque estaba oculta.
+3. Elegir un invariante de bajo coste para una transformación de al menos ocho pasos y bisecar un fallo introducido a propósito. Anotar el número de comprobaciones y compararlo con `log₂ n`.
 
 ## Del libro
 
@@ -737,21 +737,21 @@ Esta lección no se apoya en ninguno de los libros del plan. El material de refe
 
 ## Para el Cerebro
 
-- Una traza se lee **de abajo arriba** y se guarda como estructura recorrible en `e.__traceback__`.
-- **Donde revienta no es donde está el fallo.** El valor malo nace antes y viaja.
-- Las **locales de cada marco** siguen accesibles tras el error, sin ningún `print`.
-- `except Exception: pass` destruye la información **y** oculta los errores del propio programa.
-- `from e` llena `__cause__`; sin él, Python llena `__context__`. La diferencia es declarar la relación.
-- Bisecar: **96 pasos en 6 comprobaciones** frente a 96. Doblar la longitud añade **una**.
-- Sin invariante no hay bisección: «se ve raro» no responde sí o no.
-- Registrar solo lo que se sale: **21 líneas contra 5000**. El nivel se sube; los mensajes no se borran.
+- Una traza se lee de abajo arriba y se guarda como estructura recorrible en `e.__traceback__`.
+- El punto donde se levanta la excepción puede ser distinto del punto donde está el fallo. El valor incorrecto se origina antes y se transmite.
+- Las variables locales de cada marco siguen accesibles tras el error, sin ningún `print`.
+- `except Exception: pass` destruye la información y oculta los errores del propio programa.
+- `from e` asigna `__cause__`; sin él, Python asigna `__context__`. La diferencia es la declaración de la relación.
+- Bisección: 96 pasos en 6 comprobaciones frente a 96. Duplicar la longitud añade una comprobación.
+- Sin invariante no hay bisección: «parece anómalo» no responde sí o no.
+- Registro de valores anómalos: 21 líneas frente a 5000. Se sube el nivel y se conservan los mensajes.
 
 ### Fuentes
 
 ::: {#fuentes .fuentes}
-**Lo que esta página demuestra sola.** Todo lo numérico: los tres marcos de la traza con su línea de código, que el error es `TypeError`, que revienta en `escala` y empieza en `<module>`; que las locales de `prepara` contienen `cfg` valiendo `{'factor': '2'}`; que las dos formas de capturar dan el mismo total `30.5` y solo la segunda indica el importe `'n/d'`; que con `from` valen `__cause__` y `__context__` y sin él solo `__context__`; que localizar el paso 7 de 12 cuesta 8 comprobaciones uno por uno y 4 bisecando, con el mismo culpable, y que el peor caso sobre 96 pasos es 96 contra 6; que el invariante se cumple antes del paso 7 y no después; y que registrar 5000 filas produce 5000 líneas o 21 según la forma, con el recuento por categoría dando 20, 500 y 4480, y que los tres niveles dan 5, 1 y 1 líneas.
+**Lo que esta página demuestra sola.** Todo lo numérico: los tres marcos de la traza con su línea de código, que el error es `TypeError`, que se levanta en `escala` y la traza empieza en `<module>`; que las variables locales de `prepara` contienen `cfg` con el valor `{'factor': '2'}`; que las dos formas de capturar dan el mismo total `30.5` y solo la segunda indica el importe `'n/d'`; que con `from` tienen valor `__cause__` y `__context__` y sin él solo `__context__`; que localizar el paso 7 de 12 cuesta 8 comprobaciones uno por uno y 4 bisecando, con el mismo culpable, y que el peor caso sobre 96 pasos es 96 frente a 6; que el invariante se cumple antes del paso 7 y no después; y que registrar 5000 filas produce 5000 líneas o 21 según la forma, con el recuento por categoría dando 20, 500 y 4480, y que los tres niveles dan 5, 1 y 1 líneas.
 
 **Lo que viene de los libros.** Nada. Ninguno de los libros verificados del plan trata depuración.
 
-**Lo que es mío, no del libro.** La decisión de **recorrer la traza desde el programa** en lugar de mostrar su texto, que además la hace idéntica en las dos versiones de Python y enseña que la traza es una estructura; la elección de un fallo que **con enteros no ocurriría**, para que la Proposición 1.2 explique por qué tardó en aparecer; la medición de la bisección en su **peor caso**, que es la comparación honesta; el visual donde el panel de variables sigue al marco elegido; y el cierre que ata el registro por niveles con la idea de no borrar el trabajo hecho.
+**Lo que es mío, no del libro.** La decisión de recorrer la traza desde el programa en lugar de mostrar su texto, lo que la hace idéntica en las dos versiones de Python y muestra que la traza es una estructura; la elección de un fallo que no ocurriría con enteros, para que la Proposición 1.2 explique su aparición tardía; la medición de la bisección en su peor caso, que es la comparación adecuada; el visual donde el panel de variables sigue al marco elegido; y el cierre que relaciona el registro por niveles con la conservación de los mensajes escritos.
 :::
