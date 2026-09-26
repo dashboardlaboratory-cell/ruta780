@@ -4644,6 +4644,48 @@ líneas por debajo de la escala nueva, que la pisaba entera. En SCSS el orden
 manda; al tocar tipografía conviene buscar **todas** las reglas que fijan la
 misma propiedad antes de añadir una.
 
+### 3.84 Fuera la doble fuente del titular, y la malla (25-09-2026)
+
+Luis, sobre el titular de portada: **«el doble fuente en título es cliché AI»**.
+Tenía razón. La grotesca con una palabra en serif cursiva es el recurso que
+aparece en cualquier portada generada, y encima obligaba a cargar Newsreader
+para una sola palabra de una sola página.
+
+**Una sola familia en el titular.** El énfasis de «fundamentos» lo lleva ahora
+**solo el color**, en la misma Geist en regular. Newsreader se queda en el
+proyecto para las citas, donde una serif en cursiva sí significa algo.
+
+**La malla.** Pidió decoración de cuadrados o líneas, animada, que llenara el
+hueco de arriba. Es una rejilla de capilares al 7 % de opacidad con dieciséis
+cuadrados en las intersecciones —tres en el acento— y un trazo vertical que la
+recorre cada 7,6 s encendiéndolos al pasar.
+
+**Tres decisiones de construcción que conviene no deshacer:**
+
+· **Se dibuja ya visible.** Los cuadrados existen y se ven sin que corra ni una
+animación; lo único que anima es el latido y el barrido. La **regla 10** prohíbe
+las entradas con `opacity: 0` desde que dejaron el índice invisible, y una
+decoración no es excepción: si el navegador ignora el CSS de animación, queda
+una malla quieta y no un hueco.
+
+· **Va detrás, no al lado.** El primer intento puso el hero en dos columnas, y
+el titular —que tiene la caja de contenido de Quarto, unos 730 px— se fue a
+**cinco líneas** y empujó la malla fuera de la pantalla. Ahora es una capa
+absoluta que desborda hacia el margen derecho con `right: -22vw`, que es donde
+de verdad sobraba sitio.
+
+· **Lleva máscara elíptica.** Sin ella la rejilla se ve **recortada** por el
+borde del contenedor, que es lo que delata una decoración pegada. La elipse la
+apaga hacia los cuatro lados. Si el navegador no soporta `mask-image` se ve la
+malla entera, que es el estado anterior: degrada sin romperse.
+
+**Y una nota de diagnóstico.** Al comprobar la animación en el navegador salía
+`currentTime: 0` en todas las muestras y parecía que no corría. La causa era que
+la pestaña estaba en segundo plano —`visibilityState: hidden`— y Chrome congela
+el reloj de animación. Adelantando `currentTime` a mano el barrido aparecía en
+x = 171 con opacidad 0,55, que es lo correcto. **Antes de dar por rota una
+animación conviene mirar `document.visibilityState`.**
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
