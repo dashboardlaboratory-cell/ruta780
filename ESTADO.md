@@ -5132,6 +5132,29 @@ aceptaba cualquier respuesta porque no evaluaba la variable completada.
 solución, comprobación probada con la solución, con una respuesta natural
 distinta y con una errónea. Las afirmaciones se reindexaron.
 
+### 3.96 Atributos 10: niveles nuevos, orden y árboles (26-09-2026)
+
+**Atributos 10, Categóricas III (L3, FES 5.3, 5.5 y 5.7).** Escrita con las
+reglas 14b y 14c desde el principio: tono, ejercicios y visuales pasan a la
+primera.
+
+Con ficticias de rango completo, un nivel que no apareció en el entrenamiento
+tiene todas sus ficticias a cero y recibe en silencio la predicción del nivel
+de referencia. Con los datos de la 08 afecta al 18,15 % de las filas de prueba
+(fórmula $\sum p_j(1-p_j)^n$: 18,69 %) y su error es 1,7608, frente a 1,2175
+con una categoría «otros» y 1,2519 con la media encogida.
+
+En una ordinal de 7 niveles con 30 filas, la puntuación numérica gana con
+efecto lineal (1,0552 frente a 1,3047 de las ficticias) y pierde con efecto en
+U, con un sesgo que no baja con 300 filas; la base lineal y cuadrática gana en
+los dos.
+
+En árboles, ordenar los niveles por su media y probar $K-1$ cortes da el mismo
+óptimo que las $2^{K-1}-1$ particiones (comprobado por enumeración con 8
+niveles). El borrador tenía una demostración de intercambio que no era
+rigurosa y atribuía el resultado a autores que no se pueden citar con las
+reglas 3 y 4; se sustituyó por la comprobación y se declara en Fuentes.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

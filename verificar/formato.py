@@ -189,6 +189,7 @@ MIGRADAS = {
     "atributos/07-de-muchos-a-muchos.qmd",
     "atributos/08-categoricas-ficticias.qmd",
     "atributos/09-codificacion-supervisada.qmd",
+    "atributos/10-niveles-nuevos-orden-y-arboles.qmd",
     "causal/16-metalearners.qmd",
     "causal/17-double-machine-learning.qmd",
     "causal/18-r-learner-y-r-score.qmd",

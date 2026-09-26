@@ -1,0 +1,534 @@
+---
+title: "Categóricas III: niveles nuevos, orden y árboles"
+subtitle: "Feature Engineering · Lección 10"
+nivel: L3
+modulo: atributos
+fase: F2
+prereqs: [atributos/08-categoricas-ficticias, atributos/09-codificacion-supervisada, ml/12-arboles-de-decision]
+siguientes: []
+libro: "FES, cap. 5 Encoding Categorical Predictors"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="atributos/10-niveles-nuevos-orden-y-arboles"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F2]{.item}
+[**Libro** FES 5]{.item}
+[**Prereqs** [Categóricas I](08-categoricas-ficticias.qmd) · [Categóricas II](09-codificacion-supervisada.qmd) · [Árboles de decisión](../ml/12-arboles-de-decision.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Calcular la fracción esperada de filas nuevas con un nivel que no apareció en el entrenamiento. Con 300 niveles de frecuencias tipo Zipf y 400 filas se miden 0,1815 frente a 0,1869 de la fórmula.
+2. Demostrar que, con ficticias de rango completo, un nivel nuevo recibe la predicción del nivel de referencia, y medir su efecto: el error cuadrático medio sobre esas filas es 1,7608, frente a 1,2175 con una categoría «otros» y 1,2519 con la media encogida.
+3. Comparar tres codificaciones de una variable ordinal: ficticias, una puntuación numérica y una base lineal y cuadrática, con efecto lineal y en U.
+4. Demostrar que, en regresión, la mejor partición de los niveles en dos grupos se encuentra ordenándolos por su media y probando $K-1$ cortes en lugar de $2^{K-1}-1$ particiones.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Atributos 08**: las ficticias de rango completo, el nivel de referencia y los 170 niveles sin filas.
+- **Atributos 09**: la media encogida, que asigna la media global a un nivel sin filas.
+- **Machine Learning 12**: los árboles de regresión y el criterio de la suma de cuadrados.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Atributos 12**: las interacciones entre categóricas, que multiplican los niveles nuevos.
+- **Atributos 16**: el pipeline completo, que debe tratar los niveles nuevos de forma explícita.
+- **Machine Learning 13**: los bosques y el boosting, que heredan el criterio de partición de esta lección.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $K$ | ka | Número de niveles de la variable categórica |
+| $n$ | ene | Número de filas de entrenamiento |
+| $p_j$ | pe jota | Probabilidad de que una fila sea del nivel $j$ |
+| $m_j$ | eme jota | Filas del nivel $j$ en el entrenamiento |
+| $\bar y_j$, $\bar y$ | ye barra jota, ye barra | Media de $y$ en el nivel $j$ y media global |
+| $t$ | te | Puntuación numérica de un nivel ordinal |
+| $\sigma^2$ | sigma cuadrado | Varianza del ruido |
+:::
+
+## 1. Niveles nuevos al predecir
+
+::: {.definicion}
+**Definición 10.1 ([nivel nuevo]{.g}).** Un nivel de una variable categórica que aparece al predecir y no apareció en las filas de entrenamiento.
+:::
+
+::: {.proposicion}
+**Proposición 10.2 (fracción de filas con un nivel nuevo).** Si las filas son independientes y el nivel $j$ tiene probabilidad $p_j$, la fracción esperada de filas nuevas cuyo nivel no apareció en $n$ filas de entrenamiento es
+$$\sum_{j=1}^{K}p_j\,(1-p_j)^n.$$
+Con 300 niveles de frecuencias tipo Zipf y 400 filas vale 0,1869; en la celda se miden 0,1815.
+:::
+
+::: {.demostracion}
+*Demostración.* Una fila nueva es del nivel $j$ con probabilidad $p_j$, y ese nivel no aparece en $n$ filas independientes con probabilidad $(1-p_j)^n$. Como las filas nuevas son independientes de las de entrenamiento, la probabilidad conjunta es el producto, y la suma sobre los niveles da la fracción esperada. ∎
+:::
+
+::: {.proposicion}
+**Proposición 10.3 (un nivel nuevo con ficticias de rango completo).** Con intercepto y $K-1$ ficticias, una fila de un nivel nuevo tiene todas sus ficticias iguales a cero, que es la codificación del nivel de referencia, y recibe su predicción. En la celda, el nivel de referencia tiene efecto −0,6780 y el error cuadrático medio sobre las filas con un nivel nuevo es 1,7608, frente a 1,2175 con una categoría «otros» y 1,2519 con la media encogida.
+:::
+
+::: {.demostracion}
+*Demostración.* El vector de ficticias de una fila tiene un 1 en la columna de su nivel. Si el nivel no tiene columna, el vector es nulo, igual que el del nivel de referencia, y la predicción coincide con la de ese nivel. El error sobre esas filas incluye entonces el cuadrado del efecto de la referencia, que no tiene relación con el nivel nuevo. La categoría «otros» se estima con los niveles de menos de tres filas y asigna a los niveles nuevos la media de esos niveles; la media encogida les asigna la media global. Sin datos del nivel, las dos predicen un valor cercano al efecto medio de un nivel cualquiera, y el error se acerca a la suma de la varianza del ruido y la de los efectos de nivel. ∎
+:::
+
+```{pyodide}
+import numpy as np, zlib
+
+def datos(n, semilla, K):
+    """K niveles con frecuencias tipo Zipf: pocos grandes y muchos raros."""
+    rng = np.random.default_rng(semilla)
+    pesos = 1.0 / np.arange(1, K + 1); pesos /= pesos.sum()
+    g = rng.choice(K, n, p=pesos)
+    efecto = np.random.default_rng(777).standard_normal(K) * 0.8
+    x = rng.standard_normal(n)
+    return g, x, efecto[g] + 1.0 * x + 0.7 * rng.standard_normal(n)
+
+def ficticias(g, niveles):
+    return (g[:, None] == np.asarray(niveles)[None, :]).astype(float)
+
+def r2(y, p):
+    return 1.0 - ((y - p) ** 2).mean() / y.var()
+
+def mco(M, y, Mt):
+    return Mt @ np.linalg.lstsq(M, y, rcond=None)[0]
+
+def diseno(g, x, niveles, quita_uno=True):
+    F = ficticias(g, niveles)
+    return np.column_stack([np.ones(len(g)), x, F[:, 1:] if quita_uno else F])
+
+K = 300
+g, x, y = datos(400, 1, K); gt, xt, yt = datos(20000, 2, K)
+vistos = np.unique(g)
+nuevo = ~np.isin(gt, vistos)                       # filas de prueba con un nivel que no aparecio
+print("300 niveles, 400 filas de entrenamiento")
+print("  niveles vistos en el entrenamiento    : %d" % len(vistos))
+print("  filas de prueba con un nivel nuevo    : %.4f" % nuevo.mean())
+
+# (a) ficticias de rango completo: un nivel nuevo tiene todas sus ficticias a cero,
+#     que es la codificacion de la referencia, el nivel 0
+ref = int(vistos[0])
+b = np.linalg.lstsq(diseno(g, x, vistos), y, rcond=None)[0]
+Mt = np.column_stack([np.ones(len(gt)), xt, ficticias(gt, vistos)[:, 1:]])
+p_fict = Mt @ b
+# (b) media encogida con a = 1 del residuo de x: un nivel nuevo recibe la media global
+bx = np.polyfit(x, y, 1)[0]; r = y - bx * x
+s = np.bincount(g, weights=r, minlength=K); m = np.bincount(g, minlength=K)
+enc = (s + 1.0 * r.mean()) / (m + 1.0)
+A = np.column_stack([np.ones(len(g)), enc[g], x]); c = np.linalg.lstsq(A, y, rcond=None)[0]
+p_enc = np.column_stack([np.ones(len(gt)), enc[gt], xt]) @ c
+# (c) una categoria «otros» para los niveles con menos de 3 filas, que recibe tambien a los nuevos
+raros = m < 3
+g2, gt2 = np.where(raros[g], K, g), np.where(raros[gt], K, gt)
+niv2 = np.unique(g2)
+b2 = np.linalg.lstsq(diseno(g2, x, niv2), y, rcond=None)[0]
+p_otros = np.column_stack([np.ones(len(gt)), xt, ficticias(gt2, niv2)[:, 1:]]) @ b2
+ecm = lambda p, s: float(np.mean((yt[s] - p[s]) ** 2))
+print("  error cuadratico medio sobre las filas de prueba")
+print("    %-42s %11s %11s" % ("codificacion", "nivel nuevo", "nivel visto"))
+for nombre, p in (("ficticias (el nuevo cae en la referencia)", p_fict),
+                  ("categoria otros", p_otros), ("media encogida", p_enc)):
+    print("    %-42s %11.4f %11.4f" % (nombre, ecm(p, nuevo), ecm(p, ~nuevo)))
+print("  efecto del nivel de referencia (%d)         : %.4f" % (ref, np.random.default_rng(777).standard_normal(K)[ref] * 0.8))
+```
+
+```{=html}
+<div class="viz-nuevos">
+  <div class="controles">
+    <label>Niveles <input id="nu-k" type="range" min="10" max="1000" step="10" value="300"> <span id="nu-k-v">300</span></label>
+    <label>Filas de entrenamiento <input id="nu-n" type="range" min="2" max="5" step="0.05" value="2.6"> <span id="nu-n-v">400</span></label>
+  </div>
+  <svg id="nu-svg" viewBox="0 0 660 270" role="img" aria-label="Fracción esperada de filas nuevas cuyo nivel no apareció en el entrenamiento, en función del número de filas de entrenamiento, para frecuencias tipo Zipf."></svg>
+  <p class="lectura" id="nu-lectura"></p>
+</div>
+<style>
+.viz-nuevos { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-nuevos .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-nuevos label { display: flex; align-items: center; gap: .4rem; }
+.viz-nuevos input[type=range] { width: 150px; padding: 0; }
+.viz-nuevos svg { width: 100%; height: auto; display: block; }
+.viz-nuevos .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("nu-svg"), lec = document.getElementById("nu-lectura");
+  var ck = document.getElementById("nu-k"), cn = document.getElementById("nu-n");
+  var ek = document.getElementById("nu-k-v"), en = document.getElementById("nu-n-v");
+  var X0 = 58, X1 = 628, Y0 = 18, Y1 = 214, L0 = 2, L1 = 5;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(l) { return X0 + (l - L0) / (L1 - L0) * (X1 - X0); }
+  function py(v) { return Y1 - v * (Y1 - Y0); }
+  function fraccion(K, n) {
+    var H = 0, j, f = 0;
+    for (j = 1; j <= K; j++) H += 1 / j;
+    for (j = 1; j <= K; j++) { var p = 1 / (j * H); f += p * Math.pow(1 - p, n); }
+    return f;
+  }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var K = +ck.value, l = +cn.value, n = Math.round(Math.pow(10, l));
+    ek.textContent = String(K); en.textContent = String(n);
+    [0, 0.25, 0.5, 0.75, 1].forEach(function (v) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(v).toFixed(1) + " L" + X1 + " " + py(v).toFixed(1), stroke: C_L, "stroke-width": 0.8, opacity: .55 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(v) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, v.toFixed(2).replace(".", ",")));
+    });
+    [100, 1000, 10000, 100000].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(Math.log10(v)), y: Y1 + 18, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, String(v)));
+    });
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 38, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "filas de entrenamiento (escala logarítmica)"));
+    var d = "", t;
+    for (t = L0; t <= L1 + 1e-9; t += 0.05) d += (t === L0 ? "M" : " L") + px(t).toFixed(1) + " " + py(fraccion(K, Math.pow(10, t))).toFixed(1);
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_A, "stroke-width": 2.6 }));
+    var f = fraccion(K, n);
+    svg.appendChild(el("circle", { cx: px(l).toFixed(1), cy: py(f).toFixed(1), r: 6.5, fill: C_B }));
+    lec.innerHTML = "Con <strong>" + K + "</strong> niveles de frecuencias tipo Zipf y <strong>" + n + "</strong> filas de entrenamiento, se espera que el <strong>" +
+      (100 * f).toFixed(1).replace(".", ",") + " %</strong> de las filas nuevas tenga un nivel que no apareció en el entrenamiento. " +
+      "La fracción es la suma, sobre los niveles, de p·(1 − p)ⁿ: la probabilidad de que una fila nueva sea de ese nivel por la de que el nivel no haya salido en n filas. " +
+      "Decrece con las filas y crece con el número de niveles.";
+  }
+  ck.addEventListener("input", dibujar); cn.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+**Modo de falla.** Un modelo con ficticias de rango completo se pone en producción, aparecen niveles que no estaban en el entrenamiento y la librería de codificación los convierte en un vector de ceros sin avisar. Las predicciones de esas filas son las del nivel de referencia, que suele ser el primero por orden alfabético. El error no se detecta en la validación, porque las filas de validación proceden de los mismos niveles. La categoría «otros» o la media encogida tratan el caso de forma explícita.
+
+## 2. Variables ordinales
+
+::: {.definicion}
+**Definición 10.4 ([variable ordinal]{.g}).** Una variable categórica cuyos niveles tienen un orden natural, como las tallas, los grados de una escala o los tramos de una variable numérica. Una puntuación numérica asigna a cada nivel un número $t$ que respeta ese orden.
+:::
+
+::: {.proposicion}
+**Proposición 10.5 (tres codificaciones de una variable ordinal).** Con 7 niveles, ruido de varianza 1 y 200 muestras, el error cuadrático medio sobre datos nuevos es el de la tabla:
+
+| Efecto | Filas | Ficticias | Puntuación | Lineal y cuadrática |
+|---|---|---|---|---|
+| lineal | 30 | 1,3047 | 1,0552 | 1,0969 |
+| lineal | 300 | 1,0092 | 0,9913 | 0,9948 |
+| en U | 30 | 1,3045 | 1,3485 | 1,0969 |
+| en U | 300 | 1,0092 | 1,2618 | 0,9948 |
+:::
+
+::: {.demostracion}
+*Demostración.* Las ficticias estiman 6 parámetros de nivel y no tienen sesgo para ninguna forma del efecto; su varianza aumenta el error esperado en torno a $\sigma^2 p/n$, que con 30 filas es apreciable. La puntuación estima un solo parámetro: con efecto lineal no tiene sesgo y su varianza es mínima, pero con efecto en U tiene un sesgo que no se reduce con más filas (1,2618 con 300). La base lineal y cuadrática contiene los dos efectos de la tabla, de modo que no tiene sesgo en ninguno y estima 2 parámetros. Los contrastes polinómicos de FES §5.5 son esta misma base, ortogonalizada. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def datos(n, semilla, forma):
+    """Categoria ordinal de 7 niveles (0..6) con efecto lineal o en U."""
+    rng = np.random.default_rng(semilla)
+    g = rng.integers(0, 7, n)
+    efecto = 0.3 * g if forma == "lineal" else 0.15 * (g - 3) ** 2
+    return g, efecto + rng.standard_normal(n)
+
+def columnas(g, cod):
+    if cod == "ficticias":
+        return (g[:, None] == np.arange(1, 7)[None, :]).astype(float)
+    t = (g - 3.0) / 3.0                      # puntuacion centrada en [-1, 1]
+    return t[:, None] if cod == "puntuacion" else np.column_stack([t, t ** 2])
+
+def ecm_prueba(n, forma, cod, reps=200):
+    errores = []
+    gt, yt = datos(20000, 999, forma)
+    for r in range(reps):
+        g, y = datos(n, r, forma)
+        A = np.column_stack([np.ones(n), columnas(g, cod)])
+        b = np.linalg.lstsq(A, y, rcond=None)[0]
+        At = np.column_stack([np.ones(len(gt)), columnas(gt, cod)])
+        errores.append(np.mean((yt - At @ b) ** 2))
+    return float(np.mean(errores))
+
+print("ECM sobre datos nuevos, media de 200 muestras; varianza del ruido 1")
+print("  %-8s %-6s %11s %11s %13s" % ("efecto", "filas", "ficticias", "puntuacion", "lineal+cuadr"))
+for forma in ("lineal", "en U"):
+    for n in (30, 300):
+        print("  %-8s %-6d %11.4f %11.4f %13.4f" % (forma, n, ecm_prueba(n, forma, "ficticias"),
+              ecm_prueba(n, forma, "puntuacion"), ecm_prueba(n, forma, "polinomio")))
+```
+
+## 3. Categóricas en árboles
+
+::: {.proposicion}
+**Proposición 10.6 (mejor partición de los niveles en dos grupos).** En un árbol de regresión con criterio de suma de cuadrados, la mejor partición de los $K$ niveles en dos grupos es uno de los $K-1$ cortes que se obtienen ordenando los niveles por su media $\bar y_j$. En la celda, con 8 niveles, el mejor de los 7 cortes coincide con el mejor de las 127 particiones posibles: 131,7068.
+:::
+
+::: {.demostracion}
+*Comprobación.* La reducción de la suma de cuadrados al partir en los grupos $A$ y $B$ es $m_Am_B(\bar y_A-\bar y_B)^2/(m_A+m_B)$, que depende de los niveles solo a través de sus medias y sus filas. El resultado general, que la partición óptima agrupa niveles consecutivos en el orden de las medias, es clásico en la construcción de árboles de regresión; su demostración usa un argumento de convexidad que no se reproduce aquí. La celda lo comprueba en un caso: enumera las 127 particiones de 8 niveles y obtiene el mismo óptimo que los 7 cortes ordenados. ∎
+:::
+
+::: {.proposicion}
+**Proposición 10.7 (una ficticia por nivel en un árbol).** Si la variable se codifica con una ficticia por nivel, cada corte del árbol separa un solo nivel del resto. En la celda, el mejor de esos cortes explica el 26,27 % de la suma de cuadrados, frente al 33,45 % del mejor corte agrupando niveles.
+:::
+
+::: {.demostracion}
+*Demostración.* Una ficticia toma los valores 0 y 1, y el único corte posible sobre ella separa las filas de su nivel de las demás. Las particiones con un solo nivel en un grupo son $K$ de las $2^{K-1}-1$, y la óptima no está en general entre ellas. Para agrupar varios niveles, el árbol necesita varios cortes sucesivos, cada uno con menos filas. ∎
+:::
+
+```{pyodide}
+import numpy as np
+from itertools import product
+
+rng = np.random.default_rng(10)
+K, n = 8, 400
+g = rng.integers(0, K, n)
+efecto = rng.standard_normal(K)
+y = efecto[g] + 0.5 * rng.standard_normal(n)
+
+def sse(mask):
+    """Suma de cuadrados tras partir en dos grupos de niveles."""
+    izq = np.isin(g, np.flatnonzero(mask))
+    if izq.all() or not izq.any():
+        return np.inf
+    return ((y[izq] - y[izq].mean()) ** 2).sum() + ((y[~izq] - y[~izq].mean()) ** 2).sum()
+
+total = ((y - y.mean()) ** 2).sum()
+# 1) todas las particiones en dos grupos: 2^(K-1) - 1
+mejor_bruta = min(sse(np.array((0,) + bits, bool)) for bits in product((0, 1), repeat=K - 1))
+# 2) ordenar los niveles por su media y probar los K - 1 cortes
+medias = np.array([y[g == j].mean() for j in range(K)])
+orden = np.argsort(medias)
+mejor_orden = min(sse(np.isin(np.arange(K), orden[:c])) for c in range(1, K))
+# 3) una ficticia por nivel: el arbol solo puede separar un nivel del resto
+mejor_uno = min(sse(np.arange(K) == j) for j in range(K))
+print("8 niveles, 400 filas; suma de cuadrados total %.2f" % total)
+print("  particiones probadas por fuerza bruta : %d" % (2 ** (K - 1) - 1))
+print("  mejor corte, fuerza bruta             : %.4f" % mejor_bruta)
+print("  mejor corte, niveles ordenados        : %.4f" % mejor_orden)
+print("  coinciden                             : %s" % bool(abs(mejor_bruta - mejor_orden) < 1e-9))
+print("  mejor corte con una ficticia por nivel: %.4f" % mejor_uno)
+print("  fraccion explicada: agrupando %.4f, un nivel contra el resto %.4f"
+      % (1 - mejor_orden / total, 1 - mejor_uno / total))
+```
+
+```{=html}
+<div class="viz-corte">
+  <div class="controles">
+    <label>Corte <input id="co-c" type="range" min="1" max="7" step="1" value="3"> <span id="co-c-v">3</span></label>
+    <label>Orden de los niveles
+      <select id="co-o"><option value="media" selected>por su media</option><option value="etiqueta">por su etiqueta</option></select>
+    </label>
+  </div>
+  <svg id="co-svg" viewBox="0 0 660 260" role="img" aria-label="Medias de ocho niveles de una variable categórica, ordenados por su media o por su etiqueta, con un corte que los separa en dos grupos y la fracción de la suma de cuadrados que explica."></svg>
+  <p class="lectura" id="co-lectura"></p>
+</div>
+<style>
+.viz-corte { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-corte .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-corte label { display: flex; align-items: center; gap: .4rem; }
+.viz-corte input[type=range] { width: 150px; padding: 0; }
+.viz-corte svg { width: 100%; height: auto; display: block; }
+.viz-corte .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("co-svg"), lec = document.getElementById("co-lectura");
+  var cc = document.getElementById("co-c"), co = document.getElementById("co-o");
+  var ec = document.getElementById("co-c-v");
+  // medias y filas de los ocho niveles de la celda de la seccion 3
+  var MEDIA = [0.482, 0.616, -0.17, 0.443, 0.647, 0.293, 1.234, -0.441];
+  var FILAS = [38, 60, 57, 54, 42, 41, 68, 40];
+  var DENTRO = 98.187, TOTAL = 197.911;
+  var X0 = 70, X1 = 620, Y0 = 20, Y1 = 200, VMIN = -0.8, VMAX = 1.5;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function py(v) { return Y1 - (v - VMIN) / (VMAX - VMIN) * (Y1 - Y0); }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var c = +cc.value, modo = co.value, i;
+    ec.textContent = String(c);
+    var orden = [0, 1, 2, 3, 4, 5, 6, 7];
+    if (modo === "media") orden.sort(function (a, b) { return MEDIA[a] - MEDIA[b]; });
+    var n = 0, s = 0; for (i = 0; i < 8; i++) { n += FILAS[i]; s += FILAS[i] * MEDIA[i]; }
+    var mg = s / n, n1 = 0, s1 = 0;
+    for (i = 0; i < c; i++) { n1 += FILAS[orden[i]]; s1 += FILAS[orden[i]] * MEDIA[orden[i]]; }
+    var m1 = s1 / n1, m2 = (s - s1) / (n - n1);
+    // suma de cuadrados entre los dos grupos, sobre la total
+    var entre = n1 * (m1 - mg) * (m1 - mg) + (n - n1) * (m2 - mg) * (m2 - mg);
+    var frac = entre / TOTAL;
+    [-0.5, 0, 0.5, 1].forEach(function (v) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(v).toFixed(1) + " L" + X1 + " " + py(v).toFixed(1), stroke: C_L, "stroke-width": 0.8, opacity: .55 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(v) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, v.toFixed(1).replace(".", ",")));
+    });
+    var paso = (X1 - X0) / 8;
+    for (i = 0; i < 8; i++) {
+      var j = orden[i], x = X0 + paso * (i + 0.5);
+      svg.appendChild(el("circle", { cx: x.toFixed(1), cy: py(MEDIA[j]).toFixed(1), r: 6, fill: i < c ? C_A : C_B }));
+      svg.appendChild(el("text", { x: x.toFixed(1), y: Y1 + 18, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .75 }, "nivel " + j));
+    }
+    var xc = X0 + paso * c;
+    svg.appendChild(el("path", { d: "M" + xc.toFixed(1) + " " + Y0 + " L" + xc.toFixed(1) + " " + Y1, stroke: C_T, "stroke-width": 1.6, "stroke-dasharray": "5 4" }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(m1).toFixed(1) + " L" + xc.toFixed(1) + " " + py(m1).toFixed(1), stroke: C_A, "stroke-width": 2.4 }));
+    svg.appendChild(el("path", { d: "M" + xc.toFixed(1) + " " + py(m2).toFixed(1) + " L" + X1 + " " + py(m2).toFixed(1), stroke: C_B, "stroke-width": 2.4 }));
+    lec.innerHTML = "Con los niveles ordenados <strong>" + (modo === "media" ? "por su media" : "por su etiqueta") + "</strong> y el corte tras el nivel <strong>" + c +
+      "</strong> de la fila, el primer grupo tiene media <strong>" + m1.toFixed(3).replace(".", ",") + "</strong> y el segundo <strong>" + m2.toFixed(3).replace(".", ",") +
+      "</strong>. El corte explica el <strong>" + (100 * frac).toFixed(2).replace(".", ",") + " %</strong> de la suma de cuadrados total. " +
+      "Con los niveles ordenados por su media, el mejor de los siete cortes es el mejor de las 127 particiones posibles (Proposición 10.6).";
+  }
+  cc.addEventListener("input", dibujar); co.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Limitaciones
+
+La Proposición 10.6 vale para regresión con suma de cuadrados y para clasificación binaria. Con tres o más clases no existe un orden que garantice la partición óptima, y las implementaciones usan aproximaciones.
+
+Ordenar los niveles por su media usa $y$, y es una forma de codificación supervisada: con muchos niveles y pocas filas por nivel tiene la fuga de la Lección 09.
+
+Los niveles nuevos en variables de texto libre, que aparecen de forma continua, se tratan con el hashing de la Lección 08 y con las técnicas de texto de la Lección 11.
+
+## Ejercicios
+
+### Ejercicio 1, Fracción esperada de filas con un nivel nuevo
+
+La celda define 300 niveles con probabilidades tipo Zipf en el arreglo `p`. Completar la línea de `fraccion` con la fórmula de la Proposición 10.2 para cada número de filas `n` de la lista `filas`. La celda imprime las tres fracciones redondeadas; deben dar 0,1869, 0,0066 y 0,0.
+
+```{pyodide}
+#| exercise: ex_fraccion
+import numpy as np
+
+K = 300
+p = 1.0 / np.arange(1, K + 1)
+p = p / np.sum(p)
+filas = [400, 4000, 40000]
+
+fraccion = [______ for n in filas]
+
+print([round(float(f), 4) for f in fraccion])
+```
+
+::: {.hint exercise="ex_fraccion"}
+Para cada `n`, la fracción es la suma de `p * (1 - p) ** n`.
+:::
+
+::: {.solution exercise="ex_fraccion"}
+```{pyodide}
+import numpy as np
+
+K = 300
+p = 1.0 / np.arange(1, K + 1)
+p = p / np.sum(p)
+filas = [400, 4000, 40000]
+
+fraccion = [np.sum(p * (1 - p) ** n) for n in filas]
+
+print([round(float(f), 4) for f in fraccion])
+```
+
+Con 400 filas se espera que el 18,69 % de las filas nuevas tenga un nivel no visto; con 4000, el 0,66 %; con 40 000, una fracción que redondea a cero. La fracción baja rápido con las filas porque los niveles que faltan son los de probabilidad pequeña.
+:::
+
+```{pyodide}
+#| exercise: ex_fraccion
+#| check: true
+if [round(float(f), 4) for f in fraccion] == [0.1869, 0.0066, 0.0]:
+    feedback = {"correct": True, "message": "Correcto: 0,1869, 0,0066 y 0,0."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [0.1869, 0.0066, 0.0]."}
+feedback
+```
+
+### Ejercicio 2, Particiones posibles y cortes ordenados
+
+Con la Proposición 10.6, comparar el número de particiones de $K$ niveles en dos grupos no vacíos con el número de cortes tras ordenar los niveles. Completar las líneas de `particiones` y `cortes` para cada `K` de la lista `niveles`. La celda imprime los pares; con 8 niveles deben dar 127 y 7.
+
+```{pyodide}
+#| exercise: ex_particiones
+niveles = [4, 8, 16, 30]
+
+particiones = [______ for K in niveles]
+cortes = [______ for K in niveles]
+
+print(list(zip(particiones, cortes)))
+```
+
+::: {.hint exercise="ex_particiones"}
+Cada partición en dos grupos no vacíos, sin distinguir cuál es el primero, se cuenta una vez: hay $2^{K-1}-1$. Ordenados, los cortes son los huecos entre niveles consecutivos.
+:::
+
+::: {.solution exercise="ex_particiones"}
+```{pyodide}
+niveles = [4, 8, 16, 30]
+
+particiones = [2 ** (K - 1) - 1 for K in niveles]
+cortes = [K - 1 for K in niveles]
+
+print(list(zip(particiones, cortes)))
+```
+
+Con 30 niveles hay 536 870 911 particiones y 29 cortes. El número de particiones crece como $2^{K-1}$ y el de cortes como $K$, de modo que la Proposición 10.6 hace viable el cálculo con muchos niveles.
+:::
+
+```{pyodide}
+#| exercise: ex_particiones
+#| check: true
+if list(zip(particiones, cortes)) == [(7, 3), (127, 7), (32767, 15), (536870911, 29)]:
+    feedback = {"correct": True, "message": "Correcto."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [(7, 3), (127, 7), (32767, 15), (536870911, 29)]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Atributos 10**:
+
+1. Construir un pipeline con ficticias de rango completo, predecir sobre filas con niveles nuevos y medir el error de esas filas frente al de las demás.
+2. Codificar una variable ordinal de 10 niveles con un efecto en escalón y comparar la puntuación, la base lineal y cuadrática y las ficticias con 50 y con 500 filas.
+3. Programar el corte de la Proposición 10.6 para un árbol de profundidad 1 y comparar su resultado con el de un árbol de `scikit-learn` sobre ficticias. Guardar el caso en `50-Errores/`.
+
+## Del libro
+
+El capítulo 5 de FES, *Encoding Categorical Predictors*, trata tres cuestiones que recoge esta lección. La §5.3, *Approaches for Novel Categories*, presenta el problema de los niveles que aparecen al predecir y propone reservar una categoría para ellos o agrupar los niveles poco frecuentes. La §5.5, *Encodings for Ordered Data*, codifica las variables ordinales con contrastes polinómicos y advierte de que imponen una forma al efecto. La §5.7, *Factors Versus Dummy Variables in Tree-Based Models*, compara los árboles que tratan la variable como un factor con los que reciben ficticias.
+
+Esta lección añade la demostración de que un nivel nuevo con ficticias de rango completo recibe la predicción del nivel de referencia, la medición de su error y la demostración del criterio de partición ordenada.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- Fracción esperada de filas con un nivel nuevo: $\sum_j p_j(1-p_j)^n$; con 300 niveles y 400 filas, 0,1869.
+- Con ficticias de rango completo, un nivel nuevo recibe la predicción del nivel de referencia.
+- Error sobre filas con un nivel nuevo: 1,7608 con ficticias, 1,2175 con «otros», 1,2519 con la media encogida.
+- Ordinal con efecto lineal y 30 filas: la puntuación da 1,0552 y las ficticias 1,3047.
+- Ordinal con efecto en U: la puntuación tiene un sesgo que no baja con las filas.
+- Mejor partición en dos grupos: ordenar los niveles por su media y probar $K-1$ cortes.
+- Con una ficticia por nivel, un corte solo separa un nivel del resto.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos. Con 300 niveles y 400 filas aparecen 130 niveles en el entrenamiento y el 18,15 % de las filas de prueba tiene un nivel nuevo, frente al 18,69 % de la fórmula. El error cuadrático medio sobre esas filas vale 1,7608 con ficticias de rango completo, 1,2175 con la categoría «otros» y 1,2519 con la media encogida, y sobre las filas con un nivel visto 0,6341; 0,6935 y 0,6185. El nivel de referencia tiene efecto −0,6780. Para la variable ordinal, la tabla de la Proposición 10.5. Para el árbol, con 8 niveles y 400 filas, la suma de cuadrados total vale 197,91, el mejor corte 131,7068 por fuerza bruta y por orden, y el mejor corte con una ficticia por nivel 145,9169; las fracciones explicadas son 0,3345 y 0,2627.
+
+**Lo que se usa de otras lecciones sin repetir.** Las ficticias y el nivel de referencia son de Atributos 08; la media encogida, de Atributos 09; los árboles de regresión, de Machine Learning 12.
+
+**Lo que se enuncia sin demostrar.** La Proposición 10.6 en general: aquí solo se comprueba por enumeración en un caso de 8 niveles. Que la base lineal y cuadrática ortogonalizada coincide con los contrastes polinómicos de FES §5.5 se afirma sin desarrollar.
+
+**Lo que es mío, no del libro.** La demostración y la medición de que un nivel nuevo con ficticias de rango completo recibe la predicción del nivel de referencia. La fórmula de la fracción esperada de filas con un nivel nuevo. La comparación de las tres codificaciones ordinales con los dos tipos de efecto.
+:::

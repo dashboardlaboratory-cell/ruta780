@@ -78,6 +78,7 @@ LIMPIAS = [
     "atributos/07-de-muchos-a-muchos.qmd",
     "atributos/08-categoricas-ficticias.qmd",
     "atributos/09-codificacion-supervisada.qmd",
+    "atributos/10-niveles-nuevos-orden-y-arboles.qmd",
     "atributos/index.qmd",
     "causal/01-resultados-potenciales.qmd",
     "causal/02-dags-y-puerta-trasera.qmd",
