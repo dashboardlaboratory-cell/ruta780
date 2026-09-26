@@ -20,7 +20,7 @@ VICIOS = {
     "valorativo": re.compile(r"\b(?:(?<!árboles )(?<!árbol )(?<!bosques )honest[oa]s?|limpi[oa]s?|barat[oa]s?|ridícul[oa]s?|elegante|brutal|mágic[oa]|obvi[oa]s?|trivialmente)\b", re.I),
 }
 NEGRITA = re.compile(r"\*\*(.+?)\*\*")
-ETIQUETA = re.compile(r"^(?:Definición|Proposición|Procedimiento|Algoritmo|Teorema|Lema|Corolario|Ejemplo|Observación|Modo de falla|Ejercicio|Preguntas|Lo que NO se afirma|Nota de versión|Lo que esta página|Lo que se usa|Lo que viene|Lo que se enuncia|Lo que es mío)\b")
+ETIQUETA = re.compile(r"^(?:(?:Python|Álgebra|Matemática|Estadística|Machine Learning|Fundamentos|Series|Causal|Atributos|Series de tiempo) \d+|Definición|Proposición|Procedimiento|Algoritmo|Teorema|Lema|Corolario|Ejemplo|Observación|Modo de falla|Ejercicio|Preguntas|Lo que NO se afirma|Nota de versión|Lo que esta página|Lo que esta lección|Lo que se usa|Lo que viene|Lo que se enuncia|Lo que es mío)\b")
 TITULO = re.compile(r"^(#{2,4}) +(.*)$")
 TITULO_TESIS = re.compile(r"\b(?:es|son|pone|decide|manda|gana|pierde|miente|engaña|no|sin el cual|nunca|siempre)\b", re.I)
 

@@ -29,6 +29,7 @@ Uso:
 Requiere playwright:
     python3 -m pip install playwright && python3 -m playwright install chromium
 """
+import os
 import asyncio
 import hashlib
 import io
@@ -37,7 +38,8 @@ import re
 import sys
 
 RAIZ = pathlib.Path(__file__).resolve().parent.parent
-TMP = RAIZ / "verificar" / "_visual_tmp.html"
+# Un archivo por proceso: dos auditorias a la vez se pisaban el visual montado.
+TMP = RAIZ / "verificar" / f"_visual_tmp_{os.getpid()}.html"
 
 # Variables del tema, para que el visual se dibuje igual que en la página.
 CSS = """<style>:root{--r-linea:#ddd;--r-acento:#0F6E68;--r-tinta:#1a1a1a;
@@ -52,6 +54,27 @@ QUIETOS = {
     ("estadistica/08-maxima-verosimilitud.qmd", "nv-rastro"):
         "el rastro solo existe tras pulsar «Otra muestra»",
 }
+
+# Pares de textos del SVG que se pisan: se compara la caja en pantalla de cada
+# <text> visible y se informa si la interseccion cubre mas del 20 % de la menor.
+JS_SOLAPES = """(sel) => {
+  const svg = document.querySelector(sel); if (!svg) return [];
+  const ts = [...svg.querySelectorAll('text')].filter(t => {
+    const st = getComputedStyle(t);
+    return t.textContent.trim() && st.display !== 'none' && st.visibility !== 'hidden' &&
+           parseFloat(st.opacity || '1') > 0.05 && parseFloat(t.getAttribute('opacity') || '1') > 0.05;
+  }).map(t => ({t: t.textContent.trim().slice(0, 40), r: t.getBoundingClientRect()}));
+  const out = [];
+  for (let i = 0; i < ts.length; i++) for (let j = i + 1; j < ts.length; j++) {
+    const a = ts[i].r, b = ts[j].r;
+    const w = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+    const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+    if (w <= 0 || h <= 0) continue;
+    const menor = Math.min(a.width * a.height, b.width * b.height);
+    if (menor > 0 && w * h > 0.2 * menor) out.push([ts[i].t, ts[j].t].sort().join(' | '));
+  }
+  return out;
+}"""
 
 JS_FIRMA = """(sel) => {
   const svg = document.querySelector(sel);
@@ -253,6 +276,7 @@ async def audita(pg, html, rel, idx, fallos, avisos, notas):
             except Exception:
                 pass
     _, ms = await estable(pg, sel)
+    solapes = set(await pg.evaluate(JS_SOLAPES, sel))
     if ms > 1500:
         avisos.append((etiqueta, "-", f"lento: {ms:.0f} ms por redibujo"))
 
@@ -272,6 +296,7 @@ async def audita(pg, html, rel, idx, fallos, avisos, notas):
                     f, _ = await estable(pg, sel)
                     firmas.add(f)
                     marcas.append(await pg.evaluate(JS_MARCAS, sel))
+                    solapes.update(await pg.evaluate(JS_SOLAPES, sel))
             elif c["tipo"] == "range":
                 lo, hi = float(c["min"] or 0), float(c["max"] or 1)
                 for k in range(4):
@@ -282,6 +307,7 @@ async def audita(pg, html, rel, idx, fallos, avisos, notas):
                     f, _ = await estable(pg, sel)
                     firmas.add(f)
                     marcas.append(await pg.evaluate(JS_MARCAS, sel))
+                    solapes.update(await pg.evaluate(JS_SOLAPES, sel))
             elif c["tipo"] == "checkbox":
                 for v in ["1", "0"]:
                     await pg.eval_on_selector("#" + cid,
@@ -331,6 +357,7 @@ async def audita(pg, html, rel, idx, fallos, avisos, notas):
                     f, _ = await estable(pg, sel)
                     firmas.add(f)
                     marcas.append(await pg.evaluate(JS_MARCAS, sel))
+                    solapes.update(await pg.evaluate(JS_SOLAPES, sel))
                 rec = recorrido(marcas)
                 if len(firmas) <= 1:
                     fallos.append((etiqueta, cid, "«re-sortear» no cambia nada"))
@@ -370,6 +397,8 @@ async def audita(pg, html, rel, idx, fallos, avisos, notas):
 
     if errs:
         fallos.append((etiqueta, "-", f"ERROR DE JAVASCRIPT: {errs[0][:80]}"))
+    for par in sorted(solapes)[:4]:
+        fallos.append((etiqueta, "-", "textos superpuestos: " + par))
 
 
 async def main():

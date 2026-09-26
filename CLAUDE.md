@@ -16,6 +16,7 @@ python3 verificar/retos.py       && \
 python3 verificar/salidas.py     && \
 python3 verificar/formato.py     && \
 python3 verificar/tono.py --estricto && \
+python3 verificar/ejercicios.py --estricto && \
 python3 verificar/visuales.py --estricto
 ```
 
@@ -119,6 +120,23 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
     si cambió cualquier número de la prosa, bloque de código o de HTML, término
     de glosario, enlace, etiqueta o valla. El piloto es `atributos/08`.
 
+14c. **El enunciado de un ejercicio describe exactamente lo que pide su celda**
+    (revisión del Ejercicio 1 de Estadística 11, 26-09-2026). Lo comprueba
+    `verificar/ejercicios.py`:
+
+    · El verbo corresponde a lo que hace la celda: «calcular e imprimir» si
+      imprime; «devolver» solo si hay una función con `return`.
+    · El enunciado nombra, entre comillas invertidas, cada variable que se
+      completa («Completar la línea de `medianas` para…») y los objetos que la
+      celda ya trae («la muestra `x` ya generada»).
+    · El código que sigue al hueco acepta las respuestas naturales:
+      `np.std(medianas)` y no `medianas.std()`, que falla con una lista.
+    · Un valor obtenido por simulación es «de referencia», no «verdadero».
+    · El enunciado o la pista dicen qué resultado se espera («el cociente
+      debe quedar cerca de 1»), para que se sepa si se acertó.
+    · Ninguna línea de la celda ni de la solución pasa de 72 caracteres: el
+      cuadro de código no se desplaza en horizontal.
+
 15. **Cero contexto de su empresa.** Nada de CBTL, tiendas, tickets,
     sucursales, Multiplaza, café. Ejemplos neutros y clásicos: dados, pesos
     al nacer, ingresos, los datasets que usan los propios libros.
@@ -219,7 +237,7 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
     porque suelen ser precisiones matemáticas («no es un subespacio sino uno
     trasladado») y no titulares.
 
-23. **`verificar/visuales.py` comprueba la regla 19b en píxeles.** Acciona cada
+23. **`verificar/visuales.py` comprueba la regla 19b en píxeles.** Desde el 26-09-2026 falla también si dos textos del SVG se pisan en cualquier posición de los controles (más del 20 % de la caja menor). Acciona cada
     control de cada visual y mide cuánto se desplaza la geometría, trazo a
     trazo. Si un control de verdad no debe mover nada porque la cantidad que
     representa no depende de los datos, se declara en `QUIETOS` con su razón

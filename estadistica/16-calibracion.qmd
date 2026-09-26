@@ -854,16 +854,18 @@ En consecuencia, un informe que solo incluye AUC, lift o ganancia no informa sob
 
 ### Ejercicio 1, Recalibrar con regresión isotónica
 
-Implementar PAVA (*pool adjacent violators*) sobre los niveles distintos del pronóstico: recorrerlos de menor a mayor y, cada vez que la frecuencia observada de un nivel sea menor que la del anterior, fundir los dos bloques en uno con la media ponderada. Comprobar sobre un pronóstico descalibrado que la recalibración anula la calibración, no cambia la resolución y no cambia la curva de ganancia.
+Este ejercicio recalibra un pronóstico con regresión isotónica. La celda genera $n=100\,000$ días con probabilidades `q` en múltiplos de 0,05 y resultados `y`, y un pronóstico descalibrado `p_malo`, igual a `q` al cuadrado, que conserva el orden de `q`. La función `isotonica(p, y)` aplica PAVA (*pool adjacent violators*) sobre los niveles distintos del pronóstico, `niveles`: los recorre de menor a mayor y, cada vez que la frecuencia observada de un nivel es menor que la del anterior, funde los dos bloques en uno con la media ponderada. Completar la línea de `medias`, la frecuencia observada de `y` en cada nivel. La celda calcula e imprime el Brier y su descomposición antes y después de recalibrar, y compara la curva de ganancia. Tras la isotónica la calibración debe valer cero, la resolución no debe cambiar y el Brier debe bajar a 0,179618.
 
 ```{pyodide}
+#| exercise: ex_pava
 import numpy as np
 
 ss_d, ss_l = np.random.SeedSequence(1605).spawn(2)
 rd, rl = np.random.default_rng(ss_d), np.random.default_rng(ss_l)
 
 n = 100_000
-q = np.round(1 / (1 + np.exp(-(-0.6 + 1.3 * rd.normal(size=n)))) * 20) / 20
+z = rd.normal(size=n)
+q = np.round(1 / (1 + np.exp(-(-0.6 + 1.3 * z))) * 20) / 20
 y = (rl.random(n) < q).astype(float)
 p_malo = q ** 2                      # descalibrado, mismo orden que q
 
@@ -878,20 +880,26 @@ def descomponer(p, y):
     return rel, res, ybar * (1 - ybar)
 
 def isotonica(p, y):
-    """Regresion isotonica por PAVA sobre los niveles distintos del pronostico.
+    """Regresion isotonica por PAVA sobre los niveles distintos.
 
-    Devuelve, para cada dia, la frecuencia ajustada de su nivel. Es la mejor
-    recalibracion creciente posible: deja la calibracion en cero sin tocar el orden.
+    Devuelve, para cada dia, la frecuencia ajustada de su nivel.
+    Es la mejor recalibracion creciente posible: deja la
+    calibracion en cero sin tocar el orden.
     """
     niveles = np.unique(p)
-    medias = np.array([y[p == v].mean() for v in niveles])
+
+    # frecuencia observada de y en cada nivel
+    medias = ______
+
     pesos = np.array([(p == v).sum() for v in niveles], dtype=float)
     vs, ws, ns = [], [], []
     for v, w in zip(medias, pesos):
         vv, ww, nn = v, w, 1
-        while vs and vs[-1] > vv:                   # violacion: fundir bloques
+        while vs and vs[-1] > vv:            # violacion: fundir
             v0, w0, n0 = vs.pop(), ws.pop(), ns.pop()
-            vv = (v0 * w0 + vv * ww) / (w0 + ww); ww = w0 + ww; nn = n0 + nn
+            vv = (v0 * w0 + vv * ww) / (w0 + ww)
+            ww = w0 + ww
+            nn = n0 + nn
         vs.append(vv); ws.append(ww); ns.append(nn)
     ajustado, i = np.empty(len(niveles)), 0
     for v, k in zip(vs, ns):
@@ -901,32 +909,170 @@ def isotonica(p, y):
 def curva_ganancia(p, y, us):
     orden = np.argsort(-p, kind="stable")
     acum = np.cumsum(y[orden]) / y.sum()
-    return np.array([acum[max(int(round(u * len(y))) - 1, 0)] for u in us])
+    return np.array([acum[max(int(round(u * len(y))) - 1, 0)]
+                     for u in us])
 
 us = np.array([0.1, 0.2, 0.5])
 p_recal = isotonica(p_malo, y)
-for nombre, p in [("descalibrado", p_malo), ("tras isotonica", p_recal)]:
+for nombre, p in [("descalibrado", p_malo),
+                  ("tras isotonica", p_recal)]:
     rel, res, inc = descomponer(np.round(p, 9), y)
-    print(f"{nombre:16s} BS = {brier(p, y):.6f}   calibracion = {rel:.6f}   "
+    print(f"{nombre:16s} BS = {brier(p, y):.6f}   "
+          f"calibracion = {rel:.6f}   "
           f"resolucion = {res:.6f}   inc − res = {inc - res:.6f}")
 print()
-print(f"la ganancia no cambia: {np.array_equal(curva_ganancia(p_malo, y, us), curva_ganancia(p_recal, y, us))}")
-print(f"ganancia (10/20/50 %): {np.round(curva_ganancia(p_recal, y, us), 6)}")
-print(f"niveles distintos: {len(np.unique(p_malo))} antes, {len(np.unique(np.round(p_recal,9)))} despues")
+g_malo = curva_ganancia(p_malo, y, us)
+g_recal = curva_ganancia(p_recal, y, us)
+print(f"la ganancia no cambia: {np.array_equal(g_malo, g_recal)}")
+print(f"ganancia (10/20/50 %): {np.round(g_recal, 6)}")
+print(f"niveles distintos: {len(np.unique(p_malo))} antes, "
+      f"{len(np.unique(np.round(p_recal, 9)))} despues")
 ```
 
-El Brier baja de 0,216403 a 0,179618, que es incertidumbre − resolución, la cota del Corolario 16.11. La calibración queda en cero, la resolución no cambia en el sexto decimal y la ganancia es idéntica. PAVA es creciente pero no estrictamente: puede fundir niveles vecinos en uno solo, y dentro de un empate el orden entre casos queda indeterminado. Aquí no fundió ninguno (21 niveles antes y después); cuando lo hace, la curva de ganancia cambia ligeramente por el desempate, y el cambio debe indicarse.
+::: {.hint exercise="ex_pava"}
+La frecuencia observada de un nivel `v` es la proporción de días con `y` igual a 1 entre los que tienen `p == v`. Se calcula para cada elemento de `niveles`, en el mismo orden.
+:::
 
-### Ejercicio 2, Número de cajas en un diagrama de fiabilidad
-
-Un pronóstico continuo no repite valores, de modo que para dibujar el diagrama hay que agrupar en cajas. Tomar un pronóstico calibrado, que anuncia la probabilidad verdadera, y medir la calibración estimada con distintos números de cajas. Predecir antes de ejecutar el valor teórico y el valor estimado.
-
+::: {.solution exercise="ex_pava"}
 ```{pyodide}
 import numpy as np
 
-# Un pronostico CONTINUO y perfectamente calibrado: dice exactamente q.
-# Como no repite valores, para dibujar el diagrama hay que agrupar en cajas,
-# y el numero de cajas cambia lo que el diagrama parece decir.
+ss_d, ss_l = np.random.SeedSequence(1605).spawn(2)
+rd, rl = np.random.default_rng(ss_d), np.random.default_rng(ss_l)
+
+n = 100_000
+z = rd.normal(size=n)
+q = np.round(1 / (1 + np.exp(-(-0.6 + 1.3 * z))) * 20) / 20
+y = (rl.random(n) < q).astype(float)
+p_malo = q ** 2                      # descalibrado, mismo orden que q
+
+def brier(p, y): return ((p - y) ** 2).mean()
+
+def descomponer(p, y):
+    ybar = y.mean(); rel = res = 0.0
+    for v in np.unique(p):
+        m = p == v; w = m.mean(); yv = y[m].mean()
+        rel += w * (v - yv) ** 2
+        res += w * (yv - ybar) ** 2
+    return rel, res, ybar * (1 - ybar)
+
+def isotonica(p, y):
+    """Regresion isotonica por PAVA sobre los niveles distintos.
+
+    Devuelve, para cada dia, la frecuencia ajustada de su nivel.
+    Es la mejor recalibracion creciente posible: deja la
+    calibracion en cero sin tocar el orden.
+    """
+    niveles = np.unique(p)
+    medias = np.array([y[p == v].mean() for v in niveles])
+    pesos = np.array([(p == v).sum() for v in niveles], dtype=float)
+    vs, ws, ns = [], [], []
+    for v, w in zip(medias, pesos):
+        vv, ww, nn = v, w, 1
+        while vs and vs[-1] > vv:            # violacion: fundir
+            v0, w0, n0 = vs.pop(), ws.pop(), ns.pop()
+            vv = (v0 * w0 + vv * ww) / (w0 + ww)
+            ww = w0 + ww
+            nn = n0 + nn
+        vs.append(vv); ws.append(ww); ns.append(nn)
+    ajustado, i = np.empty(len(niveles)), 0
+    for v, k in zip(vs, ns):
+        ajustado[i:i + k] = v; i += k
+    return np.interp(p, niveles, ajustado)
+
+def curva_ganancia(p, y, us):
+    orden = np.argsort(-p, kind="stable")
+    acum = np.cumsum(y[orden]) / y.sum()
+    return np.array([acum[max(int(round(u * len(y))) - 1, 0)]
+                     for u in us])
+
+us = np.array([0.1, 0.2, 0.5])
+p_recal = isotonica(p_malo, y)
+for nombre, p in [("descalibrado", p_malo),
+                  ("tras isotonica", p_recal)]:
+    rel, res, inc = descomponer(np.round(p, 9), y)
+    print(f"{nombre:16s} BS = {brier(p, y):.6f}   "
+          f"calibracion = {rel:.6f}   "
+          f"resolucion = {res:.6f}   inc − res = {inc - res:.6f}")
+print()
+g_malo = curva_ganancia(p_malo, y, us)
+g_recal = curva_ganancia(p_recal, y, us)
+print(f"la ganancia no cambia: {np.array_equal(g_malo, g_recal)}")
+print(f"ganancia (10/20/50 %): {np.round(g_recal, 6)}")
+print(f"niveles distintos: {len(np.unique(p_malo))} antes, "
+      f"{len(np.unique(np.round(p_recal, 9)))} despues")
+```
+
+El Brier baja de 0,216403 a 0,179618, que es incertidumbre − resolución, la cota del Corolario 16.11. La calibración queda en cero, la resolución no cambia en el sexto decimal y la ganancia es idéntica. PAVA es creciente pero no estrictamente: puede fundir niveles vecinos en uno solo, y dentro de un empate el orden entre casos queda indeterminado. Aquí no fundió ninguno (21 niveles antes y después); cuando lo hace, la curva de ganancia cambia ligeramente por el desempate, y el cambio debe indicarse.
+:::
+
+```{pyodide}
+#| exercise: ex_pava
+#| check: true
+rel_f, res_f, inc_f = descomponer(np.round(p_recal, 9), y)
+ok = rel_f < 1e-12 and abs(brier(p_recal, y) - 0.179618) < 1e-6
+feedback = ("Correcto: la calibración queda en cero y el Brier en "
+            "0,179618." if ok else
+            "La recalibración no anula la calibración; revisar la "
+            "frecuencia observada de cada nivel.")
+{"correct": bool(ok), "message": feedback}
+```
+
+### Ejercicio 2, Número de cajas en un diagrama de fiabilidad
+
+Un pronóstico continuo no repite valores, de modo que para dibujar el diagrama de fiabilidad hay que agrupar en cajas. La celda genera $n=4000$ días con un pronóstico continuo `q` calibrado, que anuncia la probabilidad verdadera, y sus resultados `y`. La función `rel_por_cajas(p, y, K)` reparte los días en `K` cajas con el mismo número de días; dentro del bucle, `m` marca los días de la caja `j`. Completar la línea que suma a `rel` la contribución de la caja `j` a la calibración estimada, con el peso de la caja igual a la fracción de días que contiene. La celda calcula e imprime la calibración estimada para siete números de cajas. Antes de ejecutar, predecir el valor teórico y el valor estimado. Con 400 cajas la calibración estimada debe valer 0,018799.
+
+```{pyodide}
+#| exercise: ex_cajas
+import numpy as np
+
+# Un pronostico CONTINUO y perfectamente calibrado: dice q.
+# Como no repite valores, para dibujar el diagrama hay que agrupar
+# en cajas, y el numero de cajas cambia lo que el diagrama parece
+# decir.
+ss_d, ss_l = np.random.SeedSequence(1606).spawn(2)
+rd, rl = np.random.default_rng(ss_d), np.random.default_rng(ss_l)
+
+n = 4000
+q = 1 / (1 + np.exp(-(-0.6 + 1.3 * rd.normal(size=n))))
+y = (rl.random(n) < q).astype(float)
+
+def rel_por_cajas(p, y, K):
+    bordes = np.quantile(p, np.linspace(0, 1, K + 1))
+    bordes[-1] += 1e-9
+    caja = np.clip(np.digitize(p, bordes[1:-1]), 0, K - 1)
+    rel = 0.0
+    for j in range(K):
+        m = caja == j
+        if m.sum() == 0:
+            continue
+
+        # contribucion de la caja j a la calibracion
+        rel += ______
+
+    return rel
+
+print(f"n = {n} dias, pronostico perfectamente calibrado "
+      f"(dice la probabilidad verdadera)")
+print()
+print("cajas   calibracion estimada   dias por caja")
+for K in [2, 5, 10, 20, 50, 100, 400]:
+    print(f"{K:5d}        {rel_por_cajas(q, y, K):.6f}          "
+          f"{n // K}")
+```
+
+::: {.hint exercise="ex_cajas"}
+Cada caja aporta su peso por el cuadrado de la diferencia entre el pronóstico medio de sus días y la frecuencia observada en ellos, como en la descomposición de la Proposición 16.5. El peso es la media del vector booleano `m`.
+:::
+
+::: {.solution exercise="ex_cajas"}
+```{pyodide}
+import numpy as np
+
+# Un pronostico CONTINUO y perfectamente calibrado: dice q.
+# Como no repite valores, para dibujar el diagrama hay que agrupar
+# en cajas, y el numero de cajas cambia lo que el diagrama parece
+# decir.
 ss_d, ss_l = np.random.SeedSequence(1606).spawn(2)
 rd, rl = np.random.default_rng(ss_d), np.random.default_rng(ss_l)
 
@@ -946,14 +1092,29 @@ def rel_por_cajas(p, y, K):
         rel += m.mean() * (p[m].mean() - y[m].mean()) ** 2
     return rel
 
-print(f"n = {n} dias, pronostico perfectamente calibrado (dice la probabilidad verdadera)")
+print(f"n = {n} dias, pronostico perfectamente calibrado "
+      f"(dice la probabilidad verdadera)")
 print()
 print("cajas   calibracion estimada   dias por caja")
 for K in [2, 5, 10, 20, 50, 100, 400]:
-    print(f"{K:5d}        {rel_por_cajas(q, y, K):.6f}          {n // K}")
+    print(f"{K:5d}        {rel_por_cajas(q, y, K):.6f}          "
+          f"{n // K}")
 ```
 
 El valor correcto es cero en las siete filas, porque el pronóstico es la probabilidad verdadera. La tabla mide el sesgo del estimador, que crece con el número de cajas porque cada caja estima una frecuencia con menos días: de 0,000002 con dos cajas a 0,018799 con cuatrocientas. Un diagrama de fiabilidad con muchas cajas y pocos datos aparenta descalibración, y leerlo como un hallazgo es el error que trata la lección 17.
+:::
+
+```{pyodide}
+#| exercise: ex_cajas
+#| check: true
+r400 = rel_por_cajas(q, y, 400)
+ok = abs(r400 - 0.018799) < 5e-6
+feedback = ("Correcto: con 400 cajas la calibración estimada vale "
+            "0,018799." if ok else
+            f"Con 400 cajas sale {r400:.6f} y se esperaba 0,018799; "
+            "revisar el peso de cada caja.")
+{"correct": bool(ok), "message": feedback}
+```
 
 ## Contraste con la librería
 

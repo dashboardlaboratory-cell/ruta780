@@ -5103,6 +5103,35 @@ La codificación dejando uno fuera es, dentro de cada nivel, una recta
 decreciente en $y_i$: correlación −1, y un modelo de 20 tramos saca 0,0815 de
 $R^2$ de entrenamiento sobre ruido, frente a 0,0291 fuera de pliegue.
 
+### 3.95 Ejercicios y textos superpuestos en todo el sitio (26-09-2026)
+
+**Textos superpuestos.** Luis mandó una captura del visual de Estadística 11
+con la leyenda y los rótulos «verdadero» y «observado» pisándose. El gate de
+visuales no miraba eso. Ahora mide, en cada posición de cada control, las cajas
+de los textos del SVG y falla si dos se pisan en más del 20 % de la menor.
+Probado en negativo sobre la versión anterior de la lección: marca justo el
+choque de la captura. Sobre el sitio encontró 65 choques en 31 lecciones; todos
+reparados. `visuales.py` usa además un archivo temporal por proceso: dos
+auditorías a la vez se pisaban el visual montado y daban fallos falsos.
+
+**Ejercicios (regla 14c).** Una revisión del Ejercicio 1 de Estadística 11
+señaló que el enunciado no correspondía a la celda: decía «devolver» sin
+`return`, no nombraba la variable a completar, usaba `medianas.std()` (falla
+con una lista), llamaba «verdadero» a un valor simulado, no decía qué
+resultado esperar y cortaba líneas. `verificar/ejercicios.py` lo comprueba en
+los 302 ejercicios y corre en CI con `--estricto`; además exige que la celda
+de comprobación use la variable completada o algo calculado con ella. De 274
+ejercicios iniciales, 134 lecciones tenían algún problema; ahora 0.
+
+Los agentes encontraron comprobaciones rotas: en Álgebra 01 el check rechazaba
+la respuesta correcta (`np.bool_` frente a `True`); en Python 16 y 17 el check
+aceptaba cualquier respuesta porque no evaluaba la variable completada.
+
+**Ejercicios que no lo eran.** En Estadística 14–18 y Álgebra 10–18 los 28
+«ejercicios» eran celdas ya resueltas. Ahora son interactivos: hueco, pista,
+solución, comprobación probada con la solución, con una respuesta natural
+distinta y con una errónea. Las afirmaciones se reindexaron.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
