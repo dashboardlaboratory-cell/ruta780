@@ -5057,6 +5057,24 @@ los textos de los visuales. `salidas.py` acepta ya lecciones sueltas.
    40 remisiones a lecciones o proposiciones con el número mal, entre ellas las
    de Estadística 01–06, desfasadas en uno.
 
+4. **Textos de los visuales**: unas 820 lecturas, rótulos y `aria-label`
+   reescritos. `conserva_html.py` da ok en todas salvo dos cambios hechos a
+   propósito: el visual de Atributos 02 sumaba una fuga en acierto con otra en
+   AUC y ahora las enumera en su métrica, y el de Python 29 dice que el
+   defecto de `observed` cambia entre pandas 2 y 3. Los agentes encontraron y
+   corrigieron unas 15 lecturas falsas (G(t) es el cociente de las curvas y no
+   su distancia en ML 17; la varianza crece como el inverso del cuadrado del
+   seno en ML 24; el pronóstico sesgado queda por debajo de la diagonal en
+   Estadística 16…). ML 14 llamaba «presupuesto» a un C que funciona como
+   coste; pasa a «coste por holgura» y la pregunta de lectura explica la
+   formulación de ISLP.
+
+**Pendiente de esta auditoría:** el visual de ML 25 dibuja «sin la
+modificación del lasso» como coeficientes fijos en mínimos cuadrados, cuando
+LAR sin modificar también sale de cero (exige cambiar el cálculo); la rama
+`rExt < 1` del visual 0 de ML 15 es inalcanzable; y el término «techo de una
+optimización» (Python 26 y 27), que Luis decide si se renombra.
+
 **Error propio durante el trabajo:** un `git stash` coló en un comando de
 diagnóstico guardó aparte los 148 archivos modificados mientras el gate
 completo corría. Se recuperaron al momento con `git stash pop` y el gate se

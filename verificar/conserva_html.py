@@ -3,7 +3,7 @@
 Compara cada bloque ```{=html} con su versión en git (HEAD por defecto). Dentro
 de <script> vacía el contenido de las cadenas ("…", '…', `…`); fuera, vacía el
 texto entre etiquetas. Lo que queda (código, etiquetas, atributos de estilo y
-de datos) debe ser idéntico, y las cifras de las cadenas no pueden cambiar.
+de datos) debe ser idéntico; aria-label, title y placeholder cuentan como texto, y las cifras de las cadenas no pueden cambiar.
 
 Uso:
     python3 verificar/conserva_html.py ruta.qmd ...
@@ -28,6 +28,8 @@ def esqueleto(b):
             for q in sin_estilo:
                 if q.startswith("<style"): out.append(q); continue
                 cifras += [n for s in re.findall(r">([^<]*)<", q) for n in NUM.findall(s)]
+                cifras += [n for s in re.findall(r'(?:aria-label|title|placeholder)="([^"]*)"', q) for n in NUM.findall(s)]
+                q = re.sub(r'((?:aria-label|title|placeholder)=")[^"]*"', r'\1"', q)   # textos accesibles
                 out.append(re.sub(r">[^<]*<", "><", q))
     return "".join(out), collections.Counter(cifras)
 
