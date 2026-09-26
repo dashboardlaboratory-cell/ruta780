@@ -1,0 +1,612 @@
+---
+title: "Categóricas II: codificación supervisada"
+subtitle: "Feature Engineering · Lección 09"
+nivel: L3
+modulo: atributos
+fase: F2
+prereqs: [atributos/08-categoricas-ficticias, atributos/02-el-proceso-y-la-fuga, ml/08-ridge-y-lasso]
+siguientes: []
+libro: "FES, cap. 5 Encoding Categorical Predictors"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="atributos/09-codificacion-supervisada"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F2]{.item}
+[**Libro** FES 5]{.item}
+[**Prereqs** [Categóricas I](08-categoricas-ficticias.qmd) · [El proceso y la fuga](02-el-proceso-y-la-fuga.qmd) · [Ridge y lasso](../ml/08-ridge-y-lasso.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Calcular la codificación por el objetivo de una variable categórica y medir su fuga cuando se calcula con las mismas filas que se ajustan. Con 200 niveles, 1000 filas y un objetivo que no depende del nivel, el $R^2$ de entrenamiento vale 0,2048 y el de prueba −0,2566.
+2. Demostrar que ese $R^2$ tiene esperanza $(K-1)/(n-1)$, y que la codificación fuera de pliegue la reduce a cero.
+3. Demostrar que la media encogida hacia la media global coincide con ridge sobre las ficticias, con diferencias menores que $10^{-12}$.
+4. Medir que codificar el residuo de las demás columnas, y no $y$, lleva la codificación de 0,6139 a 0,6567, frente al 0,6602 de ridge.
+5. Explicar por qué la codificación dejando uno fuera tiene fuga: dentro de cada nivel es una función lineal de $y$ con correlación −1.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Atributos 02**: la fuga de la codificación por el objetivo ajustada fuera del bucle de validación.
+- **Atributos 08**: las ficticias, la cola de niveles raros y el encogimiento de ridge por el factor $m/(m+\lambda)$.
+- **Machine Learning 8**: ridge y su solución cerrada.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Atributos 10**: los niveles que aparecen por primera vez al predecir, que la codificación por el objetivo asigna a la media global.
+- **Atributos 12**: las interacciones entre categóricas, cuya codificación tiene muchos más niveles.
+- **Atributos 16**: el pipeline completo, donde la codificación se ajusta dentro de cada pliegue.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $K$ | ka | Número de niveles de la variable categórica |
+| $n$ | ene | Número de filas de entrenamiento |
+| $m_j$ | eme jota | Filas del nivel $j$ |
+| $S_j$ | ese jota | Suma de $y$ en el nivel $j$ |
+| $\bar y_j$, $\bar y$ | ye barra jota, ye barra | Media de $y$ en el nivel $j$ y media global |
+| $F$ | efe mayúscula | La matriz de ficticias, una columna 0/1 por nivel |
+| $a$ | a | Peso de la media global en la media encogida |
+| $\lambda$ | lambda | Penalización de ridge |
+| $R^2$ | erre cuadrado | Fracción de varianza explicada |
+:::
+
+## 1. Codificación por el objetivo y su fuga
+
+::: {.definicion}
+**Definición 9.1 ([codificación por el objetivo]{.g}).** Sustituir cada nivel $j$ de una variable categórica por la media del objetivo en ese nivel, $\bar y_j=S_j/m_j$. La variable queda representada por una sola columna numérica, sea cual sea el número de niveles.
+:::
+
+::: {.definicion}
+**Definición 9.2 ([codificación fuera de pliegue]{.g}).** Repartir las filas de entrenamiento en pliegues y codificar las filas de cada pliegue con las medias de nivel calculadas en los demás pliegues. Para predecir sobre filas nuevas se usan las medias calculadas con todo el entrenamiento.
+:::
+
+::: {.proposicion}
+**Proposición 9.3 (fuga de la codificación calculada con todas las filas).** Si $y$ no depende del nivel, tiene varianza constante y cada nivel tiene al menos una fila, el $R^2$ de entrenamiento de la regresión de $y$ sobre su codificación calculada con todas las filas tiene esperanza aproximada $(K-1)/(n-1)$. Con 200 niveles y 1000 filas se mide 0,2048, frente a 0,1992 de la fórmula; sobre datos nuevos, −0,2566. La codificación fuera de pliegue da 0,0002 y −0,0005.
+:::
+
+::: {.demostracion}
+*Demostración.* La regresión de $y$ sobre $\bar y_{g(i)}$ tiene pendiente 1, porque $\bar y_{g(i)}$ es la proyección de $y$ sobre las ficticias del nivel. Su $R^2$ es por tanto el cociente entre la suma de cuadrados entre niveles y la total, que es el estadístico del análisis de la varianza de un factor. Si $y$ no depende del nivel, la suma entre niveles tiene $K-1$ grados de libertad y la total $n-1$, y el cociente tiene esperanza cercana a $(K-1)/(n-1)$. Esa fracción es varianza del ruido que la codificación asigna a los niveles. En la codificación fuera de pliegue, la media que recibe cada fila no contiene su propio $y$, y la correlación entre ambas tiene esperanza cero. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def media_por_nivel(g, y, K):
+    """Suma y cuenta de y en cada nivel."""
+    s = np.bincount(g, weights=y, minlength=K); n = np.bincount(g, minlength=K)
+    return s, n
+
+def cod_ingenua(g, y, K, gt):
+    """Media del nivel calculada con todas las filas de entrenamiento."""
+    s, n = media_por_nivel(g, y, K)
+    m = np.where(n > 0, s / np.maximum(n, 1), y.mean())
+    return m[g], m[gt]
+
+def cod_fuera_de_pliegue(g, y, K, gt, pliegues=5, semilla=0):
+    """Cada fila se codifica con la media de su nivel en los otros pliegues."""
+    rng = np.random.default_rng(semilla); f = rng.integers(0, pliegues, len(g))
+    e = np.empty(len(g))
+    for k in range(pliegues):
+        dentro = f != k
+        s, n = media_por_nivel(g[dentro], y[dentro], K)
+        m = np.where(n > 0, s / np.maximum(n, 1), y[dentro].mean())
+        e[f == k] = m[g[f == k]]
+    s, n = media_por_nivel(g, y, K)
+    mt = np.where(n > 0, s / np.maximum(n, 1), y.mean())
+    return e, mt[gt]
+
+def r2_recta(e, y, et, yt):
+    """Ajusta y = a + b e por minimos cuadrados y mide R2 en entrenamiento y prueba."""
+    A = np.column_stack([np.ones(len(e)), e]); b = np.linalg.lstsq(A, y, rcond=None)[0]
+    At = np.column_stack([np.ones(len(et)), et])
+    r2 = lambda yy, p: 1 - ((yy - p) ** 2).mean() / yy.var()
+    return r2(y, A @ b), r2(yt, At @ b)
+
+rng = np.random.default_rng(3)
+K, n = 200, 1000
+g = rng.integers(0, K, n); y = rng.standard_normal(n)          # y no depende del nivel
+gt = rng.integers(0, K, 20000); yt = rng.standard_normal(20000)
+print("objetivo sin relacion con el nivel: %d niveles, %d filas" % (K, n))
+print("  %-28s %12s %12s" % ("codificacion", "R2 entreno", "R2 prueba"))
+for nombre, fn in (("media con todas las filas", cod_ingenua), ("media fuera de pliegue", cod_fuera_de_pliegue)):
+    e, et = fn(g, y, K, gt)
+    a, b = r2_recta(e, y, et, yt)
+    print("  %-28s %12.4f %12.4f" % (nombre, a, b))
+```
+
+```{=html}
+<div class="viz-fuga-te">
+  <div class="controles">
+    <label>Filas <input id="ft-n" type="range" min="200" max="5000" step="100" value="1000"> <span id="ft-n-v">1000</span></label>
+    <label>Niveles <input id="ft-k" type="range" min="10" max="1000" step="10" value="200"> <span id="ft-k-v">200</span></label>
+  </div>
+  <svg id="ft-svg" viewBox="0 0 660 260" role="img" aria-label="R cuadrado esperado sobre las filas de entrenamiento al codificar cada nivel con la media del objetivo calculada con todas las filas, cuando el objetivo no depende del nivel, en función del número de niveles."></svg>
+  <p class="lectura" id="ft-lectura"></p>
+</div>
+<style>
+.viz-fuga-te { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-fuga-te .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-fuga-te label { display: flex; align-items: center; gap: .4rem; }
+.viz-fuga-te input[type=range] { width: 150px; padding: 0; }
+.viz-fuga-te svg { width: 100%; height: auto; display: block; }
+.viz-fuga-te .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("ft-svg"), lec = document.getElementById("ft-lectura");
+  var cn = document.getElementById("ft-n"), ck = document.getElementById("ft-k");
+  var en = document.getElementById("ft-n-v"), ek = document.getElementById("ft-k-v");
+  var X0 = 58, X1 = 628, Y0 = 18, Y1 = 208, KMAX = 1000;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(k) { return X0 + (k / KMAX) * (X1 - X0); }
+  function py(v) { return Y1 - Math.max(0, Math.min(1, v)) * (Y1 - Y0); }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var n = +cn.value, K = +ck.value;
+    en.textContent = String(n); ek.textContent = String(K);
+    [0, 0.25, 0.5, 0.75, 1].forEach(function (v) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(v).toFixed(1) + " L" + X1 + " " + py(v).toFixed(1), stroke: C_L, "stroke-width": 0.8, opacity: .55 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(v) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, v.toFixed(2).replace(".", ",")));
+    });
+    [0, 250, 500, 750, 1000].forEach(function (k) {
+      svg.appendChild(el("text", { x: px(k), y: Y1 + 18, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, String(k)));
+    });
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 38, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "número de niveles"));
+    var d = "", k;
+    for (k = 1; k <= KMAX; k += 5) d += (k === 1 ? "M" : " L") + px(k).toFixed(1) + " " + py((Math.min(k, n) - 1) / (n - 1)).toFixed(1);
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_B, "stroke-width": 2.6 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + X1 + " " + py(0).toFixed(1), stroke: C_A, "stroke-width": 2.6 }));
+    var r = (Math.min(K, n) - 1) / (n - 1);
+    svg.appendChild(el("circle", { cx: px(K).toFixed(1), cy: py(r).toFixed(1), r: 6.5, fill: C_B }));
+    svg.appendChild(el("text", { x: X1 - 4, y: py(0) - 7, "text-anchor": "end", "font-size": 10.5, fill: C_A }, "codificación fuera de pliegue"));
+    lec.innerHTML = "Con <strong>" + K + "</strong> niveles y <strong>" + n + "</strong> filas, la codificación calculada con todas las filas da un R² esperado de <strong>" +
+      r.toFixed(4).replace(".", ",") + "</strong> sobre el entrenamiento, aunque el objetivo no depende del nivel. " +
+      "La curva roja es (K − 1)/(n − 1): crece con el número de niveles y decrece con el número de filas. " +
+      "La codificación fuera de pliegue, en verde, tiene esperanza cero en todos los casos.";
+  }
+  cn.addEventListener("input", dibujar); ck.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+El valor negativo sobre datos nuevos tiene la misma causa. La recta ajustada tiene pendiente cercana a 1 porque en el entrenamiento la codificación contiene el propio $y$. Aplicada a filas nuevas, multiplica por 1 una media de nivel que es ruido, y el error de prueba supera a la varianza de $y$.
+
+## 2. Media encogida
+
+::: {.definicion}
+**Definición 9.4 ([media encogida]{.g}).** Para un peso $a>0$, la media del nivel $j$ encogida hacia la media global es
+$$\tilde y_j=\frac{S_j+a\,\bar y}{m_j+a}.$$
+Un nivel con muchas filas conserva su media; uno con pocas queda cerca de $\bar y$; uno sin filas recibe $\bar y$.
+:::
+
+::: {.proposicion}
+**Proposición 9.5 (media encogida y ridge).** Con $y$ centrada y sin otras columnas, los efectos que ridge estima sobre las $K$ ficticias con penalización $\lambda$ coinciden con $\tilde y_j-\bar y$ para $a=\lambda$. En la celda, con 40 niveles y $\lambda=3$, la diferencia es menor que $10^{-12}$.
+:::
+
+::: {.demostracion}
+*Demostración.* Las ficticias de niveles distintos son ortogonales, así que $F^\top F$ es diagonal con elementos $m_j$ y el sistema de ridge se separa por niveles: $(m_j+\lambda)\,b_j=\sum_{i:g(i)=j}(y_i-\bar y)=S_j-m_j\bar y$. Entonces
+$$b_j=\frac{S_j-m_j\bar y}{m_j+\lambda}=\frac{S_j+\lambda\bar y}{m_j+\lambda}-\bar y=\tilde y_j-\bar y.$$
+El factor de encogimiento $m_j/(m_j+\lambda)$ de la Lección 08 es el caso de un solo nivel. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# Sin otras columnas, con y centrada: ridge sobre las K ficticias frente a la
+# media encogida hacia la global con a = lambda.
+rng = np.random.default_rng(5)
+K, n, lam = 40, 300, 3.0
+g = rng.integers(0, K, n); y = rng.standard_normal(n) + 0.5 * (g % 4)
+yc = y - y.mean()
+F = (g[:, None] == np.arange(K)[None, :]).astype(float)
+b_ridge = np.linalg.solve(F.T @ F + lam * np.eye(K), F.T @ yc)
+s = np.bincount(g, weights=y, minlength=K); m = np.bincount(g, minlength=K)
+suave = (s + lam * y.mean()) / (m + lam) - y.mean()
+print("ridge sobre ficticias frente a media encogida, lambda = a = %.0f" % lam)
+print("  coinciden por debajo de 1e-12       : %s" % bool(np.abs(b_ridge - suave).max() < 1e-12))
+print("  factor de encogimiento del nivel con menos filas (%d): %.4f" % (m.min(), m.min() / (m.min() + lam)))
+```
+
+::: {.proposicion}
+**Proposición 9.6 (media encogida frente a ficticias).** Con los datos de la Lección 08, una columna numérica $x$ además de la categórica y 400 filas, la media encogida fuera de pliegue con $a=4$ da un $R^2$ sobre datos nuevos de 0,6294 con 300 niveles, frente a 0,5902 de las ficticias y 0,5884 de la media sin encoger. Con 20 niveles, las ficticias dan 0,7234 y la media encogida 0,7112.
+:::
+
+::: {.demostracion}
+*Demostración.* Con 20 niveles casi todos tienen filas suficientes y las ficticias estiman bien cada efecto. La codificación queda por debajo porque cada media de nivel incluye la variación de $x$ de sus filas, efecto que se trata en la Sección 3. Con 300 niveles, la mayoría de las medias se calculan con una o ninguna fila, y el encogimiento reduce su varianza en la proporción de la Proposición 9.5. ∎
+:::
+
+```{pyodide}
+import numpy as np, zlib
+
+def datos(n, semilla, K):
+    """K niveles con frecuencias tipo Zipf: pocos grandes y muchos raros."""
+    rng = np.random.default_rng(semilla)
+    pesos = 1.0 / np.arange(1, K + 1); pesos /= pesos.sum()
+    g = rng.choice(K, n, p=pesos)
+    efecto = np.random.default_rng(777).standard_normal(K) * 0.8
+    x = rng.standard_normal(n)
+    return g, x, efecto[g] + 1.0 * x + 0.7 * rng.standard_normal(n)
+
+def ficticias(g, niveles):
+    return (g[:, None] == np.asarray(niveles)[None, :]).astype(float)
+
+def r2(y, p):
+    return 1.0 - ((y - p) ** 2).mean() / y.var()
+
+def mco(M, y, Mt):
+    return Mt @ np.linalg.lstsq(M, y, rcond=None)[0]
+
+def diseno(g, x, niveles, quita_uno=True):
+    F = ficticias(g, niveles)
+    return np.column_stack([np.ones(len(g)), x, F[:, 1:] if quita_uno else F])
+
+
+def cod_suave(g, y, K, gt, a, pliegues=5, semilla=0):
+    """Media del nivel encogida hacia la global: (s + a*media) / (n + a),
+    calculada fuera de pliegue para el entrenamiento."""
+    rng = np.random.default_rng(semilla); f = rng.integers(0, pliegues, len(g))
+    def medias(gg, yy):
+        s = np.bincount(gg, weights=yy, minlength=K); n = np.bincount(gg, minlength=K)
+        return (s + a * yy.mean()) / (n + a) if a > 0 else np.where(n > 0, s / np.maximum(n, 1), yy.mean())
+    e = np.empty(len(g))
+    for k in range(pliegues):
+        d = f != k
+        e[f == k] = medias(g[d], y[d])[g[f == k]]
+    return e, medias(g, y)[gt]
+
+def ajusta(e, x, y, et, xt):
+    A = np.column_stack([np.ones(len(e)), e, x]); b = np.linalg.lstsq(A, y, rcond=None)[0]
+    return np.column_stack([np.ones(len(et)), et, xt]) @ b
+
+print("R2 sobre datos nuevos, 400 filas de entrenamiento")
+print("  %-8s %10s %10s %10s %10s %10s" % ("niveles", "ficticias", "media", "a = 1", "a = 4", "a = 16"))
+for K in (20, 80, 300):
+    g, x, y = datos(400, 1, K); gt, xt, yt = datos(20000, 2, K)
+    fila = [r2(yt, mco(diseno(g, x, np.arange(K)), y, diseno(gt, xt, np.arange(K))))]
+    for a in (0, 1, 4, 16):
+        e, et = cod_suave(g, y, K, gt, a)
+        fila.append(r2(yt, ajusta(e, x, y, et, xt)))
+    print("  %-8d" % K + "".join("%11.4f" % v for v in fila))
+```
+
+## 3. Codificación del residuo
+
+::: {.proposicion}
+**Proposición 9.7 (codificar el residuo de las demás columnas).** Con 300 niveles, calcular la media encogida sobre $y-\hat b\,x$, con $\hat b$ la pendiente de $x$ sin la categórica, da un $R^2$ de 0,6567 con $a=1$, frente a 0,6139 al codificar $y$ y 0,6602 de ridge con $\lambda=1$.
+:::
+
+::: {.demostracion}
+*Demostración.* La media de $y$ en un nivel incluye el término $x$ de sus filas. Como $x$ no depende del nivel, ese término es ruido adicional para estimar el efecto del nivel, y su varianza dentro de cada nivel se suma a la del error. Al restar $\hat b\,x$ antes de promediar, la media del nivel estima su efecto con la varianza del error solamente, que es lo que hace ridge al estimar a la vez el coeficiente de $x$ y los de los niveles. La diferencia restante, 0,6567 frente a 0,6602, corresponde a estimar la pendiente de $x$ y los efectos de nivel en dos pasos en lugar de a la vez. ∎
+:::
+
+```{pyodide}
+import numpy as np, zlib
+
+def datos(n, semilla, K):
+    """K niveles con frecuencias tipo Zipf: pocos grandes y muchos raros."""
+    rng = np.random.default_rng(semilla)
+    pesos = 1.0 / np.arange(1, K + 1); pesos /= pesos.sum()
+    g = rng.choice(K, n, p=pesos)
+    efecto = np.random.default_rng(777).standard_normal(K) * 0.8
+    x = rng.standard_normal(n)
+    return g, x, efecto[g] + 1.0 * x + 0.7 * rng.standard_normal(n)
+
+def ficticias(g, niveles):
+    return (g[:, None] == np.asarray(niveles)[None, :]).astype(float)
+
+def r2(y, p):
+    return 1.0 - ((y - p) ** 2).mean() / y.var()
+
+def mco(M, y, Mt):
+    return Mt @ np.linalg.lstsq(M, y, rcond=None)[0]
+
+def diseno(g, x, niveles, quita_uno=True):
+    F = ficticias(g, niveles)
+    return np.column_stack([np.ones(len(g)), x, F[:, 1:] if quita_uno else F])
+
+
+def cod_suave(g, y, K, gt, a, pliegues=5, semilla=0):
+    """Media del nivel encogida hacia la global: (s + a*media) / (n + a),
+    calculada fuera de pliegue para el entrenamiento."""
+    rng = np.random.default_rng(semilla); f = rng.integers(0, pliegues, len(g))
+    def medias(gg, yy):
+        s = np.bincount(gg, weights=yy, minlength=K); n = np.bincount(gg, minlength=K)
+        return (s + a * yy.mean()) / (n + a) if a > 0 else np.where(n > 0, s / np.maximum(n, 1), yy.mean())
+    e = np.empty(len(g))
+    for k in range(pliegues):
+        d = f != k
+        e[f == k] = medias(g[d], y[d])[g[f == k]]
+    return e, medias(g, y)[gt]
+
+def ajusta(e, x, y, et, xt):
+    A = np.column_stack([np.ones(len(e)), e, x]); b = np.linalg.lstsq(A, y, rcond=None)[0]
+    return np.column_stack([np.ones(len(et)), et, xt]) @ b
+
+
+def ridge_niveles(g, x, y, gt, xt, K, lam):
+    M = diseno(g, x, np.arange(K), quita_uno=False)
+    P = np.diag([0.0, 0.0] + [lam] * K)
+    b = np.linalg.solve(M.T @ M + P, M.T @ y)
+    return diseno(gt, xt, np.arange(K), quita_uno=False) @ b
+
+K = 300
+g, x, y = datos(400, 1, K); gt, xt, yt = datos(20000, 2, K)
+bx = np.polyfit(x, y, 1)[0]                        # pendiente de x sin el nivel
+print("R2 sobre datos nuevos, 300 niveles y 400 filas")
+print("  %-6s %16s %16s %14s" % ("a", "media de y", "media del resto", "ridge, lam = a"))
+for a in (1, 4, 16):
+    e, et = cod_suave(g, y, K, gt, a)
+    e2, et2 = cod_suave(g, y - bx * x, K, gt, a)   # se codifica y - bx*x
+    print("  %-6d %16.4f %16.4f %14.4f" % (a, r2(yt, ajusta(e, x, y, et, xt)),
+          r2(yt, ajusta(e2, x, y, et2, xt)), r2(yt, ridge_niveles(g, x, y, gt, xt, K, a))))
+```
+
+**Modo de falla.** La codificación por el objetivo se calcula sobre $y$ cuando el modelo contiene otras columnas con efecto grande. Las medias de nivel incorporan la variación de esas columnas, el encogimiento óptimo aumenta y la codificación rinde por debajo de las ficticias con penalización. Calcularla sobre el residuo de un primer ajuste sin la categórica corrige el problema.
+
+## 4. Codificación dejando uno fuera
+
+::: {.definicion}
+**Definición 9.8 ([codificación dejando uno fuera]{.g}).** Codificar cada fila con la media de su nivel calculada sin ella, $(S_j-y_i)/(m_j-1)$.
+:::
+
+::: {.proposicion}
+**Proposición 9.9 (fuga de la codificación dejando uno fuera).** Dentro de un nivel, la codificación dejando uno fuera es una función lineal de $y_i$ con pendiente $-1/(m_j-1)$, y la correlación entre ambas vale −1. Con 50 niveles, 1000 filas y un objetivo sin relación con el nivel, un modelo escalonado de 20 tramos sobre la codificación da un $R^2$ de entrenamiento de 0,0815 y de prueba −0,0930; con la codificación fuera de pliegue, 0,0291 y −0,0429.
+:::
+
+::: {.demostracion}
+*Demostración.* Para las filas de un nivel, $S_j$ y $m_j$ son constantes, así que $e_i=(S_j-y_i)/(m_j-1)$ es una recta decreciente en $y_i$. Una fila con $y_i$ alto recibe una codificación baja, y la ordenación de las filas dentro del nivel queda invertida sin error. Un modelo que puede cortar la codificación en tramos estrechos aprovecha esa relación en el entrenamiento, y la relación no existe en las filas nuevas, que se codifican con la media completa. El segundo visual muestra la recta para un nivel. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def loo(g, y, K):
+    """Media del nivel sin la propia fila: (S - y_i) / (n - 1)."""
+    s = np.bincount(g, weights=y, minlength=K); n = np.bincount(g, minlength=K)
+    return np.where(n[g] > 1, (s[g] - y) / np.maximum(n[g] - 1, 1), y.mean())
+
+def tramos(e, y, et, q=20):
+    """Modelo escalonado: la media de y en cada veintil de la codificacion."""
+    cortes = np.quantile(e, np.linspace(0, 1, q + 1)[1:-1])
+    b, bt = np.searchsorted(cortes, e), np.searchsorted(cortes, et)
+    medias = np.array([y[b == j].mean() for j in range(q)])
+    return medias[b], medias[bt]
+
+r2 = lambda yy, p: 1 - ((yy - p) ** 2).mean() / yy.var()
+rng = np.random.default_rng(8)
+K, n = 50, 1000
+g = rng.integers(0, K, n); y = rng.standard_normal(n)               # y sin relacion con el nivel
+gt = rng.integers(0, K, 20000); yt = rng.standard_normal(20000)
+e = loo(g, y, K)
+s = np.bincount(g, weights=y, minlength=K); c = np.bincount(g, minlength=K)
+et = (s / np.maximum(c, 1))[gt]                                      # al predecir, la media completa
+print("codificacion dejando uno fuera, objetivo sin relacion con el nivel")
+print("  correlacion entre y y su codificacion, entrenamiento: %.4f" % np.corrcoef(y, e)[0, 1])
+f = rng.integers(0, 5, n); eo = np.empty(n)                         # fuera de pliegue, para comparar
+for k in range(5):
+    dd = f != k
+    ss = np.bincount(g[dd], weights=y[dd], minlength=K); cc = np.bincount(g[dd], minlength=K)
+    eo[f == k] = np.where(cc > 0, ss / np.maximum(cc, 1), y[dd].mean())[g[f == k]]
+print("  modelo por tramos (20 veintiles)      R2 entreno   R2 prueba")
+for nombre, ee in (("dejando uno fuera", e), ("fuera de pliegue", eo)):
+    p, pt = tramos(ee, y, et)
+    print("    %-34s %9.4f %11.4f" % (nombre, r2(y, p), r2(yt, pt)))
+# dentro de un nivel, la codificacion es una funcion lineal decreciente de y
+j = int(np.argmax(c)); d = g == j
+print("  nivel %d, %d filas: correlacion dentro del nivel igual a -1: %s"
+      % (j, c[j], bool(np.corrcoef(y[d], e[d])[0, 1] < -1 + 1e-12)))
+```
+
+```{=html}
+<div class="viz-loo">
+  <div class="controles">
+    <label>Filas del nivel <input id="lo-m" type="range" min="3" max="40" step="1" value="10"> <span id="lo-m-v">10</span></label>
+    <label>Media del nivel <input id="lo-c" type="range" min="-1.5" max="1.5" step="0.1" value="0"> <span id="lo-c-v">0,0</span></label>
+  </div>
+  <svg id="lo-svg" viewBox="0 0 660 270" role="img" aria-label="Dentro de un nivel, cada fila frente a su codificación dejando uno fuera: los puntos quedan sobre una recta de pendiente negativa."></svg>
+  <p class="lectura" id="lo-lectura"></p>
+</div>
+<style>
+.viz-loo { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-loo .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-loo label { display: flex; align-items: center; gap: .4rem; }
+.viz-loo input[type=range] { width: 150px; padding: 0; }
+.viz-loo svg { width: 100%; height: auto; display: block; }
+.viz-loo .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("lo-svg"), lec = document.getElementById("lo-lectura");
+  var cm = document.getElementById("lo-m"), cc = document.getElementById("lo-c");
+  var em = document.getElementById("lo-m-v"), ec = document.getElementById("lo-c-v");
+  var X0 = 58, X1 = 628, Y0 = 16, Y1 = 214, LIM = 3.5;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // valores fijos de ruido normal, para que el dibujo solo dependa de los controles
+  var Z = [0.31, -1.12, 0.54, 1.47, -0.23, -0.78, 0.95, -1.61, 0.12, 0.66, -0.41, 1.08, -0.97, 0.28, -0.05,
+           1.73, -1.34, 0.47, -0.62, 0.83, -0.18, 1.21, -0.88, 0.39, -1.45, 0.71, 0.02, -0.33, 1.36, -0.71,
+           0.58, -1.02, 0.19, 0.91, -0.52, 1.52, -1.27, 0.44, -0.14, 0.77];
+  function px(v) { return X0 + (v + LIM) / (2 * LIM) * (X1 - X0); }
+  function py(v) { return Y1 - (v + LIM) / (2 * LIM) * (Y1 - Y0); }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var m = +cm.value, c = +cc.value, i, S = 0, ys = [];
+    em.textContent = String(m); ec.textContent = c.toFixed(1).replace(".", ",");
+    for (i = 0; i < m; i++) { ys.push(c + Z[i]); S += c + Z[i]; }
+    [-3, -2, -1, 0, 1, 2, 3].forEach(function (v) {
+      svg.appendChild(el("path", { d: "M" + px(v).toFixed(1) + " " + Y0 + " L" + px(v).toFixed(1) + " " + Y1, stroke: C_L, "stroke-width": 0.7, opacity: .5 }));
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(v).toFixed(1) + " L" + X1 + " " + py(v).toFixed(1), stroke: C_L, "stroke-width": 0.7, opacity: .5 }));
+      svg.appendChild(el("text", { x: px(v), y: Y1 + 16, "text-anchor": "middle", "font-size": 10, fill: C_T, opacity: .7 }, String(v)));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(v) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, String(v)));
+    });
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 36, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "y de la fila"));
+    svg.appendChild(el("text", { x: X0 + 6, y: Y0 + 12, "font-size": 10.5, fill: C_T, opacity: .7 }, "codificación de la fila"));
+    // la recta e = (S - y)/(m - 1)
+    svg.appendChild(el("path", { d: "M" + px(-LIM).toFixed(1) + " " + py((S + LIM) / (m - 1)).toFixed(1) + " L" + px(LIM).toFixed(1) + " " + py((S - LIM) / (m - 1)).toFixed(1),
+      stroke: C_B, "stroke-width": 2, "stroke-dasharray": "6 4", fill: "none" }));
+    ys.forEach(function (y) {
+      svg.appendChild(el("circle", { cx: px(y).toFixed(1), cy: py((S - y) / (m - 1)).toFixed(1), r: 4.5, fill: C_A, "fill-opacity": .8 }));
+    });
+    var media = S / m;
+    lec.innerHTML = "Un nivel con <strong>" + m + "</strong> filas y media <strong>" + media.toFixed(3).replace(".", ",") + "</strong>. " +
+      "Cada punto es una fila: en horizontal su valor de y, en vertical su codificación dejando uno fuera, (S − y)/(m − 1). " +
+      "Todos los puntos están sobre la recta de pendiente −1/(m − 1) = <strong>" + (-1 / (m - 1)).toFixed(4).replace(".", ",") + "</strong>, " +
+      "de modo que dentro del nivel la codificación determina y sin error. Con más filas la pendiente se acerca a cero, pero la relación sigue siendo exacta.";
+  }
+  cm.addEventListener("input", dibujar); cc.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Limitaciones
+
+La media encogida usa el mismo peso $a$ para todos los niveles, y $a$ se elige con validación o con la regla de la Lección 08. El modelo jerárquico que estima $a$ a partir de la varianza entre niveles, el agrupamiento parcial bayesiano que presenta FES §5.4, no se desarrolla aquí.
+
+Con objetivo binario, FES §5.4 codifica con el logaritmo de la razón de probabilidades del nivel en lugar de la media. El encogimiento se aplica del mismo modo sobre los recuentos.
+
+Los embeddings de entidades, que aprenden un vector por nivel con una red neuronal, tampoco se tratan. Requieren el material de Machine Learning 36 y 37.
+
+## Ejercicios
+
+### Ejercicio 1, R² esperado de la codificación con todas las filas
+
+Con la Proposición 9.3, calcular el $R^2$ esperado sobre el entrenamiento para varios pares de niveles y filas cuando el objetivo no depende del nivel.
+
+```{pyodide}
+#| exercise: ex_r2_fuga
+pares = [(50, 1000), (200, 1000), (500, 1000), (200, 20000)]
+
+r2_esperado = ______
+
+print(r2_esperado)
+```
+
+::: {.hint exercise="ex_r2_fuga"}
+Para cada par $(K, n)$ el valor es $(K-1)/(n-1)$, redondeado a cuatro decimales.
+:::
+
+::: {.solution exercise="ex_r2_fuga"}
+```{pyodide}
+pares = [(50, 1000), (200, 1000), (500, 1000), (200, 20000)]
+
+r2_esperado = [round((K - 1) / (n - 1), 4) for K, n in pares]
+
+print(r2_esperado)
+```
+
+Con 1000 filas, pasar de 50 a 500 niveles lleva el $R^2$ esperado de 0,049 a 0,4995. Con 200 niveles y 20 000 filas baja a 0,01. La fuga depende del cociente entre niveles y filas.
+:::
+
+```{pyodide}
+#| exercise: ex_r2_fuga
+#| check: true
+if r2_esperado == [0.049, 0.1992, 0.4995, 0.01]:
+    feedback = {"correct": True, "message": "Correcto: (K - 1)/(n - 1) para cada par."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [0.049, 0.1992, 0.4995, 0.01]."}
+feedback
+```
+
+### Ejercicio 2, Media encogida de un nivel
+
+Con la Definición 9.4, calcular la media encogida de un nivel cuya media es 2,0, con media global 0,5 y $a=4$, para varios números de filas.
+
+```{pyodide}
+#| exercise: ex_encogida
+media_nivel, media_global, a = 2.0, 0.5, 4.0
+filas = [1, 3, 10, 100]
+
+encogida = ______
+
+print(encogida)
+```
+
+::: {.hint exercise="ex_encogida"}
+Con $S_j=m_j\,\bar y_j$, la media encogida es $(m_j\bar y_j+a\bar y)/(m_j+a)$. Redondear a seis decimales.
+:::
+
+::: {.solution exercise="ex_encogida"}
+```{pyodide}
+media_nivel, media_global, a = 2.0, 0.5, 4.0
+filas = [1, 3, 10, 100]
+
+encogida = [round((m * media_nivel + a * media_global) / (m + a), 6) for m in filas]
+
+print(encogida)
+```
+
+Con una fila, la media encogida vale 0,8, más cerca de la global que de la del nivel. Con cien filas vale 1,942308, casi la del nivel. Con $m_j=a$ el valor está en el punto medio entre las dos medias.
+:::
+
+```{pyodide}
+#| exercise: ex_encogida
+#| check: true
+if encogida == [0.8, 1.142857, 1.571429, 1.942308]:
+    feedback = {"correct": True, "message": "Correcto."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [0.8, 1.142857, 1.571429, 1.942308]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Atributos 9**:
+
+1. Construir una categórica con 500 niveles de frecuencias desiguales y comparar la codificación calculada con todas las filas, la fuera de pliegue y la media encogida, midiendo el $R^2$ sobre datos nuevos.
+2. Elegir $a$ por validación cruzada y compararlo con el número de filas por nivel a partir del cual el efecto del nivel es fiable.
+3. Repetir la comparación con un árbol de decisión como modelo y anotar qué codificación tiene más fuga. Guardar el caso en `50-Errores/`.
+
+## Del libro
+
+El capítulo 5 de FES, *Encoding Categorical Predictors*, trata la codificación supervisada en la §5.4, *Supervised Encoding Methods*. La sección presenta la codificación por efecto, que sustituye cada nivel por un resumen del objetivo en ese nivel, y advierte del sobreajuste cuando el resumen se calcula con las mismas filas que se usan para ajustar el modelo. Para los niveles con pocas filas propone un modelo jerárquico bayesiano que encoge la estimación de cada nivel hacia la media global, y con objetivo binario usa el logaritmo de la razón de probabilidades. La sección también menciona los embeddings de entidades aprendidos con redes neuronales.
+
+Esta lección añade dos mediciones: la equivalencia exacta entre la media encogida y ridge sobre las ficticias, y el efecto de codificar el residuo de las demás columnas en lugar de $y$.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- Codificación por el objetivo: cada nivel se sustituye por la media de $y$ en el nivel.
+- Calculada con todas las filas, su $R^2$ de entrenamiento tiene esperanza $(K-1)/(n-1)$ aunque $y$ no dependa del nivel.
+- Con 200 niveles y 1000 filas: 0,2048 en entrenamiento y −0,2566 en prueba.
+- La codificación fuera de pliegue elimina esa fuga: 0,0002 y −0,0005.
+- Media encogida: $(S_j+a\bar y)/(m_j+a)$.
+- Con $y$ centrada, la media encogida con $a=\lambda$ coincide con ridge sobre las ficticias.
+- Con 300 niveles: ficticias 0,5902; media encogida 0,6294; media encogida del residuo 0,6567; ridge 0,6602.
+- La codificación dejando uno fuera es, dentro de cada nivel, una recta decreciente en $y_i$.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos. Con 200 niveles, 1000 filas y un objetivo sin relación con el nivel, la codificación calculada con todas las filas da un $R^2$ de 0,2048 en entrenamiento y −0,2566 en prueba, y la fuera de pliegue 0,0002 y −0,0005. Con los datos de la Lección 08 y 400 filas, las ficticias dan 0,7234; 0,6921 y 0,5902 con 20, 80 y 300 niveles; la media fuera de pliegue 0,7086; 0,6394 y 0,5884; y la media encogida con $a=1$, 4 y 16, 0,7116; 0,7112 y 0,6983 con 20 niveles, 0,6614; 0,6708 y 0,6598 con 80, y 0,6139; 0,6294 y 0,6193 con 300. Con 300 niveles, la media encogida del residuo da 0,6567; 0,6454 y 0,6126, y ridge 0,6602; 0,6383 y 0,5869. La media encogida y ridge coinciden por debajo de $10^{-12}$ con 40 niveles y $\lambda=3$. Con 50 niveles y 1000 filas, el modelo por tramos da 0,0815 y −0,0930 con la codificación dejando uno fuera y 0,0291 y −0,0429 con la fuera de pliegue, y dentro del nivel de 30 filas la correlación es −1.
+
+**Lo que se usa de otras lecciones sin repetir.** La fuga de la codificación ajustada fuera de la validación es de Atributos 02. Los datos, las ficticias y el factor $m/(m+\lambda)$ son de Atributos 08. Ridge es de Machine Learning 8.
+
+**Lo que se enuncia sin demostrar.** La esperanza $(K-1)/(n-1)$ es aproximada: el cociente de dos sumas de cuadrados no tiene como esperanza el cociente de sus esperanzas, y la aproximación mejora con $n$ grande. La Proposición 9.6 se apoya en la tabla y no en una demostración general.
+
+**Lo que es mío, no del libro.** La fórmula $(K-1)/(n-1)$ como medida de la fuga, obtenida del análisis de la varianza de un factor. La equivalencia exacta entre la media encogida y ridge sobre las ficticias. La medición del efecto de codificar el residuo de las demás columnas. Y la descripción de la fuga de la codificación dejando uno fuera como una recta dentro de cada nivel.
+:::

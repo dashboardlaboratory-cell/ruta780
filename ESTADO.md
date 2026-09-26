@@ -5081,6 +5081,28 @@ completo corría. Se recuperaron al momento con `git stash pop` y el gate se
 relanzó desde cero. Para comparar con la versión comiteada se usa
 `git archive HEAD | tar -x -C $TMPDIR/head`, que no toca el árbol de trabajo.
 
+### 3.94 Atributos 09: codificación supervisada (26-09-2026)
+
+**Atributos 09, Categóricas II: codificación supervisada (L3, FES 5.4).**
+Primera lección escrita desde el principio con la regla 14b; `tono.py` da 0.
+
+La codificación por el objetivo calculada con todas las filas tiene un $R^2$
+de entrenamiento con esperanza aproximada $(K-1)/(n-1)$ aunque $y$ no dependa
+del nivel: con 200 niveles y 1000 filas se mide 0,2048 (fórmula 0,1992) y
+−0,2566 sobre datos nuevos. Fuera de pliegue, 0,0002.
+
+La media encogida $(S_j+a\bar y)/(m_j+a)$ coincide con ridge sobre las
+ficticias con $y$ centrada, por debajo de $10^{-12}$. Con los datos de la 08 y
+300 niveles da 0,6294, por debajo del 0,6602 de ridge. La diferencia se
+explica midiendo: la media de cada nivel arrastra la variación de $x$, y al
+codificar el residuo $y-\hat b x$ sube a 0,6567. El número de pliegues no
+influye (5 y 20 dan lo mismo), y dos frases del borrador que lo atribuían a los
+pliegues se corrigieron antes de publicar.
+
+La codificación dejando uno fuera es, dentro de cada nivel, una recta
+decreciente en $y_i$: correlación −1, y un modelo de 20 tramos saca 0,0815 de
+$R^2$ de entrenamiento sobre ruido, frente a 0,0291 fuera de pliegue.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
