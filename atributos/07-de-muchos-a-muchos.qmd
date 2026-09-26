@@ -1,0 +1,672 @@
+---
+title: "De muchos a muchos: proyecciones como atributos"
+subtitle: "Feature Engineering · Lección 07"
+nivel: L3
+modulo: atributos
+fase: F2
+prereqs: [atributos/05-escalado-y-centrado, ml/19-pca, ml/20-pcr-y-pls]
+siguientes: []
+libro: "FES, cap. 6 Engineering Numeric Predictors"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="atributos/07-de-muchos-a-muchos"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F2]{.item}
+[**Libro** FES 6]{.item}
+[**Prereqs** [Escalado y centrado](05-escalado-y-centrado.qmd) · [PCA](../ml/19-pca.qmd) · [PCR y PLS](../ml/20-pcr-y-pls.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Comprimir columnas correlacionadas** en unas pocas proyecciones: veinte columnas movidas por tres factores se reducen a dos que explican el **95,34 %** de la variación, y la primera sola predice **0,7648**.
+2. **Medir el caso en que comprimir tira la señal**: si $y$ depende del factor de menos varianza, esas mismas dos componentes predicen **−0,0413**, peor que la media, y el tercero —que explica un **1,88 %** de $X$— lleva toda la señal.
+3. Explicar por qué: **una componente recoge la fracción $\cos^2\theta$ de la señal**, con $\theta$ el ángulo entre ella y la dirección que predice, y esa fracción no depende de cuánta varianza explique.
+4. **Comparar con PLS**, que elige sus direcciones mirando a $y$: con dos direcciones alcanza **0,3949** donde PCA da −0,0413.
+5. **Medir que PCA depende de las unidades**: sin estandarizar, una columna en centésimas se queda con el **99,99 %** de la primera componente.
+6. **Elegir el número de componentes por validación**: la regla del 95 % elige dos en los dos casos; la validación elige cuatro cuando la señal está en lo pequeño y recupera **0,7159**.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 19**: el análisis de componentes principales, su cálculo por descomposición en valores singulares y la varianza explicada.
+- **Machine Learning 20**: la regresión sobre componentes y los mínimos cuadrados parciales.
+- **Atributos 05**: la estandarización, sin la que PCA encuentra unidades y no estructura.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Atributos 15**: la selección de atributos, que reduce columnas eligiendo en vez de combinando.
+- **Atributos 16**: el pipeline, donde la proyección se estima dentro de la validación.
+- **Machine Learning 34**: los métodos no lineales de reducción, que se nombran aquí y no se construyen.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $X$ | equis mayúscula | La matriz de predictores, $n$ filas por $p$ columnas |
+| $Z$ | zeta mayúscula | $X$ estandarizada |
+| $v_j$ | uve sub jota | La dirección de la componente $j$ |
+| $k$ | ka | Componentes o direcciones que se conservan |
+| $\theta$ | theta | El ángulo entre una componente y la dirección que predice |
+| $W$ | uve doble | La matriz que mezcla los factores latentes en las columnas |
+| $R^2$ | erre cuadrado | La fracción de varianza de $y$ explicada |
+:::
+
+## 1. Comprimir columnas correlacionadas
+
+::: {.definicion}
+**Definición 7.1 ([componentes principales como atributos]{.g}).** Sustituir las $p$ columnas estandarizadas por sus proyecciones sobre las $k$ primeras direcciones $v_1,\dots,v_k$ de la descomposición en valores singulares de $Z$, que son las de mayor varianza. El procedimiento **no mira a $y$**.
+:::
+
+::: {.proposicion}
+**Proposición 7.2 (cuando la señal está en lo grande, comprimir no cuesta).** Con veinte columnas movidas por tres factores de desviaciones 5, 2 y 0,5, las dos primeras componentes explican el **95,34 %** de la variación de $X$. Si $y$ depende del factor de más varianza, la primera componente sola predice $R^2=$ **0,7648** y las dos, **0,7904**.
+:::
+
+::: {.demostracion}
+*Demostración.* Las veinte columnas son combinaciones de tres factores más ruido, así que viven cerca de un subespacio de dimensión tres, y las dos primeras componentes recogen los dos factores de mayor varianza. Si $y$ depende del mayor, la primera componente apunta prácticamente en su dirección y la regresión sobre ella tiene todo lo que hace falta; las diecisiete columnas restantes solo aportaban ruido. **Es el caso para el que PCA se inventó, y en él funciona.** ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+VAR = np.array([5.0, 2.0, 0.5])                   # desviacion de cada factor
+W = np.random.default_rng(99).standard_normal((3, 20))
+
+def datos(n, semilla, factor):
+    """20 columnas movidas por 3 factores latentes; y depende de UNO de ellos."""
+    rng = np.random.default_rng(semilla)
+    F = rng.standard_normal((n, 3)) * VAR
+    X = F @ W + 0.5 * rng.standard_normal((n, 20))
+    y = F[:, factor] / VAR[factor] + 0.5 * rng.standard_normal(n)
+    return X, y
+
+def r2(y, p):
+    return 1.0 - ((y - p) ** 2).mean() / y.var()
+
+def pca(X, y, Xt, k):
+    """Regresion sobre las k primeras componentes principales."""
+    mu, sd = X.mean(0), X.std(0)
+    Z, Zt = (X - mu) / sd, (Xt - mu) / sd
+    V = np.linalg.svd(Z, full_matrices=False)[2][:k].T
+    T, Tt = Z @ V, Zt @ V
+    b = np.linalg.lstsq(np.column_stack([np.ones(len(T)), T]), y, rcond=None)[0]
+    return np.column_stack([np.ones(len(Tt)), Tt]) @ b
+
+def pls(X, y, Xt, k):
+    """PLS1 por NIPALS: cada direccion maximiza la covarianza con y."""
+    mu, sd = X.mean(0), X.std(0)
+    Z, Zt = (X - mu) / sd, (Xt - mu) / sd
+    ym = y.mean(); yr = y - ym; E = Z.copy()
+    Ws, Ps, qs = [], [], []
+    for _ in range(k):
+        w = E.T @ yr; w /= np.linalg.norm(w)
+        t = E @ w
+        p = E.T @ t / (t @ t); c = yr @ t / (t @ t)
+        E = E - np.outer(t, p); yr = yr - c * t
+        Ws.append(w); Ps.append(p); qs.append(c)
+    Wm, Pm = np.array(Ws).T, np.array(Ps).T
+    return ym + Zt @ (Wm @ np.linalg.solve(Pm.T @ Wm, np.array(qs)))
+
+X, _ = datos(200, 1, 0)
+Z = (X - X.mean(0)) / X.std(0)
+s = np.linalg.svd(Z, compute_uv=False)
+v = s ** 2 / (s ** 2).sum()
+print("veinte columnas movidas por tres factores; varianza de X por componente")
+print("  %-14s %12s %12s" % ("componente", "explica", "acumulada"))
+for j in range(5):
+    print("  %-14d %12.4f %12.4f" % (j + 1, v[j], v[: j + 1].sum()))
+print()
+X0, y0 = datos(200, 1, 0); X0t, y0t = datos(5000, 2, 0)
+print("si y depende del factor de MAS varianza, R2 sobre datos nuevos")
+print("  %-6s %12s" % ("k", "PCA"))
+for k in (1, 2, 3):
+    print("  %-6d %12.4f" % (k, r2(y0t, pca(X0, y0, X0t, k))))
+print()
+print("veinte columnas se reducen a dos que explican el 95 % de la variacion,")
+print("y la primera sola ya predice 0.7648. Cuando la senal esta en las")
+print("direcciones grandes de X, comprimir no cuesta nada y quita diecisiete")
+print("columnas que solo aportaban ruido")
+```
+
+## 2. Cuando la señal está en lo pequeño
+
+::: {.proposicion}
+**Proposición 7.3 (la varianza explicada no dice nada sobre la señal).** Si $y$ depende del factor de **menos** varianza, las dos primeras componentes —el 95,34 % de $X$— predicen $R^2=$ **−0,0413**, peor que la media. Al entrar la tercera, que explica el **1,88 %**, el $R^2$ sube a **0,7106**.
+:::
+
+::: {.demostracion}
+*Demostración.* La regresión sobre una componente $v$ recoge de la señal solo su proyección sobre $v$. Si la dirección que predice forma un ángulo $\theta$ con $v$, la fracción recogida es $\cos^2\theta$, y $\theta$ **no tiene nada que ver** con la varianza que $v$ explique: son dos preguntas distintas, una sobre $X$ y otra sobre la relación entre $X$ e $y$. Aquí las dos primeras componentes son casi perpendiculares al factor que importa, $\cos^2\theta\approx0$, y el ajuste solo encuentra ruido. El visual siguiente dibuja esta cuenta en dos dimensiones. ∎
+:::
+
+::: {.proposicion}
+**Proposición 7.4 (PLS mira a $y$ para elegir).** Con dos direcciones, los mínimos cuadrados parciales alcanzan $R^2=$ **0,3949** donde PCA da −0,0413; con tres o más, los dos métodos llegan a lo mismo.
+:::
+
+::: {.demostracion}
+*Demostración.* PLS elige cada dirección maximizando la covarianza entre la proyección y $y$, no la varianza de la proyección, así que pone delante lo que predice aunque varíe poco. No lo consigue del todo con una sola dirección —0,0475—, porque la covarianza mezcla la correlación con la varianza y el factor grande sigue tirando; con dos ya se aparta de él. Al entrar la tercera componente PCA recoge también el factor pequeño y los dos métodos coinciden: **el problema de PCA nunca fue la base, sino el orden**. Y como PLS mira a $y$, es un paso supervisado y va dentro de la validación, por la regla de la Lección 02. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+VAR = np.array([5.0, 2.0, 0.5])                   # desviacion de cada factor
+W = np.random.default_rng(99).standard_normal((3, 20))
+
+def datos(n, semilla, factor):
+    """20 columnas movidas por 3 factores latentes; y depende de UNO de ellos."""
+    rng = np.random.default_rng(semilla)
+    F = rng.standard_normal((n, 3)) * VAR
+    X = F @ W + 0.5 * rng.standard_normal((n, 20))
+    y = F[:, factor] / VAR[factor] + 0.5 * rng.standard_normal(n)
+    return X, y
+
+def r2(y, p):
+    return 1.0 - ((y - p) ** 2).mean() / y.var()
+
+def pca(X, y, Xt, k):
+    """Regresion sobre las k primeras componentes principales."""
+    mu, sd = X.mean(0), X.std(0)
+    Z, Zt = (X - mu) / sd, (Xt - mu) / sd
+    V = np.linalg.svd(Z, full_matrices=False)[2][:k].T
+    T, Tt = Z @ V, Zt @ V
+    b = np.linalg.lstsq(np.column_stack([np.ones(len(T)), T]), y, rcond=None)[0]
+    return np.column_stack([np.ones(len(Tt)), Tt]) @ b
+
+def pls(X, y, Xt, k):
+    """PLS1 por NIPALS: cada direccion maximiza la covarianza con y."""
+    mu, sd = X.mean(0), X.std(0)
+    Z, Zt = (X - mu) / sd, (Xt - mu) / sd
+    ym = y.mean(); yr = y - ym; E = Z.copy()
+    Ws, Ps, qs = [], [], []
+    for _ in range(k):
+        w = E.T @ yr; w /= np.linalg.norm(w)
+        t = E @ w
+        p = E.T @ t / (t @ t); c = yr @ t / (t @ t)
+        E = E - np.outer(t, p); yr = yr - c * t
+        Ws.append(w); Ps.append(p); qs.append(c)
+    Wm, Pm = np.array(Ws).T, np.array(Ps).T
+    return ym + Zt @ (Wm @ np.linalg.solve(Pm.T @ Wm, np.array(qs)))
+
+# Las mismas veinte columnas, pero ahora y depende del factor de MENOS varianza.
+X, y = datos(200, 1, 2)
+Xt, yt = datos(5000, 2, 2)
+Z = (X - X.mean(0)) / X.std(0)
+s = np.linalg.svd(Z, compute_uv=False)
+v = np.cumsum(s ** 2 / (s ** 2).sum())
+
+print("y depende del factor de MENOS varianza; R2 sobre datos nuevos")
+print("  %-6s %16s %12s %12s" % ("k", "varianza de X", "PCA", "PLS"))
+for k in (1, 2, 3, 5):
+    print("  %-6d %16.4f %12.4f %12.4f"
+          % (k, v[k - 1], r2(yt, pca(X, y, Xt, k)), r2(yt, pls(X, y, Xt, k))))
+print()
+print("con dos componentes PCA explica el 95.34 % de X y predice PEOR que la")
+print("media: -0.0413. La regla de quedarse con las componentes hasta el 90 o")
+print("el 95 % de la varianza se para justo ahi, y tira la tercera, que explica")
+print("un 1.88 % de X y lleva toda la senal. PLS, que elige las direcciones")
+print("mirando a y, ya saca 0.3949 con dos. Y al entrar la tercera, los dos")
+print("llegan a lo mismo: el problema nunca fue la base, sino el orden")
+```
+
+```{=html}
+<div class="viz-pca">
+  <div class="controles">
+    <label>Alargamiento de la nube <input id="pc-r" type="range" min="1" max="6" step="0.1" value="4"> <span id="pc-r-v">4,0</span></label>
+    <label>Dirección de la señal <input id="pc-a" type="range" min="0" max="90" step="1" value="75"> <span id="pc-a-v">75°</span></label>
+  </div>
+  <svg id="pc-svg" viewBox="0 0 660 320" role="img" aria-label="Una nube de puntos alargada, su primera componente principal y la dirección en la que se mueve la variable a predecir: la primera componente solo recoge la señal en la medida en que las dos direcciones coinciden."></svg>
+  <p class="lectura" id="pc-lectura"></p>
+</div>
+<style>
+.viz-pca { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-pca .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-pca label { display: flex; align-items: center; gap: .4rem; }
+.viz-pca input[type=range] { width: 150px; padding: 0; }
+.viz-pca svg { width: 100%; height: auto; display: block; }
+.viz-pca .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("pc-svg"), lec = document.getElementById("pc-lectura");
+  var cr = document.getElementById("pc-r"), ca = document.getElementById("pc-a");
+  var er = document.getElementById("pc-r-v"), ea = document.getElementById("pc-a-v");
+  var CX = 330, CY = 160, ESC = 34, ROT = 20 * Math.PI / 180;   // la nube va inclinada 20 grados
+  var U = [], semilla = 4242, i;
+  function azar() { semilla = (semilla * 1103515245 + 12345) % 2147483648; return semilla / 2147483648; }
+  function normal() { var u = azar() || 1e-9, v = azar(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
+  for (i = 0; i < 260; i++) U.push([normal(), normal()]);
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function flecha(ang, largo, color, grosor) {
+    var dx = Math.cos(ang) * largo, dy = -Math.sin(ang) * largo;
+    svg.appendChild(el("path", { d: "M" + (CX - dx).toFixed(1) + " " + (CY - dy).toFixed(1) + " L" + (CX + dx).toFixed(1) + " " + (CY + dy).toFixed(1),
+      stroke: color, "stroke-width": grosor, "stroke-linecap": "round" }));
+  }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var r = +cr.value, a = +ca.value * Math.PI / 180;
+    er.textContent = r.toFixed(1).replace(".", ",");
+    ea.textContent = ca.value + "°";
+    // la nube: eje largo r, eje corto 1, girada ROT
+    for (i = 0; i < U.length; i++) {
+      var x = U[i][0] * r, y = U[i][1];
+      var X = x * Math.cos(ROT) - y * Math.sin(ROT), Y = x * Math.sin(ROT) + y * Math.cos(ROT);
+      if (Math.abs(X) * ESC > 320 || Math.abs(Y) * ESC > 150) continue;
+      svg.appendChild(el("circle", { cx: (CX + X * ESC).toFixed(1), cy: (CY - Y * ESC).toFixed(1), r: 2.4, fill: C_T, opacity: .3 }));
+    }
+    // primera componente: el eje largo. La senal forma un angulo a con el
+    flecha(ROT, Math.min(r * 2.2 * ESC, 300), C_A, 3);
+    flecha(ROT + a, 140, C_B, 2.2);
+    svg.appendChild(el("text", { x: CX + Math.cos(ROT) * 250, y: CY - Math.sin(ROT) * 250 - 10, "text-anchor": "middle",
+      "font-size": 10.5, fill: C_A }, "primera componente"));
+    svg.appendChild(el("text", { x: CX + Math.cos(ROT + a) * 160, y: CY - Math.sin(ROT + a) * 160 - 6, "text-anchor": "middle",
+      "font-size": 10.5, fill: C_B }, "dirección de la señal"));
+    var parte = Math.pow(Math.cos(a), 2), vx = r * r / (r * r + 1);
+    lec.innerHTML = "La primera componente explica el <strong>" + (100 * vx).toFixed(1).replace(".", ",") +
+      " %</strong> de la varianza de la nube, y recoge solo el <strong>" + (100 * parte).toFixed(1).replace(".", ",") +
+      " %</strong> de la señal: la fracción es cos²(" + ca.value + "°), y no depende en nada de lo alargada que sea la nube. " +
+      (parte < 0.2 ? "Con la señal casi perpendicular al eje largo, quedarse con la primera componente es quedarse con la dirección que <em>no</em> predice, por mucha varianza que explique."
+        : (parte > 0.8 ? "Con la señal alineada con el eje largo, comprimir a una sola dirección no cuesta casi nada." : "Entre medias, la primera componente se lleva una parte de la señal y tira el resto.")) +
+      " Alargar la nube sube el primer porcentaje y deja el segundo igual: la varianza explicada no dice nada sobre la señal.";
+  }
+  cr.addEventListener("input", dibujar); ca.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+**Modo de falla.** Un conjunto de muchas columnas correlacionadas se reduce por PCA a las componentes que explican el 90 % de la varianza, por costumbre y antes de mirar $y$. Si la variable que se quiere predecir depende de una diferencia pequeña entre columnas —el cambio frente al nivel, la parte que no comparten dos sensores—, esa diferencia vive en las componentes de poca varianza y es justo lo que se tira. El síntoma es un modelo que empeora al «limpiar» los datos. La defensa es elegir cuántas componentes quedarse **con la validación** y no con la varianza explicada, o usar un método que mire a $y$.
+
+## 3. PCA y las unidades
+
+::: {.proposicion}
+**Proposición 7.5 (sin estandarizar, PCA encuentra unidades).** Con la sexta de las veinte columnas medida en centésimas y sin estandarizar, la primera componente explica el **99,99 %** de la varianza y su peso sobre esa columna vale **0,9999**. El $R^2$ con una componente cae de **0,7648** a **0,6928**.
+:::
+
+::: {.demostracion}
+*Demostración.* PCA busca la dirección de mayor varianza, y multiplicar una columna por cien multiplica su varianza por diez mil. Esa columna sola supera con mucho a la suma de las demás, y la primera componente se alinea con ella: PCA no ha encontrado una estructura de los datos sino **la columna con las unidades más grandes**. Es la Proposición 5.4 de la Lección 05 con PCA en lugar de kNN, y tiene la misma defensa. La caída de $R^2$ es moderada aquí porque la columna sexta también lleva información del factor grande; con una columna de ruido en esas unidades sería total. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+VAR = np.array([5.0, 2.0, 0.5])                   # desviacion de cada factor
+W = np.random.default_rng(99).standard_normal((3, 20))
+
+def datos(n, semilla, factor):
+    """20 columnas movidas por 3 factores latentes; y depende de UNO de ellos."""
+    rng = np.random.default_rng(semilla)
+    F = rng.standard_normal((n, 3)) * VAR
+    X = F @ W + 0.5 * rng.standard_normal((n, 20))
+    y = F[:, factor] / VAR[factor] + 0.5 * rng.standard_normal(n)
+    return X, y
+
+def r2(y, p):
+    return 1.0 - ((y - p) ** 2).mean() / y.var()
+
+def pca(X, y, Xt, k):
+    """Regresion sobre las k primeras componentes principales."""
+    mu, sd = X.mean(0), X.std(0)
+    Z, Zt = (X - mu) / sd, (Xt - mu) / sd
+    V = np.linalg.svd(Z, full_matrices=False)[2][:k].T
+    T, Tt = Z @ V, Zt @ V
+    b = np.linalg.lstsq(np.column_stack([np.ones(len(T)), T]), y, rcond=None)[0]
+    return np.column_stack([np.ones(len(Tt)), Tt]) @ b
+
+def pls(X, y, Xt, k):
+    """PLS1 por NIPALS: cada direccion maximiza la covarianza con y."""
+    mu, sd = X.mean(0), X.std(0)
+    Z, Zt = (X - mu) / sd, (Xt - mu) / sd
+    ym = y.mean(); yr = y - ym; E = Z.copy()
+    Ws, Ps, qs = [], [], []
+    for _ in range(k):
+        w = E.T @ yr; w /= np.linalg.norm(w)
+        t = E @ w
+        p = E.T @ t / (t @ t); c = yr @ t / (t @ t)
+        E = E - np.outer(t, p); yr = yr - c * t
+        Ws.append(w); Ps.append(p); qs.append(c)
+    Wm, Pm = np.array(Ws).T, np.array(Ps).T
+    return ym + Zt @ (Wm @ np.linalg.solve(Pm.T @ Wm, np.array(qs)))
+
+# PCA busca las direcciones de mas varianza, y la varianza depende de las
+# unidades. Sin estandarizar, una columna en otra unidad se come la primera.
+def pca_crudo(X, y, Xt, k):
+    mu = X.mean(0)
+    V = np.linalg.svd(X - mu, full_matrices=False)[2][:k].T
+    T, Tt = (X - mu) @ V, (Xt - mu) @ V
+    b = np.linalg.lstsq(np.column_stack([np.ones(len(T)), T]), y, rcond=None)[0]
+    return np.column_stack([np.ones(len(Tt)), Tt]) @ b
+
+X, y = datos(200, 1, 0)
+Xt, yt = datos(5000, 2, 0)
+u = np.ones(20); u[5] = 100.0                      # la columna 6, en centesimas
+Xu, Xut = X * u, Xt * u
+Vt = np.linalg.svd(Xu - Xu.mean(0), full_matrices=False)
+s = Vt[1]; v1 = s[0] ** 2 / (s ** 2).sum()
+
+print("las mismas veinte columnas, con la sexta medida en centesimas")
+print("  %-52s %10.4f" % ("varianza que explica la primera componente, sin estandarizar", v1))
+print("  %-52s %10.4f" % ("peso de la columna 6 en esa componente", abs(Vt[2][0, 5])))
+print()
+print("  %-40s %12s %12s" % ("", "k = 1", "k = 2"))
+print("  %-40s %12.4f %12.4f" % ("PCA sobre columnas estandarizadas",
+                                  r2(yt, pca(Xu, y, Xut, 1)), r2(yt, pca(Xu, y, Xut, 2))))
+print("  %-40s %12.4f %12.4f" % ("PCA sobre columnas sin estandarizar",
+                                  r2(yt, pca_crudo(Xu, y, Xut, 1)), r2(yt, pca_crudo(Xu, y, Xut, 2))))
+print()
+print("sin estandarizar, la primera componente explica el 99.99 % de la")
+print("varianza y es, casi entera, la columna 6: PCA ha encontrado la columna")
+print("con las unidades mas grandes, no una direccion de los datos. Es la")
+print("Leccion 05 otra vez, con PCA en el papel de kNN")
+```
+
+```{=html}
+<div class="viz-giro">
+  <div class="controles">
+    <label>Unidades de la columna 2 <input id="gi-u" type="range" min="-1.5" max="1.5" step="0.05" value="0"> <span id="gi-u-v">×1</span></label>
+    <label>Correlación <input id="gi-c" type="range" min="0" max="0.95" step="0.05" value="0.6"> <span id="gi-c-v">0,60</span></label>
+  </div>
+  <svg id="gi-svg" viewBox="0 0 660 300" role="img" aria-label="La dirección de la primera componente principal según las unidades de una de las dos columnas: gira hasta pegarse a la columna medida en números más grandes."></svg>
+  <p class="lectura" id="gi-lectura"></p>
+</div>
+<style>
+.viz-giro { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-giro .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-giro label { display: flex; align-items: center; gap: .4rem; }
+.viz-giro input[type=range] { width: 150px; padding: 0; }
+.viz-giro svg { width: 100%; height: auto; display: block; }
+.viz-giro .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("gi-svg"), lec = document.getElementById("gi-lectura");
+  var cu = document.getElementById("gi-u"), cc = document.getElementById("gi-c");
+  var eu = document.getElementById("gi-u-v"), ec = document.getElementById("gi-c-v");
+  var CX = 330, CY = 150, R = 120;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // primer autovector de la covarianza [[1, u rho], [u rho, u^2]]
+  function pc1(u, rho) {
+    var a = 1, b = u * rho, d = u * u;
+    var l = (a + d) / 2 + Math.sqrt(Math.pow((a - d) / 2, 2) + b * b);
+    var vx = b, vy = l - a;
+    if (Math.abs(vx) < 1e-12 && Math.abs(vy) < 1e-12) { vx = a >= d ? 1 : 0; vy = a >= d ? 0 : 1; }
+    var n = Math.sqrt(vx * vx + vy * vy);
+    return { ang: Math.atan2(vy / n, vx / n), frac: l / (a + d) };
+  }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var u = Math.pow(10, +cu.value), rho = +cc.value;
+    eu.textContent = "×" + (u >= 10 ? u.toFixed(0) : u >= 1 ? u.toFixed(1) : u.toFixed(2)).replace(".", ",");
+    ec.textContent = rho.toFixed(2).replace(".", ",");
+    var p = pc1(u, rho), q = pc1(1, rho);
+    // la circunferencia y los dos ejes de columna
+    svg.appendChild(el("circle", { cx: CX, cy: CY, r: R, fill: "none", stroke: C_L }));
+    svg.appendChild(el("path", { d: "M" + (CX - R - 10) + " " + CY + " L" + (CX + R + 10) + " " + CY, stroke: C_L }));
+    svg.appendChild(el("path", { d: "M" + CX + " " + (CY - R - 10) + " L" + CX + " " + (CY + R + 10), stroke: C_L }));
+    svg.appendChild(el("text", { x: CX + R + 14, y: CY + 4, "font-size": 10.5, fill: C_T, opacity: .7 }, "columna 1"));
+    svg.appendChild(el("text", { x: CX + 6, y: CY - R - 14, "font-size": 10.5, fill: C_T, opacity: .7 }, "columna 2"));
+    function eje(ang, color, grosor, guion) {
+      var dx = Math.cos(ang) * R, dy = Math.sin(ang) * R;
+      svg.appendChild(el("path", { d: "M" + (CX - dx).toFixed(1) + " " + (CY + dy).toFixed(1) + " L" + (CX + dx).toFixed(1) + " " + (CY - dy).toFixed(1),
+        stroke: color, "stroke-width": grosor, "stroke-dasharray": guion || "none", "stroke-linecap": "round" }));
+    }
+    eje(q.ang, C_T, 1.6, "5 4");
+    eje(p.ang, C_A, 3);
+    var grados = (p.ang * 180 / Math.PI + 180) % 180;
+    lec.innerHTML = "Con la columna 2 en unidades " + eu.textContent + " y correlación " + ec.textContent +
+      ", la primera componente apunta a <strong>" + grados.toFixed(1).replace(".", ",") + "°</strong> y explica el <strong>" +
+      (100 * p.frac).toFixed(1).replace(".", ",") + " %</strong> de la varianza. La línea discontinua es la dirección con las dos columnas en la misma escala. " +
+      (u > 5 ? "Con la columna 2 en números grandes, la componente se pega a ella y deja de describir la relación entre las dos."
+        : (u < 0.2 ? "Con la columna 2 en números pequeños, la componente se pega a la columna 1 y la segunda desaparece."
+          : "Con escalas parecidas, la componente sigue la diagonal que marca la correlación.")) +
+      " Los datos son los mismos: lo único que gira es la definición de «más varianza».";
+  }
+  cu.addEventListener("input", dibujar); cc.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Cuántas componentes
+
+::: {.proposicion}
+**Proposición 7.6 (la regla de la varianza elige lo mismo pase lo que pase con $y$).** La regla de quedarse hasta el 95 % de varianza explicada elige **dos** componentes con los dos mecanismos, porque $X$ es la misma. Acierta cuando la señal está en lo grande —$R^2=$ 0,7904— y da **−0,0413** cuando está en lo pequeño. La validación cruzada elige dos y **cuatro**, y alcanza 0,7904 y **0,7159**.
+:::
+
+::: {.demostracion}
+*Demostración.* La regla de la varianza es una función de $X$ sola, así que no puede distinguir entre dos problemas que solo se diferencian en $y$. La validación cruzada estima directamente el error de predicción para cada $k$ y por tanto ve la diferencia. Que elija cuatro y no tres en el segundo caso es el precio de estimar con 200 filas: la curva del error es casi plana entre tres y cinco y el máximo cae donde cae el ruido. **El número de componentes es un hiperparámetro como cualquier otro**, y se elige con lo que se quiere predecir. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+VAR = np.array([5.0, 2.0, 0.5])                   # desviacion de cada factor
+W = np.random.default_rng(99).standard_normal((3, 20))
+
+def datos(n, semilla, factor):
+    """20 columnas movidas por 3 factores latentes; y depende de UNO de ellos."""
+    rng = np.random.default_rng(semilla)
+    F = rng.standard_normal((n, 3)) * VAR
+    X = F @ W + 0.5 * rng.standard_normal((n, 20))
+    y = F[:, factor] / VAR[factor] + 0.5 * rng.standard_normal(n)
+    return X, y
+
+def r2(y, p):
+    return 1.0 - ((y - p) ** 2).mean() / y.var()
+
+def pca(X, y, Xt, k):
+    """Regresion sobre las k primeras componentes principales."""
+    mu, sd = X.mean(0), X.std(0)
+    Z, Zt = (X - mu) / sd, (Xt - mu) / sd
+    V = np.linalg.svd(Z, full_matrices=False)[2][:k].T
+    T, Tt = Z @ V, Zt @ V
+    b = np.linalg.lstsq(np.column_stack([np.ones(len(T)), T]), y, rcond=None)[0]
+    return np.column_stack([np.ones(len(Tt)), Tt]) @ b
+
+def pls(X, y, Xt, k):
+    """PLS1 por NIPALS: cada direccion maximiza la covarianza con y."""
+    mu, sd = X.mean(0), X.std(0)
+    Z, Zt = (X - mu) / sd, (Xt - mu) / sd
+    ym = y.mean(); yr = y - ym; E = Z.copy()
+    Ws, Ps, qs = [], [], []
+    for _ in range(k):
+        w = E.T @ yr; w /= np.linalg.norm(w)
+        t = E @ w
+        p = E.T @ t / (t @ t); c = yr @ t / (t @ t)
+        E = E - np.outer(t, p); yr = yr - c * t
+        Ws.append(w); Ps.append(p); qs.append(c)
+    Wm, Pm = np.array(Ws).T, np.array(Ps).T
+    return ym + Zt @ (Wm @ np.linalg.solve(Pm.T @ Wm, np.array(qs)))
+
+# Dos maneras de decidir cuantas componentes quedarse: la regla del 95 % de
+# varianza explicada, que solo mira a X, o la validacion cruzada, que mira
+# lo que se quiere predecir.
+def cv_k(X, y, k, pliegues=10):
+    orden = np.random.default_rng(0).permutation(len(y))
+    est = []
+    for f in range(pliegues):
+        te = orden[f::pliegues]; tr = np.setdiff1d(orden, te)
+        est.append(r2(y[te], pca(X[tr], y[tr], X[te], k)))
+    return float(np.mean(est))
+
+print("  %-26s %12s %10s %12s %10s"
+      % ("y depende del factor de", "k por el 95%", "R2", "k por CV", "R2"))
+for factor, nombre in ((0, "mas varianza"), (2, "menos varianza")):
+    X, y = datos(200, 1, factor)
+    Xt, yt = datos(5000, 2, factor)
+    Z = (X - X.mean(0)) / X.std(0)
+    s = np.linalg.svd(Z, compute_uv=False)
+    k95 = int(np.argmax(np.cumsum(s ** 2) / (s ** 2).sum() >= 0.95)) + 1
+    kcv = max(range(1, 8), key=lambda k: cv_k(X, y, k))
+    print("  %-26s %12d %10.4f %12d %10.4f"
+          % (nombre, k95, r2(yt, pca(X, y, Xt, k95)), kcv, r2(yt, pca(X, y, Xt, kcv))))
+print()
+print("la regla del 95 % elige dos componentes en los dos casos, porque solo")
+print("mira a X y X es la misma. Acierta cuando la senal esta en lo grande y")
+print("falla por completo cuando esta en lo pequeno. La validacion cruzada")
+print("elige cuatro en el segundo caso, porque mira lo que se quiere predecir")
+```
+
+## 5. Lo que esta lección no resuelve
+
+Las dos proyecciones de la lección son **lineales**. FES §6.3 recorre otras —PCA con núcleo, análisis de componentes independientes, factorización no negativa, autocodificadores— que buscan estructuras que no son subespacios; aquí se nombran y no se construyen.
+
+Tampoco se ha tocado la **interpretación**. Una componente es una mezcla de las veinte columnas, y explicar qué significa suele costar más que el beneficio de haberla construido. Cuando lo que se necesita es saber qué columnas importan, reducir por selección —la Lección 15— conserva los nombres.
+
+Y todo supone que las columnas son numéricas y continuas. Con categóricas codificadas, la varianza de una columna ficticia depende de la frecuencia de su categoría y PCA las ordena por eso; qué hacer con ellas es de la Lección 08.
+
+## Ejercicios
+
+### Ejercicio 1, La fracción que recoge una componente
+
+Con la Proposición 7.3, calcular qué fracción de la señal recoge una componente según el ángulo que forma con la dirección que predice.
+
+```{pyodide}
+#| exercise: ex_angulo
+import numpy as np
+
+grados = np.array([0.0, 30.0, 45.0, 60.0, 80.0, 90.0])
+
+# la regresion sobre v recoge la proyeccion de la senal sobre v
+fraccion = ______
+
+print([round(float(z), 4) for z in fraccion])
+```
+
+::: {.hint exercise="ex_angulo"}
+La fracción es $\cos^2\theta$, con $\theta$ en radianes: `np.radians` hace la conversión.
+:::
+
+::: {.solution exercise="ex_angulo"}
+```{pyodide}
+import numpy as np
+
+grados = np.array([0.0, 30.0, 45.0, 60.0, 80.0, 90.0])
+
+fraccion = np.cos(np.radians(grados)) ** 2
+
+print([round(float(z), 4) for z in fraccion])
+```
+
+Con la señal alineada con la componente se recoge el **100 %**; a 45° la mitad; a 80°, el **3,02 %**; y perpendicular, **nada**. La columna de la varianza explicada no aparece en ninguna de estas cuentas: una componente puede explicar el 99 % de $X$ y recoger el 0 % de la señal, que es lo que hacía la Sección 2.
+:::
+
+```{pyodide}
+#| exercise: ex_angulo
+#| check: true
+if [round(float(z), 4) for z in fraccion] == [1.0, 0.75, 0.5, 0.25, 0.0302, 0.0]:
+    feedback = {"correct": True, "message": "Correcto: la fracción es cos² del ángulo."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [1.0, 0.75, 0.5, 0.25, 0.0302, 0.0]."}
+feedback
+```
+
+### Ejercicio 2, La varianza que explica cada componente
+
+Calcular la varianza explicada por las componentes de una matriz pequeña a partir de sus valores singulares, y comprobar que suman uno.
+
+```{pyodide}
+#| exercise: ex_varianza
+import numpy as np
+
+rng = np.random.default_rng(4)
+F = rng.standard_normal((500, 2)) * np.array([3.0, 1.0])
+X = F @ rng.standard_normal((2, 6)) + 0.2 * rng.standard_normal((500, 6))
+Z = (X - X.mean(0)) / X.std(0)
+
+s = np.linalg.svd(Z, compute_uv=False)
+explica = ______
+
+print([round(float(z), 3) for z in explica[:3]], round(float(explica.sum()), 6))
+```
+
+::: {.hint exercise="ex_varianza"}
+La varianza de la componente $j$ es proporcional a $s_j^2$; dividiendo por la suma de todos los $s_j^2$ se obtiene la fracción.
+:::
+
+::: {.solution exercise="ex_varianza"}
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(4)
+F = rng.standard_normal((500, 2)) * np.array([3.0, 1.0])
+X = F @ rng.standard_normal((2, 6)) + 0.2 * rng.standard_normal((500, 6))
+Z = (X - X.mean(0)) / X.std(0)
+
+s = np.linalg.svd(Z, compute_uv=False)
+explica = s ** 2 / (s ** 2).sum()
+
+print([round(float(z), 3) for z in explica[:3]], round(float(explica.sum()), 6))
+```
+
+Seis columnas movidas por dos factores: las dos primeras componentes se reparten casi toda la varianza y la tercera se queda en un resto de ruido. Las fracciones suman **1** porque la suma de los $s_j^2$ es la suma de las varianzas de las columnas estandarizadas. Lo que esta cuenta no puede decir es cuál de las componentes predice algo, y ésa es la pregunta que importa.
+:::
+
+```{pyodide}
+#| exercise: ex_varianza
+#| check: true
+if abs(float(explica.sum()) - 1.0) < 1e-9 and float(explica[0]) > float(explica[1]) > float(explica[2]):
+    feedback = {"correct": True, "message": "Correcto: las fracciones suman 1 y van en orden decreciente."}
+else:
+    feedback = {"correct": False, "message": "Las fracciones tienen que sumar 1 e ir de mayor a menor."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Atributos 7**:
+
+1. Construir un conjunto con varios factores latentes de varianzas distintas y hacer depender $y$ del más pequeño. Medir el $R^2$ de PCA con las componentes que pide la regla del 90 %.
+2. Comparar PCA y PLS en ese conjunto para $k=1,\dots,5$ y anotar a partir de qué $k$ coinciden.
+3. Encontrar un conjunto real o sintético donde PCA le gane con claridad a usar todas las columnas, y explicar en dos frases por qué. Guardar el caso en `50-Errores/`.
+
+## Del libro
+
+FES cap. 6 *Engineering Numeric Predictors* dedica su §6.3 *Many:Many Transformations* a consolidar la información redundante de varios predictores. Recorre métodos de proyección lineal —componentes principales, PCA con núcleo, análisis de componentes independientes, factorización no negativa y mínimos cuadrados parciales—, los autocodificadores como correspondencia no lineal, el **signo espacial** como transformación que resiste atípicos, y los atributos construidos con distancias y profundidades para clasificación. Esta página toma los dos primeros de la lista lineal, PCA y PLS, y mide la diferencia que los separa: uno mira solo a $X$ y el otro mira también a $y$.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- PCA como atributos: proyectar las columnas estandarizadas sobre las direcciones de **más varianza**.
+- **No mira a $y$**: es un paso no supervisado y no filtra.
+- Veinte columnas de tres factores: dos componentes explican el **95,34 %**.
+- Si la señal está en lo grande, la primera sola predice **0,7648**: comprimir no cuesta.
+- Si está en lo pequeño, esas dos predicen **−0,0413**; la tercera, con el **1,88 %** de $X$, lleva toda la señal.
+- Una componente recoge la fracción **$\cos^2\theta$** de la señal, sin relación con su varianza.
+- **PLS** elige direcciones por covarianza con $y$: **0,3949** con dos donde PCA da −0,0413.
+- PLS mira a $y$, así que va **dentro** de la validación.
+- Sin estandarizar, una columna en centésimas se queda el **99,99 %** de la primera componente.
+- La regla del 95 % elige **lo mismo** pase lo que pase con $y$.
+- El número de componentes se elige **con validación**: cuatro, y **0,7159**, en el caso difícil.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico. Que con veinte columnas movidas por tres factores de desviaciones 5, 2 y 0,5 las componentes explican 0,6554; 0,2980; 0,0188; 0,0054 y 0,0051 de la varianza, con acumuladas 0,6554; 0,9534; 0,9722; 0,9775 y 0,9827; que si $y$ depende del factor de más varianza PCA predice 0,7648; 0,7904 y 0,7900 con 1, 2 y 3 componentes; que si depende del de menos varianza PCA predice −0,0615; −0,0413; 0,7106 y 0,7199 con 1, 2, 3 y 5, y PLS 0,0475; 0,3949; 0,7169 y 0,7001; que con la sexta columna en centésimas y sin estandarizar la primera componente explica 0,9999 con un peso de 0,9999 sobre esa columna, y el $R^2$ con una y dos componentes es 0,6928 y 0,7882 frente a 0,7648 y 0,7904 estandarizando; y que la regla del 95 % elige dos componentes en los dos casos, con $R^2$ de 0,7904 y −0,0413, mientras la validación cruzada elige dos y cuatro, con 0,7904 y 0,7159. PCA por descomposición en valores singulares y PLS por NIPALS están escritos en la página.
+
+**Lo que se usa de otras lecciones sin repetir.** El análisis de componentes principales y su relación con la descomposición en valores singulares son de Machine Learning 19. La regresión sobre componentes y los mínimos cuadrados parciales son de Machine Learning 20. La dependencia de la escala es de Atributos 05, y la regla de meter los pasos supervisados dentro de la validación, de Atributos 02.
+
+**Lo que se enuncia sin demostrar.** Que la regresión sobre una componente recoge la fracción $\cos^2\theta$ de la señal es exacto en población y con una sola componente; con varias y con muestra finita es la intuición correcta y la tabla lo respalda, pero no se demuestra con esa generalidad. Los métodos no lineales de FES §6.3 se nombran y no se construyen.
+
+**Lo que es mío, no del libro.** Construir los datos con **tres factores de varianzas muy distintas** y cambiar solo de cuál depende $y$, de modo que $X$ sea idéntica en los dos casos y toda la diferencia esté en la relación con $y$: eso aísla la pregunta que PCA no puede contestar. La fórmula $\cos^2\theta$ como explicación de una línea, dibujada en el primer visual con los dos porcentajes lado a lado para que se vea que uno se mueve y el otro no. Y la Proposición 7.6, que convierte «¿cuántas componentes me quedo?» en lo que es: un hiperparámetro que se elige con lo que se quiere predecir.
+:::

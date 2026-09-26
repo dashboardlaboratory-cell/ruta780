@@ -4884,6 +4884,152 @@ cuáles no**», «buscarlas con criterio **en vez de** multiplicar todo», «y
 El sitio queda en **151 lecciones, 848 celdas, 3409 afirmaciones**, y Feature
 Engineering en **4 de 16**.
 
+### 3.89 Atributos 05: escalado y centrado (25-09-2026)
+
+**Atributos 05, Escalado y centrado (L3, FES 6).** La mitad lineal de las
+transformaciones 1:1, con una sola pregunta de fondo: **a qué modelos les
+importan las unidades**.
+
+**Mínimos cuadrados no se entera, y se demuestra.** Cambiar de unidades es
+multiplicar $X$ por una diagonal invertible, y el espacio columna de $XD$ es el
+de $X$: la predicción cambia menos de $10^{-9}$.
+
+**Ridge sí, y mucho.** Con la misma $\lambda=1$ y los mismos datos, el $R^2$ cae
+de **0,9194** a **0,6117** solo por medir las columnas en unidades mixtas, y la
+columna medida en milésimas —coeficiente verdadero 1,5— termina en **0,000256**.
+Castiga el tamaño del coeficiente, y el castigo relativo va como $1/u^2$: doce
+órdenes de magnitud entre una columna en milésimas y una en miles.
+
+**kNN todavía más.** Una columna de puro ruido medida en miles deja el $R^2$ en
+**−0,0946**, peor que predecir la media: los vecinos de cada punto son los que se
+le parecen en el ruido. Estandarizar lo devuelve a 0,8585.
+
+**Qué escalado.** Con **un solo** atípico entre 600 filas, el escalado por rango
+aplasta las 599 normales en un intervalo de ancho **0,0143** y el $R^2$ cae de
+0,8464 a 0,4443; el estandarizado a 0,6056; el robusto —mediana y rango
+intercuartil— se queda en **0,8527**. El escalado hereda la robustez del
+estimador de centro y escala que usa.
+
+**Y la proposición que justifica estandarizar**: si la columna se multiplica por
+$u>0$, su media y su desviación también, y el cociente no cambia. Cuatro juegos de
+unidades, entre ellos $(10^6;\,10^{-6};\,1)$, dan la misma predicción de ridge.
+Estandarizar **elimina una decisión arbitraria**, las unidades en que alguien
+apuntó los datos.
+
+**Lo que cazó el gate de visuales, y es de manual.** El visual de los tres
+escalados ajustaba el eje de abajo al mínimo y máximo de los datos escalados. Y
+como **los tres escalados son afines**, sobre un eje que sigue a los datos los
+tres dibujos son **exactamente** iguales: el control de escalado no movía nada.
+Es la regla 19b en su forma más pura. Anclado a $[-3,3]$ unidades escaladas.
+
+**Y un fallo de flujo que conviene no repetir.** El ayudante que saca las líneas
+para `afirmaciones.json` buscaba el prefijo en la salida de **todas** las celdas
+juntas, y `"  1    "` casó con una fila de la celda 0 que no era la que se quería
+declarar en la celda 2. El gate de salidas lo habría cazado, pero veinte minutos
+después. Desde aquí cada afirmación se comprueba contra **su propia celda** antes
+de lanzar el gate.
+
+### 3.90 Atributos 06: de uno a muchos (25-09-2026)
+
+**Atributos 06, discretizar, splines y expansión polinómica (L3, FES 6).** FES
+desaconseja discretizar y lo deja como último recurso; la lección convierte ese
+consejo en una cifra.
+
+**Lo que cuesta discretizar, en forma cerrada.** Con $x$ uniforme y un efecto
+lineal, $k$ cajas iguales explican exactamente $1-1/k^2$ de la señal, porque lo
+que no ven es la varianza de dentro de cada tramo. Medido 0,7493 con dos cajas
+contra 0,7500 predicho, y los cinco casos coinciden a cuatro decimales. Para
+perder menos del 1 % hacen falta **11 cajas**: once columnas para lo que una
+continua da entero.
+
+**Seis columnas de spline le ganan a treinta cajas**: 0,8322 contra 0,8129 sobre
+un efecto $\sin(1{,}5x)$ con 300 filas. Con tres cajas el $R^2$ es **0,0063**,
+porque la curva sube y baja dentro de cada tramo y la media de cada uno sale casi
+cero.
+
+**El hallazgo que no esperaba encontrar así.** Se buscaba que el polinomio
+explotase en los bordes, y con 300 filas no explotó; con 60 explotaban **los dos**,
+porque era sobreajuste de cualquier base. El contraste honesto resultó ser otro:
+**global frente a local**. Subiendo 1 la respuesta de un solo punto, al extremo
+opuesto llega el **5,9 %** del cambio con el polinomio y el **0,9 %** con el spline
+natural. Y ese cambio es una columna de la matriz sombrero,
+$B(B^\top B)^{-1}B^\top e_i$, que **no depende de ninguna respuesta**: es una
+propiedad de la base y de dónde están los puntos. Por eso la tabla es exacta y no
+una media de repeticiones.
+
+**El único caso en que discretizar gana.** Con un escalón en $x=0{,}7$, dos cajas
+con el corte en su sitio alcanzan 0,7203 y le ganan al spline de ocho columnas;
+movido el corte a 0, junto al salto caen a **−0,2330**. Una caja solo gana si ya se
+sabe dónde cortar, y buscarlo en los datos es ajustar un árbol.
+
+**Visuales a la primera.** La vecindad de las cajas se dibuja con la media
+poblacional de la curva en cada tramo —sin muestra—, y la influencia de un punto
+resuelve la matriz sombrero en JavaScript por eliminación gaussiana sobre 60
+puntos equiespaciados.
+
+### 3.91 Atributos 07: la varianza explicada no dice nada sobre la señal (25-09-2026)
+
+**Atributos 07, De muchos a muchos: proyecciones como atributos (L3, FES 6).**
+PCA y PLS escritos a mano —por SVD y por NIPALS— sobre un diseño que aísla la
+pregunta: **veinte columnas movidas por tres factores de desviaciones 5, 2 y
+0,5, y lo único que cambia entre los dos casos es de cuál depende $y$**. $X$ es
+idéntica.
+
+**Cuando la señal está en lo grande, PCA es lo que promete.** Dos componentes
+explican el **95,34 %** de $X$ y la primera sola predice 0,7648.
+
+**Cuando está en lo pequeño, esas mismas dos predicen −0,0413**, peor que la
+media, y la tercera —que explica un **1,88 %** de $X$— lleva toda la señal. La
+explicación es de una línea: una componente recoge la fracción $\cos^2\theta$
+de la señal, con $\theta$ el ángulo con la dirección que predice, y ese ángulo
+no tiene nada que ver con la varianza que explique. El primer visual pone los
+dos porcentajes lado a lado para que se vea que alargar la nube mueve uno y deja
+el otro igual.
+
+**PLS mira a $y$** y con dos direcciones saca 0,3949 donde PCA da −0,0413. Con
+tres, los dos llegan a lo mismo: **el problema de PCA nunca fue la base, sino el
+orden**.
+
+**Sin estandarizar**, una columna medida en centésimas se queda con el **99,99 %**
+de la primera componente. Es la Lección 05 con PCA en el papel de kNN.
+
+**La regla del 95 % elige dos componentes en los dos casos**, porque solo mira a
+$X$; la validación elige dos y **cuatro**, y recupera 0,7159 en el caso difícil.
+
+**Una celda descartada, y por qué.** Se quiso medir la fuga de ajustar PLS fuera
+del pliegue. El diseño mezclaba dos cosas: al ajustar «fuera», no solo la
+proyección sino **la regresión entera** se entrenaba con las filas de prueba, y
+con 120 filas y $R^2$ cerca de cero el ruido dominaba la tabla. Se sustituyó por
+la dependencia de la escala, que es limpia y exacta; la fuga de PLS queda dicha
+en la prosa con la regla de la Lección 02.
+
+### 3.92 Atributos 08: el problema de las muchas categorías es la cola (25-09-2026)
+
+**Atributos 08, Categóricas I: variables ficticias y demasiadas categorías (L3,
+FES 5.1 y 5.2).** La trampa de las ficticias medida como rango —**4 de 5** con
+intercepto y las cuatro, **4 de 4** quitando una— y la referencia como elección
+de lectura: las cuatro dan interceptos distintos y la misma predicción por
+debajo de $10^{-9}$.
+
+**El diagnóstico antes del arreglo.** Con 300 niveles de frecuencias tipo Zipf y
+400 filas, **170 niveles no aparecen nunca y 73 aparecen una vez**; solo 15
+tienen cinco filas o más. El $R^2$ de las ficticias cae de 0,7260 con 5 niveles a
+0,5902 con 300.
+
+**Reducir columnas no recupera información.** Colapsar las raras da 0,5518 y el
+hashing a 16 cubos 0,5306, los dos por debajo de las ficticias. **Encoger sí**:
+ridge sobre las ficticias con $\lambda=1$ sube a **0,6602**, porque multiplica la
+media de cada nivel por $m/(m+\lambda)$. Y la penalización levanta de paso la
+trampa del rango: $M^\top M$ tiene rango 21 de 22 y $M^\top M+P$, 22 de 22.
+
+El primer visual tenía el eje logarítmico anclado a la frecuencia del primer
+nivel, así que mover las filas desplazaba curva y eje a la vez y el dibujo salía
+idéntico: la regla 19b de siempre. Se ancló a una constante antes de pasar el
+gate.
+
+El sitio queda en **155 lecciones, 872 celdas, 3474 afirmaciones**, y Feature
+Engineering en **8 de 16**.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

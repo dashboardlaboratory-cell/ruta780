@@ -1,0 +1,596 @@
+---
+title: "Categóricas I: variables ficticias y demasiadas categorías"
+subtitle: "Feature Engineering · Lección 08"
+nivel: L3
+modulo: atributos
+fase: F2
+prereqs: [atributos/05-escalado-y-centrado, ml/08-ridge-y-lasso, matematica/03-espacio-columna]
+siguientes: []
+libro: "FES, cap. 5 Encoding Categorical Predictors"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="atributos/08-categoricas-ficticias"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F2]{.item}
+[**Libro** FES 5]{.item}
+[**Prereqs** [Escalado y centrado](05-escalado-y-centrado.qmd) · [Ridge y lasso](../ml/08-ridge-y-lasso.qmd) · [Espacio columna](../matematica/03-espacio-columna.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Explicar la trampa de las ficticias**: con intercepto y una columna por nivel, la matriz tiene rango **4 de 5**, porque las ficticias suman la columna del intercepto.
+2. **Demostrar que la categoría de referencia cambia los coeficientes y no la predicción**: las cuatro referencias posibles dan la misma predicción por debajo de $10^{-9}$.
+3. **Medir la anatomía de una variable con muchas categorías**: con 300 niveles de frecuencias desiguales y 400 filas, **170 niveles no aparecen nunca** en el entrenamiento y 73 aparecen una vez.
+4. **Medir que colapsar niveles raros y el hashing no lo arreglan**: con 300 niveles, las ficticias dan **0,5902**, colapsar **0,5518** y el hashing a 16 cubos **0,5306**.
+5. **Medir lo que sí lo arregla**: encoger los efectos de nivel con ridge sube el $R^2$ a **0,6602**, y con penalización se pueden usar las $K$ ficticias sin quitar ninguna.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Álgebra 3**: el espacio columna y el rango, que es donde vive la trampa de las ficticias.
+- **Machine Learning 8**: ridge, que aquí encoge los efectos de nivel.
+- **Atributos 05**: que una penalización depende de cómo estén codificadas las columnas.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Atributos 09**: la codificación supervisada, que es la misma idea de encoger escrita de otra forma.
+- **Atributos 10**: los niveles que aparecen por primera vez al predecir, que son los 170 vacíos de esta lección.
+- **Atributos 12**: las interacciones entre categóricas, que multiplican el número de niveles.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $C,\ K$ | ce, ka | Número de niveles de la variable categórica |
+| $D$ | de mayúscula | La matriz de ficticias: una columna 0/1 por nivel |
+| $M$ | eme mayúscula | La matriz de diseño completa |
+| $P$ | pe mayúscula | La matriz diagonal de la penalización |
+| $\lambda$ | lambda | La fuerza de la penalización |
+| $m$ | eme | Filas que tiene un nivel |
+| $\sigma$ | sigma | Desviación típica del ruido |
+| $R^2$ | erre cuadrado | La fracción de varianza explicada |
+:::
+
+## 1. Las ficticias y el rango
+
+::: {.definicion}
+**Definición 8.1 ([variable ficticia]{.g}).** Una columna que vale 1 en las filas de un nivel de la categórica y 0 en las demás. La **codificación de rango completo** usa $C-1$ de ellas junto al intercepto; la **codificación uno contra todos** usa las $C$.
+:::
+
+::: {.proposicion}
+**Proposición 8.2 (la trampa de las ficticias).** Con intercepto y las cuatro ficticias de una categórica de cuatro niveles, la matriz de diseño tiene rango **4 de 5**. Quitando una ficticia, rango **4 de 4**.
+:::
+
+::: {.demostracion}
+*Demostración.* Cada fila tiene exactamente un 1 entre las $C$ ficticias, así que su suma es la columna de unos, que es la del intercepto: hay una dependencia lineal exacta y $M^\top M$ no se puede invertir. Quitar una ficticia rompe la dependencia. El nivel quitado pasa a ser la **referencia**, absorbido por el intercepto. ∎
+:::
+
+::: {.proposicion}
+**Proposición 8.3 (la referencia cambia los coeficientes y no la predicción).** Las cuatro elecciones posibles de referencia dan coeficientes distintos y la misma predicción, por debajo de $10^{-9}$.
+:::
+
+::: {.demostracion}
+*Demostración.* Las cuatro matrices de diseño generan el mismo espacio columna —el de todas las funciones constantes por nivel—, así que la proyección de $y$ sobre él es la misma. Lo que cambia es cómo se expresa: con la referencia $r$, el intercepto es la media del nivel $r$ y cada coeficiente, la diferencia de su nivel con el $r$. **Elegir la referencia es elegir qué comparaciones se leen directamente**, no qué se predice. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# Una variable categorica de 4 niveles y su codificacion en columnas 0/1.
+rng = np.random.default_rng(1)
+C, n = 4, 200
+g = rng.integers(0, C, n)
+efecto = np.array([0.0, 1.0, -0.5, 2.0])
+y = efecto[g] + 0.5 * rng.standard_normal(n)
+D = np.eye(C)[g]                                 # una columna por nivel
+uno = np.ones((n, 1))
+
+print("rango de la matriz de diseno")
+print("  %-40s %4d de %d columnas" % ("intercepto y las 4 ficticias",
+      np.linalg.matrix_rank(np.column_stack([uno, D])), C + 1))
+print("  %-40s %4d de %d columnas" % ("intercepto y 3 ficticias",
+      np.linalg.matrix_rank(np.column_stack([uno, D[:, 1:]])), C))
+print()
+print("la misma regresion con cada nivel como referencia")
+print("  %-12s %34s" % ("referencia", "intercepto y coeficientes"))
+preds = []
+for ref in range(C):
+    M = np.column_stack([uno, D[:, [j for j in range(C) if j != ref]]])
+    b = np.linalg.lstsq(M, y, rcond=None)[0]
+    preds.append(M @ b)
+    print("  %-12d %34s" % (ref, "  ".join("%7.4f" % v for v in b)))
+dif = max(float(np.max(np.abs(p - preds[0]))) for p in preds)
+print()
+print("  las cuatro dan la misma prediccion, por debajo de 1e-9 :", dif < 1e-9)
+print()
+print("las cuatro ficticias suman siempre 1, que es la columna del intercepto:")
+print("una columna sobra y la matriz tiene rango 4 con 5 columnas. Quitando una")
+print("se recupera el rango, y cual se quite no cambia la prediccion; cambia")
+print("lo que significa cada coeficiente, que pasa a ser la diferencia con el")
+print("nivel que se quito")
+```
+
+## 2. Demasiadas categorías
+
+::: {.proposicion}
+**Proposición 8.4 (casi todos los niveles se estiman con una fila o ninguna).** Con 300 niveles de frecuencias tipo Zipf y 400 filas, **170 niveles no aparecen** en el entrenamiento, 73 aparecen una vez y 42 entre dos y cuatro; solo **15** tienen cinco filas o más. El $R^2$ de las ficticias cae de **0,7260** con 5 niveles a **0,5902** con 300.
+:::
+
+::: {.demostracion}
+*Demostración.* Con frecuencias proporcionales a $1/j$, el nivel $j$ recibe de media $n/(jH_K)$ filas, con $H_K$ el número armónico; para $K=300$ y $n=400$, del nivel 64 en adelante el número esperado de filas baja de uno. La media de un nivel con $m$ filas tiene desviación $\sigma/\sqrt m$, así que con una fila el efecto estimado es casi todo ruido y con ninguna ni siquiera existe. **El problema de las muchas categorías no es el número de columnas, sino la cola de niveles raros**, y el primer visual enseña que multiplicar las filas por diez no la elimina. ∎
+:::
+
+```{pyodide}
+import numpy as np, zlib
+
+def datos(n, semilla, K):
+    """K niveles con frecuencias tipo Zipf: pocos grandes y muchos raros."""
+    rng = np.random.default_rng(semilla)
+    pesos = 1.0 / np.arange(1, K + 1); pesos /= pesos.sum()
+    g = rng.choice(K, n, p=pesos)
+    efecto = np.random.default_rng(777).standard_normal(K) * 0.8
+    x = rng.standard_normal(n)
+    return g, x, efecto[g] + 1.0 * x + 0.7 * rng.standard_normal(n)
+
+def ficticias(g, niveles):
+    return (g[:, None] == np.asarray(niveles)[None, :]).astype(float)
+
+def r2(y, p):
+    return 1.0 - ((y - p) ** 2).mean() / y.var()
+
+def mco(M, y, Mt):
+    return Mt @ np.linalg.lstsq(M, y, rcond=None)[0]
+
+def diseno(g, x, niveles, quita_uno=True):
+    F = ficticias(g, niveles)
+    return np.column_stack([np.ones(len(g)), x, F[:, 1:] if quita_uno else F])
+
+# Con K niveles y 400 filas, cuantas filas le tocan a cada nivel.
+g, x, y = datos(400, 1, 300)
+cuenta = np.bincount(g, minlength=300)
+print("300 niveles con frecuencias desiguales, 400 filas de entrenamiento")
+print("  %-26s %10s" % ("filas del nivel", "niveles"))
+for a, b in ((0, 0), (1, 1), (2, 4), (5, 19), (20, 400)):
+    print("  %-26s %10d" % ("entre %d y %d" % (a, b) if a != b else "exactamente %d" % a,
+                            int(((cuenta >= a) & (cuenta <= b)).sum())))
+print()
+print("y el R2 sobre datos nuevos al subir el numero de niveles")
+print("  %-10s %14s %14s" % ("niveles", "ficticias", "sin la columna"))
+for K in (5, 20, 80, 300):
+    g, x, y = datos(400, 1, K); gt, xt, yt = datos(20000, 2, K)
+    niv = np.arange(K)
+    solo = r2(yt, mco(np.column_stack([np.ones(len(g)), x]), y,
+                      np.column_stack([np.ones(len(gt)), xt])))
+    print("  %-10d %14.4f %14.4f" % (K, r2(yt, mco(diseno(g, x, niv), y, diseno(gt, xt, niv))), solo))
+print()
+print("de 300 niveles, 170 no aparecen nunca en el entrenamiento y 73 aparecen")
+print("una sola vez: solo 15 tienen cinco filas o mas. El problema de las")
+print("muchas categorias no es el numero de columnas sino que casi cada nivel se")
+print("estima con una fila o con ninguna, y una fila es una estimacion ruidosa")
+```
+
+```{=html}
+<div class="viz-niveles">
+  <div class="controles">
+    <label>Niveles <input id="nv-k" type="range" min="5" max="400" step="5" value="300"> <span id="nv-k-v">300</span></label>
+    <label>Filas <input id="nv-n" type="range" min="100" max="5000" step="100" value="400"> <span id="nv-n-v">400</span></label>
+  </div>
+  <svg id="nv-svg" viewBox="0 0 660 280" role="img" aria-label="Cuántas filas le tocan a cada nivel de una variable categórica con frecuencias desiguales, según el número de niveles y de filas."></svg>
+  <p class="lectura" id="nv-lectura"></p>
+</div>
+<style>
+.viz-niveles { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-niveles .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-niveles label { display: flex; align-items: center; gap: .4rem; }
+.viz-niveles input[type=range] { width: 150px; padding: 0; }
+.viz-niveles svg { width: 100%; height: auto; display: block; }
+.viz-niveles .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("nv-svg"), lec = document.getElementById("nv-lectura");
+  var ck = document.getElementById("nv-k"), cn = document.getElementById("nv-n");
+  var ek = document.getElementById("nv-k-v"), en = document.getElementById("nv-n-v");
+  var X0 = 58, X1 = 628, Y0 = 22, Y1 = 212;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var K = +ck.value, n = +cn.value;
+    ek.textContent = String(K); en.textContent = String(n);
+    // frecuencias tipo Zipf: el nivel j recibe una fraccion proporcional a 1/j
+    var H = 0, j; for (j = 1; j <= K; j++) H += 1 / j;
+    var esp = [], nulos = 0, uno = 0, cinco = 0;
+    for (j = 1; j <= K; j++) {
+      var m = n / (j * H);                        // filas esperadas del nivel j
+      esp.push(m);
+      nulos += Math.exp(-m); uno += m * Math.exp(-m);
+      if (m >= 5) cinco++;
+    }
+    var tope = 3.5;                              // eje fijo: de 0,01 a unas 3000 filas
+    function px(i) { return X0 + (i / K) * (X1 - X0); }
+    function py(v) { return Y1 - (Math.log10(Math.max(v, 0.01)) + 2) / (tope + 2) * (Y1 - Y0); }
+    [0.1, 1, 5, 10, 100, 1000].forEach(function (v) {
+      if (Math.log10(v) > tope) return;
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(v).toFixed(1) + " L" + X1 + " " + py(v).toFixed(1), stroke: C_L, "stroke-width": 0.8, opacity: v === 1 || v === 5 ? 1 : .5 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(v) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, String(v).replace(".", ",")));
+    });
+    var d = "";
+    for (j = 0; j < K; j++) d += (j === 0 ? "M" : " L") + px(j).toFixed(1) + " " + py(esp[j]).toFixed(1);
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_A, "stroke-width": 2.6 }));
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 24, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "niveles, del más frecuente al más raro"));
+    svg.appendChild(el("text", { x: X1 - 4, y: py(5) - 6, "text-anchor": "end", "font-size": 10, fill: C_B }, "5 filas"));
+    lec.innerHTML = "Con <strong>" + K + "</strong> niveles y <strong>" + n + "</strong> filas, se espera que <strong>" + Math.round(nulos) +
+      "</strong> niveles no aparezcan nunca en el entrenamiento y <strong>" + Math.round(uno) + "</strong> aparezcan una sola vez. Solo <strong>" +
+      cinco + "</strong> tienen cinco filas o más de media. " +
+      (nulos > K / 3 ? "Con tantos niveles vacíos, cada columna ficticia de más es una columna que el modelo no puede estimar." : "Con estos números la mayoría de niveles tiene datos suficientes y las ficticias funcionan.") +
+      " Multiplicar las filas por diez sube toda la curva un escalón en la escala logarítmica, pero la cola de niveles raros sigue ahí: con frecuencias desiguales siempre hay niveles con una fila.";
+  }
+  ck.addEventListener("input", dibujar); cn.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Colapsar y el hashing
+
+::: {.definicion}
+**Definición 8.5 ([hashing de atributos]{.g}).** Asignar cada nivel a uno de $B$ cubos mediante una función hash y codificar los cubos en vez de los niveles. Reduce el número de columnas a $B$ sea cual sea $K$, a cambio de meter en el mismo cubo niveles que no tienen nada que ver.
+:::
+
+::: {.proposicion}
+**Proposición 8.6 (reducir columnas no recupera información).** Con 300 niveles, colapsar los que tienen menos de diez filas en un único «otros» da $R^2=$ **0,5518** y el hashing a 16 cubos **0,5306**, los dos por debajo de las ficticias, **0,5902**.
+:::
+
+::: {.demostracion}
+*Demostración.* Colapsar asigna a todos los niveles raros el mismo efecto, la media de «otros», y tira la diferencia entre ellos. El hashing mezcla en cada cubo unos diecinueve niveles cuyos efectos no guardan relación, y el coeficiente del cubo es su promedio. Los dos **reducen columnas**, que es un problema de memoria y de cómputo, y ninguno aporta la información que falta para estimar los niveles raros. Son las herramientas adecuadas cuando $K$ no cabe en memoria o cambia sin parar; no cuando el problema es de estimación. ∎
+:::
+
+```{pyodide}
+import numpy as np, zlib
+
+def datos(n, semilla, K):
+    """K niveles con frecuencias tipo Zipf: pocos grandes y muchos raros."""
+    rng = np.random.default_rng(semilla)
+    pesos = 1.0 / np.arange(1, K + 1); pesos /= pesos.sum()
+    g = rng.choice(K, n, p=pesos)
+    efecto = np.random.default_rng(777).standard_normal(K) * 0.8
+    x = rng.standard_normal(n)
+    return g, x, efecto[g] + 1.0 * x + 0.7 * rng.standard_normal(n)
+
+def ficticias(g, niveles):
+    return (g[:, None] == np.asarray(niveles)[None, :]).astype(float)
+
+def r2(y, p):
+    return 1.0 - ((y - p) ** 2).mean() / y.var()
+
+def mco(M, y, Mt):
+    return Mt @ np.linalg.lstsq(M, y, rcond=None)[0]
+
+def diseno(g, x, niveles, quita_uno=True):
+    F = ficticias(g, niveles)
+    return np.column_stack([np.ones(len(g)), x, F[:, 1:] if quita_uno else F])
+
+# Dos arreglos habituales para las muchas categorias: juntar los niveles raros
+# en uno solo, o repartirlos en pocos cubos con una funcion hash.
+def cubo(g, cubos):
+    return np.array([zlib.crc32(str(int(v)).encode()) % cubos for v in g])
+
+print("R2 sobre datos nuevos con 400 filas")
+print("  %-10s %12s %16s %14s" % ("niveles", "ficticias", "colapsar raras", "hashing a 16"))
+for K in (20, 80, 300):
+    g, x, y = datos(400, 1, K); gt, xt, yt = datos(20000, 2, K)
+    niv = np.arange(K)
+    a = r2(yt, mco(diseno(g, x, niv), y, diseno(gt, xt, niv)))
+    # los niveles con menos de 10 filas pasan a formar un unico «otros»
+    grandes = niv[np.bincount(g, minlength=K) >= 10]
+    b = r2(yt, mco(diseno(g, x, grandes, quita_uno=False), y, diseno(gt, xt, grandes, quita_uno=False)))
+    c = r2(yt, mco(diseno(cubo(g, 16), x, np.arange(16)), y, diseno(cubo(gt, 16), xt, np.arange(16))))
+    print("  %-10d %12.4f %16.4f %14.4f" % (K, a, b, c))
+print()
+print("ninguno de los dos le gana a las ficticias. Colapsar tira el efecto de")
+print("cada nivel raro y le pone a todos el mismo, el de la media de «otros».")
+print("El hashing mete en el mismo cubo niveles que no tienen nada que ver, y")
+print("con 300 niveles en 16 cubos cada cubo mezcla unos diecinueve. Los dos")
+print("reducen columnas; ninguno recupera la informacion que faltaba")
+```
+
+**Modo de falla.** Una variable con miles de niveles se reduce por hashing porque «hay demasiadas columnas», y el modelo empeora sin que se note, porque no hay con qué compararlo. La confusión es entre dos problemas distintos: si las ficticias caben en memoria, reducirlas solo quita señal. FES §5.2 presenta el hashing y el filtrado de niveles casi sin varianza como técnicas para la **alta cardinalidad**; lo que esta lección mide es que resuelven el tamaño y no la estimación.
+
+## 4. Encoger los niveles raros
+
+::: {.proposicion}
+**Proposición 8.7 (ridge sobre las ficticias arregla lo que colapsar no).** Penalizando solo las ficticias, ridge con $\lambda=1$ sube el $R^2$ con 300 niveles de 0,5902 a **0,6602**. Con $\lambda=16$ encoge de más y baja a 0,5869.
+:::
+
+::: {.demostracion}
+*Demostración.* Con una sola ficticia de $m$ filas, ridge multiplica la media observada del nivel por $m/(m+\lambda)$: un nivel con muchas filas casi no se toca y uno con una sola se encoge casi del todo hacia cero. **Eso es exactamente la confianza que merece cada estimación**, y a diferencia de colapsar, ridge no tira el efecto de un nivel raro: lo atenúa en proporción a lo poco fiable que es. El segundo visual dibuja ese factor. ∎
+:::
+
+::: {.proposicion}
+**Proposición 8.8 (la penalización levanta la trampa del rango).** Con las 20 ficticias y el intercepto, $M^\top M$ tiene rango **21 de 22**; $M^\top M+P$, **22 de 22**.
+:::
+
+::: {.demostracion}
+*Demostración.* El único vector del núcleo de $M$ es $v=(1,0,-1,\dots,-1)$: intercepto menos la suma de las ficticias. Para él, $v^\top(M^\top M+P)v=v^\top Pv=\lambda K>0$, así que la matriz penalizada es definida positiva. **Con penalización se pueden usar las $K$ ficticias**, sin quitar ninguna y sin elegir referencia, y la penalización reparte el nivel común entre el intercepto y los efectos de forma única. ∎
+:::
+
+```{pyodide}
+import numpy as np, zlib
+
+def datos(n, semilla, K):
+    """K niveles con frecuencias tipo Zipf: pocos grandes y muchos raros."""
+    rng = np.random.default_rng(semilla)
+    pesos = 1.0 / np.arange(1, K + 1); pesos /= pesos.sum()
+    g = rng.choice(K, n, p=pesos)
+    efecto = np.random.default_rng(777).standard_normal(K) * 0.8
+    x = rng.standard_normal(n)
+    return g, x, efecto[g] + 1.0 * x + 0.7 * rng.standard_normal(n)
+
+def ficticias(g, niveles):
+    return (g[:, None] == np.asarray(niveles)[None, :]).astype(float)
+
+def r2(y, p):
+    return 1.0 - ((y - p) ** 2).mean() / y.var()
+
+def mco(M, y, Mt):
+    return Mt @ np.linalg.lstsq(M, y, rcond=None)[0]
+
+def diseno(g, x, niveles, quita_uno=True):
+    F = ficticias(g, niveles)
+    return np.column_stack([np.ones(len(g)), x, F[:, 1:] if quita_uno else F])
+
+# Lo que si arregla el problema: encoger los efectos de nivel hacia cero, mas
+# cuanto menos filas tenga el nivel. Ridge lo hace solo, penalizando unicamente
+# las ficticias. Y con penalizacion se pueden usar las K, sin quitar ninguna.
+def ridge_niveles(g, x, y, gt, xt, K, lam):
+    M = diseno(g, x, np.arange(K), quita_uno=False)
+    P = np.diag([0.0, 0.0] + [lam] * K)             # ni intercepto ni x se penalizan
+    b = np.linalg.solve(M.T @ M + P, M.T @ y)
+    return diseno(gt, xt, np.arange(K), quita_uno=False) @ b
+
+print("R2 sobre datos nuevos con 400 filas")
+print("  %-10s %12s %12s %12s %12s" % ("niveles", "ficticias", "ridge 1", "ridge 4", "ridge 16"))
+for K in (5, 20, 80, 300):
+    g, x, y = datos(400, 1, K); gt, xt, yt = datos(20000, 2, K)
+    niv = np.arange(K)
+    a = r2(yt, mco(diseno(g, x, niv), y, diseno(gt, xt, niv)))
+    print("  %-10d %12.4f" % (K, a)
+          + "".join(" %12.4f" % r2(yt, ridge_niveles(g, x, y, gt, xt, K, l)) for l in (1.0, 4.0, 16.0)))
+print()
+g, x, y = datos(400, 1, 20)
+M = diseno(g, x, np.arange(20), quita_uno=False)
+P = np.diag([0.0, 0.0] + [1.0] * 20)
+print("  con las 20 ficticias y el intercepto, rango de M'M     :", np.linalg.matrix_rank(M.T @ M), "de", M.shape[1])
+print("  y de M'M + P, con la penalizacion                        :", np.linalg.matrix_rank(M.T @ M + P), "de", M.shape[1])
+print()
+print("con 300 niveles, ridge con lambda 1 sube el R2 de 0.5902 a 0.6602. Un")
+print("nivel con una sola fila ve su efecto encogido casi del todo hacia cero,")
+print("y uno con veinte filas casi no, que es exactamente lo que se quiere. Y")
+print("la penalizacion levanta la trampa del rango: M'M no se invierte con las")
+print("K ficticias, pero M'M + P si")
+```
+
+```{=html}
+<div class="viz-encoge">
+  <div class="controles">
+    <label>Filas del nivel <input id="ec-n" type="range" min="1" max="60" step="1" value="3"> <span id="ec-n-v">3</span></label>
+    <label>λ de ridge <input id="ec-l" type="range" min="-1" max="1.6" step="0.05" value="0"> <span id="ec-l-v">1,00</span></label>
+  </div>
+  <svg id="ec-svg" viewBox="0 0 660 260" role="img" aria-label="Cuánto encoge ridge el efecto estimado de un nivel hacia cero según las filas que tenga el nivel y la fuerza de la penalización."></svg>
+  <p class="lectura" id="ec-lectura"></p>
+</div>
+<style>
+.viz-encoge { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-encoge .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-encoge label { display: flex; align-items: center; gap: .4rem; }
+.viz-encoge input[type=range] { width: 150px; padding: 0; }
+.viz-encoge svg { width: 100%; height: auto; display: block; }
+.viz-encoge .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("ec-svg"), lec = document.getElementById("ec-lectura");
+  var cn = document.getElementById("ec-n"), cl = document.getElementById("ec-l");
+  var en = document.getElementById("ec-n-v"), el_ = document.getElementById("ec-l-v");
+  var X0 = 58, X1 = 628, Y0 = 26, Y1 = 206;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // con una sola columna ficticia de m filas, ridge multiplica la media del nivel por m / (m + lambda)
+  function factor(m, lam) { return m / (m + lam); }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var m = +cn.value, lam = Math.pow(10, +cl.value);
+    en.textContent = String(m); el_.textContent = lam.toFixed(2).replace(".", ",");
+    function px(v) { return X0 + ((v - 1) / 59) * (X1 - X0); }
+    function py(v) { return Y1 - v * (Y1 - Y0); }
+    [0, 0.25, 0.5, 0.75, 1].forEach(function (g) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(g).toFixed(1) + " L" + X1 + " " + py(g).toFixed(1), stroke: C_L, "stroke-width": 0.8, opacity: .55 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(g) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, g.toFixed(2).replace(".", ",")));
+    });
+    [1, 10, 20, 30, 40, 50, 60].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y1 + 18, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, String(v)));
+    });
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 38, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "filas del nivel"));
+    var d = "", v;
+    for (v = 1; v <= 60; v += 0.25) d += (v === 1 ? "M" : " L") + px(v).toFixed(1) + " " + py(factor(v, lam)).toFixed(1);
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_A, "stroke-width": 2.8 }));
+    svg.appendChild(el("circle", { cx: px(m).toFixed(1), cy: py(factor(m, lam)).toFixed(1), r: 6.5, fill: C_B }));
+    var f = factor(m, lam);
+    lec.innerHTML = "Un nivel con <strong>" + m + "</strong> fila" + (m === 1 ? "" : "s") + " y λ = " + el_.textContent +
+      ": ridge conserva el <strong>" + (100 * f).toFixed(1).replace(".", ",") + " %</strong> de la media observada del nivel y encoge el resto hacia cero. " +
+      "El factor es m / (m + λ): un nivel con muchas filas casi no se toca, uno con una sola se encoge casi del todo. " +
+      (f < 0.3 ? "Es lo que se quiere con un nivel así: su media se apoya en tan pocas filas que es casi todo ruido."
+        : "Con tantas filas la media del nivel es fiable, y ridge la deja pasar casi entera.");
+  }
+  cn.addEventListener("input", dibujar); cl.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Lo que esta lección no resuelve
+
+Ridge encoge todos los niveles con la misma $\lambda$, y la $\lambda$ buena se elige con validación. La **codificación por el objetivo con suavizado** hace lo mismo con una fórmula cerrada por nivel —la media del nivel mezclada con la global según sus filas— y es la Lección 09, con la fuga de la Lección 02 que hay que evitarle.
+
+Tampoco se han tratado los niveles que aparecen **por primera vez al predecir**. Los 170 niveles vacíos de la Sección 2 no tienen columna con la que codificarse en producción, y qué hacer con ellos es la Lección 10.
+
+Y todo supone que los niveles no tienen orden. Una categórica ordenada —tallas, grados, tramos— tiene información en el orden que las ficticias tiran; FES §5.5 la trata con contrastes polinómicos, y también es la Lección 10.
+
+## Ejercicios
+
+### Ejercicio 1, El factor de encogimiento
+
+Con la Proposición 8.7, calcular cuánto conserva ridge de la media observada de un nivel según sus filas, para $\lambda=4$.
+
+```{pyodide}
+#| exercise: ex_encoge
+import numpy as np
+
+m = np.array([1.0, 2.0, 4.0, 10.0, 40.0, 400.0])
+lam = 4.0
+
+conserva = ______
+
+print([round(float(z), 4) for z in conserva])
+```
+
+::: {.hint exercise="ex_encoge"}
+El factor es $m/(m+\lambda)$: con $m=\lambda$ conserva exactamente la mitad.
+:::
+
+::: {.solution exercise="ex_encoge"}
+```{pyodide}
+import numpy as np
+
+m = np.array([1.0, 2.0, 4.0, 10.0, 40.0, 400.0])
+lam = 4.0
+
+conserva = m / (m + lam)
+
+print([round(float(z), 4) for z in conserva])
+```
+
+Un nivel con una fila conserva el **20 %** de su media; con cuatro, justo la mitad; con cuarenta, el 90,9 %; con cuatrocientas, el 99 %. La $\lambda$ se lee como **el número de filas a partir del cual se confía en el nivel más que en cero**, y eso da una manera de elegirla razonable antes de validar.
+:::
+
+```{pyodide}
+#| exercise: ex_encoge
+#| check: true
+if [round(float(z), 4) for z in conserva] == [0.2, 0.3333, 0.5, 0.7143, 0.9091, 0.9901]:
+    feedback = {"correct": True, "message": "Correcto: con m = λ se conserva la mitad."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [0.2, 0.3333, 0.5, 0.7143, 0.9091, 0.9901]."}
+feedback
+```
+
+### Ejercicio 2, Niveles vacíos esperados
+
+Con la Proposición 8.4, calcular cuántos niveles se espera que no aparezcan en una muestra, para frecuencias tipo Zipf.
+
+```{pyodide}
+#| exercise: ex_vacios
+import numpy as np
+
+def vacios(K, n):
+    j = np.arange(1, K + 1)
+    H = (1.0 / j).sum()
+    esperadas = n / (j * H)                 # filas esperadas de cada nivel
+    # un nivel con media m queda vacio con probabilidad exp(-m)
+    return ______
+
+print([round(float(vacios(K, 400)), 1) for K in (20, 80, 300)])
+print([round(float(vacios(300, n)), 1) for n in (400, 4000, 40000)])
+```
+
+::: {.hint exercise="ex_vacios"}
+La suma, sobre los niveles, de $e^{-m_j}$ da el número esperado de niveles con cero filas.
+:::
+
+::: {.solution exercise="ex_vacios"}
+```{pyodide}
+import numpy as np
+
+def vacios(K, n):
+    j = np.arange(1, K + 1)
+    H = (1.0 / j).sum()
+    esperadas = n / (j * H)
+    return np.exp(-esperadas).sum()
+
+print([round(float(vacios(K, 400)), 1) for K in (20, 80, 300)])
+print([round(float(vacios(300, n)), 1) for n in (400, 4000, 40000)])
+```
+
+Con 400 filas, veinte niveles no dejan casi ninguno vacío y trescientos dejan unos **170**, que es lo que midió la celda. Multiplicar las filas por diez y por cien deja unos **10** y **0** vacíos, pero con frecuencias desiguales la cola de niveles con una o dos filas sigue existiendo: **más datos acortan la cola sin eliminarla**, y por eso el encogimiento sigue haciendo falta con conjuntos grandes.
+:::
+
+```{pyodide}
+#| exercise: ex_vacios
+#| check: true
+if ([round(float(vacios(K, 400)), 1) for K in (20, 80, 300)][2] > 150
+        and [round(float(vacios(300, n)), 1) for n in (400, 4000, 40000)][2] < 1.0):
+    feedback = {"correct": True, "message": "Correcto: con 300 niveles y 400 filas quedan unos 170 vacíos."}
+else:
+    feedback = {"correct": False, "message": "La suma de exp(−m) sobre los niveles da los vacíos esperados."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Atributos 8**:
+
+1. Construir una categórica con frecuencias desiguales y comparar ficticias, colapsar, hashing y ridge para tres números de niveles. Anotar a partir de cuántos niveles ridge empieza a ganar.
+2. Elegir la $\lambda$ de ridge por validación cruzada y compararla con la regla del Ejercicio 1: el número de filas a partir del cual se confía en un nivel.
+3. Encontrar un caso donde el hashing le gane a las ficticias y explicar en dos frases qué lo permite. Guardar el caso en `50-Errores/`.
+
+## Del libro
+
+FES cap. 5 *Encoding Categorical Predictors* abre con las dos secciones que sostienen esta lección. Su §5.1 *Creating Dummy Variables for Unordered Categories* distingue la codificación de rango completo, con $C-1$ ficticias para que la matriz de diseño no sea singular, de la codificación uno contra todos con las $C$, e interpreta los coeficientes como diferencias con la celda de referencia. Su §5.2 *Encoding Predictors with Many Categories* trata la alta cardinalidad: el hashing de atributos por aritmética modular, los predictores de varianza cero o casi cero, el colapso de categorías y el compromiso entre reducir columnas y mezclar niveles en el mismo cubo.
+
+Esta página añade una medición que cambia el orden de las recomendaciones: con el problema bien diagnosticado —la cola de niveles raros—, lo que funciona es **encoger**, que es la idea que la §5.4 del libro desarrolla como codificación supervisada con suavizado y que es la Lección 09.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- Una **ficticia** por nivel; con intercepto, las $C$ suman la columna de unos.
+- La trampa: rango **4 de 5**; quitando una, **4 de 4**. El nivel quitado es la **referencia**.
+- La referencia cambia los **coeficientes**, no la **predicción**: mismo espacio columna.
+- Con 300 niveles Zipf y 400 filas: **170** vacíos, **73** con una fila, solo **15** con cinco o más.
+- El problema de las muchas categorías es **la cola de niveles raros**, no el número de columnas.
+- Colapsar (**0,5518**) y el hashing (**0,5306**) pierden contra las ficticias (**0,5902**).
+- Reducir columnas resuelve la **memoria**, no la **estimación**.
+- **Ridge** sobre las ficticias sube a **0,6602**: encoge cada nivel por $m/(m+\lambda)$.
+- $\lambda$ = filas a partir de las que se confía en el nivel más que en cero.
+- Con penalización, $M^\top M+P$ es invertible: **se pueden usar las $K$ ficticias**.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico. Que con intercepto y cuatro ficticias la matriz tiene rango 4 de 5 y con tres, 4 de 4; que las cuatro elecciones de referencia dan coeficientes distintos —los cuatro interceptos valen −0,0923; 0,9896; −0,5029 y 1,8864— y la misma predicción por debajo de $10^{-9}$; que con 300 niveles de frecuencias tipo Zipf y 400 filas hay 170 niveles con cero filas, 73 con una, 42 con dos a cuatro, 12 con cinco a diecinueve y 3 con veinte o más; que el $R^2$ de las ficticias vale 0,7260; 0,7234; 0,6921 y 0,5902 con 5, 20, 80 y 300 niveles, frente a 0,5718; 0,5358; 0,5122 y 0,4923 sin la variable; que con 20, 80 y 300 niveles colapsar da 0,7036; 0,6101 y 0,5518 y el hashing a 16 cubos 0,6306; 0,5806 y 0,5306; que ridge con $\lambda=1$, 4 y 16 da 0,7259; 0,7248 y 0,7153 con 5 niveles y 0,6602; 0,6383 y 0,5869 con 300; y que con 20 ficticias e intercepto $M^\top M$ tiene rango 21 de 22 y $M^\top M+P$, 22 de 22.
+
+**Lo que se usa de otras lecciones sin repetir.** El rango y el espacio columna son de Álgebra 3. Ridge y su solución cerrada son de Machine Learning 8. Que la proyección no depende de la base que genera el espacio es de Álgebra 5.
+
+**Lo que se enuncia sin demostrar.** El factor $m/(m+\lambda)$ es exacto para una ficticia aislada; con muchas y con el intercepto sin penalizar, el encogimiento de cada nivel depende también de los demás, y la tabla lo respalda sin demostrar la fórmula general. El número esperado de niveles vacíos, $\sum_j e^{-m_j}$, usa la aproximación de Poisson a la binomial, válida para niveles raros.
+
+**Lo que es mío, no del libro.** Diagnosticar el problema de las muchas categorías como **la cola de niveles raros** y medirla directamente —170 vacíos de 300— antes de proponer ningún arreglo. Poner colapsar y el hashing en la misma tabla que las ficticias y ridge, que es lo que enseña que **reducir columnas no es lo mismo que recuperar información**. Y la Proposición 8.8, que conecta la trampa de la Sección 1 con el arreglo de la Sección 4: la penalización que resuelve la estimación resuelve de paso el rango.
+:::

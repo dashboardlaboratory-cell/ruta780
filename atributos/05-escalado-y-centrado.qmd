@@ -1,0 +1,618 @@
+---
+title: "Escalado y centrado"
+subtitle: "Feature Engineering · Lección 05"
+nivel: L3
+modulo: atributos
+fase: F2
+prereqs: [atributos/04-transformaciones-1a1, ml/08-ridge-y-lasso, ml/06-validacion-cruzada]
+siguientes: []
+libro: "FES, cap. 6 Engineering Numeric Predictors"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="atributos/05-escalado-y-centrado"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F2]{.item}
+[**Libro** FES 6]{.item}
+[**Prereqs** [Transformaciones 1:1](04-transformaciones-1a1.qmd) · [Ridge y lasso](../ml/08-ridge-y-lasso.qmd) · [Validación cruzada](../ml/06-validacion-cruzada.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Demostrar que a mínimos cuadrados no le importan las unidades**: cambiarlas deja la predicción igual por debajo de $10^{-9}$.
+2. **Medir que a ridge sí**: con la misma $\lambda$ y los mismos datos, el $R^2$ cae de **0,9194** a **0,6117** solo por medir las columnas en otras unidades, y una columna que valía 1,5 termina con coeficiente **0,000256**.
+3. **Medir que a kNN todavía más**: una columna de ruido medida en miles deja el $R^2$ en **−0,0946**, peor que predecir la media, y estandarizar lo devuelve a **0,8585**.
+4. **Elegir el escalado según la columna**: con **un solo** atípico, el escalado por rango aplasta las 599 filas normales en un intervalo de ancho **0,0143** y el $R^2$ cae de 0,8464 a **0,4443**; el robusto se queda en **0,8527**.
+5. **Demostrar que después de estandarizar las unidades de partida desaparecen**: cuatro juegos de unidades distintos dan la misma predicción.
+6. Estimar el centro y la escala **solo con el entrenamiento**, y medir qué cambia si no.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Atributos 04**: las transformaciones 1:1, de las que el escalado es el caso lineal.
+- **Machine Learning 8**: ridge y lasso, cuya penalización es lo que hace que las unidades importen.
+- **Atributos 02**: estimar dentro del entrenamiento y aplicar a todo lo demás.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Atributos 07**: las proyecciones como PCA, que dependen de la escala tanto como kNN.
+- **Atributos 16**: el pipeline, donde el centro y la escala son parámetros que viajan con el modelo.
+- **Machine Learning 39**: los optimizadores, cuya velocidad depende del condicionamiento que fija la escala.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $x_j$ | equis sub jota | La columna $j$ |
+| $c_j,\ s_j$ | ce sub jota, ese sub jota | El centro y la escala con que se transforma la columna $j$ |
+| $u_j$ | u sub jota | La constante por la que se multiplica la columna al cambiar de unidades |
+| $\beta_j$ | beta sub jota | El coeficiente de la columna $j$ |
+| $\lambda$ | lambda | La fuerza de la penalización de ridge |
+| $k$ | ka | Vecinos del $k$-NN |
+| $R^2$ | erre cuadrado | La fracción de varianza explicada |
+:::
+
+## 1. Mínimos cuadrados y ridge frente a las unidades
+
+::: {.definicion}
+**Definición 5.1 ([estandarización]{.g}).** Sustituir cada columna por $(x_j-c_j)/s_j$ con $c_j$ la media y $s_j$ la desviación típica del entrenamiento. El **escalado por rango** usa el mínimo y el recorrido; el **robusto**, la mediana y el rango intercuartil.
+:::
+
+::: {.proposicion}
+**Proposición 5.2 (a mínimos cuadrados no le importan las unidades).** Multiplicando las columnas por $u=(1;\,1000;\,0{,}001)$, la predicción de mínimos cuadrados cambia **menos de $10^{-9}$**.
+:::
+
+::: {.demostracion}
+*Demostración.* Cambiar las unidades es multiplicar $X$ por una diagonal invertible $D$, y el espacio columna de $XD$ es el mismo que el de $X$. La proyección de $y$ sobre ese espacio —que es la predicción— no cambia; lo único que cambia es el coeficiente, $\beta_j/u_j$, que compensa exactamente la nueva unidad. ∎
+:::
+
+::: {.proposicion}
+**Proposición 5.3 (a ridge sí).** Con $\lambda=1$, ridge alcanza $R^2=$ **0,9194** sobre columnas estandarizadas y **0,6117** sobre las mismas columnas en unidades mixtas. El coeficiente de la columna medida en milésimas, que vale 1,5, queda en **0,000256**.
+:::
+
+::: {.demostracion}
+*Demostración.* Ridge minimiza $\lVert y-X\beta\rVert^2+\lambda\lVert\beta\rVert^2$, y el segundo término castiga el **tamaño** del coeficiente. Una columna medida en milésimas necesita un coeficiente mil veces mayor para hacer el mismo trabajo, y ese coeficiente paga un millón de veces más de penalización. Ridge prefiere entonces renunciar a la columna: la misma $\lambda$ encoge cada coeficiente en proporción inversa a la escala de su columna. **La penalización solo es justa cuando todas las columnas están en la misma unidad**, y la estandarización es la manera de conseguirlo. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# Tres predictores con efecto real. Se miden luego en otras unidades: la
+# segunda en miles de veces su valor y la tercera en milesimas.
+def datos(n, semilla):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 3))
+    y = 2.0 * X[:, 0] - 1.0 * X[:, 1] + 1.5 * X[:, 2] + 0.8 * rng.standard_normal(n)
+    return X, y
+
+def mco(X, y, Xt):
+    Z = np.column_stack([np.ones(len(X)), X])
+    b = np.linalg.lstsq(Z, y, rcond=None)[0]
+    return np.column_stack([np.ones(len(Xt)), Xt]) @ b
+
+def ridge(X, y, Xt, lam):
+    mu = X.mean(0); Xc = X - mu
+    b = np.linalg.solve(Xc.T @ Xc + lam * np.eye(X.shape[1]), Xc.T @ (y - y.mean()))
+    return y.mean() + (Xt - mu) @ b, b
+
+def r2(y, p):
+    return 1.0 - ((y - p) ** 2).mean() / y.var()
+
+X, y = datos(200, 1)
+Xt, yt = datos(5000, 2)
+u = np.array([1.0, 1000.0, 0.001])          # las otras unidades
+
+dif = float(np.max(np.abs(mco(X, y, Xt) - mco(X * u, y, Xt * u))))
+print("minimos cuadrados, cambiando las unidades de las columnas")
+print("  la prediccion cambia menos de 1e-9 :", dif < 1e-9)
+print()
+print("ridge, con la misma lambda y los mismos datos")
+print("  %-8s %16s %16s %22s"
+      % ("lambda", "R2 estandarizado", "R2 unidades mixtas", "coef. col. en milesimas"))
+for lam in (1.0, 10.0, 100.0):
+    sd = X.std(0)
+    pa, _ = ridge(X / sd, y, Xt / sd, lam)
+    pb, bb = ridge(X * u, y, Xt * u, lam)
+    print("  %-8g %16.4f %16.4f %22.6f" % (lam, r2(yt, pa), r2(yt, pb), (bb * u)[2]))
+print()
+print("minimos cuadrados no se entera: cambiar de unidades multiplica la")
+print("columna y divide su coeficiente, y la prediccion es la misma. Ridge si")
+print("se entera, porque castiga el TAMANO del coeficiente: la columna medida")
+print("en milesimas necesita un coeficiente mil veces mayor, se lo castigan")
+print("un millon de veces mas y termina en 0.000256 cuando valia 1.5")
+```
+
+## 2. La distancia de kNN y las unidades
+
+::: {.proposicion}
+**Proposición 5.4 (kNN elige a los vecinos por la columna de números más grandes).** Con dos columnas de señal y una de ruido, el $R^2$ vale **0,8491** con las tres en la misma escala, **−0,0946** con el ruido medido en miles y **0,5809** con una señal medida en milésimas. Estandarizar el caso del ruido en miles devuelve **0,8585**.
+:::
+
+::: {.demostracion}
+*Demostración.* La distancia euclídea suma $\sum_j u_j^2(x_{ij}-x_{lj})^2$, así que cada columna pesa en proporción al cuadrado de su unidad. Con el ruido multiplicado por mil, las dos columnas con señal pesan un millón de veces menos, y los vecinos de un punto son los que se le parecen **en el ruido**: la predicción es un promedio de filas sin relación con él, y el $R^2$ negativo dice que eso es peor que no predecir nada. El visual siguiente dibuja la misma cuenta: la vecindad de un punto pasa de círculo a franja según la unidad de una columna. **Los puntos no se mueven al tocar los controles, y a propósito**: los datos son siempre los mismos, y lo único que cambia es la regla con que se mide la distancia y, con ella, quiénes resultan vecinos. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# Dos columnas con senal y una de puro ruido. kNN mide distancias, y una
+# distancia suma cuadrados de diferencias: la columna con numeros grandes manda.
+def datos(n, semilla):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 2))
+    ruido = rng.standard_normal((n, 1))
+    y = np.sin(2.0 * X[:, 0]) + X[:, 1] + 0.3 * rng.standard_normal(n)
+    return np.column_stack([X, ruido]), y
+
+def knn(Xtr, ytr, Xte, k=15):
+    d = ((Xte[:, None, :] - Xtr[None, :, :]) ** 2).sum(-1)
+    idx = np.argpartition(d, k - 1, axis=1)[:, :k]
+    return ytr[idx].mean(1)
+
+def r2(y, p):
+    return 1.0 - ((y - p) ** 2).mean() / y.var()
+
+X, y = datos(600, 7)
+Xt, yt = datos(2000, 8)
+
+print("kNN con 15 vecinos, segun en que unidades venga cada columna")
+print("  %-40s %10s" % ("", "R2"))
+for nombre, u in (("las tres en la misma escala", [1.0, 1.0, 1.0]),
+                  ("el ruido medido en miles", [1.0, 1.0, 1000.0]),
+                  ("una senal medida en milesimas", [0.001, 1.0, 1.0])):
+    u = np.array(u)
+    print("  %-40s %10.4f" % (nombre, r2(yt, knn(X * u, y, Xt * u))))
+u = np.array([1.0, 1.0, 1000.0])
+sd = (X * u).std(0)
+print("  %-40s %10.4f" % ("ruido en miles, y luego estandarizado",
+                          r2(yt, knn(X * u / sd, y, Xt * u / sd))))
+print()
+print("con el ruido medido en miles, los vecinos de un punto son los que se")
+print("parecen en el RUIDO: las dos columnas con senal pesan mil veces menos en")
+print("la distancia. El R2 cae a -0.0946, peor que predecir la media para todo")
+print("el mundo. Estandarizar devuelve cada columna a pesar lo mismo, y con")
+print("ello el 0.8585")
+```
+
+```{=html}
+<div class="viz-vecinos">
+  <div class="controles">
+    <label>Unidades de la columna 2 <input id="vc-s" type="range" min="-2" max="2" step="0.05" value="0"> <span id="vc-s-v">×1</span></label>
+    <label>Vecinos k <input id="vc-k" type="range" min="3" max="40" step="1" value="15"> <span id="vc-k-v">15</span></label>
+  </div>
+  <svg id="vc-svg" viewBox="0 0 660 330" role="img" aria-label="Una nube de puntos y los k vecinos más cercanos a un punto central según en qué unidades venga la segunda columna: la vecindad pasa de un círculo a una franja."></svg>
+  <p class="lectura" id="vc-lectura"></p>
+</div>
+<style>
+.viz-vecinos { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-vecinos .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-vecinos label { display: flex; align-items: center; gap: .4rem; }
+.viz-vecinos input[type=range] { width: 150px; padding: 0; }
+.viz-vecinos svg { width: 100%; height: auto; display: block; }
+.viz-vecinos .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("vc-svg"), lec = document.getElementById("vc-lectura");
+  var cs = document.getElementById("vc-s"), ck = document.getElementById("vc-k");
+  var es = document.getElementById("vc-s-v"), ek = document.getElementById("vc-k-v");
+  var X0 = 180, X1 = 480, Y0 = 18, Y1 = 318, R = 2.6;
+  // una nube fija de 220 puntos, sorteada una vez con una semilla
+  var P = [], semilla = 12345, i;
+  function azar() { semilla = (semilla * 1103515245 + 12345) % 2147483648; return semilla / 2147483648; }
+  function normal() { var u = azar() || 1e-9, v = azar(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
+  for (i = 0; i < 220; i++) P.push([normal(), normal()]);
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var s = Math.pow(10, +cs.value), k = +ck.value;
+    es.textContent = "×" + (s >= 10 ? s.toFixed(0) : s >= 1 ? s.toFixed(1) : s.toFixed(2)).replace(".", ",");
+    ek.textContent = String(k);
+    function px(v) { return X0 + ((v + R) / (2 * R)) * (X1 - X0); }
+    function py(v) { return Y1 - ((v + R) / (2 * R)) * (Y1 - Y0); }
+
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: X1 - X0, height: Y1 - Y0, fill: "none", stroke: C_L }));
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 12, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "columna 1"));
+    svg.appendChild(el("text", { x: X0 - 10, y: (Y0 + Y1) / 2, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7,
+      transform: "rotate(-90 " + (X0 - 10) + " " + ((Y0 + Y1) / 2) + ")" }, "columna 2"));
+
+    // distancia con la columna 2 multiplicada por s
+    var d = P.map(function (p, j) { return [p[0] * p[0] + (s * p[1]) * (s * p[1]), j]; });
+    d.sort(function (a, b) { return a[0] - b[0]; });
+    var vec = {}, ancho1 = 0, ancho2 = 0;
+    for (i = 0; i < k; i++) { vec[d[i][1]] = true; ancho1 = Math.max(ancho1, Math.abs(P[d[i][1]][0])); ancho2 = Math.max(ancho2, Math.abs(P[d[i][1]][1])); }
+    var r = Math.sqrt(d[k - 1][0]);
+    // la curva de igual distancia: una elipse de semiejes r y r/s
+    svg.appendChild(el("ellipse", { cx: px(0), cy: py(0),
+      rx: (Math.min(r, 3 * R) / (2 * R)) * (X1 - X0), ry: (Math.min(r / s, 3 * R) / (2 * R)) * (Y1 - Y0),
+      fill: C_A, "fill-opacity": .07, stroke: C_A, "stroke-width": 1.4, "stroke-dasharray": "5 4" }));
+    for (i = 0; i < P.length; i++) {
+      if (Math.abs(P[i][0]) > R || Math.abs(P[i][1]) > R) continue;
+      svg.appendChild(el("circle", { cx: px(P[i][0]).toFixed(1), cy: py(P[i][1]).toFixed(1), r: vec[i] ? 4.2 : 2.6,
+        fill: vec[i] ? C_A : C_T, opacity: vec[i] ? .95 : .28 }));
+    }
+    svg.appendChild(el("circle", { cx: px(0), cy: py(0), r: 5.5, fill: C_B }));
+
+    var razon = ancho1 / Math.max(ancho2, 1e-9);
+    lec.innerHTML = "Los <strong>" + k + "</strong> vecinos del punto rojo, con la columna 2 medida en unidades " + es.textContent +
+      ". Ocupan <strong>" + ancho1.toFixed(2).replace(".", ",") + "</strong> a lo largo de la columna 1 y <strong>" +
+      ancho2.toFixed(2).replace(".", ",") + "</strong> a lo largo de la 2. " +
+      (s > 3 ? "Con la columna 2 en números grandes, la vecindad se aplasta en una <strong>franja horizontal</strong>: los vecinos son los que se parecen en la columna 2 y la columna 1 casi no cuenta."
+        : (s < 1 / 3 ? "Con la columna 2 en números pequeños, la vecindad se estira en una <strong>franja vertical</strong>: la columna 2 deja de contar y los vecinos se eligen por la 1."
+          : "Con las dos columnas en escalas parecidas, la vecindad es un círculo y las dos cuentan lo mismo.")) +
+      " Los datos son los mismos en todos los casos; lo único que cambia es la unidad, y con ella <em>quién es vecino de quién</em>.";
+  }
+  cs.addEventListener("input", dibujar); ck.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+**Modo de falla.** Una tabla trae la edad en años y los ingresos en unidades monetarias, y el kNN se ajusta sin tocarla. Los ingresos varían en decenas de miles y la edad en decenas, así que la edad no participa en la distancia y el modelo no lo sabe. El síntoma es que un atributo que tendría que importar sale con importancia nula, y se concluye que no sirve. La defensa es estandarizar **antes** de cualquier método que use distancias o penalizaciones —kNN, ridge, lasso, SVM, PCA— y comprobar que la importancia de las columnas no depende de sus unidades.
+
+## 3. Qué escalado, según la columna
+
+::: {.proposicion}
+**Proposición 5.5 (un solo atípico basta para inutilizar el escalado por rango).** Con un atípico enorme entre 600 filas, el escalado por rango deja las 599 filas normales en un intervalo de ancho **0,0143** y el $R^2$ de kNN cae de **0,8464** a **0,4443**. El estandarizado cae a **0,6056**. El robusto se queda en **0,8527**.
+:::
+
+::: {.demostracion}
+*Demostración.* El escalado por rango divide por máximo menos mínimo, y un solo valor extremo multiplica ese recorrido; todos los demás quedan comprimidos contra un extremo del intervalo. La desviación típica también crece con un atípico, pero en proporción a $1/\sqrt n$ de su distancia y no a toda ella, por eso el estandarizado resiste algo más. La mediana y el rango intercuartil no dependen de los extremos por construcción: un atípico no mueve ni el percentil 25 ni el 75. **El escalado que se elige es un estimador de centro y escala, y hereda la robustez de ese estimador.** ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# Tres maneras de llevar una columna a una escala comun, y lo que les pasa
+# cuando la columna trae unos pocos valores enormes.
+def escala(X, ref, modo):
+    """Centro y escala se calculan SOLO sobre `ref`, el entrenamiento."""
+    if modo == "estandar":
+        c, s = ref.mean(0), ref.std(0)
+    elif modo == "rango":
+        c, s = ref.min(0), ref.max(0) - ref.min(0)
+    else:                                   # robusta: mediana y rango intercuartil
+        q1, q2, q3 = np.percentile(ref, [25, 50, 75], axis=0)
+        c, s = q2, q3 - q1
+    return (X - c) / s
+
+def knn(Xtr, ytr, Xte, k=15):
+    d = ((Xte[:, None, :] - Xtr[None, :, :]) ** 2).sum(-1)
+    idx = np.argpartition(d, k - 1, axis=1)[:, :k]
+    return ytr[idx].mean(1)
+
+def r2(y, p):
+    return 1.0 - ((y - p) ** 2).mean() / y.var()
+
+def datos(n, semilla, atipicos):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 2))
+    y = np.sin(2.0 * X[:, 0]) + np.cos(1.5 * X[:, 1]) + 0.3 * rng.standard_normal(n)
+    if atipicos:
+        X[:atipicos, 1] = 400.0 + 50.0 * rng.standard_normal(atipicos)
+    return X, y
+
+Xt, yt = datos(2000, 9, 0)
+print("kNN con 600 filas; la segunda columna trae unos pocos valores enormes")
+print("  %-10s %10s %10s %10s %24s"
+      % ("atipicos", "estandar", "rango", "robusta", "ancho de lo normal (rango)"))
+for a in (0, 1, 3, 12):
+    X, y = datos(600, 4, a)
+    r = [r2(yt, knn(escala(X, X, m), y, escala(Xt, X, m)))
+         for m in ("estandar", "rango", "robusta")]
+    ancho = float(np.ptp(escala(X, X, "rango")[a:, 1]))
+    print("  %-10d %10.4f %10.4f %10.4f %24.4f" % (a, r[0], r[1], r[2], ancho))
+print()
+print("con UN solo atipico, el escalado por rango aplasta las 599 filas")
+print("normales en un intervalo de ancho 0.0143: la columna entera deja de")
+print("contar en la distancia y el R2 cae de 0.8464 a 0.4443. La estandar")
+print("aguanta algo mas porque la desviacion crece menos que el rango. La")
+print("robusta no se entera: la mediana y los cuartiles no ven los extremos")
+```
+
+```{=html}
+<div class="viz-escalas">
+  <div class="controles">
+    <label>Tamaño del atípico <input id="es-a" type="range" min="0" max="3" step="0.05" value="2"> <span id="es-a-v">100</span></label>
+    <label>Escalado <input id="es-m" type="range" min="0" max="2" step="1" value="1"> <span id="es-m-v">rango</span></label>
+  </div>
+  <svg id="es-svg" viewBox="0 0 660 250" role="img" aria-label="Cuarenta valores normales y un atípico, antes y después de tres escalados distintos: el de rango aplasta los normales, el robusto no."></svg>
+  <p class="lectura" id="es-lectura"></p>
+</div>
+<style>
+.viz-escalas { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-escalas .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-escalas label { display: flex; align-items: center; gap: .4rem; }
+.viz-escalas input[type=range] { width: 150px; padding: 0; }
+.viz-escalas svg { width: 100%; height: auto; display: block; }
+.viz-escalas .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("es-svg"), lec = document.getElementById("es-lectura");
+  var ca = document.getElementById("es-a"), cm = document.getElementById("es-m");
+  var ea = document.getElementById("es-a-v"), em = document.getElementById("es-m-v");
+  var NOMBRES = ["estándar", "rango", "robusta"];
+  var X0 = 40, X1 = 620;
+  var V = [], semilla = 777, i;
+  function azar() { semilla = (semilla * 1103515245 + 12345) % 2147483648; return semilla / 2147483648; }
+  function normal() { var u = azar() || 1e-9, v = azar(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
+  for (i = 0; i < 40; i++) V.push(normal());
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function cuantil(a, q) { var s = a.slice().sort(function (x, y) { return x - y; }); var p = q * (s.length - 1), b = Math.floor(p);
+    return s[b] + (p - b) * ((s[b + 1] === undefined ? s[b] : s[b + 1]) - s[b]); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var at = Math.pow(10, +ca.value), m = +cm.value;
+    ea.textContent = at >= 10 ? at.toFixed(0) : at.toFixed(1).replace(".", ",");
+    em.textContent = NOMBRES[m];
+    var todos = V.concat([at]);
+    var c, s;
+    if (m === 0) { c = todos.reduce(function (a, b) { return a + b; }, 0) / todos.length;
+      s = Math.sqrt(todos.reduce(function (a, b) { return a + (b - c) * (b - c); }, 0) / todos.length); }
+    else if (m === 1) { c = Math.min.apply(null, todos); s = Math.max.apply(null, todos) - c; }
+    else { c = cuantil(todos, 0.5); s = cuantil(todos, 0.75) - cuantil(todos, 0.25); }
+    var z = todos.map(function (v) { return (v - c) / s; });
+    var zn = z.slice(0, 40), lo = Math.min.apply(null, zn), hi = Math.max.apply(null, zn);
+
+    function fila(y, vals, titulo, izq, der) {
+      svg.appendChild(el("text", { x: X0, y: y - 18, "font-size": 10.5, fill: C_T, opacity: .75 }, titulo));
+      svg.appendChild(el("path", { d: "M" + X0 + " " + y + " L" + X1 + " " + y, stroke: C_L, "stroke-width": 1.2 }));
+      function px(v) { return X0 + ((v - izq) / (der - izq)) * (X1 - X0); }
+      vals.forEach(function (v, j) {
+        var x = Math.max(X0, Math.min(X1, px(v)));
+        svg.appendChild(el("circle", { cx: x.toFixed(1), cy: y, r: j === 40 ? 6 : 3.4,
+          fill: j === 40 ? C_B : C_A, opacity: j === 40 ? .95 : .55 }));
+      });
+    }
+    // El eje de abajo va ANCLADO en [-3, 3] unidades escaladas. Si siguiera al
+    // mínimo y máximo de los datos, los tres escalados —que son afines— darían
+    // exactamente el mismo dibujo (regla 19b).
+    fila(70, todos, "los datos tal como vienen", Math.min.apply(null, todos), Math.max.apply(null, todos));
+    fila(170, z, "después del escalado " + NOMBRES[m] + ", sobre un eje fijo de −3 a 3", -3, 3);
+
+    lec.innerHTML = "Con un atípico de <strong>" + ea.textContent + "</strong>, el escalado <strong>" + NOMBRES[m] +
+      "</strong> deja los 40 valores normales en un intervalo de ancho <strong>" + (hi - lo).toFixed(3).replace(".", ",") + "</strong>. " +
+      (m === 2 ? "La mediana y los cuartiles no ven el extremo, así que los normales conservan su anchura y el atípico queda lejos, que es donde debe estar."
+        : (hi - lo < 0.2 ? "Los normales quedan aplastados en un punto: para una distancia, esa columna ha dejado de existir, y todo por un solo valor."
+          : "Mientras el atípico no es muy grande el aplastamiento es moderado, pero crece con él.")) +
+      " Pasar por las tres opciones con el mismo atípico enseña lo que mide la tabla de la celda.";
+  }
+  ca.addEventListener("input", dibujar); cm.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. La independencia de las unidades, y dónde se estima la escala
+
+::: {.proposicion}
+**Proposición 5.6 (después de estandarizar, las unidades de partida desaparecen).** Estandarizando y ajustando ridge con $\lambda=10$, cuatro juegos de unidades —entre ellos $(10^6;\,10^{-6};\,1)$— dan la misma predicción por debajo de $10^{-9}$.
+:::
+
+::: {.demostracion}
+*Demostración.* Si la columna $j$ se multiplica por $u_j>0$, su media y su desviación se multiplican por $u_j$, y el cociente $(u_jx_j-u_jc_j)/(u_js_j)=(x_j-c_j)/s_j$ no cambia. La matriz estandarizada es exactamente la misma y todo lo que se ajuste sobre ella también. Por eso la Proposición 5.3 no dice que ridge sea malo, sino que **ridge sin estandarizar depende de una decisión arbitraria** —las unidades en que alguien apuntó los datos—, y estandarizar la elimina. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# Estandarizar deja la matriz igual sean cuales sean las unidades de partida:
+# si cada columna se multiplica por una constante positiva, su media y su
+# desviacion se multiplican por la misma, y el cociente no cambia.
+def datos(n, semilla):
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 3))
+    y = 2.0 * X[:, 0] - 1.0 * X[:, 1] + 1.5 * X[:, 2] + 0.8 * rng.standard_normal(n)
+    return X, y
+
+def ridge(X, y, Xt, lam):
+    mu = X.mean(0); Xc = X - mu
+    b = np.linalg.solve(Xc.T @ Xc + lam * np.eye(X.shape[1]), Xc.T @ (y - y.mean()))
+    return y.mean() + (Xt - mu) @ b
+
+def estandariza(X, ref):
+    return (X - ref.mean(0)) / ref.std(0)
+
+X, y = datos(200, 1)
+Xt, yt = datos(5000, 2)
+
+print("ridge con lambda = 10 despues de estandarizar, con cuatro juegos de unidades")
+base = ridge(estandariza(X, X), y, estandariza(Xt, X), 10.0)
+for texto, u in (("1, 1, 1", [1.0, 1.0, 1.0]),
+                 ("1, 1000, 0.001", [1.0, 1000.0, 0.001]),
+                 ("0.01, 60, 3.5", [0.01, 60.0, 3.5]),
+                 ("1e6, 1e-6, 1", [1e6, 1e-6, 1.0])):
+    u = np.array(u)
+    p = ridge(estandariza(X * u, X * u), y, estandariza(Xt * u, X * u), 10.0)
+    print("  unidades %-18s igual a la primera, por debajo de 1e-9 : %s"
+          % (texto, bool(np.max(np.abs(p - base)) < 1e-9)))
+print()
+
+# el centro y la escala se estiman con el entrenamiento y se aplican a todo
+mal = ridge(estandariza(X, np.vstack([X, Xt])), y, estandariza(Xt, np.vstack([X, Xt])), 10.0)
+bien = base
+print("  %-52s %10.4f" % ("diferencia de prediccion, escala con todo o solo con train",
+                          float(np.max(np.abs(mal - bien)))))
+print()
+print("despues de estandarizar, las unidades de partida desaparecen: las cuatro")
+print("filas dan la misma prediccion. Por eso estandarizar va antes de ridge,")
+print("lasso o kNN por construccion. Y la escala se estima con el entrenamiento")
+print("solo: hacerla con todo mueve las predicciones en la segunda cifra, poco,")
+print("porque no mira el objetivo —es la fuga que vale casi cero de la Leccion")
+print("02—, pero la columna que se valida deja de ser la que se va a usar")
+```
+
+**Modo de falla.** El centro y la escala se calculan sobre la tabla entera antes de partir, por comodidad, y la validación usa columnas estandarizadas con información de las filas de prueba. Como la estandarización no mira al objetivo, la fuga es pequeña —la celda mueve las predicciones en la segunda cifra—, y por eso pasa inadvertida. Lo que no es pequeño es la consecuencia práctica: en producción, cada fila nueva se estandarizará con el centro y la escala **del entrenamiento**, así que el modelo validado y el desplegado no ven la misma columna. FES §6.1 lo fija como regla: se estiman con el entrenamiento y se aplican iguales a todo lo demás.
+
+## 5. Lo que esta lección no resuelve
+
+La estandarización hace que las columnas **pesen lo mismo**, pero eso no es necesariamente lo que se quiere. Si se sabe que una columna importa más que otra, la unidad común la trata como igual, y un kNN con pesos distintos por columna —una métrica aprendida— es otra cosa que aquí no se ha tocado.
+
+Tampoco se ha tratado la escala de las **categóricas codificadas**. Una variable ficticia vale 0 o 1, y estandarizarla la convierte en otra cosa que depende de la frecuencia de la categoría; qué hacer con ellas es de la Lección 08.
+
+Y el escalado robusto resuelve la distancia pero no el atípico. Si el valor extremo es un error, sigue estando en los datos; si es real, sigue influyendo en cualquier modelo que no use distancias. Decidir qué es cada uno es de la Lección 03.
+
+## Ejercicios
+
+### Ejercicio 1, Los tres escalados a mano
+
+Aplicar los tres escalados a una columna con un atípico y medir el ancho que ocupan los valores normales.
+
+```{pyodide}
+#| exercise: ex_escalados
+import numpy as np
+
+x = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 1000.0])
+normales = x[:-1]
+
+def estandar(v, ref): return (v - ref.mean()) / ref.std()
+def rango(v, ref):    return ______
+def robusta(v, ref):
+    q1, q2, q3 = np.percentile(ref, [25, 50, 75])
+    return ______
+
+print([round(float(np.ptp(f(normales, x))), 4) for f in (estandar, rango, robusta)])
+```
+
+::: {.hint exercise="ex_escalados"}
+El de rango resta el mínimo y divide por máximo menos mínimo. El robusto resta la mediana y divide por el rango intercuartil, $q_3-q_1$.
+:::
+
+::: {.solution exercise="ex_escalados"}
+```{pyodide}
+import numpy as np
+
+x = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 1000.0])
+normales = x[:-1]
+
+def estandar(v, ref): return (v - ref.mean()) / ref.std()
+def rango(v, ref):    return (v - ref.min()) / (ref.max() - ref.min())
+def robusta(v, ref):
+    q1, q2, q3 = np.percentile(ref, [25, 50, 75])
+    return (v - q2) / (q3 - q1)
+
+print([round(float(np.ptp(f(normales, x))), 4) for f in (estandar, rango, robusta)])
+```
+
+Los nueve valores normales ocupan **0,0268** con el estandarizado, **0,0080** con el de rango y **1,7778** con el robusto. El de rango los deja en menos de una centésima porque divide por 999; el estandarizado, algo más porque la desviación típica crece con el atípico pero no tanto como el recorrido. El robusto los deja casi como estaban: sus cuartiles son 3,25 y 7,75, y el 1000 no entra en esa cuenta.
+:::
+
+```{pyodide}
+#| exercise: ex_escalados
+#| check: true
+if [round(float(np.ptp(f(normales, x))), 4) for f in (estandar, rango, robusta)] == [0.0268, 0.008, 1.7778]:
+    feedback = {"correct": True, "message": "Correcto: el robusto conserva la anchura de los normales."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [0.0268, 0.008, 1.7778]."}
+feedback
+```
+
+### Ejercicio 2, Cuánto castiga ridge según la unidad
+
+Con la Proposición 5.3, calcular el factor por el que ridge penaliza un coeficiente cuando su columna se mide en otra unidad.
+
+```{pyodide}
+#| exercise: ex_castigo
+import numpy as np
+
+unidades = np.array([1000.0, 10.0, 1.0, 0.1, 0.001])
+
+# la columna u*x necesita un coeficiente beta/u para hacer el mismo trabajo,
+# y ridge castiga el cuadrado de ese coeficiente
+castigo = ______
+
+print([round(float(z), 6) for z in castigo])
+```
+
+::: {.hint exercise="ex_castigo"}
+Si el coeficiente pasa a ser $\beta/u$, su cuadrado es $\beta^2/u^2$: el castigo relativo vale $1/u^2$.
+:::
+
+::: {.solution exercise="ex_castigo"}
+```{pyodide}
+import numpy as np
+
+unidades = np.array([1000.0, 10.0, 1.0, 0.1, 0.001])
+
+castigo = 1.0 / unidades ** 2
+
+print([round(float(z), 6) for z in castigo])
+```
+
+Medir una columna en milésimas multiplica su castigo por **un millón**; medirla en miles lo divide por un millón. Por eso en la celda la columna en milésimas desaparece y la medida en miles se queda casi sin encoger: con la misma $\lambda$, ridge está aplicando penalizaciones que difieren en **doce órdenes de magnitud** entre la primera y la última.
+:::
+
+```{pyodide}
+#| exercise: ex_castigo
+#| check: true
+if [round(float(z), 6) for z in castigo] == [1e-06, 0.01, 1.0, 100.0, 1000000.0]:
+    feedback = {"correct": True, "message": "Correcto: el castigo va como 1/u²."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [1e-06, 0.01, 1.0, 100.0, 1000000.0]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Atributos 5**:
+
+1. Tomar un conjunto con columnas en unidades muy distintas y comparar el $R^2$ de kNN y de ridge con y sin estandarizar. Anotar cuál de los dos pierde más.
+2. Meter uno, tres y doce atípicos en una columna y medir los tres escalados, reproduciendo la tabla de la Sección 3 con datos propios.
+3. Encontrar una columna donde el escalado robusto funcione **peor** que el estandarizado y explicar en dos frases por qué. Guardar el caso en `50-Errores/`.
+
+## Del libro
+
+FES cap. 6 *Engineering Numeric Predictors* trata el centrado, el escalado y el escalado por rango en su §6.1 *1:1 Transformations*, junto a las transformaciones de potencia de la Lección 04, como técnicas para llevar los predictores a unidades comunes. El capítulo insiste en el mismo procedimiento que aquí se mide en la Sección 4: los parámetros de la transformación se estiman con el conjunto de entrenamiento y se aplican después, sin volver a estimarlos, a todos los demás.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- **Estandarizar**: $(x_j-c_j)/s_j$ con media y desviación del entrenamiento.
+- A mínimos cuadrados **no le importan las unidades**: el espacio columna de $XD$ es el de $X$.
+- A **ridge sí**: con la misma $\lambda$, $R^2$ de **0,9194** a **0,6117** solo por las unidades.
+- Porque castiga el tamaño del coeficiente, y una columna en milésimas necesita uno mil veces mayor.
+- El castigo relativo va como $1/u^2$: **doce órdenes de magnitud** entre milésimas y miles.
+- A **kNN todavía más**: el ruido medido en miles deja el $R^2$ en **−0,0946**.
+- La distancia pesa cada columna por el **cuadrado** de su unidad.
+- Un solo atípico deja las filas normales en ancho **0,0143** con el escalado por rango.
+- El **robusto** —mediana e intercuartil— no ve los extremos y se queda en **0,8527**.
+- Después de estandarizar, **las unidades de partida desaparecen**: $(u_jx_j-u_jc_j)/(u_js_j)$.
+- Centro y escala se estiman **con el entrenamiento** y se aplican iguales a todo lo demás.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico. Que la predicción de mínimos cuadrados cambia menos de $10^{-9}$ al multiplicar las columnas por $(1;\,1000;\,0{,}001)$; que ridge con $\lambda=1$, 10 y 100 alcanza 0,9194, 0,9159 y 0,8011 de $R^2$ estandarizado y 0,6117, 0,6083 y 0,5385 en unidades mixtas, con el coeficiente de la columna en milésimas en 0,000256, 0,000025 y 0,000002; que kNN con 15 vecinos da 0,8491 con las tres columnas en la misma escala, −0,0946 con el ruido en miles, 0,5809 con una señal en milésimas y 0,8585 al estandarizar el caso del ruido; que con 0, 1, 3 y 12 atípicos el $R^2$ de kNN vale 0,8539, 0,6056, 0,4893 y 0,4437 con el estandarizado, 0,8464, 0,4443, 0,4421 y 0,4418 con el de rango y 0,8525, 0,8527, 0,8524 y 0,8509 con el robusto, y el ancho de las filas normales tras el escalado por rango vale 1,0000, 0,0143, 0,0120 y 0,0119; y que después de estandarizar, cuatro juegos de unidades dan la misma predicción de ridge por debajo de $10^{-9}$. Ridge, kNN y los tres escalados están escritos en la página.
+
+**Lo que se usa de otras lecciones sin repetir.** La penalización de ridge y su solución cerrada son de Machine Learning 8. Que la proyección sobre un espacio columna no depende de la base es de Álgebra 5. Estimar en el entrenamiento y aplicar a todo lo demás es de Atributos 02.
+
+**Lo que se enuncia sin demostrar.** Que la desviación típica crece con un atípico «en proporción a $1/\sqrt n$ de su distancia» es una aproximación para $n$ grande y un solo atípico; la tabla la respalda sin demostrarla. Y la afirmación de que PCA y SVM dependen de la escala igual que kNN se enuncia aquí y se mide en las lecciones correspondientes.
+
+**Lo que es mío, no del libro.** Poner mínimos cuadrados y ridge en la misma celda para que la diferencia entre los dos sea **la penalización** y nada más. Medir con kNN el caso extremo —un $R^2$ negativo por una unidad mal elegida—, que convierte «conviene estandarizar» en una cifra que no admite discusión. El visual de la vecindad que pasa de círculo a franja, que es la misma cuenta de la distancia dibujada. Y la Proposición 5.6, que explica por qué estandarizar no es una opción de estilo: **elimina una decisión arbitraria**, las unidades en que alguien apuntó los datos.
+:::

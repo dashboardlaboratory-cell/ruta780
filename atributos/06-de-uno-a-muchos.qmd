@@ -1,0 +1,604 @@
+---
+title: "De uno a muchos: discretizar, splines y expansión polinómica"
+subtitle: "Feature Engineering · Lección 06"
+nivel: L3
+modulo: atributos
+fase: F2
+prereqs: [atributos/05-escalado-y-centrado, ml/10-bases-y-splines, matematica/05-proyeccion-ortogonal]
+siguientes: []
+libro: "FES, cap. 6 Engineering Numeric Predictors"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="atributos/06-de-uno-a-muchos"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F2]{.item}
+[**Libro** FES 6]{.item}
+[**Prereqs** [Escalado y centrado](05-escalado-y-centrado.qmd) · [Bases y splines](../ml/10-bases-y-splines.qmd) · [Proyección ortogonal](../matematica/05-proyeccion-ortogonal.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. **Demostrar cuánto pierde discretizar**: un efecto lineal partido en $k$ cajas iguales explica exactamente $1-1/k^2$ de la señal, medido **0,7493** con dos cajas contra 0,75 predicho.
+2. **Comparar las tres maneras de convertir una columna en varias**: con 300 filas y un efecto suave, un spline de **6** columnas alcanza **0,8322** de $R^2$ y 30 cajas se quedan en **0,8129**.
+3. **Medir la diferencia entre una base global y una local**: al mover un solo punto, el polinomio transmite al extremo opuesto el **5,9 %** del cambio y el spline natural el **0,9 %**.
+4. Explicar por qué ese número **no depende de ninguna respuesta**: es una fila de la matriz sombrero.
+5. **Identificar el único caso en que discretizar gana**: con un escalón en $x=0{,}7$, dos cajas con el corte acertado alcanzan **0,7203** y le ganan al spline de ocho columnas; con el corte errado caen a **0,4501**.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Atributos 04 y 05**: las transformaciones 1:1, que no pueden arreglar una relación que sube y baja.
+- **Machine Learning 10**: las bases y los splines, que aquí se miden como atributos.
+- **Álgebra 5**: la proyección ortogonal, de la que sale la matriz sombrero.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Atributos 07**: de muchos a muchos, el camino inverso: pocas columnas a partir de muchas.
+- **Atributos 12**: las interacciones, que son otra expansión de una columna en varias.
+- **Machine Learning 12**: los árboles, que buscan los cortes de las cajas en los propios datos.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $k$ | ka | Número de cajas |
+| $d$ | de | Grado del polinomio |
+| $\xi_j$ | xi sub jota | Los nudos del spline |
+| $B$ | be mayúscula | La matriz de la base: una columna por función, una fila por dato |
+| $H$ | hache | La matriz sombrero, $B(B^\top B)^{-1}B^\top$ |
+| $e_i$ | e sub i | El vector con un 1 en la posición $i$ y ceros en el resto |
+| $L$ | ele | La longitud del intervalo donde vive $x$ |
+| $R^2$ | erre cuadrado | La fracción de varianza explicada |
+:::
+
+## 1. Lo que cuesta discretizar
+
+::: {.definicion}
+**Definición 6.1 ([discretización]{.g}).** Sustituir un predictor continuo por $k$ columnas indicadoras, una por tramo. El modelo asigna entonces un valor constante a cada tramo.
+:::
+
+::: {.proposicion}
+**Proposición 6.2 (discretizar un efecto lineal explica $1-1/k^2$).** Con $x$ uniforme y $y=x$ sin ruido, $k$ cajas iguales explican **0,7493, 0,8886, 0,9601, 0,9900 y 0,9975** de la varianza para $k=2,3,5,10,20$, contra los $1-1/k^2$ = 0,7500, 0,8889, 0,9600, 0,9900 y 0,9975 de la fórmula.
+:::
+
+::: {.demostracion}
+*Demostración.* Con cajas, el mejor ajuste asigna a cada tramo la media de $y$ en él, y lo que no puede ver es la variación **dentro** de cada tramo. Para $x$ uniforme sobre un intervalo de longitud $L$, la varianza total vale $L^2/12$ y la de dentro de un tramo de longitud $L/k$, $(L/k)^2/12$: el cociente es $1/k^2$. **Discretizar no añade nada que no estuviera en la columna continua: solo quita**, y lo que quita se puede calcular antes de hacerlo. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+# Un efecto LINEAL, sin ruido, y el mismo predictor partido en k cajas
+# iguales. Lo que cada caja no puede ver es la variacion dentro de ella.
+def cajas(x, k, lo=-3.0, hi=3.0):
+    cortes = np.linspace(lo, hi, k + 1)[1:-1]
+    return np.eye(k)[np.digitize(x, cortes)]
+
+def r2(y, p):
+    return 1.0 - ((y - p) ** 2).mean() / y.var()
+
+rng = np.random.default_rng(0)
+x = rng.uniform(-3.0, 3.0, 200000)
+y = x.copy()                                   # la senal pura, sin ruido
+
+print("un efecto lineal, discretizado en k cajas iguales")
+print("  %-8s %14s %14s" % ("cajas", "R2 medido", "1 - 1/k^2"))
+for k in (2, 3, 5, 10, 20):
+    B = cajas(x, k)
+    p = B @ np.linalg.lstsq(B, y, rcond=None)[0]
+    print("  %-8d %14.4f %14.4f" % (k, r2(y, p), 1.0 - 1.0 / k ** 2))
+print()
+print("sin ruido, una sola columna continua explica el 100 %. Partida en dos")
+print("cajas explica el 75 %; en cinco, el 96 %. Lo que falta es exactamente")
+print("la varianza dentro de cada caja, que es 1/k^2 de la total cuando x es")
+print("uniforme. Discretizar no anade nada que no estuviera: solo quita")
+```
+
+```{=html}
+<div class="viz-cajas">
+  <div class="controles">
+    <label>Cajas <input id="cj-k" type="range" min="2" max="30" step="1" value="6"> <span id="cj-k-v">6</span></label>
+    <label>Frecuencia de la curva <input id="cj-w" type="range" min="0.5" max="3" step="0.05" value="1.5"> <span id="cj-w-v">1,50</span></label>
+  </div>
+  <svg id="cj-svg" viewBox="0 0 660 290" role="img" aria-label="Una curva suave y su aproximación por cajas: cada caja vale la media de la curva en su tramo, y lo que se pierde es la variación dentro de cada una."></svg>
+  <p class="lectura" id="cj-lectura"></p>
+</div>
+<style>
+.viz-cajas { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-cajas .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-cajas label { display: flex; align-items: center; gap: .4rem; }
+.viz-cajas input[type=range] { width: 150px; padding: 0; }
+.viz-cajas svg { width: 100%; height: auto; display: block; }
+.viz-cajas .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("cj-svg"), lec = document.getElementById("cj-lectura");
+  var ck = document.getElementById("cj-k"), cw = document.getElementById("cj-w");
+  var ek = document.getElementById("cj-k-v"), ew = document.getElementById("cj-w-v");
+  var X0 = 58, X1 = 628, Y0 = 22, Y1 = 232, A = -3, B = 3;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var k = +ck.value, w = +cw.value;
+    ek.textContent = String(k); ew.textContent = w.toFixed(2).replace(".", ",");
+    function f(x) { return Math.sin(w * x); }
+    function px(v) { return X0 + ((v - A) / (B - A)) * (X1 - X0); }
+    function py(v) { return Y1 - ((v + 1.2) / 2.4) * (Y1 - Y0); }
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(0) + " L" + X1 + " " + py(0), stroke: C_L, "stroke-width": 1 }));
+    var i, j, x, d = "", ss = 0, sr = 0, N = 600, media = 0;
+    for (i = 0; i <= N; i++) { x = A + i * (B - A) / N; media += f(x) / (N + 1); }
+    for (i = 0; i <= N; i++) { x = A + i * (B - A) / N; d += (i === 0 ? "M" : " L") + px(x).toFixed(1) + " " + py(f(x)).toFixed(1); }
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_T, "stroke-width": 2, opacity: .55 }));
+    // cada caja vale la media de la curva en su tramo
+    var ancho = (B - A) / k;
+    for (j = 0; j < k; j++) {
+      var a = A + j * ancho, m = 0, M = 60;
+      for (i = 0; i <= M; i++) m += f(a + i * ancho / M) / (M + 1);
+      for (i = 0; i <= M; i++) { x = a + i * ancho / M; sr += Math.pow(f(x) - m, 2); ss += Math.pow(f(x) - media, 2); }
+      svg.appendChild(el("path", { d: "M" + px(a).toFixed(1) + " " + py(m).toFixed(1) + " L" + px(a + ancho).toFixed(1) + " " + py(m).toFixed(1),
+        stroke: C_A, "stroke-width": 3 }));
+      if (j > 0) svg.appendChild(el("path", { d: "M" + px(a).toFixed(1) + " " + Y0 + " L" + px(a).toFixed(1) + " " + Y1,
+        stroke: C_L, "stroke-width": 0.8, "stroke-dasharray": "3 4" }));
+    }
+    var r2 = 1 - sr / ss;
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 22, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "x"));
+    lec.innerHTML = "Con <strong>" + k + "</strong> cajas, la mejor aproximación posible —cada caja en la media de la curva en su tramo— explica el <strong>" +
+      (100 * r2).toFixed(1).replace(".", ",") + " %</strong> de la variación de la curva, <em>sin ruido y con infinitos datos</em>. " +
+      (r2 < 0.3 ? "Con cajas anchas frente a la ondulación, la media de cada tramo cancela subidas con bajadas y la caja no ve nada."
+        : "Subir la frecuencia de la curva con las mismas cajas enseña lo que las cajas pagan: la variación de dentro de cada tramo es la que se pierde.") +
+      " Ése es el techo; con datos reales y ruido, cada caja se estima además con solo las filas de su tramo.";
+  }
+  ck.addEventListener("input", dibujar); cw.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Cajas, polinomios y splines frente a una curva
+
+::: {.definicion}
+**Definición 6.3 ([spline cúbico natural]{.g}).** Un polinomio cúbico a trozos, con los trozos unidos en los nudos $\xi_j$ con continuidad hasta la segunda derivada, y **lineal** más allá de los nudos extremos. Con $K$ nudos usa $K$ columnas.
+:::
+
+::: {.proposicion}
+**Proposición 6.4 (seis columnas de spline le ganan a treinta cajas).** Con 300 filas y un efecto $\sin(1{,}5x)$, las cajas alcanzan $R^2=$ **0,0063, 0,6749, 0,7887 y 0,8129** con 3, 6, 12 y 30 columnas; el polinomio de grado 5 alcanza **0,8362** con 6, y el spline natural **0,8322** con 6 y **0,8355** con 8.
+:::
+
+::: {.demostracion}
+*Demostración.* Las cajas pagan dos veces. Pierden la variación de dentro de cada tramo, por la Proposición 6.2, y gastan una columna por tramo, así que para aproximar una curva necesitan muchas y cada una se estima con las pocas filas que caen en ella. Con tres cajas el caso es extremo: la curva sube y baja dentro de cada tramo, la media de cada uno sale casi cero y las cajas no ven nada. Polinomio y spline, con el mismo número de columnas, **quedan a la par dentro del recorrido de los datos**; la diferencia entre los dos no está aquí sino en la sección siguiente. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def cajas(x, cortes):
+    return np.eye(len(cortes) + 1)[np.digitize(x, cortes)]
+
+def polinomio(x, d):
+    """Potencias de x/3, para que las columnas no difieran en ordenes de magnitud."""
+    return np.column_stack([(x / 3.0) ** j for j in range(d + 1)])
+
+def natural(x, nudos):
+    """Base de spline cubico natural: lineal mas alla de los nudos extremos."""
+    K, xk = len(nudos), nudos[-1]
+    def d(k):
+        return (np.clip(x - nudos[k], 0, None) ** 3
+                - np.clip(x - xk, 0, None) ** 3) / (xk - nudos[k])
+    return np.column_stack([np.ones_like(x), x] + [d(k) - d(K - 2) for k in range(K - 2)])
+
+def ajusta(B, y, Bt):
+    return Bt @ np.linalg.lstsq(B, y, rcond=None)[0]
+
+def r2(y, p):
+    return 1.0 - ((y - p) ** 2).mean() / y.var()
+
+# Un efecto curvo y suave: tres maneras de convertir una columna en varias.
+def datos(n, semilla):
+    rng = np.random.default_rng(semilla)
+    x = rng.uniform(-3.0, 3.0, n)
+    return x, np.sin(1.5 * x) + 0.3 * rng.standard_normal(n)
+
+x, y = datos(300, 1)
+xt, yt = datos(20000, 2)
+
+print("un efecto suave, con 300 filas; R2 sobre datos nuevos")
+print("  %-28s %9s %10s" % ("", "columnas", "R2"))
+for k in (3, 6, 12, 30):
+    c = np.linspace(-3.0, 3.0, k + 1)[1:-1]
+    print("  %-28s %9d %10.4f" % ("%d cajas iguales" % k, k, r2(yt, ajusta(cajas(x, c), y, cajas(xt, c)))))
+for d in (3, 5, 9):
+    print("  %-28s %9d %10.4f" % ("polinomio de grado %d" % d, d + 1,
+                                  r2(yt, ajusta(polinomio(x, d), y, polinomio(xt, d)))))
+for m in (6, 8, 12):
+    nd = np.linspace(-3.0, 3.0, m)
+    print("  %-28s %9d %10.4f" % ("spline natural, %d nudos" % m, m,
+                                  r2(yt, ajusta(natural(x, nd), y, natural(xt, nd)))))
+print()
+print("seis columnas de spline le ganan a treinta cajas. Las cajas pagan dos")
+print("veces: pierden la variacion dentro de cada una y gastan una columna por")
+print("caja, de modo que para aproximar una curva necesitan muchas y cada una")
+print("se estima con pocas filas")
+```
+
+## 3. Una base global y una base local
+
+::: {.proposicion}
+**Proposición 6.5 (el polinomio reparte y el spline no).** Subiendo 1 la respuesta del punto más a la izquierda entre 200, con ocho columnas en las dos bases, la curva ajustada cambia **0,1868** en ese punto y **−0,0110** en el extremo opuesto con el polinomio; **0,1545** y **−0,0015** con el spline natural. Llega al otro extremo el **5,9 %** del cambio en un caso y el **0,9 %** en el otro.
+:::
+
+::: {.demostracion}
+*Demostración.* El ajuste es $\hat y=Hy$ con $H=B(B^\top B)^{-1}B^\top$, así que subir 1 la respuesta $i$ cambia la curva en la columna $i$ de $H$, $B(B^\top B)^{-1}B^\top e_i$, que **no depende de ninguna $y$**: es una propiedad de la base y de dónde están los puntos. Cada columna de un polinomio vale algo en todo el recorrido, de modo que un coeficiente movido por un punto mueve la curva en todas partes, y el cambio se reparte oscilando hasta el extremo opuesto. Las columnas del spline son locales, y el cambio se queda cerca del punto que lo produjo. **Ésa es la razón por la que un spline se prefiere a un polinomio del mismo tamaño**: un error en una esquina de los datos no contamina el resto de la curva. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def cajas(x, cortes):
+    return np.eye(len(cortes) + 1)[np.digitize(x, cortes)]
+
+def polinomio(x, d):
+    """Potencias de x/3, para que las columnas no difieran en ordenes de magnitud."""
+    return np.column_stack([(x / 3.0) ** j for j in range(d + 1)])
+
+def natural(x, nudos):
+    """Base de spline cubico natural: lineal mas alla de los nudos extremos."""
+    K, xk = len(nudos), nudos[-1]
+    def d(k):
+        return (np.clip(x - nudos[k], 0, None) ** 3
+                - np.clip(x - xk, 0, None) ** 3) / (xk - nudos[k])
+    return np.column_stack([np.ones_like(x), x] + [d(k) - d(K - 2) for k in range(K - 2)])
+
+def ajusta(B, y, Bt):
+    return Bt @ np.linalg.lstsq(B, y, rcond=None)[0]
+
+def r2(y, p):
+    return 1.0 - ((y - p) ** 2).mean() / y.var()
+
+# Cuanto se mueve la curva ajustada en cada x si se sube 1 la y de UN solo
+# punto, el de mas a la izquierda. El cambio es (B'B)^-1 B' e: no depende de
+# las y en absoluto, solo de la base y de donde estan los puntos.
+rng = np.random.default_rng(3)
+x = np.sort(rng.uniform(-3.0, 3.0, 200))
+e = np.zeros(len(x)); e[0] = 1.0
+rejilla = np.array([-2.9, -2.0, -1.0, 0.0, 1.0, 2.0, 2.9])
+
+print("se sube 1 la y del punto x = %.3f; cambio de la curva en cada x" % x[0])
+print("  %-26s" % "" + "".join("%9.1f" % v for v in rejilla))
+filas = {}
+for nombre, base in (("polinomio de grado 7", lambda z: polinomio(z, 7)),
+                     ("spline natural, 8 nudos", lambda z: natural(z, np.linspace(-3.0, 3.0, 8)))):
+    B = base(x)
+    cambio = base(rejilla) @ np.linalg.lstsq(B, e, rcond=None)[0]
+    filas[nombre] = cambio
+    print("  %-26s" % ("%s (%d col.)" % (nombre, B.shape[1])) + "".join("%9.4f" % v for v in cambio))
+print()
+for nombre, c in filas.items():
+    print("  %-26s llega al otro extremo el %5.1f %% del cambio"
+          % (nombre, 100.0 * abs(c[-1]) / abs(c[0])))
+print()
+print("las dos bases tienen ocho columnas. El polinomio reparte el cambio por")
+print("todo el recorrido —sube y baja hasta el extremo opuesto— porque cada una")
+print("de sus columnas vale algo en todas partes. El spline lo deja casi todo")
+print("cerca del punto que se movio, porque sus columnas son locales")
+```
+
+```{=html}
+<div class="viz-local">
+  <div class="controles">
+    <label>Punto que se mueve <input id="lc-p" type="range" min="0" max="59" step="1" value="3"> <span id="lc-p-v">x = −2,70</span></label>
+    <label>Columnas <input id="lc-c" type="range" min="4" max="12" step="1" value="8"> <span id="lc-c-v">8</span></label>
+  </div>
+  <svg id="lc-svg" viewBox="0 0 660 300" role="img" aria-label="Cuánto cambia la curva ajustada en cada x si se sube un solo punto, con una base polinómica y con una spline del mismo número de columnas."></svg>
+  <p class="lectura" id="lc-lectura"></p>
+</div>
+<style>
+.viz-local { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-local .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-local label { display: flex; align-items: center; gap: .4rem; }
+.viz-local input[type=range] { width: 150px; padding: 0; }
+.viz-local svg { width: 100%; height: auto; display: block; }
+.viz-local .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("lc-svg"), lec = document.getElementById("lc-lectura");
+  var cp = document.getElementById("lc-p"), cc = document.getElementById("lc-c");
+  var ep = document.getElementById("lc-p-v"), ec = document.getElementById("lc-c-v");
+  var X0 = 58, X1 = 628, Y0 = 22, Y1 = 242, N = 60, i;
+  var XS = []; for (i = 0; i < N; i++) XS.push(-3 + 6 * (i + 0.5) / N);   // 60 puntos equiespaciados
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function poli(x, p) { var r = [], j; for (j = 0; j < p; j++) r.push(Math.pow(x / 3, j)); return r; }
+  function natural(x, p) {
+    var nud = [], j; for (j = 0; j < p; j++) nud.push(-3 + 6 * j / (p - 1));
+    var xk = nud[p - 1];
+    function d(k) { return (Math.pow(Math.max(x - nud[k], 0), 3) - Math.pow(Math.max(x - xk, 0), 3)) / (xk - nud[k]); }
+    var r = [1, x]; for (j = 0; j < p - 2; j++) r.push(d(j) - d(p - 2)); return r;
+  }
+  // (B'B)^-1 B' e_i por eliminacion gaussiana: la fila i de la matriz sombrero
+  function influencia(base, p, idx) {
+    var B = XS.map(function (x) { return base(x, p); }), A = [], b = [], r, c, k;
+    for (r = 0; r < p; r++) { A.push([]); for (c = 0; c < p; c++) { var s = 0; for (k = 0; k < N; k++) s += B[k][r] * B[k][c]; A[r].push(s); } b.push(B[idx][r]); }
+    for (c = 0; c < p; c++) {
+      var piv = c; for (r = c + 1; r < p; r++) if (Math.abs(A[r][c]) > Math.abs(A[piv][c])) piv = r;
+      var t = A[c]; A[c] = A[piv]; A[piv] = t; var tb = b[c]; b[c] = b[piv]; b[piv] = tb;
+      for (r = c + 1; r < p; r++) { var f = A[r][c] / A[c][c]; for (k = c; k < p; k++) A[r][k] -= f * A[c][k]; b[r] -= f * b[c]; }
+    }
+    var coef = new Array(p);
+    for (r = p - 1; r >= 0; r--) { var s2 = b[r]; for (k = r + 1; k < p; k++) s2 -= A[r][k] * coef[k]; coef[r] = s2 / A[r][r]; }
+    return function (x) { var v = base(x, p), s3 = 0; for (k = 0; k < p; k++) s3 += v[k] * coef[k]; return s3; };
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var idx = +cp.value, p = +cc.value;
+    ep.textContent = "x = " + XS[idx].toFixed(2).replace(".", ",").replace("-", "−");
+    ec.textContent = String(p);
+    var gP = influencia(poli, p, idx), gS = influencia(natural, p, idx);
+    var tope = Math.max(Math.abs(gP(XS[idx])), Math.abs(gS(XS[idx]))) * 1.15;
+    function px(v) { return X0 + ((v + 3) / 6) * (X1 - X0); }
+    function py(v) { return (Y0 + Y1) / 2 - (v / tope) * ((Y1 - Y0) / 2); }
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(0) + " L" + X1 + " " + py(0), stroke: C_L, "stroke-width": 1.2 }));
+    var dP = "", dS = "", x, j;
+    for (j = 0; j <= 240; j++) { x = -3 + 6 * j / 240;
+      dP += (j === 0 ? "M" : " L") + px(x).toFixed(1) + " " + py(gP(x)).toFixed(1);
+      dS += (j === 0 ? "M" : " L") + px(x).toFixed(1) + " " + py(gS(x)).toFixed(1); }
+    svg.appendChild(el("path", { d: dP, fill: "none", stroke: C_B, "stroke-width": 2.4 }));
+    svg.appendChild(el("path", { d: dS, fill: "none", stroke: C_A, "stroke-width": 2.6 }));
+    svg.appendChild(el("path", { d: "M" + px(XS[idx]).toFixed(1) + " " + Y0 + " L" + px(XS[idx]).toFixed(1) + " " + Y1,
+      stroke: C_T, "stroke-width": 1.2, "stroke-dasharray": "4 4", opacity: .5 }));
+    svg.appendChild(el("text", { x: X1 - 4, y: Y0 + 12, "text-anchor": "end", "font-size": 10.5, fill: C_B }, "polinomio"));
+    svg.appendChild(el("text", { x: X1 - 4, y: Y0 + 28, "text-anchor": "end", "font-size": 10.5, fill: C_A }, "spline natural"));
+    // cuanto del cambio llega a mas de 2 unidades de distancia
+    function lejos(g) { var m = 0; for (j = 0; j <= 240; j++) { x = -3 + 6 * j / 240; if (Math.abs(x - XS[idx]) > 2) m = Math.max(m, Math.abs(g(x))); } return m / Math.abs(g(XS[idx])); }
+    var lP = lejos(gP), lS = lejos(gS);
+    lec.innerHTML = "Se sube 1 la respuesta del punto en " + ep.textContent + ", con <strong>" + p + "</strong> columnas en las dos bases. " +
+      "A más de dos unidades de distancia, la curva del polinomio todavía se mueve hasta un <strong>" + (100 * lP).toFixed(1).replace(".", ",") +
+      " %</strong> de lo que se mueve en el punto; la del spline, hasta un <strong>" + (100 * lS).toFixed(1).replace(".", ",") + " %</strong>. " +
+      "La curva dibujada es una fila de la matriz sombrero y <em>no depende de ninguna respuesta</em>: es una propiedad de la base y de dónde están los puntos.";
+  }
+  cp.addEventListener("input", dibujar); cc.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+**Modo de falla.** Se ajusta un polinomio de grado alto para capturar una curva y el ajuste queda bien dentro del recorrido, así que se da por bueno. Unos pocos datos anómalos en una punta —una semana rara al final de la serie, los clientes más grandes de la muestra— mueven entonces la curva **en todo el recorrido**, también donde había datos de sobra. El síntoma es un efecto que cambia de forma en el centro al añadir o quitar unos pocos puntos del borde. La defensa es preferir una base local del mismo tamaño y, si se usa un polinomio, comprobar cuánto se mueve la curva al quitar los puntos de los extremos.
+
+## 4. El caso en que discretizar gana
+
+::: {.proposicion}
+**Proposición 6.6 (dos cajas bien cortadas le ganan a todo, y mal cortadas pierden con todo).** Con un escalón en $x=0{,}7$, dos cajas con el corte en 0,7 alcanzan $R^2=$ **0,7203** y **0,7374** junto al salto, por encima del spline natural de ocho columnas —**0,6721** y **0,3370**—. Con el corte en 0 caen a **0,4501** y **−0,2330**.
+:::
+
+::: {.demostracion}
+*Demostración.* Cuando el mecanismo **es** un escalón, dos cajas con el corte en su sitio tienen exactamente la forma de la verdad y solo hay que estimar dos medias. Un spline o un polinomio, que son suaves, necesitan muchas columnas para aproximar un salto y aun así lo redondean, que es donde pierden: la columna de junto al salto es la que peor les va. Pero el corte tiene que estar en su sitio. Movido de 0,7 a 0, cada caja mezcla filas de los dos niveles justo donde está el salto, y junto a él el ajuste es **peor que no predecir**. **Una caja solo gana si ya se sabe dónde cortar**, y saberlo es información de fuera de los datos; buscar el corte en los propios datos es ajustar un árbol, que es otra técnica con sus propios problemas. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def cajas(x, cortes):
+    return np.eye(len(cortes) + 1)[np.digitize(x, cortes)]
+
+def polinomio(x, d):
+    """Potencias de x/3, para que las columnas no difieran en ordenes de magnitud."""
+    return np.column_stack([(x / 3.0) ** j for j in range(d + 1)])
+
+def natural(x, nudos):
+    """Base de spline cubico natural: lineal mas alla de los nudos extremos."""
+    K, xk = len(nudos), nudos[-1]
+    def d(k):
+        return (np.clip(x - nudos[k], 0, None) ** 3
+                - np.clip(x - xk, 0, None) ** 3) / (xk - nudos[k])
+    return np.column_stack([np.ones_like(x), x] + [d(k) - d(K - 2) for k in range(K - 2)])
+
+def ajusta(B, y, Bt):
+    return Bt @ np.linalg.lstsq(B, y, rcond=None)[0]
+
+def r2(y, p):
+    return 1.0 - ((y - p) ** 2).mean() / y.var()
+
+# Ahora el mecanismo es un escalon: y salta de 0 a 1 en x = 0.7. Es el unico
+# caso en que discretizar tiene la forma correcta, y solo si el corte se pone
+# donde esta el salto.
+def datos(n, semilla):
+    rng = np.random.default_rng(semilla)
+    x = rng.uniform(-3.0, 3.0, n)
+    return x, 1.0 * (x > 0.7) + 0.3 * rng.standard_normal(n)
+
+x, y = datos(300, 1)
+xt, yt = datos(20000, 2)
+cerca = np.abs(xt - 0.7) < 0.3
+
+print("un escalon en x = 0.7; R2 sobre datos nuevos")
+print("  %-36s %9s %8s %16s" % ("", "columnas", "R2", "R2 junto al salto"))
+for nombre, fb in (("2 cajas, corte en 0.7 (el bueno)", lambda z: cajas(z, [0.7])),
+                   ("2 cajas, corte en 0 (errado)", lambda z: cajas(z, [0.0])),
+                   ("6 cajas iguales", lambda z: cajas(z, np.linspace(-3, 3, 7)[1:-1])),
+                   ("polinomio de grado 7", lambda z: polinomio(z, 7)),
+                   ("spline natural, 8 nudos", lambda z: natural(z, np.linspace(-3, 3, 8)))):
+    p = ajusta(fb(x), y, fb(xt))
+    print("  %-36s %9d %8.4f %16.4f" % (nombre, fb(x).shape[1], r2(yt, p), r2(yt[cerca], p[cerca])))
+print()
+print("dos columnas con el corte bien puesto le ganan al spline de ocho: la")
+print("forma del modelo es la forma del mecanismo. Pero mover el corte de 0.7")
+print("a 0 hunde el R2 junto al salto a -0.2330, peor que no predecir. Una")
+print("caja solo gana si ya se sabe donde cortar, y saberlo es informacion de")
+print("fuera de los datos; buscarlo en los datos es ajustar un arbol")
+```
+
+## 5. Lo que esta lección no resuelve
+
+Todo lo anterior ha elegido **a mano** el número de cajas, el grado y los nudos. Elegirlos con los datos es ajustar un hiperparámetro y va dentro de la validación, como cualquier otro; la Lección 02 dice cómo y la Lección 15 cuánto cuesta equivocarse.
+
+Tampoco se ha tratado la **penalización**. Un spline con muchos nudos y un término que castiga la curvatura —un spline de suavizado— sustituye la elección de nudos por la elección de una sola constante, y es de Machine Learning 11.
+
+Y las tres bases son de **una** columna. Con dos o más, el número de columnas de una expansión crece con el producto, y la pregunta pasa a ser qué combinaciones merece la pena construir, que es la Lección 12.
+
+## Ejercicios
+
+### Ejercicio 1, El techo de las cajas
+
+Con la Proposición 6.2, calcular qué fracción de la señal de un efecto lineal pierde cada número de cajas, y cuántas hacen falta para perder menos del 1 %.
+
+```{pyodide}
+#| exercise: ex_techo
+import numpy as np
+
+ks = np.array([2, 4, 8, 16, 32])
+
+# con x uniforme, k cajas pierden la varianza de dentro: 1/k^2 del total
+pierde = ______
+# el primer k con perdida por debajo del 1 %
+minimo = ______
+
+print([round(float(z), 6) for z in pierde], int(minimo))
+```
+
+::: {.hint exercise="ex_techo"}
+La pérdida vale $1/k^2$, y $1/k^2<0{,}01$ exige $k>10$: el primer entero que lo cumple es 11.
+:::
+
+::: {.solution exercise="ex_techo"}
+```{pyodide}
+import numpy as np
+
+ks = np.array([2, 4, 8, 16, 32])
+
+pierde = 1.0 / ks.astype(float) ** 2
+minimo = int(np.floor(np.sqrt(1.0 / 0.01))) + 1
+
+print([round(float(z), 6) for z in pierde], int(minimo))
+```
+
+Dos cajas pierden el **25 %** de la señal, cuatro el 6,25 % y ocho el 1,56 %. Para perder menos del 1 % hacen falta **11**: once columnas para aproximar lo que una sola columna continua da entero. Y esto es el techo sin ruido y con infinitos datos; con 300 filas, cada una de esas once se estima con unas 27.
+:::
+
+```{pyodide}
+#| exercise: ex_techo
+#| check: true
+if [round(float(z), 6) for z in pierde] == [0.25, 0.0625, 0.015625, 0.003906, 0.000977] and int(minimo) == 11:
+    feedback = {"correct": True, "message": "Correcto: once cajas para perder menos del 1 %."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [0.25, 0.0625, 0.015625, 0.003906, 0.000977] y 11."}
+feedback
+```
+
+### Ejercicio 2, La matriz sombrero a mano
+
+Comprobar sobre un caso pequeño que el cambio de la curva al subir 1 la respuesta $i$ es la columna $i$ de la matriz sombrero, y que no depende de las respuestas.
+
+```{pyodide}
+#| exercise: ex_sombrero
+import numpy as np
+
+x = np.linspace(-1.0, 1.0, 7)
+B = np.column_stack([np.ones_like(x), x, x ** 2])
+H = ______                                   # B (B'B)^-1 B'
+
+rng = np.random.default_rng(1)
+y = rng.standard_normal(7)
+e = np.zeros(7); e[0] = 1.0
+cambio = H @ (y + e) - H @ y
+
+print("el cambio es la columna 0 de H :", bool(np.allclose(cambio, H[:, 0])))
+print("la traza de H vale el numero de columnas :", round(float(np.trace(H)), 6))
+```
+
+::: {.hint exercise="ex_sombrero"}
+`B @ np.linalg.solve(B.T @ B, B.T)` construye $H$ sin invertir de forma explícita.
+:::
+
+::: {.solution exercise="ex_sombrero"}
+```{pyodide}
+import numpy as np
+
+x = np.linspace(-1.0, 1.0, 7)
+B = np.column_stack([np.ones_like(x), x, x ** 2])
+H = B @ np.linalg.solve(B.T @ B, B.T)
+
+rng = np.random.default_rng(1)
+y = rng.standard_normal(7)
+e = np.zeros(7); e[0] = 1.0
+cambio = H @ (y + e) - H @ y
+
+print("el cambio es la columna 0 de H :", bool(np.allclose(cambio, H[:, 0])))
+print("la traza de H vale el numero de columnas :", round(float(np.trace(H)), 6))
+```
+
+El cambio coincide con la columna 0 de $H$ con cualquier $y$, porque el ajuste es lineal en las respuestas: $H(y+e)-Hy=He$. Y la traza vale **3**, el número de columnas de la base, que es lo que se llama los **grados de libertad** del ajuste. Una base de ocho columnas gasta ocho, sea polinomio o spline; lo que cambia entre las dos es **cómo reparte** $H$ la influencia de cada punto, no cuánta influencia total hay.
+:::
+
+```{pyodide}
+#| exercise: ex_sombrero
+#| check: true
+if bool(np.allclose(cambio, H[:, 0])) and round(float(np.trace(H)), 6) == 3.0:
+    feedback = {"correct": True, "message": "Correcto: el cambio es una columna de H y su traza son los grados de libertad."}
+else:
+    feedback = {"correct": False, "message": "El cambio tiene que coincidir con H[:, 0] y la traza valer 3."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Atributos 6**:
+
+1. Comprobar la fórmula $1-1/k^2$ con un predictor **normal** en vez de uniforme, y anotar cuánto se aparta y por qué.
+2. Ajustar un polinomio y un spline del mismo número de columnas a unos datos propios, quitar los cinco puntos de cada extremo y medir cuánto se mueve la curva en el centro con cada base.
+3. Encontrar un mecanismo donde un polinomio le gane con claridad a un spline del mismo tamaño, y explicar en dos frases por qué. Guardar el caso en `50-Errores/`.
+
+## Del libro
+
+FES cap. 6 *Engineering Numeric Predictors* dedica su §6.2 *1:many Transformations* a estas técnicas: las expansiones en base y los splines polinómicos, que convierten un predictor numérico en varios para representar relaciones no lineales, y la **discretización**, que el capítulo desaconseja y trata como último recurso. Esta página mide por qué: la Proposición 6.2 da la pérdida exacta de discretizar un efecto lineal, y la 6.6 el único caso en que compensa.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- **Discretizar** en $k$ cajas iguales explica $1-1/k^2$ de un efecto lineal: solo quita.
+- Dos cajas pierden el **25 %**; para perder menos del 1 % hacen falta **11**.
+- Las cajas pagan dos veces: la variación de dentro y una columna por tramo.
+- **Seis columnas de spline** (0,8322) le ganan a **treinta cajas** (0,8129).
+- Polinomio y spline del mismo tamaño quedan a la par **dentro** del recorrido.
+- La diferencia: el polinomio es una **base global** y el spline una **local**.
+- Mover un punto: al extremo opuesto llega el **5,9 %** con el polinomio y el **0,9 %** con el spline.
+- Ese cambio es la columna $i$ de $H=B(B^\top B)^{-1}B^\top$: **no depende de ninguna $y$**.
+- La traza de $H$ son los **grados de libertad**: los mismos en las dos bases.
+- Un **spline natural** es lineal más allá de los nudos extremos.
+- Discretizar **gana** solo si el mecanismo es un escalón **y** el corte está en su sitio: 0,7203.
+- Con el corte errado, junto al salto: **−0,2330**, peor que no predecir.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todo lo numérico. Que un efecto lineal sin ruido partido en 2, 3, 5, 10 y 20 cajas iguales se explica en 0,7493; 0,8886; 0,9601; 0,9900 y 0,9975, contra 0,7500; 0,8889; 0,9600; 0,9900 y 0,9975 de la fórmula $1-1/k^2$; que con 300 filas y un efecto $\sin(1{,}5x)$ las cajas dan 0,0063; 0,6749; 0,7887 y 0,8129 con 3, 6, 12 y 30 columnas, el polinomio 0,7192; 0,8362 y 0,8366 con grados 3, 5 y 9, y el spline natural 0,8322; 0,8355 y 0,8333 con 6, 8 y 12 nudos; que subir 1 la respuesta del punto más a la izquierda mueve la curva del polinomio de grado 7 en 0,1868; −0,0100; 0,0058; −0,0079; 0,0078; −0,0088 y −0,0110 en $x=-2{,}9;-2;-1;0;1;2;2{,}9$, y la del spline natural de 8 nudos en 0,1545; −0,0292; 0,0142; −0,0060; 0,0011; 0,0006 y −0,0015; y que con un escalón en 0,7 las dos cajas bien cortadas dan 0,7203 y 0,7374 junto al salto, las mal cortadas 0,4501 y −0,2330, seis cajas iguales 0,6107 y −0,0560, el polinomio de grado 7 0,6554 y 0,2688 y el spline natural 0,6721 y 0,3370. Las tres bases están escritas en la página.
+
+**Lo que se usa de otras lecciones sin repetir.** Las bases de funciones y los splines son de Machine Learning 10. La matriz de proyección $H$ y su interpretación geométrica son de Álgebra 5. Que la traza de $H$ sean los grados de libertad del ajuste es de Machine Learning 29.
+
+**Lo que se enuncia sin demostrar.** La base del spline cúbico natural se **usa** con la forma de ESL §5.2.1 sin derivar por qué es lineal fuera de los nudos extremos. Y la afirmación de que un spline de suavizado sustituye la elección de nudos por la de una constante se enuncia y se remite a Machine Learning 11.
+
+**Lo que es mío, no del libro.** La fórmula $1-1/k^2$ como medida **exacta** de lo que cuesta discretizar, que convierte el consejo de FES —discretizar como último recurso— en una cifra calculable antes de hacerlo. Plantear la diferencia entre polinomio y spline como **global frente a local** y medirla con una columna de la matriz sombrero, que no depende de ninguna respuesta y por tanto es una propiedad de la base y no de la suerte de los datos. Y el par de la Sección 4: la misma técnica que pierde con todo en las secciones anteriores gana con todo cuando el mecanismo es un escalón y el corte está en su sitio, y vuelve a perder con todo en cuanto el corte se mueve.
+:::
