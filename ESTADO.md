@@ -4730,6 +4730,64 @@ mira «la prosa» tiene que decir qué cuenta como prosa. Aquí `prosa()` exclu�
 los encabezados por venir de una función pensada para las celdas, y esa
 exclusión silenciosa dejó pasar 32 casos durante meses.
 
+### 3.86 Atributos 03, y la malla que hace k-means (25-09-2026)
+
+**Atributos 03, Visualizar para proponer un atributo (L2, FES 4).** La lección
+que fija para qué sirve un gráfico en este módulo: **propone un atributo y no
+lo confirma**. Quien confirma es la validación de la 02.
+
+**Lo que una joroba doble está diciendo.** La desviación cae de **21,4802** a
+**11,0127** al separar en dos grupos cuyas medias distan **40,8937**. La varianza
+de una mezcla vale $\sigma^2+E^2p(1-p)$, y lo que el gráfico hace visible es el
+segundo término; la columna que lo produce hay que nombrarla aparte.
+
+**Cuánta diferencia regala el azar, que es la sección que faltaba.** Un gráfico
+de barras por día **nunca sale plano**: con 60 días sin ningún patrón semanal la
+brecha entre el mejor y el peor vale ya **11,0728** de media. La fórmula es
+$c_g\,\sigma\sqrt{g/n}$ con $c_7\approx2{,}70$, y **cae como $1/\sqrt n$**:
+11,07, 7,61, 4,46 y 2,22 para 60, 120, 365 y 1460 días. De ahí lo único que hay
+que retener: **la misma barra significa cosas distintas según cuántos datos
+tenga detrás, y el gráfico no lo dice.**
+
+Y la vista se equivoca en los dos sentidos: un efecto real de −8 con 60 días
+produce **12,7980**, por debajo del umbral del 95 % del azar, que vale 17,4224.
+Con 1460 días ese mismo efecto da 10,4685 contra un umbral de 3,3642. **Las dos
+columnas de la derecha de la celda tienen barras del mismo aspecto y
+significados opuestos.**
+
+**Por qué un histograma no puede ver un efecto raro.** El fin de semana hunde 42
+y aporta el **77,8952 %** de la varianza; el feriado hunde 30 —**cinco
+desviaciones** del ruido diario— y aporta el **2,6354 %**. Un histograma ordena
+por $E^2p(1-p)$, así que un efecto raro y grande le queda dentro de la cola sin
+separarse de ella. Que es justo donde nadie mira, porque allí viven los atípicos
+que uno cree que hay que limpiar.
+
+**El residuo como segunda mirada.** Quitados el día de la semana y la tendencia,
+los mismos feriados aparecen a **−4,8908** desviaciones y caen bajo −2 los **20
+de 20**, frente a 37 de 1440 días normales, que es el 2,57 % que toca por azar.
+El umbral no encuentra nada que no sea el feriado. De ahí el modo de falla más
+caro del módulo: **antes de recortar un atípico, mirar si los atípicos comparten
+algo**; si lo comparten, son un atributo.
+
+**La malla de la portada hace k-means.** Luis: *«me encantó la animación de los
+cuadros, pero hagamos algo con sentido»*. Ahora los dieciséis cuadrados migran a
+**tres centroides calculados por distancia mínima** —6, 8 y 2 puntos—, y las
+cruces aparecen cuando su grupo se junta y se desvanecen girando cuando se
+deshace.
+
+**La pieza que lo hace funcionar sin una línea de JavaScript:** cada cuadrado
+arranca su ciclo cuando el barrido llega a su columna, porque su
+`animation-delay` es **su propia `x` dividida por la velocidad de la línea**. Con
+el barrido en `linear` los dos relojes quedan en fase para siempre. Comprobado
+en el navegador: con el barrido en x = 297, un cuadrado en x = 360 tenía
+`transform: none`.
+
+Se le ofrecieron cuatro opciones —k-means, descenso de gradiente, serie con lags
+y las tres rotando— y eligió quedarse con k-means.
+
+El sitio queda en **150 lecciones, 842 celdas, 3397 afirmaciones**, y el módulo
+de Feature Engineering en **3 de 16**.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

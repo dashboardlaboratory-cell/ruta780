@@ -182,6 +182,7 @@ MIGRADAS = {
     "causal/08-interferencia.qmd",
     "atributos/01-que-hace-un-atributo.qmd",
     "atributos/02-el-proceso-y-la-fuga.qmd",
+    "atributos/03-visualizar-para-proponer.qmd",
     "causal/16-metalearners.qmd",
     "causal/17-double-machine-learning.qmd",
     "causal/18-r-learner-y-r-score.qmd",
