@@ -1,0 +1,520 @@
+---
+title: "Discriminante con variables mixtas"
+subtitle: "Machine Learning · Lección 45"
+nivel: L3
+modulo: ml
+fase: F3
+prereqs: [ml/42-discriminante-regularizado, ml/04-modelos-generativos, ml/03-regresion-logistica]
+siguientes: []
+libro: "ESL §4.3 Linear Discriminant Analysis"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="ml/45-discriminante-mixto"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F3]{.item}
+[**Libro** ESL 4.3]{.item}
+[**Prereqs** [Discriminante regularizado](42-discriminante-regularizado.qmd) · [Modelos generativos](04-modelos-generativos.qmd) · [Regresión logística](03-regresion-logistica.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Explicar por qué LDA con las categóricas codificadas como ficticias no es un modelo generativo coherente: supone normales para columnas que solo valen 0 o 1.
+2. Definir el Bayes ingenuo mixto y el modelo de localización, que modela las continuas con una normal en cada combinación de niveles de las categóricas.
+3. Medir que, cuando las medias de las continuas dependen de la celda de las categóricas, el modelo de localización baja el error de prueba a 0,1292 frente a 0,1946 de LDA, 0,2158 del Bayes ingenuo y 0,1956 de la logística, con 200 filas.
+4. Medir cuándo conviene encoger las medias de las celdas hacia la de su clase: con 20 celdas, 150 filas y efectos de celda pequeños, el error baja de 0,3133 a 0,2977; con efectos grandes, encoger lo sube.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 42**: LDA con covarianza común y el discriminante regularizado.
+- **Machine Learning 4**: el Bayes ingenuo y los clasificadores generativos.
+- **Machine Learning 3**: la regresión logística, la alternativa discriminativa.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 46**: el clustering con variables mixtas, cuyo modelo de clases latentes es la versión sin etiquetas de estos clasificadores.
+- **Machine Learning 47**: las clases desbalanceadas, donde las probabilidades de las clases de este modelo se corrigen tras remuestrear.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $K$ | ka | Número de clases |
+| $C$ | ce mayúscula | Número de celdas: combinaciones de niveles de las categóricas |
+| $p$ | pe | Número de variables continuas |
+| $x$, $c$ | equis, ce | Continuas y celda de una fila |
+| $\mu_{kc}$ | mu sub ka ce | Media de las continuas en la clase $k$ y la celda $c$ |
+| $\Sigma$ | sigma mayúscula | Covarianza común de las continuas |
+| $\pi_k$ | pi sub ka | Probabilidad previa de la clase $k$ |
+| $a$ | a | Peso del encogimiento de las medias de celda |
+| $\sigma^2$ | sigma cuadrado | Varianza de cada continua dentro de una clase y celda |
+| $L$, $q$ | ele, cu | Niveles de cada categórica y número de categóricas |
+:::
+
+## 1. Tres modelos para variables mixtas
+
+::: {.definicion}
+**Definición 45.1 ([Bayes ingenuo mixto]{.g}).** Clasificador que supone todas las variables independientes dentro de cada clase: cada categórica con sus frecuencias por clase, suavizadas, y cada continua con una normal por clase. La probabilidad de la clase es proporcional a $\pi_k$ por el producto de las densidades de cada variable.
+:::
+
+::: {.definicion}
+**Definición 45.2 ([modelo de localización]{.g}).** Clasificador que modela la celda $c$ de las categóricas con probabilidades $P(c\mid k)$ y, dentro de cada clase y celda, las continuas con una normal $N(\mu_{kc},\Sigma)$ de covarianza común. La regla asigna la clase que maximiza $\log\pi_k+\log P(c\mid k)-\tfrac12(x-\mu_{kc})^\top\Sigma^{-1}(x-\mu_{kc})$.
+:::
+
+::: {.proposicion}
+**Proposición 45.3 (cuándo importa la celda).** Con dos clases, dos continuas y dos categóricas de 3 y 2 niveles, el error de prueba medio en 20 muestras es el de la tabla. Si las medias de las continuas dependen solo de la clase, los cuatro métodos quedan entre 0,30 y 0,32. Si dependen de la clase y de la celda, el modelo de localización queda muy por debajo de los demás.
+
+| Medias de las continuas | Filas | LDA | Ingenuo | Localización | Logística |
+|---|---|---|---|---|---|
+| solo de la clase | 200 | 0,3150 | 0,3159 | 0,3199 | 0,3148 |
+| solo de la clase | 2000 | 0,3071 | 0,3066 | 0,3014 | 0,3071 |
+| dependen de la celda | 200 | 0,1946 | 0,2158 | 0,1292 | 0,1956 |
+| dependen de la celda | 2000 | 0,1883 | 0,2086 | 0,1214 | 0,1891 |
+:::
+
+::: {.demostracion}
+*Demostración.* LDA sobre las continuas y las ficticias, y la logística con las mismas columnas, tienen una frontera lineal en todas ellas: el efecto de la celda es un desplazamiento del término independiente, y la dirección de la frontera en el plano de las continuas es la misma en todas las celdas. El Bayes ingenuo añade que las continuas no dependen de la celda, de modo que ignora la relación entre los dos tipos de variables. El modelo de localización estima una media por clase y celda, y su frontera en el plano de las continuas cambia de dirección y de posición de una celda a otra. Si las medias no dependen de la celda, esa flexibilidad no aporta nada y los cuatro métodos coinciden. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def datos(n, semilla, interaccion, niveles=(3, 2), efecto=1.2):
+    """Dos clases, dos continuas y dos categoricas. Con 'interaccion' la media
+    de las continuas depende de la clase y de la celda de las categoricas;
+    sin ella, solo de la clase."""
+    rng = np.random.default_rng(semilla)
+    base = np.random.default_rng(45)
+    ncel = int(np.prod(niveles))
+    prob_celda = base.dirichlet(np.ones(ncel) * 2, 2)          # P(celda | clase)
+    desplaz = base.standard_normal((2, ncel, 2)) * efecto         # media por clase y celda
+    y = (rng.random(n) < 0.5).astype(int)
+    celda = np.array([rng.choice(ncel, p=prob_celda[k]) for k in y])
+    medias = np.array([[0.0, 0.0], [0.8, 0.4]])[y]
+    if interaccion:
+        medias = medias + desplaz[y, celda]
+    cont = medias + rng.standard_normal((n, 2))
+    cat = np.column_stack(np.unravel_index(celda, niveles))
+    return cont, cat, y
+
+def ficticias(cat, niveles=(3, 2)):
+    return np.column_stack([(cat[:, j:j + 1] == np.arange(1, niveles[j])).astype(float)
+                            for j in range(cat.shape[1])])
+
+def celdas(cat, niveles=(3, 2)):
+    return np.ravel_multi_index(cat.T, niveles)
+
+def lda(H, y, Ht):
+    mu = np.array([H[y == k].mean(0) for k in (0, 1)])
+    R = H - mu[y]; W = R.T @ R / (len(y) - 2)
+    Wi = np.linalg.pinv(W); lp = np.log(np.bincount(y) / len(y))
+    s = Ht @ Wi @ mu.T - 0.5 * np.einsum("kj,jl,kl->k", mu, Wi, mu) + lp
+    return np.argmax(s, axis=1)
+
+def bayes_ingenuo(cont, cat, y, ct, kt, niveles=(3, 2)):
+    """Categoricas con frecuencias suavizadas y continuas normales, todas
+    independientes dentro de cada clase."""
+    s = np.zeros((len(ct), 2))
+    for k in (0, 1):
+        m = y == k
+        s[:, k] = np.log(m.mean())
+        for j, L in enumerate(niveles):
+            f = (np.bincount(cat[m, j], minlength=L) + 1) / (m.sum() + L)
+            s[:, k] += np.log(f[kt[:, j]])
+        mu, sd = cont[m].mean(0), cont[m].std(0)
+        s[:, k] += (-np.log(sd) - 0.5 * ((ct - mu) / sd) ** 2).sum(1)
+    return np.argmax(s, axis=1)
+
+def localizacion(cont, cat, y, ct, kt, encoge=0.0, niveles=(3, 2)):
+    """Modelo de localizacion: P(celda | clase) y, en cada clase y celda, una
+    normal para las continuas con covarianza comun. 'encoge' mezcla la media
+    de cada celda con la de su clase segun las filas de la celda."""
+    ncel = int(np.prod(niveles))
+    c, cte = celdas(cat, niveles), celdas(kt, niveles)
+    mu = np.zeros((2, ncel, cont.shape[1])); pc = np.zeros((2, ncel))
+    for k in (0, 1):
+        m = y == k
+        media_k = cont[m].mean(0)
+        pc[k] = (np.bincount(c[m], minlength=ncel) + 0.5) / (m.sum() + 0.5 * ncel)
+        for j in range(ncel):
+            f = m & (c == j); nf = f.sum()
+            mc = cont[f].mean(0) if nf else media_k
+            mu[k, j] = (nf * mc + encoge * media_k) / (nf + encoge) if nf + encoge > 0 else media_k
+    R = cont - mu[y, c]; W = R.T @ R / (len(y) - 2 * ncel); Wi = np.linalg.inv(W)
+    s = np.zeros((len(ct), 2))
+    for k in (0, 1):
+        d = ct - mu[k, cte]
+        s[:, k] = np.log((y == k).mean()) + np.log(pc[k, cte]) - 0.5 * np.einsum("ij,jl,il->i", d, Wi, d)
+    return np.argmax(s, axis=1)
+
+def logistica(H, y, Ht, iters=50):
+    """Regresion logistica por Newton-Raphson."""
+    A = np.column_stack([np.ones(len(H)), H]); b = np.zeros(A.shape[1])
+    for _ in range(iters):
+        p = 1 / (1 + np.exp(-A @ b)); w = p * (1 - p)
+        b = b + np.linalg.solve(A.T @ (A * w[:, None]) + 1e-8 * np.eye(len(b)), A.T @ (y - p))
+    return (np.column_stack([np.ones(len(Ht)), Ht]) @ b > 0).astype(int)
+
+print("error de prueba medio en 20 muestras; dos clases, 2 continuas y 2 categoricas (6 celdas)")
+print("  %-24s %-6s %8s %8s %8s %8s" % ("medias de las continuas", "filas", "LDA", "ingenuo", "localiz.", "logist."))
+ct0, kt0, yt0 = datos(20000, 999, False); ct1, kt1, yt1 = datos(20000, 999, True)
+for inter, (ct, kt, yt) in ((False, (ct0, kt0, yt0)), (True, (ct1, kt1, yt1))):
+    Ht = np.column_stack([ct, ficticias(kt)])
+    for n in (200, 2000):
+        e = np.zeros(4)
+        for s in range(20):
+            cont, cat, y = datos(n, s, inter)
+            H = np.column_stack([cont, ficticias(cat)])
+            e += [np.mean(lda(H, y, Ht) != yt), np.mean(bayes_ingenuo(cont, cat, y, ct, kt) != yt),
+                  np.mean(localizacion(cont, cat, y, ct, kt) != yt), np.mean(logistica(H, y, Ht) != yt)]
+        nombre = "dependen de la celda" if inter else "solo de la clase"
+        print("  %-24s %-6d" % (nombre, n) + "".join("%9.4f" % v for v in e / 20))
+```
+
+```{=html}
+<div class="viz-loc">
+  <div class="controles">
+    <label>Celda de las categóricas
+      <select id="lo-c"><option value="0">(1, 1)</option><option value="1" selected>(1, 2)</option><option value="2">(2, 1)</option><option value="3">(2, 2)</option><option value="4">(3, 1)</option><option value="5">(3, 2)</option></select>
+    </label>
+    <label>Efecto de la celda <input id="lo-e" type="range" min="0" max="1.6" step="0.1" value="1.2"> <span id="lo-e-v">1,2</span></label>
+  </div>
+  <svg id="lo-svg" viewBox="0 0 660 320" role="img" aria-label="Para una celda de las variables categóricas, las normales de las dos clases en el plano de las continuas, la frontera del modelo de localización para esa celda y la frontera que ignora las celdas."></svg>
+  <p class="lectura" id="lo-lectura"></p>
+</div>
+<style>
+.viz-loc { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-loc .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-loc label { display: flex; align-items: center; gap: .4rem; }
+.viz-loc input[type=range] { width: 150px; padding: 0; }
+.viz-loc svg { width: 100%; height: auto; display: block; }
+.viz-loc .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("lo-svg"), lec = document.getElementById("lo-lectura");
+  var cc = document.getElementById("lo-c"), ce = document.getElementById("lo-e"), ee = document.getElementById("lo-e-v");
+  // parametros del generador de la celda de la Seccion 1
+  var PC = [[0.123, 0.198, 0.159, 0.263, 0.081, 0.176], [0.148, 0.108, 0.277, 0.217, 0.19, 0.059]];
+  var D = [[[1.453, -0.228], [-1.816, -0.001], [-0.387, -0.475], [-0.641, -0.845], [-0.371, -1.815], [-1.146, -0.329]],
+           [[0.764, 0.457], [1.852, 1.21], [-1.861, 0.526], [0.979, 0.226], [-1.855, -0.365], [-0.819, 0.369]]];
+  var BASE = [[0, 0], [0.8, 0.4]];
+  var X0 = 40, X1 = 620, Y0 = 16, Y1 = 296, LIM = 4.5;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(x) { return X0 + (x + LIM) / (2 * LIM) * (X1 - X0); }
+  function py(y) { return Y1 - (y + LIM * 0.5) / (LIM) * (Y1 - Y0); }
+  function Phi(z) { var t = 1 / (1 + 0.2316419 * Math.abs(z)), d = 0.3989423 * Math.exp(-z * z / 2);
+    var p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274)))); return z > 0 ? 1 - p : p; }
+  function recta(m0, m1, t0) {
+    // regla lineal w.x > t con covarianza identidad
+    var w = [m1[0] - m0[0], m1[1] - m0[1]];
+    var t = (w[0] * (m0[0] + m1[0]) + w[1] * (m0[1] + m1[1])) / 2 + t0;
+    return { w: w, t: t };
+  }
+  function error_regla(r, m0, m1, pi0, pi1) {
+    var nw = Math.hypot(r.w[0], r.w[1]);
+    if (nw < 1e-9) return Math.min(pi0, pi1) / (pi0 + pi1);
+    var z0 = (r.t - (r.w[0] * m0[0] + r.w[1] * m0[1])) / nw, z1 = (r.t - (r.w[0] * m1[0] + r.w[1] * m1[1])) / nw;
+    return (pi0 * (1 - Phi(z0)) + pi1 * Phi(z1)) / (pi0 + pi1);
+  }
+  function dibuja_recta(r, color, guion) {
+    var nw = Math.hypot(r.w[0], r.w[1]); if (nw < 1e-9) return;
+    var p = [r.w[0] * r.t / (nw * nw), r.w[1] * r.t / (nw * nw)], d = [-r.w[1] / nw, r.w[0] / nw];
+    svg.appendChild(el("path", { d: "M" + px(p[0] - 9 * d[0]).toFixed(1) + " " + py(p[1] - 9 * d[1]).toFixed(1) + " L" + px(p[0] + 9 * d[0]).toFixed(1) + " " + py(p[1] + 9 * d[1]).toFixed(1),
+      stroke: color, "stroke-width": 2.4, "stroke-dasharray": guion ? "7 5" : "none" }));
+  }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var c = +cc.value, ef = +ce.value, k, j;
+    ee.textContent = ef.toFixed(1).replace(".", ",");
+    var m = [0, 1].map(function (k) { return [BASE[k][0] + ef * D[k][c][0], BASE[k][1] + ef * D[k][c][1]]; });
+    // medias de cada clase ignorando la celda: promedio ponderado por P(celda | clase)
+    var g = [0, 1].map(function (k) {
+      var s = [0, 0]; for (j = 0; j < 6; j++) { s[0] += PC[k][j] * (BASE[k][0] + ef * D[k][j][0]); s[1] += PC[k][j] * (BASE[k][1] + ef * D[k][j][1]); } return s; });
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: X1 - X0, height: Y1 - Y0, fill: "none", stroke: C_L }));
+    [[m[0], C_A], [m[1], C_B]].forEach(function (par) {
+      [1, 2].forEach(function (r) {
+        svg.appendChild(el("ellipse", { cx: px(par[0][0]).toFixed(1), cy: py(par[0][1]).toFixed(1), rx: (r * (X1 - X0) / (2 * LIM)).toFixed(1), ry: (r * (Y1 - Y0) / LIM).toFixed(1),
+          fill: par[1], "fill-opacity": 0.06, stroke: par[1], "stroke-width": 1.2, opacity: 0.7 }));
+      });
+      svg.appendChild(el("circle", { cx: px(par[0][0]).toFixed(1), cy: py(par[0][1]).toFixed(1), r: 5, fill: par[1] }));
+    });
+    var loc = recta(m[0], m[1], Math.log(PC[0][c] / PC[1][c]));
+    var ign = recta(g[0], g[1], 0);
+    dibuja_recta(loc, C_T, false); dibuja_recta(ign, C_T, true);
+    var e_loc = error_regla(loc, m[0], m[1], PC[0][c], PC[1][c]), e_ign = error_regla(ign, m[0], m[1], PC[0][c], PC[1][c]);
+    lec.innerHTML = "En la celda <strong>" + cc.options[c].text + "</strong>, las clases tienen medias distintas de las de las otras celdas. La recta continua es la frontera del modelo de localización para esta celda, con error <strong>" +
+      (100 * e_loc).toFixed(1).replace(".", ",") + " %</strong>; la discontinua, la que ignora las celdas y es la misma en todas, con error <strong>" + (100 * e_ign).toFixed(1).replace(".", ",") +
+      " %</strong> en esta celda. Con efecto de celda 0 las dos rectas coinciden en dirección, porque las medias de las continuas no dependen de la celda.";
+  }
+  cc.addEventListener("change", dibujar); ce.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 2. Muchas celdas y pocas filas
+
+::: {.definicion}
+**Definición 45.4 ([media de celda encogida]{.g}).** Con $m$ filas de la clase $k$ en la celda $c$, la media $\hat\mu_{kc}=(m\,\bar x_{kc}+a\,\bar x_k)/(m+a)$, que mezcla la media de la celda con la de toda la clase. Una celda sin filas recibe la media de la clase.
+:::
+
+::: {.proposicion}
+**Proposición 45.5 (cuándo ayuda encoger).** Con 20 celdas y 150 filas, el error de prueba medio en 20 muestras es el de la tabla. Con efectos de celda pequeños, el modelo de localización sin encoger queda por encima del Bayes ingenuo y encoger con $a=3$ lo lleva por debajo; con efectos grandes, encoger sube el error.
+
+| Efecto de celda | Ingenuo | Logística | Localización | $a=3$ | $a=10$ |
+|---|---|---|---|---|---|
+| 0,3 | 0,3062 | 0,3090 | 0,3133 | 0,2977 | 0,2989 |
+| 1,2 | 0,2935 | 0,3068 | 0,1149 | 0,1405 | 0,2189 |
+:::
+
+::: {.demostracion}
+*Demostración.* Con 150 filas repartidas en 2 clases y 20 celdas, muchas celdas tienen menos de cinco filas y sus medias tienen una varianza del orden de $\sigma^2/m$. Encoger hacia la media de la clase reduce esa varianza a costa de un sesgo igual a la distancia entre la media verdadera de la celda y la de la clase. Con efectos pequeños el sesgo es pequeño y predomina la reducción de varianza; con efectos grandes el sesgo es grande y encoger borra la información que separa las celdas. Es el mismo mecanismo que la media encogida de Atributos 09 y el discriminante regularizado de la Lección 42. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def datos(n, semilla, interaccion, niveles=(3, 2), efecto=1.2):
+    """Dos clases, dos continuas y dos categoricas. Con 'interaccion' la media
+    de las continuas depende de la clase y de la celda de las categoricas;
+    sin ella, solo de la clase."""
+    rng = np.random.default_rng(semilla)
+    base = np.random.default_rng(45)
+    ncel = int(np.prod(niveles))
+    prob_celda = base.dirichlet(np.ones(ncel) * 2, 2)          # P(celda | clase)
+    desplaz = base.standard_normal((2, ncel, 2)) * efecto         # media por clase y celda
+    y = (rng.random(n) < 0.5).astype(int)
+    celda = np.array([rng.choice(ncel, p=prob_celda[k]) for k in y])
+    medias = np.array([[0.0, 0.0], [0.8, 0.4]])[y]
+    if interaccion:
+        medias = medias + desplaz[y, celda]
+    cont = medias + rng.standard_normal((n, 2))
+    cat = np.column_stack(np.unravel_index(celda, niveles))
+    return cont, cat, y
+
+def ficticias(cat, niveles=(3, 2)):
+    return np.column_stack([(cat[:, j:j + 1] == np.arange(1, niveles[j])).astype(float)
+                            for j in range(cat.shape[1])])
+
+def celdas(cat, niveles=(3, 2)):
+    return np.ravel_multi_index(cat.T, niveles)
+
+def lda(H, y, Ht):
+    mu = np.array([H[y == k].mean(0) for k in (0, 1)])
+    R = H - mu[y]; W = R.T @ R / (len(y) - 2)
+    Wi = np.linalg.pinv(W); lp = np.log(np.bincount(y) / len(y))
+    s = Ht @ Wi @ mu.T - 0.5 * np.einsum("kj,jl,kl->k", mu, Wi, mu) + lp
+    return np.argmax(s, axis=1)
+
+def bayes_ingenuo(cont, cat, y, ct, kt, niveles=(3, 2)):
+    """Categoricas con frecuencias suavizadas y continuas normales, todas
+    independientes dentro de cada clase."""
+    s = np.zeros((len(ct), 2))
+    for k in (0, 1):
+        m = y == k
+        s[:, k] = np.log(m.mean())
+        for j, L in enumerate(niveles):
+            f = (np.bincount(cat[m, j], minlength=L) + 1) / (m.sum() + L)
+            s[:, k] += np.log(f[kt[:, j]])
+        mu, sd = cont[m].mean(0), cont[m].std(0)
+        s[:, k] += (-np.log(sd) - 0.5 * ((ct - mu) / sd) ** 2).sum(1)
+    return np.argmax(s, axis=1)
+
+def localizacion(cont, cat, y, ct, kt, encoge=0.0, niveles=(3, 2)):
+    """Modelo de localizacion: P(celda | clase) y, en cada clase y celda, una
+    normal para las continuas con covarianza comun. 'encoge' mezcla la media
+    de cada celda con la de su clase segun las filas de la celda."""
+    ncel = int(np.prod(niveles))
+    c, cte = celdas(cat, niveles), celdas(kt, niveles)
+    mu = np.zeros((2, ncel, cont.shape[1])); pc = np.zeros((2, ncel))
+    for k in (0, 1):
+        m = y == k
+        media_k = cont[m].mean(0)
+        pc[k] = (np.bincount(c[m], minlength=ncel) + 0.5) / (m.sum() + 0.5 * ncel)
+        for j in range(ncel):
+            f = m & (c == j); nf = f.sum()
+            mc = cont[f].mean(0) if nf else media_k
+            mu[k, j] = (nf * mc + encoge * media_k) / (nf + encoge) if nf + encoge > 0 else media_k
+    R = cont - mu[y, c]; W = R.T @ R / (len(y) - 2 * ncel); Wi = np.linalg.inv(W)
+    s = np.zeros((len(ct), 2))
+    for k in (0, 1):
+        d = ct - mu[k, cte]
+        s[:, k] = np.log((y == k).mean()) + np.log(pc[k, cte]) - 0.5 * np.einsum("ij,jl,il->i", d, Wi, d)
+    return np.argmax(s, axis=1)
+
+def logistica(H, y, Ht, iters=50):
+    """Regresion logistica por Newton-Raphson."""
+    A = np.column_stack([np.ones(len(H)), H]); b = np.zeros(A.shape[1])
+    for _ in range(iters):
+        p = 1 / (1 + np.exp(-A @ b)); w = p * (1 - p)
+        b = b + np.linalg.solve(A.T @ (A * w[:, None]) + 1e-8 * np.eye(len(b)), A.T @ (y - p))
+    return (np.column_stack([np.ones(len(Ht)), Ht]) @ b > 0).astype(int)
+
+niv = (5, 4)
+print("20 celdas y 150 filas: error de prueba medio en 20 muestras")
+print("  %-18s %8s %8s %8s %8s %8s" % ("efecto de celda", "ingenuo", "logist.", "localiz.", "encoge 3", "encoge 10"))
+for ef in (0.3, 1.2):
+    ct, kt, yt = datos(20000, 999, True, niv, ef)
+    Ht = np.column_stack([ct, ficticias(kt, niv)])
+    e = np.zeros(5)
+    for s in range(20):
+        cont, cat, y = datos(150, s, True, niv, ef)
+        H = np.column_stack([cont, ficticias(cat, niv)])
+        e += [np.mean(bayes_ingenuo(cont, cat, y, ct, kt, niv) != yt), np.mean(logistica(H, y, Ht) != yt),
+              np.mean(localizacion(cont, cat, y, ct, kt, 0, niv) != yt),
+              np.mean(localizacion(cont, cat, y, ct, kt, 3, niv) != yt),
+              np.mean(localizacion(cont, cat, y, ct, kt, 10, niv) != yt)]
+    print("  %-18s" % ef + "".join("%9.4f" % v for v in e / 20))
+```
+
+**Modo de falla.** Se ajusta LDA con las categóricas como ficticias porque la biblioteca lo acepta sin avisar. El modelo supone normales para columnas de ceros y unos, y la frontera no puede cambiar de dirección entre celdas. Si las continuas se comportan de forma distinta según la categoría, el error queda por encima del de un modelo que lo permite, y la comparación con la logística no lo detecta, porque tiene la misma limitación.
+
+## 3. Cómo elegir
+
+| Situación | Método |
+|---|---|
+| Pocas celdas y las continuas dependen de la categoría | Modelo de localización |
+| Muchas celdas con pocas filas | Modelo de localización con medias encogidas, o logística con interacciones penalizada |
+| Muchas categóricas o con muchos niveles | Bayes ingenuo mixto, o logística con la codificación de Atributos 09 |
+| Se necesitan probabilidades bien calibradas | Logística, con la calibración de Estadística 16 |
+
+## 4. Limitaciones
+
+El modelo de localización crece con el número de celdas: con $q$ categóricas de $L$ niveles hay $L^q$ celdas. Con muchas categóricas se restringen las medias de celda a efectos aditivos de cada categórica, que es un término medio entre el Bayes ingenuo y el modelo completo.
+
+La covarianza común para todas las celdas es la hipótesis de LDA. Si también cambia con la celda, el modelo necesita una covarianza por celda y aparece el problema de estimación de la Lección 42.
+
+## Ejercicios
+
+### Ejercicio 1, Parámetros del modelo de localización
+
+El modelo tiene $KCp$ medias, $p(p+1)/2$ elementos de la covarianza común, $K(C-1)$ probabilidades de celda y $K-1$ probabilidades previas. La celda define la lista `casos` de ternas $(K, C, p)$. Completar la línea de `parametros`. La lista debe dar 38, 122 y 99.
+
+```{pyodide}
+#| exercise: ex_param
+casos = [(2, 6, 2), (2, 20, 2), (3, 6, 4)]
+
+parametros = [______ for K, C, p in casos]
+
+print(parametros)
+```
+
+::: {.hint exercise="ex_param"}
+Sumar `K * C * p`, `p * (p + 1) // 2`, `K * (C - 1)` y `K - 1`.
+:::
+
+::: {.solution exercise="ex_param"}
+```{pyodide}
+casos = [(2, 6, 2), (2, 20, 2), (3, 6, 4)]
+
+parametros = [K * C * p + p * (p + 1) // 2 + K * (C - 1) + (K - 1)
+              for K, C, p in casos]
+
+print(parametros)
+```
+
+Con 20 celdas, dos clases y dos continuas hay 122 parámetros. Con 150 filas quedan poco más de una fila por parámetro, que es el caso de la Proposición 45.5.
+:::
+
+```{pyodide}
+#| exercise: ex_param
+#| check: true
+if parametros == [38, 122, 99]:
+    feedback = {"correct": True, "message": "Correcto: 38, 122 y 99."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [38, 122, 99]."}
+feedback
+```
+
+### Ejercicio 2, Media de celda encogida
+
+La celda define la media de una celda `media_celda`, la de su clase `media_clase`, el peso `a` y la lista `filas` con el número de filas de la celda. Completar la línea de `encogidas` con la Definición 45.4, redondeando a 4 decimales. La lista debe dar 0,5, 0,875, 1,25 y 1,8636.
+
+```{pyodide}
+#| exercise: ex_enc
+media_celda, media_clase, a = 2.0, 0.5, 3.0
+filas = [0, 1, 3, 30]
+
+encogidas = [______ for m in filas]
+
+print(encogidas)
+```
+
+::: {.hint exercise="ex_enc"}
+Para cada `m`, `(m * media_celda + a * media_clase) / (m + a)`, redondeado.
+:::
+
+::: {.solution exercise="ex_enc"}
+```{pyodide}
+media_celda, media_clase, a = 2.0, 0.5, 3.0
+filas = [0, 1, 3, 30]
+
+encogidas = [round((m * media_celda + a * media_clase) / (m + a), 4)
+             for m in filas]
+
+print(encogidas)
+```
+
+Una celda sin filas recibe la media de la clase, 0,5; con tantas filas como el peso, $m=a=3$, queda en el punto medio, 1,25; con 30 filas se acerca a la media de la celda.
+:::
+
+```{pyodide}
+#| exercise: ex_enc
+#| check: true
+if encogidas == [0.5, 0.875, 1.25, 1.8636]:
+    feedback = {"correct": True, "message": "Correcto."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [0.5, 0.875, 1.25, 1.8636]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **ML 45**:
+
+1. Añadir a la logística las interacciones entre las ficticias y las continuas y comparar su error con el del modelo de localización en los dos escenarios de la Sección 1.
+2. Elegir $a$ por validación cruzada con 20 celdas y comparar con los valores de la tabla.
+3. Construir un caso con tres categóricas de cuatro niveles y comparar el modelo completo con el de efectos aditivos de cada categórica. Guardar el caso en `50-Errores/`.
+
+## Del libro
+
+La §4.3 de ESL, *Linear Discriminant Analysis*, deriva LDA y QDA para predictores continuos con distribución normal en cada clase. El libro no trata el caso de predictores categóricos dentro del discriminante; esta lección lo desarrolla con el modelo de localización, que conserva la normal con covarianza común para las continuas y añade una distribución para las celdas de las categóricas.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- LDA con ficticias supone normales para columnas de ceros y unos, y su frontera tiene la misma dirección en todas las celdas.
+- Bayes ingenuo mixto: todas las variables independientes dentro de cada clase.
+- Modelo de localización: una normal por clase y celda, con covarianza común.
+- Si las medias dependen de la celda: localización 0,1292 frente a 0,19–0,22 de los demás.
+- Si no dependen: los cuatro métodos empatan.
+- Encoger las medias de celda ayuda con efectos pequeños y pocas filas, y perjudica con efectos grandes.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos: las tablas de las Proposiciones 45.3 y 45.5, con 20 muestras por configuración.
+
+**Lo que se usa de otras lecciones sin repetir.** LDA y la covarianza común son de Machine Learning 42; el Bayes ingenuo, de Machine Learning 4; la regresión logística, de Machine Learning 3; la media encogida, de Atributos 09.
+
+**Lo que se enuncia sin demostrar.** La tabla de la Sección 3 resume las mediciones y no es un resultado general.
+
+**Lo que es mío, no del libro.** El desarrollo del modelo de localización como extensión de LDA a variables mixtas, las mediciones en los dos escenarios y la del encogimiento de las medias de celda.
+:::
