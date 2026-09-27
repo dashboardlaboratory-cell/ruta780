@@ -175,6 +175,7 @@ MIGRADAS = {
     "ml/39-optimizadores.qmd",
     "ml/40-regularizacion-y-dropout.qmd",
     "ml/41-convolucion-y-vision.qmd",
+    "ml/42-discriminante-regularizado.qmd",
     "causal/01-resultados-potenciales.qmd",
     "causal/02-dags-y-puerta-trasera.qmd",
     "causal/05-potencia-y-mde.qmd",

@@ -5225,6 +5225,32 @@ wasm de 32 bits: se convierten a `np.intp`. Una solución razonable con pandas
 pasa: el 24 corresponde a la lección de rendimiento y exige en la práctica una
 solución vectorizada, sin decirlo.
 
+### 3.99 Bloque de discriminante y clustering para variables mixtas; ML 42 (27-09-2026)
+
+Luis señaló que el sitio no tenía análisis discriminante no lineal ni para
+variables categóricas o mixtas, ni clustering para variables que no sean
+continuas (k-modas y otros). Quedan cinco lecciones en ML, como filas en una
+sección nueva del índice:
+
+| ML | Tema | Base |
+|---|---|---|
+| 42 | Discriminante regularizado y de rango reducido | ESL §4.3 |
+| 43 | Discriminante flexible: fronteras no lineales | ESL §12.4–12.6 |
+| 44 | Discriminante por mezclas y por densidad de núcleo | ESL §12.7 y §6.6 |
+| 45 | Discriminante con variables mixtas: modelo de localización, Bayes ingenuo mixto, logística con ficticias | desarrollo propio |
+| 46 | Clustering con variables categóricas y mixtas: k-modas, k-prototipos, Gower con k-medoides, clases latentes | ESL §14.3 |
+
+**ML 42.** Con tres clases, 10 variables y covarianzas de clase cercanas a
+una común, el mejor α del discriminante regularizado es 0,5 con 15 filas por
+clase (0,2887 frente a 0,3197 de LDA y 0,3954 de QDA), 0,75 con 30 y 1 con 200.
+γ solo ayuda con menos filas por clase que variables. LDA con 5 clases da las
+mismas predicciones en sus 4 variables canónicas que en las 10 variables, y
+con 3 el error medio es el mismo (0,3849 frente a 0,3863). La dirección de
+Fisher coincide con la primera variable canónica. El primer diseño de datos,
+con una covarianza aleatoria distinta por clase, hacía ganar siempre a QDA; se
+cambió por una común con perturbaciones pequeñas, que es el caso en que el
+discriminante regularizado tiene sentido.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
