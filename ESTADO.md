@@ -5276,6 +5276,19 @@ con k-medoides 0,8044 y 0,4043; clases latentes con los dos tipos 0,8010 y
 0,5281. Ningún método gana en los dos: la lección cierra con una tabla de
 elección según cuánta información lleve cada tipo de variable.
 
+### 3.102 Faltantes y clases desbalanceadas en el plan (27-09-2026)
+
+Luis preguntó por qué hacer con edades que faltan y con bases desbalanceadas.
+Estadística 15 cubre la teoría de los faltantes (mecanismos, sesgo de casos
+completos, imputación por la media, identificabilidad bajo MNAR); la práctica
+para modelos va en Atributos 13, que se amplía a indicadores, imputación por
+mediana, por modelo y por vecinos, imputación múltiple con las reglas de Rubin,
+la fuga de imputar fuera de la validación y los árboles. Las clases
+desbalanceadas no estaban en ningún módulo: ML 47 (métricas con una clase
+rara, pesos, submuestreo, sobremuestreo y SMOTE, umbral por costes y la
+corrección de las probabilidades tras remuestrear). Orden: ML 45, Atributos 13,
+ML 47, ML 44.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
