@@ -177,6 +177,7 @@ MIGRADAS = {
     "ml/41-convolucion-y-vision.qmd",
     "ml/42-discriminante-regularizado.qmd",
     "ml/43-discriminante-flexible.qmd",
+    "ml/46-clustering-mixto.qmd",
     "causal/01-resultados-potenciales.qmd",
     "causal/02-dags-y-puerta-trasera.qmd",
     "causal/05-potencia-y-mde.qmd",

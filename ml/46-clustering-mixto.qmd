@@ -1,0 +1,668 @@
+---
+title: "Clustering con variables categóricas y mixtas"
+subtitle: "Machine Learning · Lección 46"
+nivel: L3
+modulo: ml
+fase: F3
+prereqs: [ml/21-clustering, ml/30-algoritmo-em, atributos/05-escalado-y-centrado]
+siguientes: []
+libro: "ESL §14.3 Cluster Analysis"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="ml/46-clustering-mixto"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F3]{.item}
+[**Libro** ESL 14.3]{.item}
+[**Prereqs** [Clustering](21-clustering.qmd) · [El algoritmo EM](30-algoritmo-em.qmd) · [Escalado y centrado](../atributos/05-escalado-y-centrado.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Explicar por qué k-medias con ficticias falla con variables mixtas: una variable en otra escala domina la distancia, y la media de una ficticia no es un nivel.
+2. Implementar k-modas, k-prototipos, la distancia de Gower con k-medoides y un modelo de clases latentes ajustado con EM.
+3. Medir que ningún método gana en todos los casos: con la señal en las categóricas, k-modas y Gower dan índices de Rand ajustados de 0,7704 y 0,8044; con la señal en las continuas bajan a 0,2709 y 0,4043, y k-prototipos con $\gamma=1$ llega a 0,5483.
+4. Elegir el método según cuánta información lleve cada tipo de variable.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 21**: k-medias y el clustering jerárquico sobre variables continuas.
+- **Machine Learning 30**: el algoritmo EM, con el que se ajusta el modelo de clases latentes.
+- **Atributos 05**: que la distancia euclídea depende de la escala de las variables.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 45**: el discriminante con variables mixtas, la versión supervisada del modelo de clases latentes.
+- **Machine Learning 34**: los métodos de clustering sobre grafos y factorizaciones, que aceptan una matriz de disimilitudes como la de Gower.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $k$ | ka | Número de grupos |
+| $p_c$, $q$ | pe sub ce, cu | Número de variables continuas y de categóricas |
+| $\gamma$ | gamma | Peso de las categóricas en k-prototipos |
+| $d_G$ | de sub ge | Distancia de Gower |
+| $\pi_j$ | pi sub jota | Proporción de la clase latente $j$ |
+| $\mathrm{ARI}$ | a erre i | Índice de Rand ajustado entre dos particiones |
+:::
+
+## 1. k-medias con variables mixtas
+
+::: {.definicion}
+**Definición 46.1 ([índice de Rand ajustado]{.g}).** Medida del acuerdo entre dos particiones de las mismas filas: la fracción de pares de filas que las dos particiones tratan igual (juntas o separadas), corregida por el acuerdo esperado al azar. Vale 1 si las particiones coinciden y alrededor de 0 si son independientes.
+:::
+
+::: {.proposicion}
+**Proposición 46.2 (k-medias con ficticias).** Con tres grupos, 900 filas, dos continuas (la segunda en una escala cien veces mayor) y tres categóricas de cuatro niveles, k-medias sobre las continuas en su escala y las ficticias da un índice de Rand ajustado de 0,0363 cuando la señal está en las categóricas y 0,1813 cuando está en las continuas. Estandarizando las continuas, 0,3476 y 0,4772.
+:::
+
+::: {.demostracion}
+*Demostración.* La distancia euclídea suma cuadrados de diferencias. La segunda continua tiene desviación típica del orden de 100 y aporta términos del orden de $10^4$, frente a 0 o 2 de cada categórica codificada con ficticias, de modo que los grupos se forman casi solo con esa variable. Estandarizar iguala las escalas, pero el centro de un grupo tiene en las ficticias fracciones que no corresponden a ningún nivel, y la distancia a esas fracciones trata las categóricas como si fueran continuas. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def datos(n, semilla, sep=1.0, p_pref=0.7):
+    """Tres grupos con dos variables continuas y tres categoricas. 'sep'
+    separa las medias de las continuas; 'p_pref' es la probabilidad de que
+    una categorica tome el nivel preferido de su grupo. La segunda continua
+    tiene una escala cien veces mayor."""
+    rng = np.random.default_rng(semilla)
+    g = rng.integers(0, 3, n)
+    medias = np.array([[0.0, 0.0], [0.6, 0.3], [0.3, 0.8]]) * sep
+    cont = medias[g] + rng.standard_normal((n, 2)) * [1.0, 1.0]
+    cont[:, 1] *= 100.0                                    # una variable en otra escala
+    # tres categoricas de 4 niveles; cada grupo tiene un nivel preferido
+    pref = np.array([[0, 1, 2], [1, 2, 3], [2, 3, 0]])
+    cat = np.empty((n, 3), int)
+    for j in range(3):
+        usa_pref = rng.random(n) < p_pref
+        cat[:, j] = np.where(usa_pref, pref[g, j], rng.integers(0, 4, n))
+    return cont, cat, g
+
+def ari(a, b):
+    """Indice de Rand ajustado entre dos particiones."""
+    from math import comb
+    ca, cb = np.unique(a, return_inverse=True)[1], np.unique(b, return_inverse=True)[1]
+    tabla = np.zeros((ca.max() + 1, cb.max() + 1), int)
+    np.add.at(tabla, (ca, cb), 1)
+    s = sum(comb(int(x), 2) for x in tabla.ravel())
+    sa = sum(comb(int(x), 2) for x in tabla.sum(1)); sb = sum(comb(int(x), 2) for x in tabla.sum(0))
+    esp = sa * sb / comb(len(a), 2)
+    return (s - esp) / (0.5 * (sa + sb) - esp)
+
+ESCENARIOS = {"senal en las categoricas": dict(sep=1.0, p_pref=0.7),
+              "senal en las continuas  ": dict(sep=3.0, p_pref=0.35)}
+
+def kmedias(Z, k, semilla, iters=100):
+    rng = np.random.default_rng(semilla)
+    C = Z[rng.choice(len(Z), k, replace=False)]
+    for _ in range(iters):
+        e = np.argmin(((Z[:, None, :] - C[None]) ** 2).sum(2), axis=1)
+        C2 = np.array([Z[e == j].mean(0) if np.any(e == j) else C[j] for j in range(k)])
+        if np.allclose(C2, C): break
+        C = C2
+    return e, ((Z - C[e]) ** 2).sum()
+
+def mejor_de(fn, reps=10):
+    return min((fn(s) for s in range(reps)), key=lambda r: r[1])[0]
+
+print("indice de Rand ajustado con los grupos verdaderos, 900 filas")
+for nombre, par in ESCENARIOS.items():
+    cont, cat, g = datos(900, 1, **par)
+    fict = np.column_stack([(cat[:, j:j + 1] == np.arange(4)).astype(float) for j in range(3)])
+    est = (cont - cont.mean(0)) / cont.std(0)
+    print("  " + nombre)
+    print("    k-medias, continuas en su escala y ficticias  : %.4f"
+          % ari(mejor_de(lambda s: kmedias(np.column_stack([cont, fict]), 3, s)), g))
+    print("    k-medias, continuas estandarizadas y ficticias: %.4f"
+          % ari(mejor_de(lambda s: kmedias(np.column_stack([est, fict]), 3, s)), g))
+```
+
+## 2. k-modas y k-prototipos
+
+::: {.definicion}
+**Definición 46.3 ([k-modas]{.g}).** Algoritmo de k-medias para variables categóricas: la disimilitud entre dos filas es el número de variables en que difieren, y el centro de cada grupo es la moda de cada variable dentro del grupo.
+:::
+
+::: {.definicion}
+**Definición 46.4 ([k-prototipos]{.g}).** Algoritmo para variables mixtas: la disimilitud es la distancia euclídea al cuadrado en las continuas estandarizadas más $\gamma$ por el número de categóricas distintas, y el centro de cada grupo tiene la media de las continuas y la moda de las categóricas.
+:::
+
+::: {.proposicion}
+**Proposición 46.5 (k-modas y el peso de k-prototipos).** Con la señal en las categóricas, k-modas da 0,7704, y k-prototipos 0,1114 con $\gamma=0{,}25$, 0,3777 con $\gamma=1$ y 0,7987 con $\gamma=4$. Con la señal en las continuas, k-modas baja a 0,2709, y k-prototipos da 0,4339; 0,5483 y 0,4467 con los mismos pesos.
+:::
+
+::: {.demostracion}
+*Demostración.* Cada paso de k-modas, como el de k-medias, no aumenta el coste: la asignación elige para cada fila el centro más cercano, y la moda minimiza el número de discrepancias dentro de cada variable. k-modas usa solo las categóricas, así que funciona cuando ellas llevan la señal y falla cuando la llevan las continuas. En k-prototipos, $\gamma$ fija cuánto vale una discrepancia en una categórica frente a una unidad de distancia al cuadrado en las continuas: con $\gamma$ pequeño el algoritmo ignora las categóricas y con $\gamma$ grande ignora las continuas. El mejor $\gamma$ depende de cuánta información lleve cada tipo. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def datos(n, semilla, sep=1.0, p_pref=0.7):
+    """Tres grupos con dos variables continuas y tres categoricas. 'sep'
+    separa las medias de las continuas; 'p_pref' es la probabilidad de que
+    una categorica tome el nivel preferido de su grupo. La segunda continua
+    tiene una escala cien veces mayor."""
+    rng = np.random.default_rng(semilla)
+    g = rng.integers(0, 3, n)
+    medias = np.array([[0.0, 0.0], [0.6, 0.3], [0.3, 0.8]]) * sep
+    cont = medias[g] + rng.standard_normal((n, 2)) * [1.0, 1.0]
+    cont[:, 1] *= 100.0                                    # una variable en otra escala
+    # tres categoricas de 4 niveles; cada grupo tiene un nivel preferido
+    pref = np.array([[0, 1, 2], [1, 2, 3], [2, 3, 0]])
+    cat = np.empty((n, 3), int)
+    for j in range(3):
+        usa_pref = rng.random(n) < p_pref
+        cat[:, j] = np.where(usa_pref, pref[g, j], rng.integers(0, 4, n))
+    return cont, cat, g
+
+def ari(a, b):
+    """Indice de Rand ajustado entre dos particiones."""
+    from math import comb
+    ca, cb = np.unique(a, return_inverse=True)[1], np.unique(b, return_inverse=True)[1]
+    tabla = np.zeros((ca.max() + 1, cb.max() + 1), int)
+    np.add.at(tabla, (ca, cb), 1)
+    s = sum(comb(int(x), 2) for x in tabla.ravel())
+    sa = sum(comb(int(x), 2) for x in tabla.sum(1)); sb = sum(comb(int(x), 2) for x in tabla.sum(0))
+    esp = sa * sb / comb(len(a), 2)
+    return (s - esp) / (0.5 * (sa + sb) - esp)
+
+ESCENARIOS = {"senal en las categoricas": dict(sep=1.0, p_pref=0.7),
+              "senal en las continuas  ": dict(sep=3.0, p_pref=0.35)}
+
+def kmodas(cat, k, semilla, iters=50):
+    """k-modas: la moda de cada variable como centro y el numero de
+    variables distintas como disimilitud."""
+    rng = np.random.default_rng(semilla)
+    M = cat[rng.choice(len(cat), k, replace=False)].copy()
+    for _ in range(iters):
+        d = (cat[:, None, :] != M[None]).sum(2)
+        e = np.argmin(d, axis=1)
+        M2 = M.copy()
+        for j in range(k):
+            if np.any(e == j):
+                M2[j] = [np.bincount(cat[e == j, v], minlength=4).argmax() for v in range(cat.shape[1])]
+        if np.array_equal(M2, M): break
+        M = M2
+    return e, d[np.arange(len(e)), e].sum()
+
+def kprototipos(Z, cat, k, gamma, semilla, iters=50):
+    """k-prototipos: distancia euclidea al cuadrado en las continuas mas
+    gamma por el numero de categoricas distintas."""
+    rng = np.random.default_rng(semilla)
+    i0 = rng.choice(len(Z), k, replace=False)
+    C, M = Z[i0].copy(), cat[i0].copy()
+    for _ in range(iters):
+        d = ((Z[:, None, :] - C[None]) ** 2).sum(2) + gamma * (cat[:, None, :] != M[None]).sum(2)
+        e = np.argmin(d, axis=1)
+        C2, M2 = C.copy(), M.copy()
+        for j in range(k):
+            if np.any(e == j):
+                C2[j] = Z[e == j].mean(0)
+                M2[j] = [np.bincount(cat[e == j, v], minlength=4).argmax() for v in range(cat.shape[1])]
+        if np.allclose(C2, C) and np.array_equal(M2, M): break
+        C, M = C2, M2
+    return e, d[np.arange(len(e)), e].sum()
+
+def mejor_de(fn, reps=10):
+    return min((fn(s) for s in range(reps)), key=lambda r: r[1])[0]
+
+print("indice de Rand ajustado con los grupos verdaderos, 900 filas")
+for nombre, par in ESCENARIOS.items():
+    cont, cat, g = datos(900, 1, **par)
+    est = (cont - cont.mean(0)) / cont.std(0)
+    print("  " + nombre)
+    print("    k-modas, solo categoricas     : %.4f" % ari(mejor_de(lambda s: kmodas(cat, 3, s)), g))
+    for gamma in (0.25, 1.0, 4.0):
+        print("    k-prototipos, gamma = %-5g   : %.4f"
+              % (gamma, ari(mejor_de(lambda s: kprototipos(est, cat, 3, gamma, s)), g)))
+```
+
+```{=html}
+<div class="viz-kproto">
+  <div class="controles">
+    <label>Peso γ de las categóricas <input id="kp-g" type="range" min="-2" max="2.5" step="0.25" value="0"> <span id="kp-g-v">1,00</span></label>
+    <label>Información de las categóricas <input id="kp-p" type="range" min="0.25" max="0.85" step="0.05" value="0.55"> <span id="kp-p-v">0,55</span></label>
+  </div>
+  <svg id="kp-svg" viewBox="0 0 660 330" role="img" aria-label="Grupos que encuentra k-prototipos en el plano de las dos variables continuas estandarizadas según el peso de las categóricas, con los prototipos de cada grupo."></svg>
+  <p class="lectura" id="kp-lectura"></p>
+</div>
+<style>
+.viz-kproto { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-kproto .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-kproto label { display: flex; align-items: center; gap: .4rem; }
+.viz-kproto input[type=range] { width: 150px; padding: 0; }
+.viz-kproto svg { width: 100%; height: auto; display: block; }
+.viz-kproto .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", COL = ["#0F6E68", "#B4342E", "#8A6D1F"];
+  var svg = document.getElementById("kp-svg"), lec = document.getElementById("kp-lectura");
+  var cg = document.getElementById("kp-g"), cp = document.getElementById("kp-p");
+  var eg = document.getElementById("kp-g-v"), ep = document.getElementById("kp-p-v");
+  var X0 = 40, X1 = 620, Y0 = 16, Y1 = 290, LIM = 3.2, N = 180;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var s = 11;
+  function u() { s = (s * 48271) % 2147483647; return s / 2147483647; }
+  function nor() { return Math.sqrt(-2 * Math.log(u() + 1e-12)) * Math.cos(2 * Math.PI * u()); }
+  // grupos, continuas (separacion 2) y ruido de las categoricas, fijos
+  var G = [], Z = [], RU = [], AL = [], i, j, v;
+  var MED = [[0, 0], [1.2, 0.6], [0.6, 1.6]], PREF = [[0, 1, 2], [1, 2, 3], [2, 3, 0]];
+  for (i = 0; i < N; i++) {
+    G.push(i % 3); Z.push([MED[i % 3][0] + nor(), MED[i % 3][1] + nor()]);
+    RU.push([u(), u(), u()]); AL.push([Math.floor(4 * u()), Math.floor(4 * u()), Math.floor(4 * u())]);
+  }
+  function categoricas(pp) { return G.map(function (g, i) { return [0, 1, 2].map(function (v) { return RU[i][v] < pp ? PREF[g][v] : AL[i][v]; }); }); }
+  function kproto(K, gamma, ini) {
+    var C = ini.map(function (i) { return Z[i].slice(); }), M = ini.map(function (i) { return K[i].slice(); }), e = new Array(N), it, j2, coste = 0;
+    for (it = 0; it < 30; it++) {
+      coste = 0;
+      for (i = 0; i < N; i++) {
+        var mejor = 0, dm = Infinity;
+        for (j2 = 0; j2 < 3; j2++) {
+          var d = Math.pow(Z[i][0] - C[j2][0], 2) + Math.pow(Z[i][1] - C[j2][1], 2);
+          for (v = 0; v < 3; v++) if (K[i][v] !== M[j2][v]) d += gamma;
+          if (d < dm) { dm = d; mejor = j2; }
+        }
+        e[i] = mejor; coste += dm;
+      }
+      for (j2 = 0; j2 < 3; j2++) {
+        var n = 0, sx = 0, sy = 0, cuenta = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]];
+        for (i = 0; i < N; i++) if (e[i] === j2) { n++; sx += Z[i][0]; sy += Z[i][1]; for (v = 0; v < 3; v++) cuenta[v][K[i][v]]++; }
+        if (n) { C[j2] = [sx / n, sy / n]; M[j2] = cuenta.map(function (c) { return c.indexOf(Math.max.apply(null, c)); }); }
+      }
+    }
+    return { e: e, C: C, coste: coste };
+  }
+  function comb2(x) { return x * (x - 1) / 2; }
+  function ari(a, b) {
+    var t = [], i, j, s = 0, sa = 0, sb = 0, fa = [0, 0, 0], fb = [0, 0, 0];
+    for (i = 0; i < 3; i++) t.push([0, 0, 0]);
+    for (i = 0; i < N; i++) { t[a[i]][b[i]]++; fa[a[i]]++; fb[b[i]]++; }
+    for (i = 0; i < 3; i++) { sa += comb2(fa[i]); sb += comb2(fb[i]); for (j = 0; j < 3; j++) s += comb2(t[i][j]); }
+    var esp = sa * sb / comb2(N);
+    return (s - esp) / (0.5 * (sa + sb) - esp);
+  }
+  function px(x) { return X0 + (x + LIM) / (2 * LIM) * (X1 - X0); }
+  function py(y) { return Y1 - (y + LIM) / (2 * LIM) * (Y1 - Y0); }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var gamma = Math.pow(2, +cg.value), pp = +cp.value;
+    eg.textContent = gamma.toFixed(2).replace(".", ","); ep.textContent = pp.toFixed(2).replace(".", ",");
+    var K = categoricas(pp), mejor = null;
+    [[5, 17, 40], [2, 61, 99], [33, 70, 150], [8, 121, 160]].forEach(function (ini) {
+      var r = kproto(K, gamma, ini); if (!mejor || r.coste < mejor.coste) mejor = r;
+    });
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: X1 - X0, height: Y1 - Y0, fill: "none", stroke: C_L }));
+    for (i = 0; i < N; i++)
+      svg.appendChild(el("circle", { cx: px(Z[i][0]).toFixed(1), cy: py(Z[i][1]).toFixed(1), r: 3.6, fill: COL[mejor.e[i]], "fill-opacity": 0.75 }));
+    mejor.C.forEach(function (c, j) {
+      var x = px(c[0]), y = py(c[1]);
+      svg.appendChild(el("path", { d: "M" + (x - 9) + " " + (y - 9) + " L" + (x + 9) + " " + (y + 9) + " M" + (x - 9) + " " + (y + 9) + " L" + (x + 9) + " " + (y - 9), stroke: COL[j], "stroke-width": 3.2 }));
+    });
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 20, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "primera continua estandarizada"));
+    var a = ari(mejor.e, G);
+    lec.innerHTML = "Con γ = <strong>" + gamma.toFixed(2).replace(".", ",") + "</strong> y categóricas que toman el nivel de su grupo con probabilidad <strong>" + pp.toFixed(2).replace(".", ",") +
+      "</strong>, k-prototipos da un índice de Rand ajustado de <strong>" + a.toFixed(3).replace(".", ",") + "</strong> frente a los grupos verdaderos. Las cruces son los prototipos de las continuas. " +
+      "Con γ pequeño los grupos se forman casi solo con las continuas y dividen el plano; con γ grande dominan las categóricas y los grupos se mezclan en el plano. El mejor γ depende de cuánta información lleve cada tipo de variable.";
+  }
+  cg.addEventListener("input", dibujar); cp.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Distancia de Gower y clases latentes
+
+::: {.definicion}
+**Definición 46.6 ([distancia de Gower]{.g}).** Para dos filas, la media sobre las variables de un término entre 0 y 1: $|x_i-x_j|$ dividido por el rango de la variable en las continuas, y 0 o 1 según coincidan o no en las categóricas. Con una matriz de distancias se agrupa mediante [k-medoides]{.g}, que usa como centro de cada grupo la fila con menor distancia total a las demás.
+:::
+
+::: {.definicion}
+**Definición 46.7 ([modelo de clases latentes]{.g}).** Mezcla de $k$ clases en la que, dentro de cada clase, las categóricas son independientes con probabilidades propias de la clase y las continuas son normales independientes. Se ajusta con el algoritmo EM de Machine Learning 30, y cada fila se asigna a la clase de mayor probabilidad a posteriori.
+:::
+
+::: {.proposicion}
+**Proposición 46.8 (Gower y clases latentes).** Con la señal en las categóricas, Gower con k-medoides da 0,8044, las clases latentes solo con las categóricas 0,7743 y con los dos tipos 0,8010. Con la señal en las continuas, 0,4043; 0,2444 y 0,5281.
+:::
+
+::: {.demostracion}
+*Demostración.* Gower divide cada continua por su rango, de modo que la escala deja de importar sin estandarizar, y da a cada variable el mismo peso máximo, 1. Con dos continuas y tres categóricas, las categóricas pesan tres quintos de la distancia: por eso funciona cuando llevan la señal y rinde menos que k-prototipos cuando la llevan las continuas. El modelo de clases latentes pondera cada variable por su verosimilitud: una variable que separa bien las clases aporta mucho al logaritmo de la verosimilitud y una que no separa aporta poco. Por eso, con los dos tipos de variables, queda entre los mejores en los dos casos. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def datos(n, semilla, sep=1.0, p_pref=0.7):
+    """Tres grupos con dos variables continuas y tres categoricas. 'sep'
+    separa las medias de las continuas; 'p_pref' es la probabilidad de que
+    una categorica tome el nivel preferido de su grupo. La segunda continua
+    tiene una escala cien veces mayor."""
+    rng = np.random.default_rng(semilla)
+    g = rng.integers(0, 3, n)
+    medias = np.array([[0.0, 0.0], [0.6, 0.3], [0.3, 0.8]]) * sep
+    cont = medias[g] + rng.standard_normal((n, 2)) * [1.0, 1.0]
+    cont[:, 1] *= 100.0                                    # una variable en otra escala
+    # tres categoricas de 4 niveles; cada grupo tiene un nivel preferido
+    pref = np.array([[0, 1, 2], [1, 2, 3], [2, 3, 0]])
+    cat = np.empty((n, 3), int)
+    for j in range(3):
+        usa_pref = rng.random(n) < p_pref
+        cat[:, j] = np.where(usa_pref, pref[g, j], rng.integers(0, 4, n))
+    return cont, cat, g
+
+def ari(a, b):
+    """Indice de Rand ajustado entre dos particiones."""
+    from math import comb
+    ca, cb = np.unique(a, return_inverse=True)[1], np.unique(b, return_inverse=True)[1]
+    tabla = np.zeros((ca.max() + 1, cb.max() + 1), int)
+    np.add.at(tabla, (ca, cb), 1)
+    s = sum(comb(int(x), 2) for x in tabla.ravel())
+    sa = sum(comb(int(x), 2) for x in tabla.sum(1)); sb = sum(comb(int(x), 2) for x in tabla.sum(0))
+    esp = sa * sb / comb(len(a), 2)
+    return (s - esp) / (0.5 * (sa + sb) - esp)
+
+ESCENARIOS = {"senal en las categoricas": dict(sep=1.0, p_pref=0.7),
+              "senal en las continuas  ": dict(sep=3.0, p_pref=0.35)}
+
+def gower(cont, cat):
+    """Distancia de Gower: media, sobre las variables, de |xi - xj| / rango
+    en las continuas y de 0 o 1 en las categoricas."""
+    rango = cont.max(0) - cont.min(0)
+    d = np.abs(cont[:, None, :] - cont[None]) / rango
+    d = d.sum(2) + (cat[:, None, :] != cat[None]).sum(2)
+    return d / (cont.shape[1] + cat.shape[1])
+
+def kmedoides(D, k, semilla, iters=50):
+    """k-medoides por alternancia: asignar al medoide mas cercano y elegir
+    como nuevo medoide la fila del grupo con menor distancia total."""
+    rng = np.random.default_rng(semilla)
+    med = rng.choice(len(D), k, replace=False)
+    for _ in range(iters):
+        e = np.argmin(D[:, med], axis=1)
+        nuevo = med.copy()
+        for j in range(k):
+            miembros = np.flatnonzero(e == j)
+            if len(miembros):
+                nuevo[j] = miembros[np.argmin(D[np.ix_(miembros, miembros)].sum(1))]
+        if np.array_equal(nuevo, med): break
+        med = nuevo
+    return e, D[np.arange(len(D)), med[e]].sum()
+
+def clases_latentes(cont, cat, k, semilla, iters=300, con_continuas=True):
+    """Mezcla de k clases: en cada clase, categoricas independientes y
+    continuas normales independientes. Se ajusta con EM."""
+    rng = np.random.default_rng(semilla)
+    n = len(cat)
+    R = rng.dirichlet(np.ones(k), n)                     # responsabilidades iniciales
+    for _ in range(iters):
+        pi = R.mean(0)
+        logp = np.log(pi)[None, :].repeat(n, 0)
+        for v in range(cat.shape[1]):
+            T = np.array([[R[cat[:, v] == c, j].sum() for c in range(4)] for j in range(k)]) + 1e-3
+            T /= T.sum(1, keepdims=True)
+            logp += np.log(T[:, cat[:, v]]).T
+        if con_continuas:
+            w = R / R.sum(0)
+            mu = w.T @ cont
+            var = np.array([(w[:, j:j + 1] * (cont - mu[j]) ** 2).sum(0) for j in range(k)]) + 1e-6
+            logp += np.array([-0.5 * (np.log(2 * np.pi * var[j]) + (cont - mu[j]) ** 2 / var[j]).sum(1)
+                              for j in range(k)]).T
+        m = logp.max(1, keepdims=True)
+        R_nueva = np.exp(logp - m); R_nueva /= R_nueva.sum(1, keepdims=True)
+        vero = (m.ravel() + np.log(np.exp(logp - m).sum(1))).sum()
+        if np.abs(R_nueva - R).max() < 1e-8: break
+        R = R_nueva
+    return R.argmax(1), -vero
+
+def mejor_de(fn, reps=10):
+    return min((fn(s) for s in range(reps)), key=lambda r: r[1])[0]
+
+print("indice de Rand ajustado con los grupos verdaderos, 900 filas")
+for nombre, par in ESCENARIOS.items():
+    cont, cat, g = datos(900, 1, **par)
+    D = gower(cont, cat)
+    print("  " + nombre)
+    print("    Gower y k-medoides                       : %.4f" % ari(mejor_de(lambda s: kmedoides(D, 3, s)), g))
+    print("    clases latentes, solo categoricas        : %.4f"
+          % ari(mejor_de(lambda s: clases_latentes(cont, cat, 3, s, con_continuas=False)), g))
+    print("    clases latentes, categoricas y continuas : %.4f"
+          % ari(mejor_de(lambda s: clases_latentes(cont, cat, 3, s)), g))
+```
+
+```{=html}
+<div class="viz-gower">
+  <div class="controles">
+    <label>Fila comparada con la primera <input id="gw-j" type="range" min="1" max="12" step="1" value="1"> <span id="gw-j-v">1</span></label>
+    <label><input id="gw-r" type="checkbox" checked> Dividir las continuas por su rango</label>
+  </div>
+  <svg id="gw-svg" viewBox="0 0 660 260" role="img" aria-label="Aporte de cada variable a la distancia de Gower entre dos filas, con las continuas divididas o no por su rango."></svg>
+  <p class="lectura" id="gw-lectura"></p>
+</div>
+<style>
+.viz-gower { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-gower .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-gower label { display: flex; align-items: center; gap: .4rem; }
+.viz-gower input[type=range] { width: 150px; padding: 0; }
+.viz-gower svg { width: 100%; height: auto; display: block; }
+.viz-gower .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("gw-svg"), lec = document.getElementById("gw-lectura");
+  var cj = document.getElementById("gw-j"), cr = document.getElementById("gw-r"), ej = document.getElementById("gw-j-v");
+  // trece filas fijas: dos continuas (la segunda cien veces mayor) y tres categoricas
+  var FILAS = [[0.4, 120, 0, 2, 1], [1.9, 60, 0, 3, 1], [-0.8, 310, 1, 2, 1], [0.1, 95, 2, 2, 0], [2.6, 240, 0, 1, 3],
+               [-1.5, 20, 3, 3, 2], [0.9, 180, 1, 0, 1], [1.2, 125, 0, 2, 1], [-0.2, 400, 2, 1, 0], [3.0, 50, 0, 2, 2],
+               [-2.1, 330, 1, 3, 3], [0.5, 70, 3, 0, 1], [1.6, 210, 2, 2, 1]];
+  var RANGO = [5.1, 380];
+  var NOM = ["continua 1", "continua 2", "categórica 1", "categórica 2", "categórica 3"];
+  var X0 = 60, X1 = 620, Y0 = 20, Y1 = 200;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function py(v) { return Y1 - Math.min(v, 1) * (Y1 - Y0); }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var j = +cj.value, norm = cr.checked, a = FILAS[0], b = FILAS[j], ap = [], v;
+    ej.textContent = String(j);
+    for (v = 0; v < 2; v++) ap.push(Math.abs(a[v] - b[v]) / (norm ? RANGO[v] : 1));
+    for (v = 2; v < 5; v++) ap.push(a[v] === b[v] ? 0 : 1);
+    [0, 0.5, 1].forEach(function (t) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(t).toFixed(1) + " L" + X1 + " " + py(t).toFixed(1), stroke: C_L, "stroke-width": 0.8 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(t) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, t.toFixed(1).replace(".", ",")));
+    });
+    var ancho = (X1 - X0) / 5;
+    for (v = 0; v < 5; v++) {
+      var x = X0 + v * ancho + ancho * 0.2, w = ancho * 0.6;
+      svg.appendChild(el("rect", { x: x.toFixed(1), y: py(ap[v]).toFixed(1), width: w.toFixed(1), height: (Y1 - py(ap[v])).toFixed(1), fill: v < 2 ? C_A : C_B, "fill-opacity": 0.75 }));
+      if (ap[v] > 1) svg.appendChild(el("text", { x: (x + w / 2).toFixed(1), y: Y0 - 4, "text-anchor": "middle", "font-size": 10, fill: C_T }, "↑ " + ap[v].toFixed(0)));
+      svg.appendChild(el("text", { x: (x + w / 2).toFixed(1), y: Y1 + 18, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .75 }, NOM[v]));
+    }
+    var d = ap.reduce(function (s, x) { return s + x; }, 0) / 5;
+    lec.innerHTML = "Entre la fila 0 y la fila <strong>" + j + "</strong>, la distancia media es <strong>" + d.toFixed(3).replace(".", ",") + "</strong>. " +
+      (norm ? "Cada continua aporta su diferencia dividida por el rango, entre 0 y 1, y cada categórica aporta 0 si coincide y 1 si no: las cinco variables pesan lo mismo."
+            : "Sin dividir por el rango, la segunda continua aporta su diferencia bruta, del orden de cien, y la distancia queda determinada por ella sola: las demás variables no cambian el orden de las distancias.");
+  }
+  cj.addEventListener("input", dibujar); cr.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+**Modo de falla.** Se agrupan clientes con k-medias sobre una tabla con ficticias y alguna variable monetaria sin estandarizar. Los grupos resultantes se describen por las categóricas, pero se formaron casi solo con la variable monetaria. Antes de interpretar un clustering conviene comprobar qué variables separan los grupos, por ejemplo comparando la partición con la que se obtiene quitando cada variable.
+
+## 4. Cómo elegir
+
+| Datos | Método |
+|---|---|
+| Solo categóricas, pocos niveles | k-modas, o clases latentes si se quiere una probabilidad por fila |
+| Mixtas, se sabe qué tipo lleva más información | k-prototipos con $\gamma$ ajustado a ese peso |
+| Mixtas, sin información previa | clases latentes con los dos tipos de variables |
+| Tipos variados (ordinales, binarias asimétricas) o solo se dispone de distancias | Gower con k-medoides o con clustering jerárquico |
+
+El número de grupos se elige como en Machine Learning 21, y en las clases latentes también con el BIC de Machine Learning 28.
+
+## 5. Limitaciones
+
+Todas las mediciones usan datos donde los grupos verdaderos se conocen. Con datos reales no hay índice de Rand, y la comparación entre métodos pasa por la estabilidad de los grupos al remuestrear y por su interpretación.
+
+El modelo de clases latentes supone independencia entre variables dentro de cada clase. Con variables muy correlacionadas dentro de los grupos, el modelo necesita más clases para describirlos.
+
+Las variables ordinales se pueden tratar como categóricas, que ignora el orden, o como continuas con su posición dividida por el número de niveles, que es la convención de Gower para ordinales en ESL §14.3.
+
+## Ejercicios
+
+### Ejercicio 1, Distancia de Gower entre dos filas
+
+La celda define dos filas con dos continuas (`a_cont`, `b_cont`), tres categóricas (`a_cat`, `b_cat`) y los rangos de las continuas en `rango`. Completar la línea de `d` con la distancia de Gower entre las dos filas, redondeada a 4 decimales. Debe dar 0,3.
+
+```{pyodide}
+#| exercise: ex_gower
+import numpy as np
+
+a_cont, b_cont = np.array([1.0, 250.0]), np.array([2.5, 100.0])
+a_cat, b_cat = np.array([0, 2, 1]), np.array([0, 3, 1])
+rango = np.array([6.0, 600.0])
+
+d = ______
+
+print(d)
+```
+
+::: {.hint exercise="ex_gower"}
+Sumar `np.abs(a_cont - b_cont) / rango` y `a_cat != b_cat`, y dividir entre el número de variables, 5.
+:::
+
+::: {.solution exercise="ex_gower"}
+```{pyodide}
+import numpy as np
+
+a_cont, b_cont = np.array([1.0, 250.0]), np.array([2.5, 100.0])
+a_cat, b_cat = np.array([0, 2, 1]), np.array([0, 3, 1])
+rango = np.array([6.0, 600.0])
+
+cont = np.sum(np.abs(a_cont - b_cont) / rango)
+cat = np.sum(a_cat != b_cat)
+partes = cont + cat
+d = round(float(partes) / 5, 4)
+
+print(d)
+```
+
+Las dos continuas aportan 0,25 cada una y la segunda categórica aporta 1; la media sobre las cinco variables es 0,3. La diferencia de 150 en la segunda continua pesa lo mismo que la de 1,5 en la primera, porque las dos son un cuarto de su rango.
+:::
+
+```{pyodide}
+#| exercise: ex_gower
+#| check: true
+if d == 0.3:
+    feedback = {"correct": True, "message": "Correcto: 0,3."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 0.3."}
+feedback
+```
+
+### Ejercicio 2, Centro de un grupo en k-modas
+
+La celda define la matriz `M` con las categóricas de las cuatro filas de un grupo, una columna por variable. Completar la línea de `centro` con el nivel más frecuente de cada columna. Debe dar [0, 1, 3].
+
+```{pyodide}
+#| exercise: ex_moda
+import numpy as np
+
+M = np.array([[0, 1, 2], [0, 1, 3], [1, 1, 3], [0, 2, 3]])
+
+centro = [______ for v in range(M.shape[1])]
+
+print(centro)
+```
+
+::: {.hint exercise="ex_moda"}
+Para la columna `v`, `np.bincount(M[:, v]).argmax()` da el nivel más frecuente; convertirlo a `int`.
+:::
+
+::: {.solution exercise="ex_moda"}
+```{pyodide}
+import numpy as np
+
+M = np.array([[0, 1, 2], [0, 1, 3], [1, 1, 3], [0, 2, 3]])
+
+centro = [int(np.bincount(M[:, v]).argmax()) for v in range(M.shape[1])]
+
+print(centro)
+```
+
+El centro es una fila posible de los datos, a diferencia de la media de unas ficticias. Si dos niveles empatan, `argmax` devuelve el menor, y el resultado de k-modas puede depender de esa regla.
+:::
+
+```{pyodide}
+#| exercise: ex_moda
+#| check: true
+if [int(x) for x in centro] == [0, 1, 3]:
+    feedback = {"correct": True, "message": "Correcto: [0, 1, 3]."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [0, 1, 3]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **ML 46**:
+
+1. Elegir $\gamma$ de k-prototipos con el criterio de estabilidad: agrupar dos mitades de los datos y medir el índice de Rand ajustado entre las dos particiones de las filas comunes.
+2. Añadir una variable ordinal de cinco niveles y comparar tratarla como categórica y como continua en Gower.
+3. Encontrar un caso en que el modelo de clases latentes con los dos tipos de variables quede por debajo de k-prototipos. Guardar el caso en `50-Errores/`.
+
+## Del libro
+
+La §14.3 de ESL, *Cluster Analysis*, trata las disimilitudes antes que los algoritmos. Define disimilitudes para variables cuantitativas, ordinales y categóricas, discute cómo combinarlas en una disimilitud entre filas con pesos por variable y advierte de que dar el mismo peso a todas las variables no equivale a que todas influyan lo mismo. Presenta k-medias y, para disimilitudes generales, los k-medoides, que solo necesitan la matriz de disimilitudes.
+
+Esta lección añade k-modas, k-prototipos y el modelo de clases latentes, y los compara con k-medoides sobre la distancia de Gower en dos escenarios con los grupos conocidos.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- k-medias con ficticias: una variable en otra escala domina, y el centro no es un nivel.
+- k-modas: número de discrepancias y la moda como centro; solo categóricas.
+- k-prototipos: euclídea en las continuas más $\gamma$ por discrepancia; $\gamma$ decide qué tipo pesa más.
+- Gower: cada variable aporta entre 0 y 1, las continuas divididas por su rango; se agrupa con k-medoides.
+- Clases latentes: mezcla con categóricas y continuas independientes dentro de cada clase, ajustada con EM.
+- Señal en las categóricas: k-modas 0,7704, Gower 0,8044, clases latentes 0,8010.
+- Señal en las continuas: k-modas 0,2709, Gower 0,4043, k-prototipos con $\gamma=1$ 0,5483, clases latentes 0,5281.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos de los dos escenarios: k-medias (0,0363 y 0,1813 sin estandarizar; 0,3476 y 0,4772 estandarizando), k-modas (0,7704 y 0,2709), k-prototipos con $\gamma$ de 0,25, 1 y 4 (0,1114; 0,3777 y 0,7987, y 0,4339; 0,5483 y 0,4467), Gower con k-medoides (0,8044 y 0,4043) y clases latentes (0,7743 y 0,8010, y 0,2444 y 0,5281).
+
+**Lo que se usa de otras lecciones sin repetir.** k-medias es de Machine Learning 21; el algoritmo EM, de Machine Learning 30; la dependencia de la distancia respecto a la escala, de Atributos 05.
+
+**Lo que se enuncia sin demostrar.** Que el modelo de clases latentes pondera cada variable por su verosimilitud se argumenta sin cuantificar. La tabla de la Sección 4 resume las mediciones y no es un resultado general.
+
+**Lo que es mío, no del libro.** Los dos escenarios con los grupos conocidos, que permiten medir cada método con el índice de Rand ajustado, y la comparación de los cinco enfoques sobre los mismos datos.
+:::

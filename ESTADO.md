@@ -5264,6 +5264,18 @@ forzar la conclusión se midió con menos filas, donde la teoría dice que
 importa. La sesión se cortó con la lección escrita y sin registrar; se retomó
 sin pérdidas.
 
+### 3.101 ML 46: clustering con variables categóricas y mixtas (27-09-2026)
+
+Adelantada a la 44 y la 45 porque Luis no la veía publicada. Dos escenarios
+con los grupos conocidos (señal en las categóricas, señal en las continuas),
+dos continuas con una en escala cien veces mayor y tres categóricas. Índice
+de Rand ajustado: k-medias con ficticias sin estandarizar 0,0363 y 0,1813;
+estandarizando 0,3476 y 0,4772; k-modas 0,7704 y 0,2709; k-prototipos con
+γ = 4 gana en el primero (0,7987) y con γ = 1 en el segundo (0,5483); Gower
+con k-medoides 0,8044 y 0,4043; clases latentes con los dos tipos 0,8010 y
+0,5281. Ningún método gana en los dos: la lección cierra con una tabla de
+elección según cuánta información lleve cada tipo de variable.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
