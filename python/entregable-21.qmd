@@ -1,0 +1,598 @@
+---
+title: "Entregable 21: informe de ventas con promociones"
+subtitle: "Python · Lecciones 01 a 12"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - pandas
+---
+
+Este entregable se puede resolver con lo visto hasta la Lección 12 de Python, y con cualquier herramienta posterior.
+
+## Especificación
+
+La celda genera cuatro tablas de un supermercado durante las cuatro semanas del 2 al 29 de marzo de 2026. `catalogo` tiene las columnas `producto`, `nombre`, `categoria` y `precio`, con un código por fila. `ventas` tiene una fila por artículo cobrado, con las columnas `ticket`, `dia` (texto `AAAA-MM-DD`), `hora`, `caja`, `producto` y `cantidad`; todos sus códigos están en el catálogo. `promociones` tiene las columnas `producto`, `desde`, `hasta` y `descuento`: el producto se vende con ese descuento, expresado como fracción del precio, en los días que van de `desde` a `hasta`, ambos incluidos. `calendario` tiene una fila por día del periodo, con las columnas `dia`, `dia_semana` (`"lunes"` a `"domingo"`) y `abierto`. El jueves 19 la tienda cerró, y el miércoles 25 abrió pero no registró ventas.
+
+El programa debe definir las funciones siguientes y aplicarlas a las tablas generadas:
+
+1. `con_promocion(ventas, catalogo, promociones)` devuelve las líneas de `ventas`, en el mismo orden y con índice de 0 a $n-1$, con cuatro columnas más: `categoria` y `precio`, tomadas del catálogo; `descuento`, que es el mayor de los descuentos de las promociones del producto vigentes ese día, o 0 si no hay ninguna; e `importe`, que es la cantidad por el precio por $(1-\text{descuento})$, sin redondear.
+2. `por_categoria(lineas, catalogo)` recibe la tabla anterior y devuelve una tabla con una fila por cada categoría del catálogo, en orden alfabético y con la categoría como índice, y las columnas `importe` (suma de importes), `unidades` (suma de cantidades, entero), `tickets` (número de tickets distintos con al menos una línea de la categoría, entero) y `participacion` (porcentaje del importe total). Una categoría sin ventas tiene ceros en las cuatro columnas; si el importe total es 0, todas las participaciones son 0.
+3. `por_hora(lineas)` devuelve una Series con índice de las horas 8 a 21, todas presentes y en orden, y el importe vendido en cada hora; una hora sin ventas vale 0.
+4. `cesta(lineas)` devuelve un diccionario con las claves `"tickets"` (número de tickets distintos, entero), `"media"` (importe total entre número de tickets), `"mediana"` (mediana del importe total de cada ticket) y `"articulos"` (unidades totales entre número de tickets). Si no hay líneas, el número de tickets es 0 y los otros tres valores son 0.
+5. `por_dia_semana(lineas, calendario)` devuelve una Series con índice `"lunes"`, `"martes"`, `"miercoles"`, `"jueves"`, `"viernes"`, `"sabado"`, `"domingo"`, en ese orden, con la venta diaria media de los días abiertos de cada día de la semana. Un día abierto sin ventas cuenta con venta 0; un día cerrado no cuenta. Si un día de la semana no tiene ningún día abierto en el calendario, su valor es un faltante.
+6. `mas_vendido(lineas)` devuelve una tabla con las columnas `categoria`, `producto` e `importe`, con una fila por cada categoría que tuvo ventas: el producto de mayor importe de la categoría y ese importe. Si dos productos empatan, se elige el de código menor. Las filas se ordenan por categoría y el índice va de 0 a $n-1$.
+7. El programa imprime un informe con el importe total, la tabla por categoría, la hora de mayor venta, los cuatro datos de la cesta, la venta media de cada día de la semana y el producto más vendido de cada categoría, con rótulos.
+
+Todos los importes, porcentajes y medias que devuelven las funciones 2 a 6 se redondean a 2 decimales.
+
+## Rúbrica
+
+| Criterio | Completo | Incompleto |
+|---|---|---|
+| Requisitos 1 a 6 | La comprobación automática marca los seis como cumplidos, con los datos de la celda, con los que genera la comprobación y con los casos límite escritos a mano. | Alguno no se cumple. |
+| Requisito 7 | El informe contiene todos los datos con rótulo, y cuadra: la suma de la tabla por categoría y la suma por hora dan el mismo importe total. | Faltan datos o las cifras no cuadran entre sí. |
+| Claridad del código | Cada función lleva el número del requisito que resuelve; la tabla de líneas con importe se construye una vez y las demás funciones la reciben; los nombres dicen qué guarda cada tabla. | El importe se recalcula en varias funciones, o hay bloques sin comentar y nombres de una letra. |
+| Razonamiento | Se distingue la media de los tickets de la media de las líneas, y el promedio por día de la semana se toma sobre los días abiertos, contando los que no tuvieron ventas. | La cesta media se calcula por línea, o el día sin ventas desaparece del promedio sin que se note. |
+
+Los dos primeros criterios se comprueban con la celda de comprobación; los dos últimos, con la solución de referencia al final de la página.
+
+## Programa
+
+```{pyodide}
+#| exercise: ent_21
+import numpy as np
+import pandas as pd
+
+GRUPOS = [
+    ("abarrotes", ["arroz", "frijoles", "azucar", "aceite", "pasta",
+                   "sal"]),
+    ("bebidas", ["agua", "jugo de naranja", "refresco", "te frio",
+                 "bebida isotonica"]),
+    ("carnes", ["pollo", "carne molida", "chuleta", "salchichas"]),
+    ("frutas y verduras", ["banano", "manzana", "tomate", "papa",
+                           "cebolla", "zanahoria", "lechuga"]),
+    ("lacteos", ["leche", "yogur", "queso", "mantequilla", "natilla"]),
+    ("limpieza", ["detergente", "jabon", "cloro", "papel higienico",
+                  "esponja"]),
+    ("panaderia", ["pan de molde", "pan dulce", "galletas", "tortillas",
+                   "queque"]),
+    ("mascotas", ["alimento para perro", "arena para gato"]),
+]
+SEMANA = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado",
+          "domingo"]
+
+
+def generar(semilla, cerrado="2026-03-19", sin_ventas="2026-03-25"):
+    rng = np.random.default_rng(semilla)
+    pares = [(c, n) for c, nombres in GRUPOS for n in nombres]
+    catalogo = pd.DataFrame({
+        "producto": ["P%03d" % (i + 1) for i in range(len(pares))],
+        "nombre": [n for _, n in pares],
+        "categoria": [c for c, _ in pares],
+        "precio": [int(x) / 100
+                   for x in rng.integers(50, 1200, len(pares))],
+    })
+    dias = ["2026-03-%02d" % d for d in range(2, 30)]
+    calendario = pd.DataFrame({
+        "dia": dias,
+        "dia_semana": [SEMANA[i % 7] for i in range(len(dias))],
+        "abierto": [d != cerrado for d in dias],
+    })
+    filas, t = [], 0
+    for i, dia in enumerate(dias):
+        if dia in (cerrado, sin_ventas):
+            continue
+        extra = 10 if i % 7 >= 5 else 0
+        for _ in range(int(rng.integers(15, 25)) + extra):
+            t += 1
+            hora = int(rng.integers(8, 22))
+            caja = int(rng.integers(1, 7))
+            for _ in range(int(rng.integers(1, 7))):
+                cod = "P%03d" % rng.integers(1, 38)
+                filas.append((t, dia, hora, caja, cod,
+                              int(rng.integers(1, 6))))
+    ventas = pd.DataFrame(filas, columns=[
+        "ticket", "dia", "hora", "caja", "producto", "cantidad"])
+    return catalogo, ventas, calendario
+
+
+catalogo, ventas, calendario = generar(21)
+promociones = pd.DataFrame({
+    "producto": ["P016", "P016", "P023", "P033", "P007", "P030"],
+    "desde": ["2026-03-02", "2026-03-06", "2026-03-09", "2026-03-20",
+              "2026-03-23", "2026-04-01"],
+    "hasta": ["2026-03-08", "2026-03-12", "2026-03-15", "2026-03-20",
+              "2026-03-29", "2026-04-05"],
+    "descuento": [0.10, 0.20, 0.15, 0.30, 0.05, 0.50],
+})
+print(len(ventas), "lineas,", ventas["ticket"].nunique(), "tickets")
+
+# 1. con_promocion
+def con_promocion(ventas, catalogo, promociones):
+    return None
+
+
+# 2. por_categoria
+def por_categoria(lineas, catalogo):
+    return None
+
+
+# 3. por_hora
+def por_hora(lineas):
+    return None
+
+
+# 4. cesta
+def cesta(lineas):
+    return None
+
+
+# 5. por_dia_semana
+def por_dia_semana(lineas, calendario):
+    return None
+
+
+# 6. mas_vendido
+def mas_vendido(lineas):
+    return None
+
+
+# 7. informe
+```
+
+::: {.hint exercise="ent_21"}
+Del 6 al 8 de marzo el banano (P016) tiene dos promociones vigentes, del 10 % y del 20 %, y vale la mayor. La promoción de P030 cae fuera del periodo y no afecta a ninguna línea. La cesta media es un promedio por ticket: primero se suma cada ticket y después se promedia. Los cuatro miércoles del periodo están abiertos, y uno de ellos tiene venta 0, así que la media de los miércoles es la suma de tres días entre cuatro.
+:::
+
+```{pyodide}
+#| exercise: ent_21
+#| check: true
+import statistics as _st
+import numpy as _np
+import pandas as _pd
+
+_GRUPOS = [
+    ("abarrotes", ["arroz", "frijoles", "azucar", "aceite", "pasta",
+                   "sal"]),
+    ("bebidas", ["agua", "jugo de naranja", "refresco", "te frio",
+                 "bebida isotonica"]),
+    ("carnes", ["pollo", "carne molida", "chuleta", "salchichas"]),
+    ("frutas y verduras", ["banano", "manzana", "tomate", "papa",
+                           "cebolla", "zanahoria", "lechuga"]),
+    ("lacteos", ["leche", "yogur", "queso", "mantequilla", "natilla"]),
+    ("limpieza", ["detergente", "jabon", "cloro", "papel higienico",
+                  "esponja"]),
+    ("panaderia", ["pan de molde", "pan dulce", "galletas", "tortillas",
+                   "queque"]),
+    ("mascotas", ["alimento para perro", "arena para gato"]),
+]
+_SEM = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado",
+        "domingo"]
+
+
+def _generar(semilla, cerrado, sin_ventas):
+    rng = _np.random.default_rng(semilla)
+    pares = [(c, n) for c, nombres in _GRUPOS for n in nombres]
+    cat = _pd.DataFrame({
+        "producto": ["P%03d" % (i + 1) for i in range(len(pares))],
+        "nombre": [n for _, n in pares],
+        "categoria": [c for c, _ in pares],
+        "precio": [int(x) / 100
+                   for x in rng.integers(50, 1200, len(pares))],
+    })
+    dias = ["2026-03-%02d" % d for d in range(2, 30)]
+    cal = _pd.DataFrame({
+        "dia": dias,
+        "dia_semana": [_SEM[i % 7] for i in range(len(dias))],
+        "abierto": [d != cerrado for d in dias],
+    })
+    filas, t = [], 0
+    for i, dia in enumerate(dias):
+        if dia in (cerrado, sin_ventas):
+            continue
+        extra = 10 if i % 7 >= 5 else 0
+        for _ in range(int(rng.integers(15, 25)) + extra):
+            t += 1
+            hora = int(rng.integers(8, 22))
+            caja = int(rng.integers(1, 7))
+            for _ in range(int(rng.integers(1, 7))):
+                cod = "P%03d" % rng.integers(1, 38)
+                filas.append((t, dia, hora, caja, cod,
+                              int(rng.integers(1, 6))))
+    ven = _pd.DataFrame(filas, columns=[
+        "ticket", "dia", "hora", "caja", "producto", "cantidad"])
+    return cat, ven, cal
+
+
+def _lineas_ref(ven, cat, pro):
+    info = {p: (c, float(x)) for p, c, x in
+            cat[["producto", "categoria", "precio"]].itertuples(
+                index=False)}
+    prom = list(pro[["producto", "desde", "hasta",
+                     "descuento"]].itertuples(index=False))
+    sal = []
+    for t, d, h, c, p, q in ven[["ticket", "dia", "hora", "caja",
+                                 "producto", "cantidad"]].itertuples(
+                                     index=False):
+        ds = [float(x) for pp, a, b, x in prom
+              if pp == p and a <= d <= b]
+        des = max(ds) if ds else 0.0
+        cg, pr = info[p]
+        sal.append((int(t), d, int(h), int(c), p, int(q), cg, pr, des,
+                    q * pr * (1 - des)))
+    return sal
+
+
+def _tabla(v, c, p):
+    return _pd.DataFrame(_lineas_ref(v, c, p), columns=[
+        "ticket", "dia", "hora", "caja", "producto", "cantidad",
+        "categoria", "precio", "descuento", "importe"])
+
+
+def _cerca(a, b, tol=0.0101):
+    return abs(float(a) - float(b)) < tol
+
+
+def _pro_m():
+    return _pd.DataFrame({
+        "producto": ["P001", "P001", "P002", "P009"],
+        "desde": ["2026-03-02", "2026-03-03", "2026-03-04",
+                  "2026-03-01"],
+        "hasta": ["2026-03-03", "2026-03-04", "2026-03-04",
+                  "2026-03-31"],
+        "descuento": [0.10, 0.25, 0.50, 0.40]})
+
+
+def _datos_m():
+    cat = _pd.DataFrame({
+        "producto": ["P001", "P002", "P003", "P004", "P005", "P006"],
+        "nombre": ["a", "b", "c", "d", "e", "f"],
+        "categoria": ["uno", "uno", "dos", "tres", "cero", "dos"],
+        "precio": [2.0, 1.0, 4.0, 3.0, 5.0, 2.0]})
+    ven = _pd.DataFrame({
+        "ticket": [1, 1, 1, 2, 2, 3, 3, 3],
+        "dia": ["2026-03-02", "2026-03-02", "2026-03-02", "2026-03-03",
+                "2026-03-04", "2026-03-04", "2026-03-04", "2026-03-04"],
+        "hora": [8, 8, 8, 10, 10, 21, 21, 21],
+        "caja": [1, 1, 1, 2, 2, 1, 1, 1],
+        "producto": ["P001", "P002", "P003", "P001", "P002", "P004",
+                     "P004", "P006"],
+        "cantidad": [1, 2, 1, 1, 2, 1, 1, 2]})
+    cal = _pd.DataFrame({
+        "dia": ["2026-03-%02d" % d for d in range(2, 9)],
+        "dia_semana": _SEM,
+        "abierto": [True, True, True, True, True, True, False]})
+    return ven, cat, cal
+
+
+_cat_s, _ven_s, _cal_s = _generar(2026, "2026-03-10", "2026-03-14")
+_ven_m, _cat_m, _cal_m = _datos_m()
+_datos = [(ventas, catalogo, promociones, calendario),
+          (_ven_s, _cat_s, promociones, _cal_s),
+          (_ven_m, _cat_m, _pro_m(), _cal_m)]
+
+
+def _r1():
+    for v, c, p, _ in _datos:
+        obt = con_promocion(v, c, p)
+        esp = _lineas_ref(v, c, p)
+        cols = ["ticket", "dia", "hora", "caja", "producto", "cantidad",
+                "categoria", "precio", "descuento", "importe"]
+        if list(obt.columns) != cols or len(obt) != len(esp):
+            return False
+        if list(obt.index) != list(range(len(esp))):
+            return False
+        for a, b in zip(obt[cols].itertuples(index=False), esp):
+            if tuple(a[:7]) != b[:7]:
+                return False
+            if not all(_cerca(x, y, 1e-9)
+                       for x, y in zip(a[7:], b[7:])):
+                return False
+    d = con_promocion(*_datos[2][:3])["descuento"].tolist()
+    return [round(x, 2) for x in d] == [0.1, 0.0, 0.0, 0.25, 0.5, 0.0,
+                                        0.0, 0.0]
+
+
+def _ref_cat(lin, cat):
+    cats = sorted(set(cat["categoria"]))
+    tot = sum(r[9] for r in lin)
+    sal = {}
+    for k in cats:
+        rs = [r for r in lin if r[6] == k]
+        imp = sum(r[9] for r in rs)
+        sal[k] = (imp, sum(r[5] for r in rs), len({r[0] for r in rs}),
+                  100 * imp / tot if tot else 0.0)
+    return cats, sal
+
+
+def _r2():
+    for v, c, p, _ in _datos:
+        lin = _lineas_ref(v, c, p)
+        obt = por_categoria(_tabla(v, c, p), c)
+        cats, esp = _ref_cat(lin, c)
+        if [str(x) for x in obt.index] != cats:
+            return False
+        if list(obt.columns) != ["importe", "unidades", "tickets",
+                                 "participacion"]:
+            return False
+        for k in cats:
+            a, b = obt.loc[k], esp[k]
+            if not (_cerca(a["importe"], b[0]) and a["unidades"] == b[1]
+                    and a["tickets"] == b[2]
+                    and _cerca(a["participacion"], b[3])):
+                return False
+    vacia = _tabla(*_datos[2][:3]).iloc[0:0]
+    z = por_categoria(vacia, _cat_m)
+    return bool((z.fillna(-1).to_numpy() == 0).all())
+
+
+def _r3():
+    for v, c, p, _ in _datos:
+        lin = _lineas_ref(v, c, p)
+        obt = por_hora(_tabla(v, c, p))
+        if [int(h) for h in obt.index] != list(range(8, 22)):
+            return False
+        for h in range(8, 22):
+            if not _cerca(obt.loc[h], sum(r[9] for r in lin
+                                          if r[2] == h)):
+                return False
+    return True
+
+
+def _r4():
+    for v, c, p, _ in _datos:
+        lin = _lineas_ref(v, c, p)
+        tk = {}
+        for r in lin:
+            tk[r[0]] = tk.get(r[0], 0.0) + r[9]
+        n = len(tk)
+        obt = cesta(_tabla(v, c, p))
+        if int(obt["tickets"]) != n:
+            return False
+        if not (_cerca(obt["media"], sum(tk.values()) / n)
+                and _cerca(obt["mediana"], _st.median(tk.values()))
+                and _cerca(obt["articulos"],
+                           sum(r[5] for r in lin) / n)):
+            return False
+    vacia = _tabla(*_datos[2][:3]).iloc[0:0]
+    z = cesta(vacia)
+    return (int(z["tickets"]) == 0 and
+            all(float(z[k]) == 0.0 for k in ["media", "mediana",
+                                             "articulos"]))
+
+
+def _r5():
+    for v, c, p, cal in _datos:
+        lin = _lineas_ref(v, c, p)
+        obt = por_dia_semana(_tabla(v, c, p), cal)
+        if list(obt.index) != _SEM:
+            return False
+        for s in _SEM:
+            dias = [d for d, ss, a in cal[["dia", "dia_semana",
+                                           "abierto"]].itertuples(
+                                               index=False)
+                    if ss == s and a]
+            if not dias:
+                if not _pd.isna(obt.loc[s]):
+                    return False
+                continue
+            m = sum(r[9] for r in lin if r[1] in dias) / len(dias)
+            if _pd.isna(obt.loc[s]) or not _cerca(obt.loc[s], m):
+                return False
+    return True
+
+
+def _r6():
+    for v, c, p, _ in _datos:
+        lin = _lineas_ref(v, c, p)
+        imp = {}
+        for r in lin:
+            imp[(r[6], r[4])] = imp.get((r[6], r[4]), 0.0) + r[9]
+        esp = []
+        for k in sorted({k for k, _ in imp}):
+            mejor = sorted((round(-x, 9), pr) for (kk, pr), x
+                           in imp.items() if kk == k)[0]
+            esp.append((k, mejor[1], -mejor[0]))
+        obt = mas_vendido(_tabla(v, c, p))
+        if list(obt.columns) != ["categoria", "producto", "importe"]:
+            return False
+        if list(obt.index) != list(range(len(esp))):
+            return False
+        for a, b in zip(obt.itertuples(index=False), esp):
+            if str(a[0]) != b[0] or str(a[1]) != b[1] or not _cerca(
+                    a[2], b[2]):
+                return False
+        if len(obt) != len(esp):
+            return False
+    return True
+
+
+_nombres = ["con_promocion", "por_categoria", "por_hora", "cesta",
+            "por_dia_semana", "mas_vendido"]
+_ok = []
+for _f in (_r1, _r2, _r3, _r4, _r5, _r6):
+    try:
+        _ok.append(bool(_f()))
+    except Exception:
+        _ok.append(False)
+_lineas = ["requisito %d (%s): %s" % (i + 1, _nombres[i],
+           "cumplido" if v else "no cumplido")
+           for i, v in enumerate(_ok)]
+feedback = {"correct": all(_ok), "message": " · ".join(_lineas)}
+feedback
+```
+
+## Solución de referencia
+
+::: {.callout-note collapse="true"}
+## Ver la solución de referencia
+
+```python
+import numpy as np
+import pandas as pd
+
+GRUPOS = [
+    ("abarrotes", ["arroz", "frijoles", "azucar", "aceite", "pasta",
+                   "sal"]),
+    ("bebidas", ["agua", "jugo de naranja", "refresco", "te frio",
+                 "bebida isotonica"]),
+    ("carnes", ["pollo", "carne molida", "chuleta", "salchichas"]),
+    ("frutas y verduras", ["banano", "manzana", "tomate", "papa",
+                           "cebolla", "zanahoria", "lechuga"]),
+    ("lacteos", ["leche", "yogur", "queso", "mantequilla", "natilla"]),
+    ("limpieza", ["detergente", "jabon", "cloro", "papel higienico",
+                  "esponja"]),
+    ("panaderia", ["pan de molde", "pan dulce", "galletas", "tortillas",
+                   "queque"]),
+    ("mascotas", ["alimento para perro", "arena para gato"]),
+]
+SEMANA = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado",
+          "domingo"]
+
+
+def generar(semilla, cerrado="2026-03-19", sin_ventas="2026-03-25"):
+    rng = np.random.default_rng(semilla)
+    pares = [(c, n) for c, nombres in GRUPOS for n in nombres]
+    catalogo = pd.DataFrame({
+        "producto": ["P%03d" % (i + 1) for i in range(len(pares))],
+        "nombre": [n for _, n in pares],
+        "categoria": [c for c, _ in pares],
+        "precio": [int(x) / 100
+                   for x in rng.integers(50, 1200, len(pares))],
+    })
+    dias = ["2026-03-%02d" % d for d in range(2, 30)]
+    calendario = pd.DataFrame({
+        "dia": dias,
+        "dia_semana": [SEMANA[i % 7] for i in range(len(dias))],
+        "abierto": [d != cerrado for d in dias],
+    })
+    filas, t = [], 0
+    for i, dia in enumerate(dias):
+        if dia in (cerrado, sin_ventas):
+            continue
+        extra = 10 if i % 7 >= 5 else 0
+        for _ in range(int(rng.integers(15, 25)) + extra):
+            t += 1
+            hora = int(rng.integers(8, 22))
+            caja = int(rng.integers(1, 7))
+            for _ in range(int(rng.integers(1, 7))):
+                cod = "P%03d" % rng.integers(1, 38)
+                filas.append((t, dia, hora, caja, cod,
+                              int(rng.integers(1, 6))))
+    ventas = pd.DataFrame(filas, columns=[
+        "ticket", "dia", "hora", "caja", "producto", "cantidad"])
+    return catalogo, ventas, calendario
+
+
+catalogo, ventas, calendario = generar(21)
+promociones = pd.DataFrame({
+    "producto": ["P016", "P016", "P023", "P033", "P007", "P030"],
+    "desde": ["2026-03-02", "2026-03-06", "2026-03-09", "2026-03-20",
+              "2026-03-23", "2026-04-01"],
+    "hasta": ["2026-03-08", "2026-03-12", "2026-03-15", "2026-03-20",
+              "2026-03-29", "2026-04-05"],
+    "descuento": [0.10, 0.20, 0.15, 0.30, 0.05, 0.50],
+})
+
+
+# 1. Precio, categoria y mayor descuento vigente de cada linea
+def con_promocion(ventas, catalogo, promociones):
+    lineas = ventas.merge(catalogo[["producto", "categoria", "precio"]],
+                          on="producto", how="left",
+                          validate="many_to_one")
+    pares = (lineas[["producto", "dia"]].reset_index()
+             .merge(promociones, on="producto"))
+    vigente = (pares["desde"] <= pares["dia"]) & (
+        pares["dia"] <= pares["hasta"])
+    mayor = pares[vigente].groupby("index")["descuento"].max()
+    lineas["descuento"] = mayor.reindex(lineas.index, fill_value=0.0)
+    lineas["importe"] = (lineas["cantidad"] * lineas["precio"]
+                         * (1 - lineas["descuento"]))
+    return lineas
+
+
+# 2. Agregados por categoria, con las categorias sin ventas en cero
+def por_categoria(lineas, catalogo):
+    categorias = sorted(catalogo["categoria"].unique())
+    g = lineas.groupby("categoria")
+    tabla = pd.DataFrame({
+        "importe": g["importe"].sum(),
+        "unidades": g["cantidad"].sum(),
+        "tickets": g["ticket"].nunique(),
+    }).reindex(categorias, fill_value=0)
+    tabla["unidades"] = tabla["unidades"].astype("int64")
+    tabla["tickets"] = tabla["tickets"].astype("int64")
+    total = tabla["importe"].sum()
+    tabla["participacion"] = (100 * tabla["importe"] / total
+                              if total > 0 else 0.0)
+    return tabla.round(2)
+
+
+# 3. Importe por hora, de 8 a 21
+def por_hora(lineas):
+    horas = lineas.groupby("hora")["importe"].sum()
+    return horas.reindex(range(8, 22), fill_value=0.0).round(2)
+
+
+# 4. Cesta: se suma cada ticket y despues se promedia
+def cesta(lineas):
+    por_ticket = lineas.groupby("ticket")["importe"].sum()
+    n = len(por_ticket)
+    if n == 0:
+        return {"tickets": 0, "media": 0.0, "mediana": 0.0,
+                "articulos": 0.0}
+    return {"tickets": n,
+            "media": round(float(por_ticket.sum()) / n, 2),
+            "mediana": round(float(por_ticket.median()), 2),
+            "articulos": round(float(lineas["cantidad"].sum()) / n, 2)}
+
+
+# 5. Venta media por dia de la semana, sobre los dias abiertos
+def por_dia_semana(lineas, calendario):
+    diario = lineas.groupby("dia")["importe"].sum()
+    abiertos = calendario[calendario["abierto"]].copy()
+    abiertos["importe"] = abiertos["dia"].map(diario).fillna(0.0)
+    media = abiertos.groupby("dia_semana")["importe"].mean()
+    return media.reindex(SEMANA).round(2)
+
+
+# 6. Producto de mayor importe por categoria; empate, codigo menor
+def mas_vendido(lineas):
+    imp = (lineas.groupby(["categoria", "producto"])["importe"].sum()
+           .reset_index())
+    imp = imp.sort_values(["categoria", "importe", "producto"],
+                          ascending=[True, False, True])
+    mejor = imp.drop_duplicates(subset="categoria", keep="first")
+    return mejor.reset_index(drop=True).round(2)
+
+
+lineas = con_promocion(ventas, catalogo, promociones)
+tabla_cat = por_categoria(lineas, catalogo)
+horas = por_hora(lineas)
+datos_cesta = cesta(lineas)
+semana = por_dia_semana(lineas, calendario)
+top = mas_vendido(lineas)
+
+# 7. Informe
+print("importe total:", round(float(lineas["importe"].sum()), 2))
+print()
+print("por categoria:")
+print(tabla_cat.to_string())
+print()
+print("hora de mayor venta:", int(horas.idxmax()), float(horas.max()))
+for clave, valor in datos_cesta.items():
+    print("cesta, %-9s:" % clave, valor)
+print()
+print("venta media por dia de la semana:")
+for dia, valor in semana.items():
+    print("  %-9s: %.2f" % (dia, valor))
+print()
+print("producto mas vendido por categoria:")
+print(top.to_string(index=False))
+```
+
+Con la semilla 21 hay 2090 líneas en 587 tickets, y el importe total es 44832,46. Las promociones afectan a 53 líneas y suman 84,57 de descuento; las ventas de banano del 6 al 8 de marzo llevan el 20 %, que es la mayor de las dos promociones vigentes esos días. La categoría mascotas aparece con ceros en las cuatro columnas, porque la tabla se construye sobre todas las categorías del catálogo, incluidas las que no tuvieron ventas.
+
+La cesta media es 76,38 por ticket, y la media de las líneas es 21,45: las dos son promedios del mismo importe total, divididos entre 587 tickets y entre 2090 líneas. La mediana de la cesta, 71,04, queda por debajo de la media porque unos pocos tickets grandes la desplazan hacia arriba. La venta media de los miércoles es 885,76 porque el miércoles 25 abrió sin ventas y cuenta con 0; si ese día se omitiera, la media subiría a 1181,01. El jueves 19 estuvo cerrado y no entra en el promedio de los jueves, que se toma sobre tres días.
+:::

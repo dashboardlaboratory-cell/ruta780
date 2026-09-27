@@ -1,0 +1,613 @@
+---
+title: "Entregable 29: tipo de cambio desde un servicio que falla"
+subtitle: "Python · Lecciones 01 a 22"
+engine: markdown
+---
+
+Este entregable se puede resolver con lo visto hasta la Lección 22 de Python, y con cualquier herramienta posterior. Se resuelve en una sola celda, desde el principio, como un programa completo; la organización del código forma parte del ejercicio.
+
+## Especificación
+
+Un supermercado cobra en colones (CRC) y reporta en dólares (USD). La celda define `ServicioCambio`, un servicio de tipo de cambio simulado que no usa la red. Su método `get(url)` devuelve `(codigo, cabeceras, cuerpo)`: el código de estado, un diccionario de cabeceras y un texto JSON. Atiende dos rutas bajo `https://cambio.ejemplo/v1/`:
+
+- `tasa`, con los parámetros `base`, `destino` y `fecha` (`AAAA-MM-DD`), responde `{"base": ..., "destino": ..., "fecha": ..., "tasa": "512.3456"}`, con la tasa escrita como texto: cuántas unidades de `destino` vale una de `base`.
+- `historial`, con `base`, `destino` y `pagina` (desde 1), responde `{"pagina": n, "datos": [{"fecha": ..., "tasa": ...}, ...], "siguiente": m}`, donde `siguiente` es el número de la página que sigue o `null` si no hay más.
+
+Una moneda desconocida da 404 y unos parámetros mal formados dan 400. Además, cada URL falla un número imprevisible de veces antes de responder bien, con 503 o con 429; una respuesta 429 trae en `cabeceras["Retry-After"]` las unidades de espera que pide el servicio, escritas como texto. Algunas URL fallan siempre. El atributo `peticiones` cuenta las llamadas a `get`. La celda crea `servicio = ServicioCambio(162)` y `tickets`, 300 tuplas `(id, fecha, total_crc)` de junio. El programa debe definir:
+
+1. `url_tasa(base, destino, fecha)` y `url_historial(base, destino, pagina)`: devuelven la URL de cada ruta, con los parámetros en el orden indicado arriba y la consulta codificada como un formulario web (`application/x-www-form-urlencoded`), de modo que cualquier valor, con espacios, `&`, `=` o eñes, llega intacto al servicio.
+2. `pide(servicio, url, maximo=5)`: hace la petición y la repite mientras la respuesta sea 429 o un 5xx, hasta un total de `maximo` intentos. Antes del reintento número k espera $2^{k-1}$ unidades, o las que pida `Retry-After` si la respuesta anterior fue un 429 que pide más; tras el último intento no espera. La espera no se ejecuta: se suman sus unidades. Devuelve `(codigo, cuerpo, intentos, espera)` de la última respuesta. Con `maximo` menor que 1 levanta `ValueError`.
+3. Dos excepciones, `MonedaDesconocida`, subclase de `LookupError`, y `ServicioNoDisponible`, subclase de `RuntimeError`, y `tasa(servicio, base, destino, fecha)`, que pide la URL de `url_tasa` con `pide` y un máximo de 5 intentos y devuelve la tasa como `float`. Un 404 levanta `MonedaDesconocida`; un 429 o un 5xx tras agotar los intentos, `ServicioNoDisponible`; cualquier otro código distinto de 200, un cuerpo que no es JSON o una tasa que no es un número positivo, `ValueError`.
+4. `convierte_tickets(servicio, tickets)`: devuelve `(convertidos, pendientes)`. `convertidos` es la lista de `(id, total_usd)`, en el orden de `tickets`, con `total_usd` = `total_crc` / tasa USD→CRC de su fecha, redondeado a 2 decimales. La tasa de cada fecha se pide una sola vez por llamada. Si la tasa de una fecha no está disponible, se usa la de la fecha anterior más cercana, entre las de los tickets de la llamada, cuya tasa sí se obtuvo; si no hay ninguna, el ticket va a `pendientes`, la lista de sus `id` en el orden de `tickets`.
+5. `historial(servicio, base, destino)`: devuelve la lista de `(fecha, tasa)` de todas las páginas, en orden, con la tasa como `float`, pidiendo cada página con `pide` y siguiendo `siguiente` hasta que valga `null`, sin pedir ninguna página de más. Si una página no está disponible tras los intentos, levanta `ServicioNoDisponible`.
+6. Con los datos de la celda: `convertidos` y `pendientes`, el resultado de `convierte_tickets(servicio, tickets)`; `total_usd`, la suma de los totales convertidos redondeada a 2 decimales; y `peticiones`, el valor de `servicio.peticiones` después de esa llamada, sin ninguna petición anterior al mismo servicio.
+7. Un informe impreso con los tickets convertidos, los pendientes, el total en dólares, las peticiones hechas, las fechas cuya tasa no estuvo disponible y la tasa usada en su lugar, con rótulos.
+
+Restricciones: Python y su biblioteca estándar.
+
+## Rúbrica
+
+| Criterio | Completo | Incompleto |
+|---|---|---|
+| Requisitos 1 a 6 | La comprobación automática marca los seis como cumplidos. | Alguno no se cumple. |
+| Requisito 7 | El informe contiene todos los datos, uno por línea, con un rótulo que dice qué es cada cifra. | Faltan datos o las cifras no llevan rótulo. |
+| Claridad del código | Las URL se construyen en un solo lugar; la política de reintentos está en una función y no se repite; cada excepción dice qué falló. | Consultas armadas pegando texto, reintentos copiados en varias funciones o errores que se tragan en silencio. |
+| Razonamiento | Se reintenta solo lo que puede cambiar; el número de intentos está acotado; cada fecha se pide una vez; el final de la paginación lo decide el servicio. | Se reintenta un 404, se pide la misma fecha varias veces o se pide una página vacía de más. |
+
+Los dos primeros criterios se comprueban con la celda de comprobación; los dos últimos, con la solución de referencia al final de la página.
+
+## Programa
+
+```{pyodide}
+#| exercise: ent_29
+import datetime
+import json
+import random
+import re
+from urllib.parse import urlparse, parse_qs
+
+class ServicioCambio:
+    """Servicio de tipo de cambio simulado, sin red."""
+    RAIZ = "https://cambio.ejemplo/v1/"
+    REF = {"USD": 1.0, "CRC": 515.0, "EUR": 0.92, "MXN": 17.1}
+    CLAVES = {"tasa": {"base", "destino", "fecha"},
+              "historial": {"base", "destino", "pagina"}}
+
+    def __init__(self, semilla, dias_historial=28, tam_pagina=7):
+        self.semilla = semilla
+        self.dias, self.tam = dias_historial, tam_pagina
+        self.peticiones = 0
+        self.guiones = {}
+
+    def _azar(self, *partes):
+        clave = (self.semilla,) + partes
+        return random.Random("|".join(map(str, clave)))
+
+    def _tasa(self, base, destino, fecha):
+        g = self._azar(base, destino, fecha)
+        valor = self.REF[destino] / self.REF[base]
+        return "%.4f" % (valor * (0.99 + 0.02 * g.random()))
+
+    def _fallo(self, url):
+        """Errores previstos para esta url, en orden; 99 es caida."""
+        if url not in self.guiones:
+            g = self._azar(url)
+            n = g.choice([0, 0, 0, 1, 1, 2, 3, 99])
+            self.guiones[url] = [
+                (429, {"Retry-After": str(g.randint(2, 6))})
+                if g.random() < 0.3 else (503, {}) for _ in range(n)]
+        guion = self.guiones[url]
+        return guion.pop(0) if guion else None
+
+    def get(self, url):
+        self.peticiones += 1
+        malo = json.dumps({"error": "peticion mal formada"})
+        if not url.startswith(self.RAIZ):
+            return 404, {}, json.dumps({"error": "ruta desconocida"})
+        partes = urlparse(url)
+        ruta = partes.path.rsplit("/", 1)[-1]
+        q = parse_qs(partes.query, keep_blank_values=True)
+        if ruta not in self.CLAVES:
+            return 404, {}, json.dumps({"error": "ruta desconocida"})
+        if set(q) != self.CLAVES[ruta] or any(len(v) > 1
+                                              for v in q.values()):
+            return 400, {}, malo
+        a = {k: v[0] for k, v in q.items()}
+        if a["base"] not in self.REF or a["destino"] not in self.REF:
+            return 404, {}, json.dumps({"error": "moneda desconocida"})
+        if ruta == "tasa" and not re.fullmatch(r"\d{4}-\d{2}-\d{2}",
+                                               a["fecha"]):
+            return 400, {}, malo
+        if ruta == "historial" and not re.fullmatch(r"[1-9]\d*",
+                                                    a["pagina"]):
+            return 400, {}, malo
+        fallo = self._fallo(url)
+        if fallo:
+            aviso = json.dumps({"error": "reintentar"})
+            return fallo[0], fallo[1], aviso
+        if ruta == "tasa":
+            cuerpo = dict(a, tasa=self._tasa(a["base"], a["destino"],
+                                             a["fecha"]))
+            return 200, {}, json.dumps(cuerpo)
+        n = int(a["pagina"])
+        inicio = datetime.date(2026, 6, 1)
+        fechas = [str(inicio + datetime.timedelta(days=d))
+                  for d in range(self.dias)]
+        trozo = fechas[(n - 1) * self.tam:n * self.tam]
+        datos = [{"fecha": f,
+                  "tasa": self._tasa(a["base"], a["destino"], f)}
+                 for f in trozo]
+        siguiente = n + 1 if n * self.tam < len(fechas) else None
+        return 200, {}, json.dumps({"pagina": n, "datos": datos,
+                                    "siguiente": siguiente})
+
+servicio = ServicioCambio(162)
+random.seed(29)
+tickets = []
+for i in range(1, 301):
+    fecha = "2026-06-%02d" % random.randint(1, 20)
+    tickets.append((i, fecha, random.randint(100000, 9000000) / 100))
+
+# 1. url_tasa y url_historial
+
+# 2. pide
+
+# 3. MonedaDesconocida, ServicioNoDisponible y tasa
+
+# 4. convierte_tickets
+
+# 5. historial
+
+# 6. convertidos, pendientes, total_usd y peticiones
+convertidos = None
+pendientes = None
+total_usd = None
+peticiones = None
+
+# 7. informe
+```
+
+::: {.hint exercise="ent_29"}
+La comprobación usa servicios propios: unos devuelven respuestas escritas a mano, en orden, y otros son instancias de `ServicioCambio` con otra semilla y otro número de días. Con cinco intentos, una espera de 1, 2, 4 y 8 unidades suma 15. Con los datos de la celda, `peticiones` queda entre 20 y 60, porque solo hay 20 fechas distintas.
+:::
+
+```{pyodide}
+#| exercise: ent_29
+#| check: true
+import datetime as _dt
+import json as _js
+import random as _rnd
+from urllib.parse import urlencode as _ue, urlparse as _up
+from urllib.parse import parse_qs as _pq
+
+_R = "https://cambio.ejemplo/v1/"
+_REF = {"USD": 1.0, "CRC": 515.0, "EUR": 0.92, "MXN": 17.1}
+
+def _u(ruta, **k):
+    return _R + ruta + "?" + _ue(k)
+
+class _Serv:
+    """Copia independiente del servicio de la celda."""
+    def __init__(self, semilla, dias=28, tam=7):
+        self.s, self.dias, self.tam = semilla, dias, tam
+        self.peticiones, self.g = 0, {}
+
+    def _az(self, *p):
+        return _rnd.Random("|".join(map(str, (self.s,) + p)))
+
+    def _t(self, b, d, f):
+        z = self._az(b, d, f).random()
+        v = _REF[d] / _REF[b] * (0.99 + 0.02 * z)
+        return "%.4f" % v
+
+    def get(self, url):
+        self.peticiones += 1
+        q = {k: v[0] for k, v in _pq(_up(url).query).items()}
+        if url not in self.g:
+            g = self._az(url)
+            n = g.choice([0, 0, 0, 1, 1, 2, 3, 99])
+            self.g[url] = [(429, {"Retry-After": str(g.randint(2, 6))})
+                           if g.random() < 0.3 else (503, {})
+                           for _ in range(n)]
+        if self.g[url]:
+            c, h = self.g[url].pop(0)
+            return c, h, "{}"
+        if "fecha" in q:
+            return 200, {}, _js.dumps(dict(q, tasa=self._t(
+                q["base"], q["destino"], q["fecha"])))
+        n = int(q["pagina"])
+        fs = [str(_dt.date(2026, 6, 1) + _dt.timedelta(days=i))
+              for i in range(self.dias)]
+        tr = fs[(n - 1) * self.tam:n * self.tam]
+        sig = n + 1 if n * self.tam < len(fs) else None
+        dat = [{"fecha": f, "tasa": self._t(q["base"], q["destino"], f)}
+               for f in tr]
+        return 200, {}, _js.dumps({"pagina": n, "siguiente": sig,
+                                   "datos": dat})
+
+class _Guion:
+    """Devuelve respuestas escritas a mano; repite la ultima."""
+    def __init__(self, resp):
+        self.resp, self.peticiones, self.urls = list(resp), 0, []
+
+    def get(self, url):
+        self.peticiones += 1
+        self.urls.append(url)
+        r = self.resp[min(self.peticiones, len(self.resp)) - 1]
+        return r[0], r[1], r[2] if len(r) > 2 else "{}"
+
+def _r1():
+    casos = [("USD", "CRC", "2026-06-03"), ("A B", "C&D", "x=y ñ"),
+             ("", "EUR", "2026-01-31"), ("US D", "?#", "%20")]
+    for b, d, f in casos:
+        if url_tasa(b, d, f) != _u("tasa", base=b, destino=d, fecha=f):
+            return False
+    for b, d, p in (("USD", "CRC", 1), ("E&R", "M X", 12)):
+        if url_historial(b, d, p) != _u("historial", base=b,
+                                         destino=d, pagina=p):
+            return False
+    return True
+
+def _r2():
+    ok = (200, {}, '{"x": 1}')
+    ra = lambda n: (429, {"Retry-After": str(n)})
+    casos = [([ok], 5, (200, '{"x": 1}', 1, 0)),
+             ([(503, {}), (503, {}), ok], 5, (200, '{"x": 1}', 3, 3)),
+             ([(404, {}, "nf")], 5, (404, "nf", 1, 0)),
+             ([(301, {}, "m")], 5, (301, "m", 1, 0)),
+             ([(503, {}, "c")], 5, (503, "c", 5, 15)),
+             ([ra(10), ok], 5, (200, '{"x": 1}', 2, 10)),
+             ([ra(1), (503, {}), ok], 5, (200, '{"x": 1}', 3, 3)),
+             ([(500, {}), (502, {}), (504, {}, "z"), ok], 3,
+              (504, "z", 3, 3)),
+             ([(503, {}, "c")], 1, (503, "c", 1, 0)),
+             ([ra(3), ra(1), ra(9), ok], 5, (200, '{"x": 1}', 4, 14))]
+    for resp, m, esp in casos:
+        s = _Guion(resp)
+        if tuple(pide(s, "u", m)) != esp or s.peticiones != esp[2]:
+            return False
+    if tuple(pide(_Guion([ok]), "u")) != (200, '{"x": 1}', 1, 0):
+        return False
+    try:
+        pide(_Guion([ok]), "u", 0)
+        return False
+    except ValueError:
+        return True
+
+def _r3():
+    if not (issubclass(MonedaDesconocida, LookupError) and
+            issubclass(ServicioNoDisponible, RuntimeError)):
+        return False
+    s = _Guion([(503, {}), (200, {}, '{"tasa": "512.30"}')])
+    if tasa(s, "USD", "CRC", "2026-06-02") != 512.3 or s.urls[0] != _u(
+            "tasa", base="USD", destino="CRC", fecha="2026-06-02"):
+        return False
+    for resp, exc, n in (
+            ([(404, {})], MonedaDesconocida, 1),
+            ([(503, {})], ServicioNoDisponible, 5),
+            ([(429, {"Retry-After": "2"})], ServicioNoDisponible, 5),
+            ([(400, {})], ValueError, 1),
+            ([(200, {}, '{"tasa": "abc"}')], ValueError, 1),
+            ([(200, {}, '{"tasa": "-3.5"}')], ValueError, 1),
+            ([(200, {}, '{"tasa": "0"}')], ValueError, 1),
+            ([(200, {}, '{"tasa": ')], ValueError, 1)):
+        s = _Guion(resp)
+        try:
+            tasa(s, "USD", "CRC", "2026-06-01")
+            return False
+        except exc:
+            if s.peticiones != n:
+                return False
+    s = _Serv(4)
+    for f in ("2026-06-%02d" % d for d in range(1, 11)):
+        try:
+            v = tasa(s, "EUR", "MXN", f)
+        except ServicioNoDisponible:
+            continue
+        if abs(v - float(_Serv(4)._t("EUR", "MXN", f))) > 1e-9:
+            return False
+    return True
+
+class _Tasas:
+    """Una tasa por fecha; las caidas dan 503 siempre."""
+    def __init__(self, tabla):
+        self.tabla = {k: list(v) for k, v in tabla.items()}
+        self.peticiones = 0
+
+    def get(self, url):
+        self.peticiones += 1
+        q = {k: v[0] for k, v in _pq(_up(url).query).items()}
+        if q.get("base") != "USD" or q.get("destino") != "CRC":
+            return 400, {}, "{}"
+        r = self.tabla[q["fecha"]]
+        x = r.pop(0) if len(r) > 1 else r[0]
+        if isinstance(x, tuple):
+            return x[0], x[1], "{}"
+        if x is None:
+            return 503, {}, "{}"
+        return 200, {}, _js.dumps({"tasa": "%.4f" % x})
+
+def _r4():
+    s = _Tasas({"2026-06-01": [None], "2026-06-02": [
+        (503, {}), (429, {"Retry-After": "3"}), 500.0],
+        "2026-06-03": [None], "2026-06-04": [520.0],
+        "2026-06-06": [None]})
+    tk = [(10, "2026-06-04", 5200.0), (11, "2026-06-01", 100.0),
+          (12, "2026-06-03", 1000.0), (13, "2026-06-02", 250.0),
+          (14, "2026-06-06", 1300.0), (15, "2026-06-01", 7.0),
+          (16, "2026-06-04", 33.33)]
+    c, p = convierte_tickets(s, tk)
+    esp = [(10, 10.0), (12, 2.0), (13, 0.5), (14, 2.5), (16, 0.06)]
+    if [tuple(x) for x in c] != esp or list(p) != [11, 15]:
+        return False
+    if s.peticiones != 5 + 3 + 5 + 1 + 5:
+        return False
+    s = _Tasas({})
+    c, p = convierte_tickets(s, [])
+    return list(c) == [] and list(p) == [] and s.peticiones == 0
+
+def _hist_ref(s, b, d):
+    out, n = [], 1
+    while True:
+        u = _u("historial", base=b, destino=d, pagina=n)
+        for _ in range(5):
+            c, _h, cu = s.get(u)
+            if c == 200:
+                break
+        else:
+            return None
+        cu = _js.loads(cu)
+        out += [(x["fecha"], float(x["tasa"])) for x in cu["datos"]]
+        if cu["siguiente"] is None:
+            return out, s.peticiones
+        n = cu["siguiente"]
+
+def _r5():
+    vistos = set()
+    for sem, dias in ((77, 35), (78, 30), (79, 0), (80, 14), (81, 28),
+                      (82, 21), (85, 70)):
+        ref = _hist_ref(_Serv(sem, dias), "USD", "EUR")
+        s = _Serv(sem, dias)
+        try:
+            r = [tuple(x) for x in historial(s, "USD", "EUR")]
+        except ServicioNoDisponible:
+            r = None
+        vistos.add(ref is None)
+        if ref is None:
+            if r is not None:
+                return False
+        elif r != ref[0] or s.peticiones != ref[1]:
+            return False
+    return vistos == {True, False}
+
+def _r6():
+    s = _Serv(162)
+    g = _rnd.Random(29)
+    tk = [(i, "2026-06-%02d" % g.randint(1, 20),
+           g.randint(100000, 9000000) / 100) for i in range(1, 301)]
+    tasas = {}
+    for f in sorted({t[1] for t in tk}):
+        u = _u("tasa", base="USD", destino="CRC", fecha=f)
+        for _ in range(5):
+            c, _h, cu = s.get(u)
+            if c == 200:
+                tasas[f] = float(_js.loads(cu)["tasa"])
+                break
+    usar, ult = {}, None
+    for f in sorted({t[1] for t in tk}):
+        ult = tasas.get(f, ult)
+        usar[f] = ult
+    conv = [(i, round(m / usar[f], 2)) for i, f, m in tk if usar[f]]
+    pend = [i for i, f, m in tk if not usar[f]]
+    return ([tuple(x) for x in convertidos] == conv and
+            list(pendientes) == pend and peticiones == s.peticiones and
+            abs(total_usd - round(sum(x[1] for x in conv), 2)) < 0.006)
+
+_nombres = ["URL", "pide", "tasa", "convierte_tickets", "historial",
+            "datos de la celda"]
+_ok = []
+for _f in (_r1, _r2, _r3, _r4, _r5, _r6):
+    try:
+        _ok.append(bool(_f()))
+    except Exception:
+        _ok.append(False)
+_lineas = ["requisito %d (%s): %s"
+           % (i + 1, _nombres[i], "cumplido" if v else "no cumplido")
+           for i, v in enumerate(_ok)]
+feedback = {"correct": all(_ok), "message": " · ".join(_lineas)}
+feedback
+```
+
+## Solución de referencia
+
+::: {.callout-note collapse="true"}
+## Ver la solución de referencia
+
+```python
+import datetime
+import json
+import random
+import re
+from urllib.parse import urlparse, parse_qs, urlencode
+
+class ServicioCambio:
+    """Servicio de tipo de cambio simulado, sin red."""
+    RAIZ = "https://cambio.ejemplo/v1/"
+    REF = {"USD": 1.0, "CRC": 515.0, "EUR": 0.92, "MXN": 17.1}
+    CLAVES = {"tasa": {"base", "destino", "fecha"},
+              "historial": {"base", "destino", "pagina"}}
+
+    def __init__(self, semilla, dias_historial=28, tam_pagina=7):
+        self.semilla = semilla
+        self.dias, self.tam = dias_historial, tam_pagina
+        self.peticiones = 0
+        self.guiones = {}
+
+    def _azar(self, *partes):
+        clave = (self.semilla,) + partes
+        return random.Random("|".join(map(str, clave)))
+
+    def _tasa(self, base, destino, fecha):
+        g = self._azar(base, destino, fecha)
+        valor = self.REF[destino] / self.REF[base]
+        return "%.4f" % (valor * (0.99 + 0.02 * g.random()))
+
+    def _fallo(self, url):
+        """Errores previstos para esta url, en orden; 99 es caida."""
+        if url not in self.guiones:
+            g = self._azar(url)
+            n = g.choice([0, 0, 0, 1, 1, 2, 3, 99])
+            self.guiones[url] = [
+                (429, {"Retry-After": str(g.randint(2, 6))})
+                if g.random() < 0.3 else (503, {}) for _ in range(n)]
+        guion = self.guiones[url]
+        return guion.pop(0) if guion else None
+
+    def get(self, url):
+        self.peticiones += 1
+        malo = json.dumps({"error": "peticion mal formada"})
+        if not url.startswith(self.RAIZ):
+            return 404, {}, json.dumps({"error": "ruta desconocida"})
+        partes = urlparse(url)
+        ruta = partes.path.rsplit("/", 1)[-1]
+        q = parse_qs(partes.query, keep_blank_values=True)
+        if ruta not in self.CLAVES:
+            return 404, {}, json.dumps({"error": "ruta desconocida"})
+        if set(q) != self.CLAVES[ruta] or any(len(v) > 1
+                                              for v in q.values()):
+            return 400, {}, malo
+        a = {k: v[0] for k, v in q.items()}
+        if a["base"] not in self.REF or a["destino"] not in self.REF:
+            return 404, {}, json.dumps({"error": "moneda desconocida"})
+        if ruta == "tasa" and not re.fullmatch(r"\d{4}-\d{2}-\d{2}",
+                                               a["fecha"]):
+            return 400, {}, malo
+        if ruta == "historial" and not re.fullmatch(r"[1-9]\d*",
+                                                    a["pagina"]):
+            return 400, {}, malo
+        fallo = self._fallo(url)
+        if fallo:
+            aviso = json.dumps({"error": "reintentar"})
+            return fallo[0], fallo[1], aviso
+        if ruta == "tasa":
+            cuerpo = dict(a, tasa=self._tasa(a["base"], a["destino"],
+                                             a["fecha"]))
+            return 200, {}, json.dumps(cuerpo)
+        n = int(a["pagina"])
+        inicio = datetime.date(2026, 6, 1)
+        fechas = [str(inicio + datetime.timedelta(days=d))
+                  for d in range(self.dias)]
+        trozo = fechas[(n - 1) * self.tam:n * self.tam]
+        datos = [{"fecha": f,
+                  "tasa": self._tasa(a["base"], a["destino"], f)}
+                 for f in trozo]
+        siguiente = n + 1 if n * self.tam < len(fechas) else None
+        return 200, {}, json.dumps({"pagina": n, "datos": datos,
+                                    "siguiente": siguiente})
+
+servicio = ServicioCambio(162)
+random.seed(29)
+tickets = []
+for i in range(1, 301):
+    fecha = "2026-06-%02d" % random.randint(1, 20)
+    tickets.append((i, fecha, random.randint(100000, 9000000) / 100))
+
+
+# 1. Las URL se construyen en un solo lugar, sin pegar texto
+RAIZ = "https://cambio.ejemplo/v1/"
+
+def url_tasa(base, destino, fecha):
+    consulta = urlencode({"base": base, "destino": destino,
+                          "fecha": fecha})
+    return RAIZ + "tasa?" + consulta
+
+def url_historial(base, destino, pagina):
+    consulta = urlencode({"base": base, "destino": destino,
+                          "pagina": pagina})
+    return RAIZ + "historial?" + consulta
+
+
+# 2. Reintentos acotados, solo para 429 y 5xx
+def reintentable(codigo):
+    return codigo == 429 or 500 <= codigo <= 599
+
+def pide(servicio, url, maximo=5):
+    if maximo < 1:
+        raise ValueError("maximo debe ser al menos 1")
+    espera = 0
+    for intento in range(1, maximo + 1):
+        codigo, cabeceras, cuerpo = servicio.get(url)
+        if not reintentable(codigo) or intento == maximo:
+            return codigo, cuerpo, intento, espera
+        pausa = 2 ** (intento - 1)
+        if codigo == 429:
+            pausa = max(pausa, int(cabeceras.get("Retry-After", 0)))
+        espera += pausa
+
+
+# 3. Cada fallo con su excepcion
+class MonedaDesconocida(LookupError):
+    """El servicio no conoce alguna de las dos monedas (404)."""
+
+class ServicioNoDisponible(RuntimeError):
+    """El servicio siguio fallando al agotar los intentos."""
+
+def lee_tasa(texto):
+    valor = float(texto)                  # ValueError si no es numero
+    if not valor > 0:
+        raise ValueError("tasa no positiva: %r" % texto)
+    return valor
+
+def tasa(servicio, base, destino, fecha):
+    url = url_tasa(base, destino, fecha)
+    codigo, cuerpo, intentos, _ = pide(servicio, url, 5)
+    if codigo == 404:
+        raise MonedaDesconocida("%s o %s" % (base, destino))
+    if reintentable(codigo):
+        raise ServicioNoDisponible("%s tras %d intentos"
+                                   % (url, intentos))
+    if codigo != 200:
+        raise ValueError("respuesta %d para %s" % (codigo, url))
+    return lee_tasa(json.loads(cuerpo)["tasa"])
+
+
+# 4. Una peticion por fecha; si falta, la fecha anterior disponible
+def convierte_tickets(servicio, tickets):
+    obtenidas = {}
+    for fecha in sorted({t[1] for t in tickets}):
+        try:
+            obtenidas[fecha] = tasa(servicio, "USD", "CRC", fecha)
+        except ServicioNoDisponible:
+            pass
+    usada, ultima = {}, None
+    for fecha in sorted({t[1] for t in tickets}):
+        ultima = obtenidas.get(fecha, ultima)
+        usada[fecha] = ultima
+    convertidos, pendientes = [], []
+    for id_, fecha, total_crc in tickets:
+        if usada[fecha] is None:
+            pendientes.append(id_)
+        else:
+            usd = round(total_crc / usada[fecha], 2)
+            convertidos.append((id_, usd))
+    return convertidos, pendientes
+
+
+# 5. Paginacion: el final lo marca el servicio con siguiente = null
+def historial(servicio, base, destino):
+    filas, pagina = [], 1
+    while pagina is not None:
+        url = url_historial(base, destino, pagina)
+        codigo, cuerpo, intentos, _ = pide(servicio, url, 5)
+        if codigo != 200:
+            raise ServicioNoDisponible("%s: codigo %d" % (url, codigo))
+        datos = json.loads(cuerpo)
+        filas += [(d["fecha"], lee_tasa(d["tasa"]))
+                  for d in datos["datos"]]
+        pagina = datos["siguiente"]
+    return filas
+
+
+# 6. Los tickets del mes
+convertidos, pendientes = convierte_tickets(servicio, tickets)
+total_usd = round(sum(usd for _, usd in convertidos), 2)
+peticiones = servicio.peticiones
+
+# 7. Informe
+fechas = sorted({t[1] for t in tickets})
+print("tickets convertidos :", len(convertidos))
+print("tickets pendientes  :", len(pendientes), pendientes[:5])
+print("total en dolares    :", total_usd)
+print("peticiones hechas   :", peticiones)
+comprobador = ServicioCambio(162)
+ultima = "ninguna"
+for fecha in fechas:
+    try:
+        tasa(comprobador, "USD", "CRC", fecha)
+        ultima = fecha
+    except ServicioNoDisponible:
+        print("sin tasa el %s; se usa la de %s" % (fecha, ultima))
+```
+
+`url_tasa` codifica la consulta con `urlencode`, que escapa `&`, `=` y los espacios, por la Proposición 22.2. `pide` separa los códigos que se reintentan de los demás, como pide la Proposición 22.5, acota los intentos y no suma espera después del último, que es la cuenta de la Proposición 22.6. `tasa` traduce cada desenlace a una excepción distinta, de modo que `convierte_tickets` captura solo `ServicioNoDisponible` y deja pasar una moneda desconocida, que es un error del programa. Cada fecha se pide una vez y en orden, y la tasa de reemplazo se decide después, cuando ya se conocen todas. `historial` sigue `siguiente` y no el tamaño de la página, así que no pide una página vacía cuando el total es múltiplo de 7, el caso de la Proposición 22.10. El informe usa un segundo servicio con la misma semilla para listar las fechas caídas sin tocar el contador del primero. Con los datos de la celda no hay tasa el 1, el 2, el 15 y el 20 de junio: los 40 tickets de los dos primeros días quedan pendientes, los otros dos días usan la tasa del 14 y del 19, se convierten 260 tickets por 22 816,01 dólares y se hacen 50 peticiones.
+:::

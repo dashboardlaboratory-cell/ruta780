@@ -1,0 +1,389 @@
+---
+title: "Entregable 14: un millón de transacciones por hora"
+subtitle: "Python · Lecciones 01 a 03"
+engine: markdown
+---
+
+Este entregable se puede resolver con lo visto hasta la Lección 03 de Python, y con cualquier herramienta posterior. Corresponde al bloque de proyecto del viernes, unos 120 minutos. Se resuelve en una sola celda, desde el principio, como un programa completo; cómo se recorren los datos y qué se guarda en memoria forma parte del ejercicio.
+
+## Especificación
+
+La celda trae la función `flujo(n, semilla)`, que entrega una a una `n` líneas de texto de la forma `HH:MM:SS;caja;monto`, por ejemplo `18:08:25;3;190.63`. Un monto negativo es una devolución. Alrededor del 0,4 % de las líneas está mal formado. Una línea es **válida** si, después de quitar los espacios y el salto de línea de sus extremos, cumple todas estas condiciones:
+
+- tiene tres campos separados por `;`;
+- la hora tiene tres partes de dos dígitos separadas por `:`, con la hora entre 00 y 23 y los minutos y segundos entre 00 y 59;
+- la caja es un número entero entre 1 y 8, escrito solo con dígitos;
+- el monto se escribe con un signo menos opcional, uno o más dígitos y, si lleva punto, uno o dos dígitos después de él; y no vale cero. Así, `nan`, `1e3`, `+5`, `12.` y `.5` no son montos válidos.
+
+La comprobación llama a las funciones con flujos nuevos y con casos escritos a mano. El programa debe definir:
+
+1. `parsear(linea)`: si la línea es válida, devuelve la tupla `(segundos, caja, monto)`, donde `segundos` es el número de segundos desde las 00:00:00, `caja` un entero y `monto` un decimal; devuelve `None` si la línea no es válida.
+2. `validas(lineas)`: recibe cualquier secuencia o flujo de líneas y devuelve un iterador con las tuplas de las líneas válidas, en orden. Pedirle los primeros elementos no puede leer más líneas de las necesarias para producirlos: la comprobación le pasa un flujo de un millón de líneas que se detiene con un error si se leen más de mil.
+3. `por_hora(lineas)`: devuelve un diccionario que asocia a cada hora del día con alguna línea válida el par `(n, total)`, con el número de transacciones y la suma de sus montos redondeada a 2 decimales. Recibe un flujo que solo se puede recorrer una vez, y la memoria que ocupa no crece con el número de líneas: con 50 000 líneas, el pico de memoria reservada durante la llamada no puede pasar de 1 MB.
+4. `hora_pico(tabla)`: recibe un diccionario como el que devuelve `por_hora` y devuelve el par `(hora, total)` de mayor total. Si hay empate, la hora más temprana. Si la tabla está vacía, devuelve `None`.
+5. `primeras_devoluciones(lineas, k)`: devuelve una lista con las tuplas de las primeras `k` devoluciones válidas, en orden, y deja de leer líneas en cuanto tiene la `k`-ésima. Si hay menos de `k`, devuelve todas. Con `k` igual a 0 devuelve una lista vacía sin leer ninguna línea.
+6. Un informe impreso sobre `flujo(1_000_000, 14)` con una línea por hora (hora, número de transacciones y total), el número de líneas no válidas, el total del periodo, la hora pico y las tres primeras devoluciones, cada dato con su rótulo. El millón de líneas se recorre una sola vez para la tabla por hora.
+
+## Rúbrica
+
+| Criterio | Completo | Incompleto |
+|---|---|---|
+| Requisitos 1 a 5 | La comprobación automática marca los cinco como cumplidos. | Alguno no se cumple. |
+| Requisito 6 | El informe contiene todos los datos pedidos, con rótulos, y la tabla por hora sale de un único recorrido del millón de líneas. | Faltan datos, las cifras no llevan rótulo o el flujo se genera varias veces para la misma tabla. |
+| Claridad del código | Cada función lleva un comentario con el número del requisito que resuelve; las reglas de validez están en un solo lugar y las demás funciones lo reutilizan. | Funciones sin comentar o las reglas de validez repetidas en varias funciones. |
+| Razonamiento | Nada de lo que se recorre se guarda entero si no hace falta, y las funciones que pueden detenerse antes se detienen. | La solución acierta pero guarda el millón de líneas o las recorre enteras cuando bastaba con el principio. |
+
+Los dos primeros criterios se comprueban con la celda de comprobación; los dos últimos, con la solución de referencia al final de la página.
+
+## Programa
+
+```{pyodide}
+#| exercise: ent_14
+import random
+
+
+def flujo(n, semilla):
+    """Cede n lineas de texto 'HH:MM:SS;caja;monto', una a una."""
+    rnd = random.Random(semilla)
+    pesos = [1, 2, 3, 4, 5, 5, 4, 3, 3, 4, 5, 6, 5, 3, 2]
+    horas = [h for h, p in zip(range(7, 22), pesos)
+             for _ in range(p)]
+    malas = ["24:05:10;3;12.50", "07:61:00;2;4.00", "09:15:00;0;3.10",
+             "10:00:00;9;8.00", "11:11:11;4;abc", "12:00:00;5;nan",
+             "13:30:00;2", "", "14:20:00;3;0.00", "15:45:30;1;1e3",
+             "16:05:00;6;12.", "8:05:00;6;2.50", "17:10:00;7;+5.00",
+             "18:00:00;4;3.5;1"]
+    for _ in range(n):
+        r = rnd.getrandbits(52)
+        if r % 250 == 0:
+            yield malas[(r >> 8) % len(malas)]
+            continue
+        r //= 250
+        h = horas[r % 55]; r //= 55
+        m = r % 60; r //= 60
+        s = r % 60; r //= 60
+        caja = r % 8 + 1; r //= 8
+        cent = r % 19901 + 100; r //= 19901
+        signo = "-" if r % 32 == 0 else ""
+        yield "%02d:%02d:%02d;%d;%s%d.%02d" % (h, m, s, caja, signo,
+                                             cent // 100, cent % 100)
+
+# 1. parsear
+def parsear(linea):
+    return None
+
+# 2. validas
+def validas(lineas):
+    return None
+
+# 3. por_hora
+def por_hora(lineas):
+    return None
+
+# 4. hora_pico
+def hora_pico(tabla):
+    return None
+
+# 5. primeras_devoluciones
+def primeras_devoluciones(lineas, k):
+    return None
+
+# 6. informe
+```
+
+::: {.hint exercise="ent_14"}
+Conviene empezar por `parsear` y probarla con las líneas mal formadas que aparecen en `flujo`. Para el monto, `float` acepta textos como `nan` o `1e3`, de modo que hay que revisar los caracteres antes de convertir. El informe tarda unos diez segundos en el navegador: cada una del millón de líneas se genera y se analiza una vez.
+:::
+
+```{pyodide}
+#| exercise: ent_14
+#| check: true
+import random
+import re as _re
+import itertools as _it
+import tracemalloc as _tm
+
+
+def _flujo(n, semilla):
+    rnd = random.Random(semilla)
+    pesos = [1, 2, 3, 4, 5, 5, 4, 3, 3, 4, 5, 6, 5, 3, 2]
+    horas = [h for h, p in zip(range(7, 22), pesos)
+             for _ in range(p)]
+    malas = ["24:05:10;3;12.50", "07:61:00;2;4.00", "09:15:00;0;3.10",
+             "10:00:00;9;8.00", "11:11:11;4;abc", "12:00:00;5;nan",
+             "13:30:00;2", "", "14:20:00;3;0.00", "15:45:30;1;1e3",
+             "16:05:00;6;12.", "8:05:00;6;2.50", "17:10:00;7;+5.00",
+             "18:00:00;4;3.5;1"]
+    for _ in range(n):
+        r = rnd.getrandbits(52)
+        if r % 250 == 0:
+            yield malas[(r >> 8) % len(malas)]
+            continue
+        r //= 250
+        h = horas[r % 55]; r //= 55
+        m = r % 60; r //= 60
+        s = r % 60; r //= 60
+        caja = r % 8 + 1; r //= 8
+        cent = r % 19901 + 100; r //= 19901
+        signo = "-" if r % 32 == 0 else ""
+        yield "%02d:%02d:%02d;%d;%s%d.%02d" % (h, m, s, caja, signo,
+                                             cent // 100, cent % 100)
+
+_PAT = _re.compile(r"(\d\d):(\d\d):(\d\d);([0-9]+);"
+                  r"(-?[0-9]+(\.[0-9]{1,2})?)")
+
+def _p(l):
+    _m = _PAT.fullmatch(l.strip())
+    if not _m:
+        return None
+    h, mi, s, c = [int(x) for x in _m.groups()[:4]]
+    x = float(_m.group(5))
+    if h > 23 or mi > 59 or s > 59 or not 1 <= c <= 8 or x == 0:
+        return None
+    return (h * 3600 + mi * 60 + s, c, x)
+
+class _Tope(Exception):
+    pass
+
+class _Contador:
+    """Flujo que cuenta lo leido y se detiene pasado un tope."""
+    def __init__(self, lineas, tope=None):
+        self.it, self.leidas, self.tope = iter(lineas), 0, tope
+    def __iter__(self):
+        return self
+    def __next__(self):
+        if self.tope is not None and self.leidas >= self.tope:
+            raise _Tope("se leyeron demasiadas lineas")
+        x = next(self.it)
+        self.leidas += 1
+        return x
+
+def _tabla(lineas):
+    _n, _s = {}, {}
+    for l in lineas:
+        t = _p(l)
+        if t:
+            h = t[0] // 3600
+            _n[h] = _n.get(h, 0) + 1
+            _s[h] = _s.get(h, 0.0) + t[2]
+    return {h: (_n[h], round(_s[h], 2)) for h in _n}
+
+_ok = []
+# 1
+try:
+    _casos = ["07:00:00;1;5.00\n", "  23:59:59;8;-0.5 ", "00:00:00;1;7",
+              "24:00:00;1;5", "7:00:00;1;5", "07:00:60;1;5",
+              "07:00:00;0;5", "07:00:00;9;5", "07:00:00;01;5",
+              "07:00:00;1;nan", "07:00:00;1;inf", "07:00:00;1;1e3",
+              "07:00:00;1;12.", "07:00:00;1;.5", "07:00:00;1;+5",
+              "07:00:00;1;5.123", "07:00:00;1;0.00", "07:00:00;1;-0",
+              "07:00:00;1", "", "07:00:00;1;5;2", "07:00:00;a;5",
+              "07:00:00;1;5,00", "07:0a:00;1;5", "07:00:00;-1;5"]
+    _casos += list(_flujo(20000, 99))
+    _ok.append(all(parsear(l) == _p(l) for l in _casos))
+except Exception:
+    _ok.append(False)
+# 2
+try:
+    _c = _Contador(_flujo(10 ** 6, 5), tope=1000)
+    _pr = list(_it.islice(validas(_c), 5))
+    _esp = [t for t in (_p(l) for l in _flujo(40, 5)) if t][:5]
+    _r2 = [_pr == _esp, _c.leidas <= 20]
+    _r2.append(list(validas(_flujo(20000, 7)))
+               == [t for t in (_p(l) for l in _flujo(20000, 7)) if t])
+    _r2.append(list(validas([])) == [])
+    _ok.append(all(_r2))
+except Exception:
+    _ok.append(False)
+# 3
+try:
+    _esp = _tabla(_flujo(50000, 21))
+    _tm.start()
+    _got = por_hora(_flujo(50000, 21))
+    _pico = _tm.get_traced_memory()[1]
+    _tm.stop()
+    _r3 = [_pico < 1_000_000, set(_got) == set(_esp)]
+    _r3 += [_got[h][0] == _esp[h][0]
+            and abs(_got[h][1] - _esp[h][1]) < 0.011
+            and abs(_got[h][1] * 100 - round(_got[h][1] * 100)) < 1e-4
+            for h in _esp]
+    _r3.append(por_hora(iter([])) == {})
+    _ok.append(all(_r3))
+except Exception:
+    try:
+        _tm.stop()
+    except Exception:
+        pass
+    _ok.append(False)
+# 4
+try:
+    _r4 = [hora_pico({9: (3, 10.0), 8: (2, 10.0), 10: (1, 5.0)})
+           == (8, 10.0),
+           hora_pico({12: (1, -3.0), 7: (1, -5.0)}) == (12, -3.0),
+           hora_pico({}) is None]
+    _t4 = _tabla(_flujo(30000, 4))
+    _h4 = min(_t4, key=lambda h: (-_t4[h][1], h))
+    _r4.append(hora_pico(_t4) == (_h4, _t4[_h4][1]))
+    _ok.append(all(_r4))
+except Exception:
+    _ok.append(False)
+# 5
+try:
+    _dev = []
+    _pos = 0
+    for _i, _l in enumerate(_flujo(10 ** 6, 8)):
+        _t = _p(_l)
+        if _t and _t[2] < 0:
+            _dev.append(_t)
+            if len(_dev) == 4:
+                _pos = _i + 1
+                break
+    _c = _Contador(_flujo(10 ** 6, 8), tope=10000)
+    _r5 = [primeras_devoluciones(_c, 4) == _dev, _c.leidas == _pos]
+    _c0 = _Contador(_flujo(10 ** 6, 8), tope=10000)
+    _r5 += [primeras_devoluciones(_c0, 0) == [], _c0.leidas == 0]
+    _cortas = ["07:00:00;1;-2.50", "08:00:00;2;3", "bad",
+               "09:00:00;3;-1"]
+    _r5.append(primeras_devoluciones(_cortas, 5)
+               == [(25200, 1, -2.5), (32400, 3, -1.0)])
+    _ok.append(all(_r5))
+except Exception:
+    _ok.append(False)
+
+_nombres = ["parsear", "validas", "por_hora", "hora_pico",
+            "primeras_devoluciones"]
+_lineas = ["requisito %d (%s): %s" % (i + 1, _nombres[i],
+           "cumplido" if v else "no cumplido")
+           for i, v in enumerate(_ok)]
+feedback = {"correct": all(_ok), "message": " · ".join(_lineas)}
+feedback
+```
+
+## Solución de referencia
+
+::: {.callout-note collapse="true"}
+## Ver la solución de referencia
+
+```python
+import random
+
+
+def flujo(n, semilla):
+    """Cede n lineas de texto 'HH:MM:SS;caja;monto', una a una."""
+    rnd = random.Random(semilla)
+    pesos = [1, 2, 3, 4, 5, 5, 4, 3, 3, 4, 5, 6, 5, 3, 2]
+    horas = [h for h, p in zip(range(7, 22), pesos)
+             for _ in range(p)]
+    malas = ["24:05:10;3;12.50", "07:61:00;2;4.00", "09:15:00;0;3.10",
+             "10:00:00;9;8.00", "11:11:11;4;abc", "12:00:00;5;nan",
+             "13:30:00;2", "", "14:20:00;3;0.00", "15:45:30;1;1e3",
+             "16:05:00;6;12.", "8:05:00;6;2.50", "17:10:00;7;+5.00",
+             "18:00:00;4;3.5;1"]
+    for _ in range(n):
+        r = rnd.getrandbits(52)
+        if r % 250 == 0:
+            yield malas[(r >> 8) % len(malas)]
+            continue
+        r //= 250
+        h = horas[r % 55]; r //= 55
+        m = r % 60; r //= 60
+        s = r % 60; r //= 60
+        caja = r % 8 + 1; r //= 8
+        cent = r % 19901 + 100; r //= 19901
+        signo = "-" if r % 32 == 0 else ""
+        yield "%02d:%02d:%02d;%d;%s%d.%02d" % (h, m, s, caja, signo,
+                                             cent // 100, cent % 100)
+def son_digitos(texto, largo=None):
+    """Cierto si texto es no vacio y solo tiene digitos 0-9."""
+    if largo is not None and len(texto) != largo:
+        return False
+    return texto.isdigit() and texto.isascii()
+
+
+def monto_valido(texto):
+    """Signo menos opcional, digitos y, si hay punto, uno o dos
+    decimales. Rechaza nan, inf, 1e3, +5 y 12."""
+    if texto.startswith("-"):
+        texto = texto[1:]
+    entera, punto, dec = texto.partition(".")
+    if not son_digitos(entera):
+        return False
+    return punto == "" or (son_digitos(dec) and len(dec) <= 2)
+
+
+# 1. Una linea de texto a (segundos, caja, monto), o None
+def parsear(linea):
+    campos = linea.strip().split(";")
+    if len(campos) != 3:
+        return None
+    hora, caja, monto = campos
+    partes = hora.split(":")
+    if len(partes) != 3 or not all(son_digitos(p, 2)
+                                    for p in partes):
+        return None
+    h, m, s = int(partes[0]), int(partes[1]), int(partes[2])
+    if h > 23 or m > 59 or s > 59:
+        return None
+    if not son_digitos(caja) or not 1 <= int(caja) <= 8:
+        return None
+    if not monto_valido(monto) or float(monto) == 0:
+        return None
+    return (h * 3600 + m * 60 + s, int(caja), float(monto))
+
+
+# 2. Filtro perezoso: pide una linea solo cuando se le pide una
+def validas(lineas):
+    for linea in lineas:
+        t = parsear(linea)
+        if t is not None:
+            yield t
+
+
+# 3. Totales por hora en una sola pasada, sin guardar lineas
+def por_hora(lineas):
+    n, suma = {}, {}
+    for seg, caja, monto in validas(lineas):
+        h = seg // 3600
+        n[h] = n.get(h, 0) + 1
+        suma[h] = suma.get(h, 0.0) + monto
+    return {h: (n[h], round(suma[h], 2)) for h in sorted(n)}
+
+
+# 4. Hora con mayor total; con empate, la mas temprana
+def hora_pico(tabla):
+    mejor = None
+    for h in sorted(tabla):
+        if mejor is None or tabla[h][1] > mejor[1]:
+            mejor = (h, tabla[h][1])
+    return mejor
+
+
+# 5. Primeras k devoluciones, sin leer mas de lo necesario
+def primeras_devoluciones(lineas, k):
+    fuera = []
+    if k <= 0:
+        return fuera
+    for t in validas(lineas):
+        if t[2] < 0:
+            fuera.append(t)
+            if len(fuera) == k:
+                break
+    return fuera
+
+
+# 6. Informe sobre un millon de lineas, en una sola pasada
+N = 1_000_000
+tabla = por_hora(flujo(N, 14))
+n_validas = sum(n for n, total in tabla.values())
+for h in tabla:
+    print("hora %02d: %6d transacciones, total %12.2f"
+          % (h, tabla[h][0], tabla[h][1]))
+print("lineas invalidas  :", N - n_validas)
+print("total del periodo :",
+      round(sum(t for n, t in tabla.values()), 2))
+print("hora pico         :", hora_pico(tabla))
+print("primeras 3 devol. :", primeras_devoluciones(flujo(N, 14), 3))
+```
+
+Con la semilla 14 hay 3924 líneas no válidas, y la hora pico es la de las 18, con 108 463 transacciones y 10 193 055,27 de total. `validas` es una función generadora: cada línea se pide al flujo cuando se pide la tupla siguiente, y por eso `primeras_devoluciones` puede cortar el recorrido con `break`. `por_hora` guarda dos diccionarios con quince claves cada uno, sea cual sea el número de líneas; una versión que construyera primero la lista de tuplas válidas ocuparía decenas de megabytes con un millón de líneas. En `parsear`, las reglas del monto se revisan carácter a carácter antes de llamar a `float`, que aceptaría `nan`, `inf` y `1e3`.
+:::

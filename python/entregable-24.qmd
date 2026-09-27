@@ -1,0 +1,491 @@
+---
+title: "Entregable 24: cierre de caja con dos millones de líneas"
+subtitle: "Python · Lecciones 01 a 15"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - pandas
+---
+
+Este entregable se puede resolver con lo visto hasta la Lección 15 de Python, y con cualquier herramienta posterior.
+
+## Especificación
+
+La celda genera `lineas`, la tabla de los artículos cobrados en un mes por una cadena de supermercados, con 2 000 000 de filas y las columnas `ticket`, `minuto`, `caja`, `producto` y `cantidad`. `minuto` es el minuto del día en que se cobró el ticket, de 480 (las 8:00) a 1319 (las 21:59). Todas las líneas de un ticket comparten minuto y caja; las cajas van de 1 a 12. La celda genera también `catalogo`, con las columnas `producto`, `categoria` y `precio`, que contiene todos los códigos de `lineas` y alguno que no se vendió, y `promos`, con las columnas `producto`, `desde_min`, `hasta_min` y `descuento`, con a lo sumo una promoción por producto. Una línea lleva el descuento de la promoción de su producto si `desde_min <= minuto < hasta_min`.
+
+El importe bruto de cada línea es la cantidad por el precio; su rebaja es el importe bruto por el descuento, si la promoción está vigente, y 0 si no; su importe neto es el bruto menos la rebaja. El total de un ticket es la suma de los importes netos de sus líneas.
+
+El programa debe definir la función `cierre(lineas, catalogo, promos)`, que devuelve un diccionario, y aplicarla a los datos generados. Todos los importes del diccionario se redondean a 2 decimales. Los requisitos son:
+
+1. Las claves `"total"` y `"descuento_total"` valen la suma de los importes netos y la suma de las rebajas de todas las líneas.
+2. La clave `"por_categoria"` es un diccionario con una entrada por cada categoría del catálogo, incluidas las que no tuvieron ventas, y el importe neto de la categoría como valor.
+3. La clave `"por_hora"` es una lista de 14 importes netos, los de las horas 8 a 21 en orden; la hora de cada línea es la parte entera de `minuto / 60`, y una hora sin ventas vale 0.
+4. Las claves `"tickets"`, `"cesta_media"` y `"tickets_grandes"` valen el número de tickets distintos, el importe neto total dividido entre ese número, y el número de tickets cuyo total, redondeado a 2 decimales, es estrictamente mayor que 100.
+5. La clave `"caja_top"` es el número de la caja que cobró más tickets distintos; si varias empatan, la de número menor.
+6. Con las 2 000 000 de filas generadas, la llamada a `cierre` devuelve el diccionario con todas sus claves y no tarda más del triple que una implementación de referencia que la comprobación ejecuta antes en el mismo equipo, con un margen fijo de 0,05 segundos; cada tiempo es el mejor de dos intentos. Como orientación, esa referencia tarda unos 0,1 segundos en un portátil actual.
+7. Durante esa llamada, el pico de memoria reservada que mide el módulo `tracemalloc` de la biblioteca estándar no pasa del triple del pico de la misma referencia más 5 MB, y al terminar `lineas` conserva sus columnas, sus tipos y sus valores. Como orientación, el pico de la referencia es de unos 55 MB.
+8. El programa imprime un informe con el tiempo que tardó `cierre`, el total, el descuento total, la categoría y la hora de mayor venta, el número de tickets, la cesta media, los tickets grandes y la caja con más tickets, con rótulos.
+
+## Rúbrica
+
+| Criterio | Completo | Incompleto |
+|---|---|---|
+| Requisitos 1 a 7 | La comprobación automática marca los siete como cumplidos, con los datos de la celda, con los que genera la comprobación y con los casos límite escritos a mano. | Alguno no se cumple. |
+| Requisito 8 | El informe contiene todos los datos con rótulo, y la suma de `por_categoria` y la de `por_hora` coinciden con el total. | Faltan datos o las cifras no cuadran. |
+| Claridad del código | Cada paso lleva el número del requisito que resuelve; lo que depende solo del producto (precio, categoría, promoción) se calcula una vez por producto y no una vez por línea; los nombres dicen qué guarda cada arreglo. | Hay bloques sin comentar, nombres de una letra sin significado, o la misma consulta al catálogo se repite en cada línea. |
+| Razonamiento | La solución cuenta cuántos arreglos del tamaño de `lineas` reserva y elige el orden de las operaciones para no multiplicarlos; el informe dice cuánto tardó `cierre`. | La solución cumple los topes por casualidad, o no se sabe qué parte del tiempo o de la memoria consume cada paso. |
+
+Los dos primeros criterios se comprueban con la celda de comprobación; los dos últimos, con la solución de referencia al final de la página.
+
+## Programa
+
+```{pyodide}
+#| exercise: ent_24
+import time
+import numpy as np
+import pandas as pd
+
+CATEGORIAS = ["abarrotes", "bebidas", "carnes", "frutas y verduras",
+              "lacteos", "limpieza", "panaderia", "higiene"]
+
+
+def generar(semilla, n):
+    rng = np.random.default_rng(semilla)
+    tam = rng.integers(1, 9, n // 3 + 10)      # lineas de cada ticket
+    tam = tam[: np.searchsorted(np.cumsum(tam), n) + 1]
+    tam = tam.astype(np.intp)          # entero nativo, para repeat
+    k = len(tam)
+    ticket = np.arange(1, k + 1, dtype=np.int32)
+    minuto = rng.integers(480, 1320, k).astype(np.int16)
+    caja = rng.integers(1, 13, k).astype(np.int8)
+    return pd.DataFrame({
+        "ticket": np.repeat(ticket, tam)[:n],
+        "minuto": np.repeat(minuto, tam)[:n],
+        "caja": np.repeat(caja, tam)[:n],
+        "producto": rng.integers(1, 39, n).astype(np.int8),
+        "cantidad": rng.integers(1, 7, n).astype(np.int8),
+    })
+
+
+catalogo = pd.DataFrame({
+    "producto": np.arange(1, 41),
+    "categoria": [CATEGORIAS[i // 5] for i in range(38)]
+                 + ["mascotas", "mascotas"],
+    "precio": np.random.default_rng(240).integers(50, 1200, 40) / 100,
+})
+promos = pd.DataFrame({
+    "producto": [5, 12, 23, 31, 36],
+    "desde_min": [1080, 480, 720, 1200, 600],
+    "hasta_min": [1200, 600, 780, 1320, 1320],
+    "descuento": [0.20, 0.10, 0.15, 0.30, 0.05],
+})
+lineas = generar(24, 2_000_000)
+print(len(lineas), "lineas,",
+      round(lineas.memory_usage().sum() / 1e6), "MB")
+
+# 1-7. cierre
+def cierre(lineas, catalogo, promos):
+    return None
+
+
+inicio = time.perf_counter()
+resultado = cierre(lineas, catalogo, promos)
+segundos = time.perf_counter() - inicio
+
+# 8. informe
+```
+
+::: {.hint exercise="ent_24"}
+Con dos millones de filas, cualquier paso que ejecute código de Python una vez por línea se come el tope de tiempo, y cualquier tabla intermedia de dos millones de filas con varias columnas de 8 bytes se come una parte grande del tope de memoria. Un arreglo de 2 000 000 de números de 8 bytes ocupa 16 MB; contar cuántos de esos arreglos existen a la vez en el peor momento de la función es la cuenta de la sección 2 de la lección. `tracemalloc.start()`, `tracemalloc.get_traced_memory()` y `tracemalloc.stop()` permiten medir el pico antes de ejecutar la comprobación.
+:::
+
+```{pyodide}
+#| exercise: ent_24
+#| check: true
+import time as _time
+import numpy as _np
+import pandas as _pd
+
+_CATS = ["abarrotes", "bebidas", "carnes", "frutas y verduras",
+         "lacteos", "limpieza", "panaderia", "higiene"]
+
+
+def _generar(semilla, n):
+    rng = _np.random.default_rng(semilla)
+    tam = rng.integers(1, 9, n // 3 + 10)
+    tam = tam[: _np.searchsorted(_np.cumsum(tam), n) + 1]
+    tam = tam.astype(_np.intp)
+    k = len(tam)
+    ticket = _np.arange(1, k + 1, dtype=_np.int32)
+    minuto = rng.integers(480, 1320, k).astype(_np.int16)
+    caja = rng.integers(1, 13, k).astype(_np.int8)
+    return _pd.DataFrame({
+        "ticket": _np.repeat(ticket, tam)[:n],
+        "minuto": _np.repeat(minuto, tam)[:n],
+        "caja": _np.repeat(caja, tam)[:n],
+        "producto": rng.integers(1, 39, n).astype(_np.int8),
+        "cantidad": rng.integers(1, 7, n).astype(_np.int8),
+    })
+
+
+_cat = _pd.DataFrame({
+    "producto": _np.arange(1, 41),
+    "categoria": [_CATS[i // 5] for i in range(38)]
+                 + ["mascotas", "mascotas"],
+    "precio": _np.random.default_rng(240).integers(50, 1200, 40) / 100,
+})
+_pro = _pd.DataFrame({
+    "producto": [5, 12, 23, 31, 36],
+    "desde_min": [1080, 480, 720, 1200, 600],
+    "hasta_min": [1200, 600, 780, 1320, 1320],
+    "descuento": [0.20, 0.10, 0.15, 0.30, 0.05],
+})
+
+
+def _esperado(lin, cat, pro):
+    """Por otra ruta: unidades enteras por (hora, producto, promo)."""
+    cats = sorted(set(cat["categoria"]))
+    tope = int(cat["producto"].max()) + 1
+    precio, cat_de = [0.0] * tope, [""] * tope
+    for p, c, x in cat[["producto", "categoria", "precio"]].itertuples(
+            index=False):
+        precio[int(p)], cat_de[int(p)] = float(x), c
+    ini, fin, dsc = [0] * tope, [0] * tope, [0.0] * tope
+    for p, a, b, d in pro[["producto", "desde_min", "hasta_min",
+                           "descuento"]].itertuples(index=False):
+        ini[int(p)], fin[int(p)], dsc[int(p)] = int(a), int(b), float(d)
+    p = lin["producto"].to_numpy().astype(_np.int64)
+    m = lin["minuto"].to_numpy().astype(_np.int64)
+    q = lin["cantidad"].to_numpy().astype(_np.float64)
+    vig = (m >= _np.array(ini)[p]) & (m < _np.array(fin)[p])
+    clave = ((m // 60 - 8) * tope + p) * 2 + vig
+    uds = _np.bincount(clave, weights=q, minlength=14 * tope * 2)
+    tot = reb = 0.0
+    por_cat = {c: 0.0 for c in cats}
+    por_hora = [0.0] * 14
+    for k in _np.flatnonzero(uds):
+        h, resto = divmod(int(k), tope * 2)
+        pp, v = divmod(resto, 2)
+        bruto = uds[k] * precio[pp]
+        r = bruto * dsc[pp] if v else 0.0
+        tot, reb = tot + bruto - r, reb + r
+        por_cat[cat_de[pp]] += bruto - r
+        por_hora[h] += bruto - r
+    fac = 1 - _np.array(dsc)[p] * vig
+    neto = q * _np.array(precio)[p] * fac
+    t = lin["ticket"].to_numpy()
+    orden = _np.argsort(t, kind="stable")
+    ts = t[orden]
+    ini_t = _np.flatnonzero(_np.r_[True, ts[1:] != ts[:-1]])
+    por_ticket = _np.add.reduceat(neto[orden], ini_t)
+    caja_t = lin["caja"].to_numpy()[orden][ini_t].astype(_np.int64)
+    cuenta = _np.bincount(caja_t, minlength=13)
+    grandes = int((_np.round(por_ticket, 2) > 100).sum())
+    return {"total": tot, "descuento_total": reb,
+            "por_categoria": por_cat, "por_hora": por_hora,
+            "tickets": len(ini_t), "cesta_media": tot / len(ini_t),
+            "tickets_grandes": grandes,
+            "caja_top": int(_np.argmax(cuenta))}
+
+
+def _cerca(a, b):
+    return abs(float(a) - float(b)) < 0.0101 + 1e-9 * abs(float(b))
+
+
+def _manual():
+    cat = _pd.DataFrame({"producto": [1, 2, 3, 4],
+                         "categoria": ["a", "a", "b", "c"],
+                         "precio": [10.0, 5.0, 2.5, 1.0]})
+    pro = _pd.DataFrame({"producto": [1], "desde_min": [600],
+                         "hasta_min": [660], "descuento": [0.5]})
+    lin = _pd.DataFrame({
+        "ticket": _np.array([1, 1, 2, 2, 3, 4, 5], dtype=_np.int32),
+        "minuto": _np.array([599, 599, 600, 600, 659, 660, 1319],
+                            dtype=_np.int16),
+        "caja": _np.array([3, 3, 2, 2, 2, 3, 1], dtype=_np.int8),
+        "producto": _np.array([1, 2, 1, 3, 1, 1, 2], dtype=_np.int8),
+        "cantidad": _np.array([2, 1, 2, 4, 1, 10, 21], dtype=_np.int8)})
+    return lin, cat, pro
+
+
+def _ok(r, e, req, holgura=0):
+    if req == 1:
+        return (_cerca(r["total"], e["total"])
+                and _cerca(r["descuento_total"], e["descuento_total"]))
+    if req == 2:
+        pc = r["por_categoria"]
+        ep = e["por_categoria"]
+        return (sorted(pc) == sorted(ep) and
+                all(_cerca(pc[c], v) for c, v in ep.items()))
+    if req == 3:
+        ph = list(r["por_hora"])
+        return len(ph) == 14 and all(_cerca(a, b)
+                                     for a, b in zip(ph, e["por_hora"]))
+    if req == 4:
+        return (int(r["tickets"]) == e["tickets"]
+                and _cerca(r["cesta_media"], e["cesta_media"])
+                and abs(int(r["tickets_grandes"])
+                        - e["tickets_grandes"]) <= holgura)
+    return int(r["caja_top"]) == e["caja_top"]
+
+
+_lin_m, _cat_m, _pro_m = _manual()
+_lin_s = _generar(2026, 300_000)
+_pequenos = [(_lin_m, _cat_m, _pro_m), (_lin_s, _cat, _pro)]
+_esp_m = _esperado(_lin_m, _cat_m, _pro_m)
+_fijo = (_esp_m["total"] == 255.0 and _esp_m["tickets_grandes"] == 1
+         and _esp_m["caja_top"] == 2)
+
+def _huella(df):
+    return (list(df.columns), [str(d) for d in df.dtypes],
+            [int(df[c].astype("int64").sum()) for c in df.columns])
+
+
+def _completo(r):
+    return (isinstance(r, dict) and set(r) >= {
+        "total", "descuento_total", "por_categoria", "por_hora",
+        "tickets", "cesta_media", "tickets_grandes", "caja_top"}
+        and len(r["por_hora"]) == 14)
+
+
+def _ref_cierre(lin, cat, pro):
+    """Referencia de los requisitos 6 y 7: consultas por producto
+    llevadas a las lineas por indexacion, sin tablas intermedias."""
+    cats = sorted(cat["categoria"].unique())
+    cod = cat["producto"].to_numpy()
+    tope = int(cod.max()) + 1
+    precio = _np.zeros(tope)
+    precio[cod] = cat["precio"].to_numpy()
+    cat_de = _np.zeros(tope, dtype=_np.intp)
+    cat_de[cod] = [cats.index(c) for c in cat["categoria"]]
+    tasa = _np.zeros(tope)
+    ini = _np.zeros(tope, dtype=_np.int16)
+    fin = _np.zeros(tope, dtype=_np.int16)
+    cp = pro["producto"].to_numpy()
+    tasa[cp] = pro["descuento"].to_numpy()
+    ini[cp] = pro["desde_min"].to_numpy()
+    fin[cp] = pro["hasta_min"].to_numpy()
+    p = lin["producto"].to_numpy()
+    m = lin["minuto"].to_numpy()
+    t = lin["ticket"].to_numpy()
+    neto = precio[p]
+    neto *= lin["cantidad"].to_numpy()
+    reb = tasa[p]
+    reb *= neto
+    reb *= (m >= ini[p]) & (m < fin[p])
+    neto -= reb
+    pc = _np.bincount(cat_de[p], weights=neto, minlength=len(cats))
+    ph = _np.bincount(m // 60 - 8, weights=neto, minlength=14)
+    pt = _np.bincount(t, weights=neto)
+    hay = _np.bincount(t) > 0
+    caja = _np.zeros(len(hay), dtype=_np.intp)
+    caja[t] = lin["caja"].to_numpy()
+    total = float(neto.sum())
+    return {"total": total, "descuento_total": float(reb.sum()),
+            "por_categoria": dict(zip(cats, pc.tolist())),
+            "por_hora": ph.tolist(), "tickets": int(hay.sum()),
+            "cesta_media": total / int(hay.sum()),
+            "tickets_grandes": int((_np.round(pt[hay], 2) > 100).sum()),
+            "caja_top": int(_np.argmax(_np.bincount(caja[hay])))}
+
+
+def _mejor(f, tope=None):
+    """Mejor de dos intentos, en segundos, y el ultimo resultado; el
+    segundo intento se omite si el primero ya queda dentro de tope."""
+    _m, _x = None, None
+    for _v in range(2):
+        _t0 = _time.perf_counter()
+        _x = f()
+        _d = _time.perf_counter() - _t0
+        _m = _d if _m is None else min(_m, _d)
+        if tope is not None and _m <= tope:
+            break
+    return _m, _x
+
+
+_lin_g = _generar(24, 2_000_000)
+_esp_g = _esperado(_lin_g, _cat, _pro)
+_antes = _huella(_lin_g)
+# 6. tiempo relativo a la referencia, medida antes en este equipo
+_t_ref, _ = _mejor(lambda: _ref_cierre(_lin_g, _cat, _pro))
+_tope = 3 * _t_ref + 0.05
+_seg, _r_g = None, None
+try:
+    _seg, _r_g = _mejor(lambda: cierre(_lin_g, _cat, _pro), _tope)
+except Exception:
+    pass
+
+_res = []
+for _k in range(1, 6):
+    try:
+        _res.append(_fijo and _ok(_r_g, _esp_g, _k, holgura=3) and all(
+            _ok(cierre(l, c, p), _esperado(l, c, p), _k)
+            for l, c, p in _pequenos))
+    except Exception:
+        _res.append(False)
+_res.append(_completo(_r_g) and _seg <= _tope)
+
+# 7. pico de memoria relativo al de la referencia
+_medible, _pico, _p_ref = True, None, None
+try:
+    import tracemalloc as _tm
+    _tm.start()
+    _ref_cierre(_lin_g, _cat, _pro)
+    _p_ref = _tm.get_traced_memory()[1]
+    _tm.stop()
+    _p_tope = 3 * _p_ref + 5e6
+    _tm.start()
+    _r_m = cierre(_lin_g, _cat, _pro)
+    _pico = _tm.get_traced_memory()[1]
+    _tm.stop()
+    _res.append(_completo(_r_m) and _pico <= _p_tope
+                and _huella(_lin_g) == _antes)
+except ImportError:
+    _medible = False
+    _res.append(_completo(_r_g) and _huella(_lin_g) == _antes)
+except Exception:
+    if _medible and _tm.is_tracing():
+        _tm.stop()
+    _res.append(False)
+
+_nombres = ["importes", "categorias", "horas", "tickets", "caja_top",
+            "tiempo", "memoria"]
+_lineas = ["requisito %d (%s): %s" % (i + 1, _nombres[i],
+           "cumplido" if v else "no cumplido")
+           for i, v in enumerate(_res)]
+_lineas[5] += (" (%s; referencia en este equipo: %.2f s; tope: %.2f s)"
+               % ("sin medir" if _seg is None else "%.2f s" % _seg,
+                  _t_ref, _tope))
+if _p_ref is not None:
+    _lineas[6] += " (%s; referencia: %d MB; tope: %d MB)" % (
+        "sin medir" if _pico is None else "%d MB" % round(_pico / 1e6),
+        round(_p_ref / 1e6), round(_p_tope / 1e6))
+if not _medible:
+    _lineas[6] += ", sin medir: este entorno no tiene tracemalloc"
+feedback = {"correct": all(_res), "message": " · ".join(_lineas)}
+feedback
+```
+
+## Solución de referencia
+
+::: {.callout-note collapse="true"}
+## Ver la solución de referencia
+
+```python
+import time
+import numpy as np
+import pandas as pd
+
+CATEGORIAS = ["abarrotes", "bebidas", "carnes", "frutas y verduras",
+              "lacteos", "limpieza", "panaderia", "higiene"]
+
+
+def generar(semilla, n):
+    rng = np.random.default_rng(semilla)
+    tam = rng.integers(1, 9, n // 3 + 10)      # lineas de cada ticket
+    tam = tam[: np.searchsorted(np.cumsum(tam), n) + 1]
+    tam = tam.astype(np.intp)          # entero nativo, para repeat
+    k = len(tam)
+    ticket = np.arange(1, k + 1, dtype=np.int32)
+    minuto = rng.integers(480, 1320, k).astype(np.int16)
+    caja = rng.integers(1, 13, k).astype(np.int8)
+    return pd.DataFrame({
+        "ticket": np.repeat(ticket, tam)[:n],
+        "minuto": np.repeat(minuto, tam)[:n],
+        "caja": np.repeat(caja, tam)[:n],
+        "producto": rng.integers(1, 39, n).astype(np.int8),
+        "cantidad": rng.integers(1, 7, n).astype(np.int8),
+    })
+
+
+catalogo = pd.DataFrame({
+    "producto": np.arange(1, 41),
+    "categoria": [CATEGORIAS[i // 5] for i in range(38)]
+                 + ["mascotas", "mascotas"],
+    "precio": np.random.default_rng(240).integers(50, 1200, 40) / 100,
+})
+promos = pd.DataFrame({
+    "producto": [5, 12, 23, 31, 36],
+    "desde_min": [1080, 480, 720, 1200, 600],
+    "hasta_min": [1200, 600, 780, 1320, 1320],
+    "descuento": [0.20, 0.10, 0.15, 0.30, 0.05],
+})
+lineas = generar(24, 2_000_000)
+
+
+def cierre(lineas, catalogo, promos):
+    # Tablas de consulta indexadas por codigo: una entrada por producto
+    categorias = sorted(catalogo["categoria"].unique())
+    codigo = catalogo["producto"].to_numpy()
+    tope = int(codigo.max()) + 1
+    precio = np.zeros(tope)
+    precio[codigo] = catalogo["precio"].to_numpy()
+    cat_de = np.zeros(tope, dtype=np.intp)
+    cat_de[codigo] = [categorias.index(c)
+                      for c in catalogo["categoria"]]
+    tasa = np.zeros(tope)
+    desde = np.zeros(tope, dtype=np.int16)
+    hasta = np.zeros(tope, dtype=np.int16)
+    con_promo = promos["producto"].to_numpy()
+    tasa[con_promo] = promos["descuento"].to_numpy()
+    desde[con_promo] = promos["desde_min"].to_numpy()
+    hasta[con_promo] = promos["hasta_min"].to_numpy()
+
+    p = lineas["producto"].to_numpy()
+    m = lineas["minuto"].to_numpy()
+    t = lineas["ticket"].to_numpy()
+    # 1. Dos arreglos de 16 MB, operando en su sitio
+    neto = precio[p]
+    neto *= lineas["cantidad"].to_numpy()
+    rebaja = tasa[p]
+    rebaja *= neto
+    rebaja *= (m >= desde[p]) & (m < hasta[p])
+    neto -= rebaja
+    total = float(neto.sum())
+    # 2 y 3. Sumas por categoria y por hora
+    por_cat = np.bincount(cat_de[p], weights=neto,
+                          minlength=len(categorias))
+    por_hora = np.bincount(m // 60 - 8, weights=neto, minlength=14)
+    # 4. Totales por ticket, indexados por el numero de ticket
+    por_ticket = np.bincount(t, weights=neto)
+    existe = np.bincount(t) > 0
+    n = int(existe.sum())
+    grandes = int((np.round(por_ticket[existe], 2) > 100).sum())
+    # 5. Caja de cada ticket y tickets por caja
+    caja_de = np.zeros(len(existe), dtype=np.intp)
+    caja_de[t] = lineas["caja"].to_numpy()
+    por_caja = np.bincount(caja_de[existe])
+    return {"total": round(total, 2),
+            "descuento_total": round(float(rebaja.sum()), 2),
+            "por_categoria": {c: round(float(v), 2)
+                              for c, v in zip(categorias, por_cat)},
+            "por_hora": [round(float(v), 2) for v in por_hora],
+            "tickets": n,
+            "cesta_media": round(total / n, 2),
+            "tickets_grandes": grandes,
+            "caja_top": int(np.argmax(por_caja))}
+
+
+inicio = time.perf_counter()
+resultado = cierre(lineas, catalogo, promos)
+segundos = time.perf_counter() - inicio
+
+# 8. Informe
+pc = resultado["por_categoria"]
+ph = resultado["por_hora"]
+print("tiempo de cierre (s) :", round(segundos, 2))
+print("total                :", resultado["total"])
+print("descuento total      :", resultado["descuento_total"])
+print("categoria principal  :", max(pc, key=pc.get), max(pc.values()))
+print("hora de mayor venta  :", 8 + ph.index(max(ph)), max(ph))
+print("tickets              :", resultado["tickets"])
+print("cesta media          :", resultado["cesta_media"])
+print("tickets de mas de 100:", resultado["tickets_grandes"])
+print("caja con mas tickets :", resultado["caja_top"])
+```
+
+Con la semilla 24 hay 444392 tickets, el importe neto total es 42798726,47 y las promociones rebajan 113379,60. La cesta media es 96,31, y 197811 tickets pasan de 100. La categoría de mayor venta es frutas y verduras y la hora de mayor venta es la de las 8, aunque las catorce horas quedan muy parejas porque el generador reparte los minutos de forma uniforme. La caja con más tickets es la 10.
+
+La tabla de entrada ocupa 18 MB porque sus columnas usan enteros de 1, 2 y 4 bytes. La solución de referencia construye las tablas de consulta una vez por producto (41 entradas) y pasa a las líneas con indexación por el código, de modo que ningún paso ejecuta Python por línea. Opera en su sitio sobre dos arreglos de 16 MB, `neto` y `rebaja`, y su pico medido es de 55 MB, 44 MB en el navegador, con los dos arreglos más los temporales de la indexación. La referencia de la comprobación hace las mismas cuentas y tiene el mismo pico. Una versión que calcula el importe bruto, la rebaja y el neto como arreglos nuevos, sin operar en su sitio, llega a entre 60 y 105 MB y cumple los dos requisitos. Una solución que une `lineas` con el catálogo y con las promociones antes de agrupar también es vectorizada, pero la tabla unida tiene dos millones de filas y más de diez columnas: su pico pasa de 240 MB, más de cuatro veces el de la referencia, y tarda entre 5 y 12 veces lo que la referencia. Una versión con pandas que lleva el precio, la categoría y la promoción a cada línea por el código del producto y agrupa por ticket y por caja, sin unir tablas, tarda entre 4 y 10 veces lo que la referencia y tampoco cumple el requisito 6. Una solución que recorre las líneas con un bucle de Python tarda entre 14 y 23 veces lo que la referencia. Los segundos exactos dependen de la máquina y del navegador; la proporción entre las soluciones se mantiene en los tres entornos probados.
+:::

@@ -1,0 +1,388 @@
+---
+title: "Entregable 30: archivo histórico en formato columnar"
+subtitle: "Python · Lecciones 01 a 23"
+engine: markdown
+---
+
+Este entregable se puede resolver con lo visto hasta la Lección 23 de Python, y con cualquier herramienta posterior. Corresponde al bloque de proyecto del viernes, unos 150 minutos. Se resuelve en una sola celda, desde el principio, como un programa completo; la organización interna del archivo forma parte del ejercicio.
+
+## Especificación
+
+La celda genera `ventas`, el histórico de 24 000 ventas de una cadena de supermercados. Es una tabla por columnas: cada nombre de columna se asocia a la lista de sus valores, y todas las listas tienen la misma longitud. Las columnas son `id` (entero), `fecha` (entero de la forma AAAAMMDD, no decreciente), `tienda` y `producto` (texto), `cantidad` (entero), `precio` (decimal), `anulada` (booleano), `cliente` (entero o `None`) y `nota` (texto o `None`).
+
+El archivo es un objeto `bytes`. Las funciones de lectura no reciben ese objeto: reciben una función `lee(inicio, n)`, que devuelve los `n` bytes del archivo que empiezan en la posición `inicio`, y el tamaño total `tamano`. La comprobación suministra su propia `lee`, que cuenta los bytes pedidos y rechaza las posiciones fuera del archivo. El programa debe definir las siguientes funciones, con los nombres y las firmas indicados:
+
+1. `guarda(tabla, tam_grupo)`: devuelve un objeto `bytes` con el contenido de `tabla`, una tabla organizada como `ventas`, con cualquier número de columnas. Los valores son de tipo `int`, `float`, `bool` o `str`, o bien `None`, y los valores no ausentes de una columna son todos del mismo tipo. Las filas se reparten en grupos consecutivos de `tam_grupo` filas; el último grupo puede tener menos. Si las columnas no tienen todas la misma longitud, o si `tam_grupo` no es un entero mayor que 0, levanta `ValueError`.
+2. `carga(lee, tamano, columnas=None)`: devuelve la tabla guardada con las columnas de la lista `columnas`, en ese orden, o con todas en su orden original si `columnas` es `None`. Cada valor vuelve igual y con el mismo tipo: `1`, `1.0` y `True` no son intercambiables, y un ausente vuelve como `None`. Una tabla de cero filas se recupera con sus columnas vacías. Pedir una columna que no está en el archivo levanta `KeyError`.
+3. Cargar una sola columna de una tabla de ocho columnas pide a `lee` como máximo el 40 % de los bytes del archivo.
+4. `consulta(lee, tamano, columna, bajo, alto)`: devuelve una tupla `(filas, grupos_leidos)`. `filas` contiene, en orden creciente y empezando a contar en 0, las posiciones de las filas cuyo valor en `columna` no es ausente y cumple `bajo <= valor <= alto`. `grupos_leidos` es el número de grupos que, a juzgar por su mínimo y su máximo en esa columna, pueden contener alguna de esas filas: los que tienen algún valor no ausente, cuyo mínimo no pasa de `alto` y cuyo máximo no queda por debajo de `bajo`. Si `bajo > alto`, el resultado es `([], 0)`. Una consulta sobre una columna ordenada que toca uno de cada quince grupos pide a `lee` como máximo el 10 % del archivo.
+5. `guarda(ventas, 1000)` ocupa como máximo el 30 % de lo que ocupa la misma tabla escrita como CSV: una cabecera y una línea por fila, un ausente como campo vacío, codificado en UTF-8.
+6. Un informe impreso con el número de filas y de grupos de `ventas` guardada en grupos de 1000 filas, el tamaño del archivo y el del CSV con su cociente, los bytes leídos al cargar solo la columna `precio` y su porcentaje del archivo, y, para la consulta de las ventas del 15 de marzo de 2026 por la columna `fecha`, el número de filas halladas, los grupos leídos sobre el total y los bytes leídos. Una línea por dato, con rótulo.
+
+Restricciones: las funciones de lectura solo acceden al archivo a través de `lee`.
+
+## Rúbrica
+
+| Criterio | Completo | Incompleto |
+|---|---|---|
+| Requisitos 1 a 5 | La comprobación automática marca los cinco como cumplidos. | Alguno no se cumple. |
+| Requisito 6 | El informe contiene todos los datos, uno por línea, con un rótulo que dice qué es cada cifra. | Faltan datos o las cifras no llevan rótulo. |
+| Claridad del código | Cada función lleva un comentario con el número del requisito que resuelve; la disposición del archivo (qué va en cada bloque y dónde se guarda el índice) se describe en un comentario al principio. | La disposición del archivo solo se deduce leyendo todo el código. |
+| Razonamiento | La disposición se justifica por las lecturas que debe servir: los valores de una columna quedan juntos dentro de cada grupo, el mínimo y el máximo se pueden leer sin leer los datos, y la compresión se aplica a bloques de valores parecidos. | El formato funciona con estos datos y no se explica por qué lee poco ni por qué ocupa poco. |
+
+Los dos primeros criterios se comprueban con la celda de comprobación; los dos últimos, con la solución de referencia al final de la página.
+
+## Programa
+
+```{pyodide}
+#| exercise: ent_30
+import datetime as dt
+import random
+
+random.seed(30)
+N = 24000
+TIENDAS = ["Heredia", "Cartago", "Alajuela", "Liberia", "Limon"]
+PRODUCTOS = ["arroz 1 kg", "frijol 900 g", "leche 1 l", "pan molde",
+             "huevos 12", "aceite 1 l", "azucar 2 kg", "cafe molido",
+             "atun lata", "pasta 500 g", "queso 400 g", "jabon barra",
+             "detergente", "papel x4", "pollo kg", "carne kg",
+             "manzana kg", "banano kg", "tomate kg", "cebolla kg",
+             "yogur 1 l", "galletas", "sal 1 kg", "harina 1 kg",
+             "avena 400 g", "refresco 2 l", "agua 1 l", "cloro 1 l",
+             "pasta dental", "champu"]
+PRECIOS = {p: round(1.25 + 0.35 * (k * 37 % 29), 2)
+           for k, p in enumerate(PRODUCTOS)}
+NOTAS = ["devolucion", "sin bolsa", "precio manual"]
+inicio = dt.date(2026, 1, 1)
+ventas = {"id": [], "fecha": [], "tienda": [], "producto": [],
+          "cantidad": [], "precio": [], "anulada": [], "cliente": [],
+          "nota": []}
+for i in range(N):
+    d = inicio + dt.timedelta(days=i // 100)
+    p = random.choice(PRODUCTOS)
+    ventas["id"].append(i + 1)
+    ventas["fecha"].append(d.year * 10000 + d.month * 100 + d.day)
+    ventas["tienda"].append(random.choice(TIENDAS))
+    ventas["producto"].append(p)
+    ventas["cantidad"].append(random.randint(1, 6))
+    ventas["precio"].append(PRECIOS[p])
+    ventas["anulada"].append(random.random() < 0.02)
+    ventas["cliente"].append(random.randint(1000, 9999)
+                             if random.random() < 0.6 else None)
+    ventas["nota"].append(random.choice(NOTAS)
+                          if random.random() < 0.03 else None)
+
+# 1. guarda
+def guarda(tabla, tam_grupo):
+    pass
+
+# 2 y 3. carga
+def carga(lee, tamano, columnas=None):
+    pass
+
+# 4. consulta
+def consulta(lee, tamano, columna, bajo, alto):
+    pass
+
+# 5 y 6. archivo de ventas e informe
+```
+
+::: {.hint exercise="ent_30"}
+Para leer poco hace falta saber, antes de leer ningún dato, dónde empieza cada columna de cada grupo y cuáles son su mínimo y su máximo. Esa información puede guardarse en un índice al final del archivo, con su longitud en los últimos bytes, de modo que la lectura empiece por `lee(tamano - k, k)`.
+:::
+
+```{pyodide}
+#| exercise: ent_30
+#| check: true
+import csv as _csv, io as _io, random as _random
+
+def _lector(_datos):
+    _cuenta = [0]
+    def _lee(inicio, n):
+        if inicio < 0 or n < 0 or inicio + n > len(_datos):
+            raise ValueError("lectura fuera del archivo")
+        _cuenta[0] += n
+        return _datos[inicio:inicio + n]
+    return _lee, _cuenta
+
+def _mismo(a, b):
+    if list(a) != list(b):
+        return False
+    for _k in a:
+        if len(a[_k]) != len(b[_k]):
+            return False
+        for _x, _y in zip(a[_k], b[_k]):
+            if type(_x) is not type(_y) or _x != _y:
+                return False
+    return True
+
+def _espera(tabla, tam, col, bajo, alto):
+    _v = tabla[col]
+    _f = [i for i, x in enumerate(_v)
+          if x is not None and bajo <= x <= alto]
+    _g = 0
+    if bajo <= alto:
+        for d in range(0, len(_v), tam):
+            _p = [x for x in _v[d:d + tam] if x is not None]
+            if _p and min(_p) <= alto and max(_p) >= bajo:
+                _g += 1
+    return _f, _g
+
+# tabla nueva, con otra semilla y otro tamano de grupo
+_r = _random.Random(3030)
+_M = 7351
+_nueva = {
+    "clave": list(range(-50, _M - 50)),
+    "tienda": [_r.choice(["Ñandú", "Sur", "Este"]) for _ in range(_M)],
+    "peso": [None if _r.random() < 0.1 else
+             round(_r.random() * 3, 3) for _ in range(_M)],
+    "suma": [0.1 + 0.2 * (i % 7) for i in range(_M)],
+    "fiado": [_r.random() < 0.5 for _ in range(_M)],
+    "unidades": [_r.randint(0, 3) if _r.random() < 0.9 else None
+                 for _ in range(_M)],
+    "vacia": [None] * _M,
+    "codigo": ["%05d" % _r.randint(0, 99999) for _ in range(_M)],
+}
+_casos = [("clave", 100, 180), ("clave", 7000, 9000),
+          ("peso", 1.0, 1.2), ("tienda", "Este", "Sur"),
+          ("unidades", 3, 3), ("clave", 5, 4), ("vacia", 0, 9),
+          ("codigo", "00000", "00999")]
+_ok, _nota = [], []
+
+# 1. guarda y sus errores
+try:
+    _d = guarda(_nueva, 500)
+    _e1 = isinstance(_d, bytes)
+    for _mala, _t in (({"a": [1, 2], "b": [1]}, 10), ({"a": [1]}, 0)):
+        try:
+            guarda(_mala, _t)
+            _e1 = False
+        except ValueError:
+            pass
+    _ok.append(_e1)
+except Exception:
+    _ok.append(False)
+
+# 2. ida y vuelta con tipos
+try:
+    _d = guarda(_nueva, 500)
+    _lee, _c = _lector(_d)
+    _e2 = _mismo(carga(_lee, len(_d)), _nueva)
+    _lee, _c = _lector(_d)
+    _pide = ["peso", "clave"]
+    _e2 = _e2 and _mismo(carga(_lee, len(_d), _pide),
+                         {k: _nueva[k] for k in _pide})
+    for _t in ({"a": [], "b": []}, {"x": [True, None, False, True],
+               "y": [1, None, 0, 1], "z": [1.0, 0.0, None, 1.0]}):
+        _dd = guarda(_t, 3)
+        _lee, _c = _lector(_dd)
+        _e2 = _e2 and _mismo(carga(_lee, len(_dd)), _t)
+    try:
+        _lee, _c = _lector(_d)
+        carga(_lee, len(_d), ["no_existe"])
+        _e2 = False
+    except KeyError:
+        pass
+    _ok.append(bool(_e2))
+except Exception:
+    _ok.append(False)
+
+# 3. leer una columna no recorre el archivo
+try:
+    _d = guarda(_nueva, 500)
+    _lee, _c = _lector(_d)
+    carga(_lee, len(_d), ["unidades"])
+    _ok.append(0 < _c[0] <= 0.40 * len(_d))
+except Exception:
+    _ok.append(False)
+
+# 4. consulta: filas, grupos leidos y bytes
+try:
+    _d = guarda(_nueva, 500)
+    _e4 = True
+    for _col, _b, _a in _casos:
+        _lee, _c = _lector(_d)
+        _f, _g = consulta(_lee, len(_d), _col, _b, _a)
+        _e4 = _e4 and ((list(_f), _g)
+                       == _espera(_nueva, 500, _col, _b, _a))
+    _lee, _c = _lector(_d)
+    consulta(_lee, len(_d), "clave", 100, 180)
+    _e4 = _e4 and _c[0] <= 0.10 * len(_d)
+    _ok.append(bool(_e4))
+except Exception:
+    _ok.append(False)
+
+# 5. tamano frente al CSV de ventas
+try:
+    _t = _io.StringIO()
+    _w = _csv.writer(_t)
+    _w.writerow(list(ventas))
+    _w.writerows(zip(*ventas.values()))
+    _ok.append(len(guarda(ventas, 1000))
+               <= 0.30 * len(_t.getvalue().encode()))
+except Exception:
+    _ok.append(False)
+
+_nombres = ["guarda", "ida y vuelta", "lectura de una columna",
+            "consulta", "tamano"]
+_lineas = ["requisito %d (%s): %s" % (i + 1, _nombres[i],
+           "cumplido" if v else "no cumplido")
+           for i, v in enumerate(_ok)]
+feedback = {"correct": all(_ok), "message": " · ".join(_lineas)}
+feedback
+```
+
+## Solución de referencia
+
+::: {.callout-note collapse="true"}
+## Ver la solución de referencia
+
+```python
+import datetime as dt
+import random
+
+random.seed(30)
+N = 24000
+TIENDAS = ["Heredia", "Cartago", "Alajuela", "Liberia", "Limon"]
+PRODUCTOS = ["arroz 1 kg", "frijol 900 g", "leche 1 l", "pan molde",
+             "huevos 12", "aceite 1 l", "azucar 2 kg", "cafe molido",
+             "atun lata", "pasta 500 g", "queso 400 g", "jabon barra",
+             "detergente", "papel x4", "pollo kg", "carne kg",
+             "manzana kg", "banano kg", "tomate kg", "cebolla kg",
+             "yogur 1 l", "galletas", "sal 1 kg", "harina 1 kg",
+             "avena 400 g", "refresco 2 l", "agua 1 l", "cloro 1 l",
+             "pasta dental", "champu"]
+PRECIOS = {p: round(1.25 + 0.35 * (k * 37 % 29), 2)
+           for k, p in enumerate(PRODUCTOS)}
+NOTAS = ["devolucion", "sin bolsa", "precio manual"]
+inicio = dt.date(2026, 1, 1)
+ventas = {"id": [], "fecha": [], "tienda": [], "producto": [],
+          "cantidad": [], "precio": [], "anulada": [], "cliente": [],
+          "nota": []}
+for i in range(N):
+    d = inicio + dt.timedelta(days=i // 100)
+    p = random.choice(PRODUCTOS)
+    ventas["id"].append(i + 1)
+    ventas["fecha"].append(d.year * 10000 + d.month * 100 + d.day)
+    ventas["tienda"].append(random.choice(TIENDAS))
+    ventas["producto"].append(p)
+    ventas["cantidad"].append(random.randint(1, 6))
+    ventas["precio"].append(PRECIOS[p])
+    ventas["anulada"].append(random.random() < 0.02)
+    ventas["cliente"].append(random.randint(1000, 9999)
+                             if random.random() < 0.6 else None)
+    ventas["nota"].append(random.choice(NOTAS)
+                          if random.random() < 0.03 else None)
+
+import json, struct, zlib
+
+# 1. Escritura. Cada grupo de filas guarda cada columna en un bloque
+# propio, comprimido; al final va un pie con la posicion y el
+# tamano de cada bloque y el minimo y el maximo de cada columna
+# en cada grupo. Los ultimos 8 bytes dicen cuanto ocupa el pie.
+def guarda(tabla, tam_grupo):
+    if not isinstance(tam_grupo, int) or tam_grupo < 1:
+        raise ValueError("tam_grupo debe ser un entero positivo")
+    largos = {len(v) for v in tabla.values()}
+    if len(largos) > 1:
+        raise ValueError("las columnas no tienen la misma longitud")
+    n = largos.pop() if largos else 0
+    cuerpo, grupos = [], []
+    pos = 0
+    for desde in range(0, n, tam_grupo):
+        grupo = {"desde": desde, "columnas": {}}
+        for nombre, valores in tabla.items():
+            trozo = valores[desde:desde + tam_grupo]
+            bloque = zlib.compress(json.dumps(trozo).encode(), 9)
+            presentes = [v for v in trozo if v is not None]
+            grupo["columnas"][nombre] = {
+                "pos": pos, "largo": len(bloque),
+                "min": min(presentes) if presentes else None,
+                "max": max(presentes) if presentes else None}
+            cuerpo.append(bloque)
+            pos += len(bloque)
+        grupos.append(grupo)
+    pie = json.dumps({"filas": n, "columnas": list(tabla),
+                      "grupos": grupos}).encode()
+    pie = zlib.compress(pie, 9)
+    return b"".join(cuerpo) + pie + struct.pack("<Q", len(pie))
+
+def lee_pie(lee, tamano):
+    largo = struct.unpack("<Q", lee(tamano - 8, 8))[0]
+    return json.loads(zlib.decompress(lee(tamano - 8 - largo, largo)))
+
+def lee_bloque(lee, info):
+    return json.loads(zlib.decompress(lee(info["pos"], info["largo"])))
+
+# 2 y 3. Lectura: solo los bloques de las columnas pedidas.
+def carga(lee, tamano, columnas=None):
+    pie = lee_pie(lee, tamano)
+    if columnas is None:
+        columnas = pie["columnas"]
+    fuera = {}
+    for nombre in columnas:
+        if nombre not in pie["columnas"]:
+            raise KeyError(nombre)
+        fuera[nombre] = []
+        for g in pie["grupos"]:
+            fuera[nombre].extend(lee_bloque(lee, g["columnas"][nombre]))
+    return fuera
+
+# 4. Consulta por rango: se saltan los grupos cuyo minimo y maximo
+# no se cruzan con [bajo, alto].
+def consulta(lee, tamano, columna, bajo, alto):
+    pie = lee_pie(lee, tamano)
+    if columna not in pie["columnas"]:
+        raise KeyError(columna)
+    filas, leidos = [], 0
+    if bajo > alto:
+        return filas, leidos
+    for g in pie["grupos"]:
+        info = g["columnas"][columna]
+        if info["min"] is None:
+            continue
+        if info["max"] < bajo or info["min"] > alto:
+            continue
+        leidos += 1
+        for k, v in enumerate(lee_bloque(lee, info)):
+            if v is not None and bajo <= v <= alto:
+                filas.append(g["desde"] + k)
+    return filas, leidos
+
+# 5 y 6. Tamano frente al CSV e informe
+import csv, io
+archivo = guarda(ventas, 1000)
+texto = io.StringIO()
+w = csv.writer(texto)
+w.writerow(list(ventas))
+w.writerows(zip(*ventas.values()))
+tam_csv = len(texto.getvalue().encode())
+
+leido = [0]
+def lee(inicio, n):
+    leido[0] += n
+    return archivo[inicio:inicio + n]
+
+precios = carga(lee, len(archivo), ["precio"])
+bytes_precio = leido[0]
+leido[0] = 0
+filas, grupos_leidos = consulta(lee, len(archivo), "fecha",
+                                20260315, 20260315)
+bytes_consulta = leido[0]
+n_grupos = (N + 999) // 1000
+
+print("filas                  :", N)
+print("grupos de 1000 filas   :", n_grupos)
+print("archivo columnar       :", len(archivo), "bytes")
+print("mismo contenido en CSV :", tam_csv, "bytes")
+print("columnar / CSV         : %.3f" % (len(archivo) / tam_csv))
+print("leer solo 'precio'     : %d bytes (%.1f %% del archivo)"
+      % (bytes_precio, 100 * bytes_precio / len(archivo)))
+print("ventas del 2026-03-15  :", len(filas), "filas")
+print("grupos leidos          : %d de %d" % (grupos_leidos, n_grupos))
+print("bytes leidos           : %d (%.1f %% del archivo)"
+      % (bytes_consulta, 100 * bytes_consulta / len(archivo)))
+```
+
+Cada grupo guarda cada columna en un bloque comprimido propio, y el índice del final da la posición, la longitud, el mínimo y el máximo de cada bloque. Con esa disposición, `ventas` ocupa 204 078 bytes frente a 1 232 388 del CSV, un cociente de 0,166; la columna `fecha`, que avanza de cien en cien filas, y los precios, que se repiten, son las que más se comprimen. Cargar solo `precio` lee el 16,5 % del archivo, del que una parte es el propio índice. La consulta del 15 de marzo halla 100 filas y lee 1 grupo de 24, un 1,2 % del archivo, porque `fecha` está ordenada; la misma consulta sobre una columna desordenada tendría que leer los 24 grupos, que es la Proposición 23.8.
+:::

@@ -5199,6 +5199,32 @@ puede resolver cada uno:
 | 32 | Py. 27 | Rendimiento | perfilado y concurrencia del cierre de caja |
 | 33 | Py. 30 | Cadena en varios países | datos que no caben, categóricos, zonas horarias |
 
+### 3.98 Los 33 entregables, publicados y probados en el navegador (27-09-2026)
+
+Los 33 del catálogo §3.97 están escritos y publicados: 12 en Fundamentos y 21
+en Python. Cada uno pasa `verificar/entregables.py` con Python 3.8 y 3.14, y
+además se ejecutó la solución de referencia con su comprobación en el Pyodide
+0.28.1 real del sitio, en Chromium con Playwright (arnés en el scratchpad,
+`ent-topes/pyo_ent.py`). Cada agente probó entre tres y ocho soluciones
+erróneas por entregable y confirmó que la comprobación marca el requisito
+que falla.
+
+**Topes relativos.** Los requisitos de tiempo se escribieron primero como
+segundos fijos, medidos en este Mac; en el Pyodide real el 18 tenía un margen
+de 1,8 veces y en el iPad de Luis habría fallado con una solución correcta. Los
+seis entregables con tope (16, 17, 18, 24, 32, 33) comparan ahora con una
+implementación de referencia que la comprobación ejecuta en el mismo equipo:
+K veces su tiempo más 0,05 s (K = 3, y 5 en el 32). Las versiones con bucles
+de Python fallan en los tres entornos.
+
+**Entregable 24.** Con diez millones de filas agotaba la memoria del
+navegador; baja a dos millones, y el tope de memoria también es relativo
+(tracemalloc sí existe en Pyodide). `np.repeat` rechaza repeticiones int64 en
+wasm de 32 bits: se convierten a `np.intp`. Una solución razonable con pandas
+(mapear por código y agrupar) tarda entre 4,6 y 10 veces la referencia y no
+pasa: el 24 corresponde a la lección de rendimiento y exige en la práctica una
+solución vectorizada, sin decirlo.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

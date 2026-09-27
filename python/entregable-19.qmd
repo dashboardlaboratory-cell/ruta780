@@ -1,0 +1,482 @@
+---
+title: "Entregable 19: depuración de un CSV de transacciones"
+subtitle: "Python · Lecciones 01 a 10"
+engine: markdown
+pyodide:
+  packages:
+    - pandas
+---
+
+Este entregable se puede resolver con lo visto hasta la Lección 10 de Python, y con cualquier herramienta posterior.
+
+## Especificación
+
+La celda genera el texto `texto`, que es el contenido de un archivo CSV exportado por las cajas de un supermercado. La primera línea es la cabecera `ticket,fecha,caja,producto,cantidad,precio`, y cada línea siguiente es un artículo cobrado. Los campos `ticket` y `caja` son siempre enteros bien escritos; los otros cuatro llegan con errores de captura, con formatos distintos para un mismo valor y con líneas repetidas. Antes de validar cualquier campo se quitan los espacios del principio y del final.
+
+El programa debe definir la función `limpiar(texto)`, que devuelve una tupla `(tabla, motivos)`, y aplicarla al texto generado. Los requisitos son:
+
+1. Columnas y tipos. `tabla` es un DataFrame con las columnas `ticket`, `fecha`, `caja`, `producto`, `cantidad`, `precio` e `importe`, en ese orden. `ticket`, `caja` y `cantidad` son enteros; `precio` e `importe` son decimales; `fecha` y `producto` son texto. Un CSV que solo contiene la cabecera produce una tabla sin filas con esas siete columnas.
+2. Fechas. Se admiten dos formatos, `AAAA-MM-DD HH:MM` y `DD/MM/AAAA HH:MM`, con cuatro cifras en el año y dos en el día, el mes, la hora y el minuto. La fecha debe existir en el calendario gregoriano (el 29 de febrero solo en años bisiestos), la hora estar entre 00 y 23 y el minuto entre 00 y 59. En `tabla`, toda fecha se escribe en el primer formato. Una línea con cualquier otra fecha se descarta.
+3. Productos. El código se pasa a mayúsculas y es válido si consta de una `P` seguida de tres cifras. Una línea con un código inválido se descarta.
+4. Cantidades, precios e importes. La cantidad es válida si es un entero mayor que cero, escrito con cifras y, opcionalmente, un punto seguido solo de ceros: `3`, `3.0` y `3.00` valen 3, mientras que `1.5`, `0`, `-2`, `dos` y el campo vacío son inválidos. El precio es válido si es un número mayor que cero escrito con cifras y, opcionalmente, un separador decimal que puede ser punto o coma: `1.25` y `1,25` valen 1,25. `importe` es la cantidad por el precio, redondeado a 2 decimales. Una línea con una cantidad o un precio inválidos se descarta.
+5. Duplicadas. Dos líneas válidas son duplicadas si, después de normalizar los seis campos según los requisitos 2 a 4, coinciden en todos ellos. De cada grupo de duplicadas se conserva la primera que aparece en el texto.
+6. Motivos. `motivos` es un diccionario con las claves `"fecha"`, `"producto"`, `"cantidad"`, `"precio"` y `"duplicada"`, cuyos valores son enteros: el número de líneas descartadas por cada motivo. Una línea con varios campos inválidos se cuenta una sola vez, en el primero de ellos según el orden fecha, producto, cantidad, precio. Una línea inválida no cuenta nunca como duplicada.
+7. Orden. Las filas de `tabla` están ordenadas por fecha y, a igual fecha, por ticket; a igual fecha y ticket conservan el orden del texto. El índice va de 0 a $n-1$.
+8. Informe. El programa imprime las líneas leídas, las válidas, las descartadas por cada motivo, el importe total, la primera y la última fecha y el número de tickets distintos, un dato por línea y con rótulo.
+
+## Rúbrica
+
+| Criterio | Completo | Incompleto |
+|---|---|---|
+| Requisitos 1 a 7 | La comprobación automática marca los siete como cumplidos, con los datos de la celda y con los que genera la comprobación. | Alguno no se cumple. |
+| Requisito 8 | El informe contiene todos los datos, uno por línea, con un rótulo que dice qué es cada cifra, y las cifras cuadran entre sí: leídas es igual a válidas más descartadas. | Faltan datos, las cifras no llevan rótulo o no cuadran. |
+| Claridad del código | Cada regla de validación está en un solo lugar y lleva el número del requisito que resuelve; los nombres dicen qué guarda cada variable; no hay código repetido para campos que se tratan igual. | Reglas dispersas o repetidas, bloques sin comentar o nombres de una letra. |
+| Razonamiento | El orden de las operaciones se justifica: se valida antes de buscar duplicadas y se normaliza antes de comparar, y cada línea se clasifica en un único motivo. | La solución acierta con estos datos, pero cuenta dos veces una línea o compara textos sin normalizar. |
+
+Los dos primeros criterios se comprueban con la celda de comprobación; los dos últimos, con la solución de referencia al final de la página.
+
+## Programa
+
+```{pyodide}
+#| exercise: ent_19
+import random
+
+
+def sucio(rnd, bueno, variantes, malos):
+    """El valor bueno, otra escritura del mismo valor o uno invalido."""
+    u = rnd.random()
+    if u < 0.04:
+        return rnd.choice(malos)
+    if u < 0.25:
+        return rnd.choice(variantes)
+    return bueno
+
+
+def generar(semilla, n_tickets):
+    rnd = random.Random(semilla)
+    precios = ["%.2f" % (0.5 + 11.5 * rnd.random()) for _ in range(40)]
+    filas = ["ticket,fecha,caja,producto,cantidad,precio"]
+    for t in range(1, n_tickets + 1):
+        d, h = rnd.randint(2, 8), rnd.randint(8, 21)
+        m = rnd.randint(0, 59)
+        caja = rnd.randint(1, 6)
+        for _ in range(rnd.randint(1, 6)):
+            k, q = rnd.randint(1, 40), rnd.randint(1, 5)
+            cod, p = "P%03d" % k, precios[k - 1]
+            for _ in range(2 if rnd.random() < 0.05 else 1):
+                filas.append(",".join([
+                    str(t),
+                    sucio(rnd, "2026-03-%02d %02d:%02d" % (d, h, m),
+                          ["%02d/03/2026 %02d:%02d" % (d, h, m)],
+                          ["", "sin dato", "2026-02-29 10:15",
+                           "31/04/2026 11:00", "2026-03-05"]),
+                    str(caja),
+                    sucio(rnd, cod, [cod.lower(), " %s " % cod],
+                          ["", "P7", "X" + cod[1:], cod + "0"]),
+                    sucio(rnd, str(q), ["%d.0" % q, " %d" % q],
+                          ["", "0", "-2", "dos", "1.5"]),
+                    sucio(rnd, p, ['"%s"' % p.replace(".", ",")],
+                          ["", "0", "-1.00", "n/d"]),
+                ]))
+    return "\n".join(filas) + "\n"
+
+
+texto = generar(19, 300)
+print(texto[:250])
+
+# 1-7. limpiar
+def limpiar(texto):
+    tabla = None
+    motivos = None
+    return tabla, motivos
+
+
+tabla, motivos = limpiar(texto)
+
+# 8. informe
+```
+
+::: {.hint exercise="ent_19"}
+Conviene escribir primero, para cada campo, una regla que reciba el texto ya sin espacios y devuelva el valor normalizado o una marca de inválido, y probarla con los ejemplos del enunciado. Con las cuatro reglas escritas, cada línea descartada se asigna a su primer campo inválido, y las duplicadas se buscan solo entre las líneas que pasaron las cuatro reglas. La fecha `05/03/2026 14:22` y la fecha `2026-03-05 14:22` son la misma.
+:::
+
+```{pyodide}
+#| exercise: ent_19
+#| check: true
+import csv as _csv
+import io as _io
+import random as _random
+import re as _re
+import datetime as _dt
+from pandas.api import types as _tipos
+
+_COLS = ["ticket", "fecha", "caja", "producto", "cantidad", "precio",
+         "importe"]
+_CLAVES = ["fecha", "producto", "cantidad", "precio", "duplicada"]
+
+
+def _sucio(rnd, bueno, variantes, malos):
+    u = rnd.random()
+    if u < 0.04:
+        return rnd.choice(malos)
+    if u < 0.25:
+        return rnd.choice(variantes)
+    return bueno
+
+
+def _generar(semilla, n_tickets):
+    rnd = _random.Random(semilla)
+    precios = ["%.2f" % (0.5 + 11.5 * rnd.random()) for _ in range(40)]
+    filas = ["ticket,fecha,caja,producto,cantidad,precio"]
+    for t in range(1, n_tickets + 1):
+        d, h = rnd.randint(2, 8), rnd.randint(8, 21)
+        m = rnd.randint(0, 59)
+        caja = rnd.randint(1, 6)
+        for _ in range(rnd.randint(1, 6)):
+            k, q = rnd.randint(1, 40), rnd.randint(1, 5)
+            cod, p = "P%03d" % k, precios[k - 1]
+            for _ in range(2 if rnd.random() < 0.05 else 1):
+                filas.append(",".join([
+                    str(t),
+                    _sucio(rnd, "2026-03-%02d %02d:%02d" % (d, h, m),
+                           ["%02d/03/2026 %02d:%02d" % (d, h, m)],
+                           ["", "sin dato", "2026-02-29 10:15",
+                            "31/04/2026 11:00", "2026-03-05"]),
+                    str(caja),
+                    _sucio(rnd, cod, [cod.lower(), " %s " % cod],
+                           ["", "P7", "X" + cod[1:], cod + "0"]),
+                    _sucio(rnd, str(q), ["%d.0" % q, " %d" % q],
+                           ["", "0", "-2", "dos", "1.5"]),
+                    _sucio(rnd, p, ['"%s"' % p.replace(".", ",")],
+                           ["", "0", "-1.00", "n/d"]),
+                ]))
+    return "\n".join(filas) + "\n"
+
+
+def _fecha(t):
+    for fmt, rx in (("%Y-%m-%d %H:%M", r"\d{4}-\d\d-\d\d \d\d:\d\d"),
+                    ("%d/%m/%Y %H:%M", r"\d\d/\d\d/\d{4} \d\d:\d\d")):
+        if _re.fullmatch(rx, t):
+            try:
+                return _dt.datetime.strptime(t, fmt).strftime(
+                    "%Y-%m-%d %H:%M")
+            except ValueError:
+                return None
+    return None
+
+
+def _referencia(texto):
+    mot = dict.fromkeys(_CLAVES, 0)
+    vistas, sal = set(), []
+    for r in list(_csv.reader(_io.StringIO(texto)))[1:]:
+        t, f, c, p, q, pr = [x.strip() for x in r]
+        f, p = _fecha(f), p.upper()
+        q = (int(q.split(".")[0])
+             if _re.fullmatch(r"\d+(\.0+)?", q) else 0)
+        pr = (float(pr.replace(",", "."))
+              if _re.fullmatch(r"\d+([.,]\d+)?", pr) else 0.0)
+        fallos = [f is None, not _re.fullmatch(r"P\d{3}", p), q <= 0,
+                  pr <= 0]
+        if any(fallos):
+            mot[_CLAVES[fallos.index(True)]] += 1
+            continue
+        fila = (int(t), f, int(c), p, q, pr)
+        if fila in vistas:
+            mot["duplicada"] += 1
+            continue
+        vistas.add(fila)
+        sal.append(fila + (round(q * pr, 2),))
+    sal.sort(key=lambda x: (x[1], x[0]))
+    return sal, mot
+
+
+def _filas(tb):
+    return [(int(a), str(b), int(c), str(d), int(e), float(f), float(g))
+            for a, b, c, d, e, f, g
+            in tb[_COLS].itertuples(index=False)]
+
+
+def _iguales(tb, esperado, en_orden=True):
+    obt = _filas(tb)
+    if not en_orden:
+        obt, esperado = sorted(obt), sorted(esperado)
+    return len(obt) == len(esperado) and all(
+        a[:5] == b[:5] and abs(a[5] - b[5]) < 1e-9
+        and abs(a[6] - b[6]) < 1e-6 for a, b in zip(obt, esperado))
+
+
+def _caso(filas):
+    return "ticket,fecha,caja,producto,cantidad,precio\n" + "\n".join(
+        filas) + "\n"
+
+
+def _r1():
+    tb, mot = limpiar(texto)
+    ok = list(tb.columns) == _COLS
+    ok = ok and all(_tipos.is_integer_dtype(tb[c])
+                    for c in ["ticket", "caja", "cantidad"])
+    ok = ok and all(_tipos.is_float_dtype(tb[c])
+                    for c in ["precio", "importe"])
+    ok = ok and all(isinstance(x, str) for x in tb["fecha"])
+    ok = ok and all(isinstance(x, str) for x in tb["producto"])
+    vacia, mv = limpiar(_caso([])[:-1])
+    return (ok and len(vacia) == 0 and list(vacia.columns) == _COLS
+            and all(mv[k] == 0 for k in _CLAVES))
+
+
+def _r2():
+    fs = ["2026-03-05 14:22", "05/03/2026 14:23", "2026-02-29 10:15",
+          "31/04/2026 11:00", "", "sin dato", "12/03/2026 08:05",
+          "2028-02-29 09:00", "5/3/2026 10:00", "2026-03-05",
+          "2026-03-05 24:00", "2026-13-01 10:00"]
+    filas = ["%d,%s,1,P001,1,2.00" % (i + 1, f)
+             for i, f in enumerate(fs)]
+    tb, mot = limpiar(_caso(filas))
+    esp = [(1, "2026-03-05 14:22"), (2, "2026-03-05 14:23"),
+           (7, "2026-03-12 08:05"), (8, "2028-02-29 09:00")]
+    obt = [(int(a), str(b)) for a, b in zip(tb["ticket"], tb["fecha"])]
+    return obt == esp and mot["fecha"] == 8
+
+
+def _r3():
+    ps = [" p002 ", "p003", "P004", "P7", "X005", "P0060", "", "PA01"]
+    filas = ["%d,2026-03-05 10:00,1,%s,1,2.00" % (i + 1, p)
+             for i, p in enumerate(ps)]
+    tb, mot = limpiar(_caso(filas))
+    return (list(tb["producto"]) == ["P002", "P003", "P004"]
+            and mot["producto"] == 5)
+
+
+def _r4():
+    qp = [("3", "1.25"), ("2.0", '"1,10"'), ("1.5", "1.00"),
+          ("0", "1.00"), ("-2", "1.00"), ("dos", "1.00"),
+          ("1", "0"), ("1", "n/d"), ("1", "-1.00"), ("4", "0.35"),
+          (" 3.00 ", "2"), ("", "1.00"), ("3.", "1.00")]
+    filas = ["%d,2026-03-05 10:00,1,P001,%s,%s" % (i + 1, q, p)
+             for i, (q, p) in enumerate(qp)]
+    tb, mot = limpiar(_caso(filas))
+    return (list(tb["cantidad"]) == [3, 2, 4, 3]
+            and all(abs(a - b) < 1e-6 for a, b in
+                    zip(tb["importe"], [3.75, 2.2, 1.4, 6.0]))
+            and len(tb) == 4
+            and mot["cantidad"] == 6 and mot["precio"] == 3)
+
+
+def _r5():
+    filas = ["1,2026-03-05 14:22,1,P001,3,1.25",
+             '1,05/03/2026 14:22,1,p001 ,3.0,"1,25"',
+             "1,2026-03-05 14:22,1,P001,2,1.25",
+             "1,2026-03-05 14:22,2,P001,3,1.25",
+             "1,2026-03-05 14:22,1,P001,3,1.25",
+             "2,2026-03-05 14:22,1,P001,3,1.25",
+             "1,2026-03-05 14:22,1,P001,0,1.25",
+             "1,2026-03-05 14:22,1,P001,0,1.25"]
+    tb, mot = limpiar(_caso(filas))
+    return (len(tb) == 4 and mot["duplicada"] == 2
+            and mot["cantidad"] == 2
+            and sorted(tb["cantidad"].tolist()) == [2, 3, 3, 3])
+
+
+def _r6():
+    filas = ["1,sin dato,1,P7,1,n/d", "2,2026-03-05 10:00,1,X001,0,0",
+             "3,2026-03-05 10:00,1,P001,0,0"]
+    tb, mot = limpiar(_caso(filas))
+    ok = ({k: mot[k] for k in _CLAVES} ==
+          {"fecha": 1, "producto": 1, "cantidad": 1, "precio": 0,
+           "duplicada": 0}) and len(tb) == 0
+    for tx in (texto, _generar(2026, 180)):
+        ok = ok and ({k: int(v) for k, v in limpiar(tx)[1].items()}
+                     == _referencia(tx)[1])
+    return ok
+
+
+def _r7():
+    filas = ["5,2026-03-05 10:00,1,P002,1,1.00",
+             "3,2026-03-05 10:00,1,P009,1,1.00",
+             "3,2026-03-05 10:00,1,P001,1,1.00",
+             "9,05/03/2026 09:59,1,P004,1,1.00"]
+    tb = limpiar(_caso(filas))[0]
+    ok = (list(tb["ticket"]) == [9, 3, 3, 5]
+          and list(tb["producto"]) == ["P004", "P009", "P001", "P002"])
+    for tx in (texto, _generar(2026, 180)):
+        tb = limpiar(tx)[0]
+        ok = ok and _iguales(tb, _referencia(tx)[0])
+        ok = ok and list(tb.index) == list(range(len(tb)))
+    return ok
+
+
+_nombres = ["columnas y tipos", "fechas", "productos",
+            "cantidades y precios", "duplicadas", "motivos", "orden"]
+_ok = []
+for _f in (_r1, _r2, _r3, _r4, _r5, _r6, _r7):
+    try:
+        _ok.append(bool(_f()))
+    except Exception:
+        _ok.append(False)
+_lineas = ["requisito %d (%s): %s" % (i + 1, _nombres[i],
+           "cumplido" if v else "no cumplido")
+           for i, v in enumerate(_ok)]
+feedback = {"correct": all(_ok), "message": " · ".join(_lineas)}
+feedback
+```
+
+## Solución de referencia
+
+::: {.callout-note collapse="true"}
+## Ver la solución de referencia
+
+```python
+import io
+import random
+import pandas as pd
+
+
+def sucio(rnd, bueno, variantes, malos):
+    """El valor bueno, otra escritura del mismo valor o uno invalido."""
+    u = rnd.random()
+    if u < 0.04:
+        return rnd.choice(malos)
+    if u < 0.25:
+        return rnd.choice(variantes)
+    return bueno
+
+
+def generar(semilla, n_tickets):
+    rnd = random.Random(semilla)
+    precios = ["%.2f" % (0.5 + 11.5 * rnd.random()) for _ in range(40)]
+    filas = ["ticket,fecha,caja,producto,cantidad,precio"]
+    for t in range(1, n_tickets + 1):
+        d, h = rnd.randint(2, 8), rnd.randint(8, 21)
+        m = rnd.randint(0, 59)
+        caja = rnd.randint(1, 6)
+        for _ in range(rnd.randint(1, 6)):
+            k, q = rnd.randint(1, 40), rnd.randint(1, 5)
+            cod, p = "P%03d" % k, precios[k - 1]
+            for _ in range(2 if rnd.random() < 0.05 else 1):
+                filas.append(",".join([
+                    str(t),
+                    sucio(rnd, "2026-03-%02d %02d:%02d" % (d, h, m),
+                          ["%02d/03/2026 %02d:%02d" % (d, h, m)],
+                          ["", "sin dato", "2026-02-29 10:15",
+                           "31/04/2026 11:00", "2026-03-05"]),
+                    str(caja),
+                    sucio(rnd, cod, [cod.lower(), " %s " % cod],
+                          ["", "P7", "X" + cod[1:], cod + "0"]),
+                    sucio(rnd, str(q), ["%d.0" % q, " %d" % q],
+                          ["", "0", "-2", "dos", "1.5"]),
+                    sucio(rnd, p, ['"%s"' % p.replace(".", ",")],
+                          ["", "0", "-1.00", "n/d"]),
+                ]))
+    return "\n".join(filas) + "\n"
+
+
+texto = generar(19, 300)
+
+COLUMNAS = ["ticket", "fecha", "caja", "producto", "cantidad",
+            "precio", "importe"]
+MOTIVOS = ["fecha", "producto", "cantidad", "precio"]
+DIAS_MES = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
+
+# 2. Fecha: la forma AAAA-MM-DD HH:MM, o None si no es valida
+def fecha_canonica(t):
+    if len(t) != 16 or t[10] != " " or t[13] != ":":
+        return None
+    dia, hora = t[:10], t[11:]
+    if dia[4] == "-" and dia[7] == "-":
+        a, m, d = dia[:4], dia[5:7], dia[8:]
+    elif dia[2] == "/" and dia[5] == "/":
+        d, m, a = dia[:2], dia[3:5], dia[6:]
+    else:
+        return None
+    hh, mm = hora[:2], hora[3:]
+    if not all(x.isdigit() for x in (a, m, d, hh, mm)):
+        return None
+    a, m, d, hh, mm = int(a), int(m), int(d), int(hh), int(mm)
+    if not 1 <= m <= 12 or hh > 23 or mm > 59:
+        return None
+    bisiesto = a % 4 == 0 and (a % 100 != 0 or a % 400 == 0)
+    tope = 29 if m == 2 and bisiesto else DIAS_MES[m - 1]
+    if not 1 <= d <= tope:
+        return None
+    return "%04d-%02d-%02d %02d:%02d" % (a, m, d, hh, mm)
+
+
+# 4. Cantidad: entero positivo, con un punto y ceros opcionales
+def cantidad_valida(t):
+    ent, punto, dec = t.partition(".")
+    if not ent.isdigit():
+        return None
+    if punto and (dec == "" or dec.strip("0") != ""):
+        return None
+    return int(ent) if int(ent) > 0 else None
+
+
+# 4. Precio: positivo, con punto o coma decimal
+def precio_valido(t):
+    ent, sep, dec = t.replace(",", ".").partition(".")
+    if not ent.isdigit() or (sep and not dec.isdigit()):
+        return None
+    valor = float(ent + "." + (dec or "0"))
+    return valor if valor > 0 else None
+
+
+def limpiar(texto):
+    crudo = pd.read_csv(io.StringIO(texto), dtype=str,
+                        keep_default_na=False)
+    for c in crudo.columns:
+        crudo[c] = crudo[c].str.strip()
+    # 2 a 4. Valor normalizado de cada campo, o faltante si no vale
+    norm = pd.DataFrame({
+        "ticket": crudo["ticket"],
+        "fecha": crudo["fecha"].map(fecha_canonica),
+        "caja": crudo["caja"],
+        "producto": crudo["producto"].str.upper(),
+        "cantidad": crudo["cantidad"].map(cantidad_valida),
+        "precio": crudo["precio"].map(precio_valido),
+    })
+    # 3. Codigo de producto: P y tres cifras
+    p = norm["producto"]
+    prod_ok = ((p.str.len() == 4) & (p.str[:1] == "P")
+               & p.str[1:].str.isdigit())
+    fallos = {"fecha": norm["fecha"].isna(), "producto": ~prod_ok,
+              "cantidad": norm["cantidad"].isna(),
+              "precio": norm["precio"].isna()}
+    # 6. Cada linea se cuenta en su primer campo invalido
+    motivos = {}
+    descartada = pd.Series(False, index=norm.index)
+    for m in MOTIVOS:
+        motivos[m] = int((fallos[m] & ~descartada).sum())
+        descartada = descartada | fallos[m]
+    tabla = norm[~descartada].copy()
+    tabla["ticket"] = tabla["ticket"].astype("int64")
+    tabla["caja"] = tabla["caja"].astype("int64")
+    tabla["cantidad"] = tabla["cantidad"].astype("int64")
+    tabla["precio"] = tabla["precio"].astype("float64")
+    # 5. Duplicadas, comparando los campos ya normalizados
+    repetida = tabla.duplicated(keep="first")
+    motivos["duplicada"] = int(repetida.sum())
+    tabla = tabla[~repetida]
+    # 4. Importe redondeado a centimos
+    tabla["importe"] = (tabla["cantidad"] * tabla["precio"]).round(2)
+    # 7. Orden por fecha y ticket, estable, con indice 0..n-1
+    tabla = tabla.sort_values(["fecha", "ticket"], kind="mergesort")
+    return tabla[COLUMNAS].reset_index(drop=True), motivos
+
+
+tabla, motivos = limpiar(texto)
+
+# 8. Informe
+leidas = texto.count("\n") - 1
+print("lineas leidas       :", leidas)
+print("lineas validas      :", len(tabla))
+for m, v in motivos.items():
+    print("descartadas (%-9s):" % m, v)
+print("importe total       :", round(float(tabla["importe"].sum()), 2))
+print("primera fecha       :", tabla["fecha"].iloc[0])
+print("ultima fecha        :", tabla["fecha"].iloc[-1])
+print("tickets distintos   :", tabla["ticket"].nunique())
+```
+
+Con la semilla 19 se leen 1123 líneas y quedan 915 válidas. Se descartan 46 por la fecha, 32 por el producto, 48 por la cantidad, 39 por el precio y 43 por estar duplicadas, y $915 + 208 = 1123$. De las 43 duplicadas, solo 7 coinciden carácter a carácter con la línea original; las otras 36 repiten el mismo artículo con otra escritura (la fecha en el otro formato, el código en minúsculas, el precio con coma), y por eso la búsqueda de duplicadas se hace sobre los campos ya normalizados. El orden de las reglas también fija los recuentos: si una línea se contara en cada campo inválido, la suma de los motivos superaría el número de líneas descartadas y el informe dejaría de cuadrar con las líneas leídas.
+:::

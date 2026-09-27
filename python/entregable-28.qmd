@@ -1,0 +1,464 @@
+---
+title: "Entregable 28: ventas de dos sucursales en SQL y en tablas"
+subtitle: "Python · Lecciones 01 a 21"
+engine: markdown
+---
+
+Este entregable se puede resolver con lo visto hasta la Lección 21 de Python, y con cualquier herramienta posterior. Se resuelve en una sola celda, desde el principio, como un programa completo; la organización del código forma parte del ejercicio.
+
+## Especificación
+
+La celda genera las ventas de junio de dos sucursales de un supermercado. Las de la sucursal A están en una base SQLite abierta en `con`, con tres tablas: `productos(codigo, nombre, categoria, precio)`, `ventas(id, ticket, dia, codigo, cantidad, descuento)` y `devoluciones`, vacía y con las mismas columnas que `ventas`. Las de la sucursal B están en la tabla `ventas_b`, con las columnas de `ventas` salvo `id`, y su catálogo en `productos_b`, que coincide con `productos`. En las dos sucursales `dia` es un texto `AAAA-MM-DD`, falta la cantidad en algunas líneas, falta el descuento en muchas y algunas líneas traen un código ausente del catálogo. Los números de ticket de las dos sucursales se solapan.
+
+Definiciones comunes: el importe de cada línea es cantidad × precio × (1 − descuento), y un descuento ausente vale 0. Una línea es **válida** si tiene cantidad y su código está en el catálogo; solo las líneas válidas cuentan en unidades e importes. El programa debe definir:
+
+1. `por_categoria(con, desde, hasta)`: para la base de `con`, con las ventas de los días entre `desde` y `hasta`, ambos incluidos, devuelve una lista de tuplas `(categoria, unidades, importe)` con el importe redondeado a 2 decimales, ordenada de mayor a menor importe y, a igualdad de importe, por categoría. Las categorías sin ventas válidas en el periodo no aparecen, y si `desde` es posterior a `hasta` la lista es vacía.
+2. `ventas_de(con, nombre)`: devuelve `(unidades, importe)` de las líneas válidas del producto que se llama `nombre`, en todo el periodo, con el importe redondeado a 2 decimales; `(0, 0.0)` si no hay ningún producto con ese nombre. Los nombres pueden contener apóstrofos, como `"Galletas O'Hara"`, y cualquier otro carácter.
+3. `calidad(con)`: devuelve un diccionario con el número total de líneas de `ventas` (`"filas"`), las que no tienen cantidad (`"sin_cantidad"`), las que tienen un código ausente de `productos` (`"huerfanas"`) y las que no tienen descuento (`"sin_descuento"`).
+4. `por_categoria_b(ventas, productos, desde, hasta)`: la misma pregunta que el requisito 1, con el mismo formato de salida, para una sucursal cuyas ventas y cuyo catálogo llegan en dos tablas con las columnas de `ventas_b` y `productos_b`.
+5. `cesta_media`: el importe medio por ticket del mes, sumando las dos sucursales, redondeado a 2 decimales. El importe de un ticket es la suma de sus líneas válidas; un ticket sin líneas válidas no cuenta, y el ticket 17 de A y el ticket 17 de B son tickets distintos. Se calcula antes de cualquier devolución.
+6. `devuelve_ticket(con, ticket)`: pasa todas las líneas de ese ticket de `ventas` a `devoluciones`, con sus mismos valores, incluido `id`, y devuelve el número de líneas pasadas. Si el ticket no tiene líneas en `ventas`, levanta `ValueError`. El paso es atómico: si cualquier operación falla a mitad, la excepción se propaga y las dos tablas quedan como estaban, vistas desde la misma conexión.
+7. Un informe impreso con el resultado de los requisitos 1 y 4 para el mes completo, una línea por categoría y sucursal, las cuatro cifras de `calidad(con)` y `cesta_media`, con rótulos.
+
+Restricciones: Python, su biblioteca estándar y las bibliotecas del módulo.
+
+## Rúbrica
+
+| Criterio | Completo | Incompleto |
+|---|---|---|
+| Requisitos 1 a 6 | La comprobación automática marca los seis como cumplidos. | Alguno no se cumple. |
+| Requisito 7 | El informe contiene todos los datos, uno por línea, con un rótulo que dice qué es cada cifra. | Faltan datos o las cifras no llevan rótulo. |
+| Claridad del código | Las definiciones comunes (importe de una línea, línea válida) se escriben una vez por sucursal y con el mismo significado; las consultas enumeran sus columnas; los nombres describen lo que guardan. | La regla del descuento ausente o de la línea válida difiere entre las dos sucursales, o las consultas usan `*`. |
+| Razonamiento | Los valores externos viajan como parámetros; las ausencias se tratan según las definiciones comunes; el filtrado y la agregación ocurren donde están los datos; la devolución usa una transacción. | La solución falla con un apóstrofo, cuenta una línea sin cantidad o deja la base a medias si algo falla. |
+
+Los dos primeros criterios se comprueban con la celda de comprobación; los dos últimos, con la solución de referencia al final de la página.
+
+## Programa
+
+```{pyodide}
+#| exercise: ent_28
+import random
+import sqlite3
+import pandas as pd
+random.seed(28)
+TIPOS = [("Galletas", "panaderia"), ("Pan", "panaderia"),
+         ("Leche", "lacteos"), ("Queso", "lacteos"),
+         ("Yogur", "lacteos"), ("Arroz", "despensa"),
+         ("Aceite", "despensa"), ("Atún", "despensa"),
+         ("Salsa", "despensa"), ("Jabón", "limpieza"),
+         ("Detergente", "limpieza"), ("Jugo", "bebidas")]
+MARCAS = ["Sol", "O'Hara", "Valle", "D'Amico", "Norte"]
+productos = []
+for tipo, categoria in TIPOS:
+    for marca in MARCAS:
+        codigo = "P%03d" % (len(productos) + 1)
+        precio = random.randint(60, 1500) / 100
+        nombre = tipo + " " + marca
+        productos.append((codigo, nombre, categoria, precio))
+
+def genera_lineas(n_tickets):
+    filas = []
+    for ticket in range(1, n_tickets + 1):
+        dia = "2026-06-%02d" % random.randint(1, 30)
+        for _ in range(random.randint(1, 8)):
+            if random.random() < 0.02:
+                k = random.randint(61, 65)          # fuera del catalogo
+            else:
+                k = random.randint(1, 60)
+            cantidad = random.randint(1, 6)
+            if random.random() < 0.03:
+                cantidad = None
+            descuento = random.choice([None, None, 0.0, 0.05, 0.1, 0.2])
+            codigo = "P%03d" % k
+            filas.append((ticket, dia, codigo, cantidad, descuento))
+    return filas
+
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE productos (codigo TEXT PRIMARY KEY, "
+            "nombre TEXT, categoria TEXT, precio REAL)")
+for tabla in ("ventas", "devoluciones"):
+    con.execute("CREATE TABLE %s (id INTEGER PRIMARY KEY, "
+                "ticket INTEGER, dia TEXT, codigo TEXT, "
+                "cantidad INTEGER, descuento REAL)" % tabla)
+con.executemany("INSERT INTO productos VALUES (?, ?, ?, ?)", productos)
+con.executemany("INSERT INTO ventas (ticket, dia, codigo, cantidad, "
+                "descuento) VALUES (?, ?, ?, ?, ?)",
+                genera_lineas(6000))
+con.commit()
+COLUMNAS = ["ticket", "dia", "codigo", "cantidad", "descuento"]
+ventas_b = pd.DataFrame(genera_lineas(4000), columns=COLUMNAS)
+productos_b = pd.DataFrame(productos,
+                           columns=["codigo", "nombre", "categoria",
+                                    "precio"])
+
+# 1. por_categoria
+
+# 2. ventas_de
+
+# 3. calidad
+
+# 4. por_categoria_b
+
+# 5. cesta_media
+cesta_media = None
+
+# 6. devuelve_ticket
+
+# 7. informe
+```
+
+::: {.hint exercise="ent_28"}
+La comprobación construye bases y tablas nuevas, con otra semilla, y llama a las funciones con ellas; también prueba `devuelve_ticket` con una base preparada para que una de sus operaciones falle. Con los datos de la celda, `calidad(con)` debe dar 27 018 filas, y `cesta_media` debe quedar entre 90 y 110.
+:::
+
+```{pyodide}
+#| exercise: ent_28
+#| check: true
+import random as _rnd
+import sqlite3 as _sq
+import pandas as _pd
+
+_TIP = [("Galletas", "panaderia"), ("Pan", "panaderia"),
+        ("Leche", "lacteos"), ("Queso", "lacteos"),
+        ("Yogur", "lacteos"),
+        ("Arroz", "despensa"), ("Aceite", "despensa"),
+        ("Atún", "despensa"), ("Salsa", "despensa"),
+        ("Jabón", "limpieza"), ("Detergente", "limpieza"),
+        ("Jugo", "bebidas")]
+_MAR = ["Sol", "O'Hara", "Valle", "D'Amico", "Norte"]
+
+def _genera(g, n_a, n_b, dias=30):
+    prods = []
+    for t, c in _TIP:
+        for m in _MAR:
+            prods.append(("P%03d" % (len(prods) + 1), t + " " + m, c,
+                          g.randint(60, 1500) / 100))
+
+    def lineas(n):
+        out = []
+        for tk in range(1, n + 1):
+            dia = "2026-06-%02d" % g.randint(1, dias)
+            for _ in range(g.randint(1, 8)):
+                k = (g.randint(61, 65) if g.random() < 0.02
+                     else g.randint(1, 60))
+                u = g.randint(1, 6)
+                if g.random() < 0.03:
+                    u = None
+                d = g.choice([None, None, 0.0, 0.05, 0.1, 0.2])
+                out.append((tk, dia, "P%03d" % k, u, d))
+        return out
+    return prods, lineas(n_a), lineas(n_b)
+
+def _base(prods, lin):
+    c = _sq.connect(":memory:")
+    c.execute("CREATE TABLE productos (codigo TEXT PRIMARY KEY, "
+              "nombre TEXT, categoria TEXT, precio REAL)")
+    for tb in ("ventas", "devoluciones"):
+        c.execute("CREATE TABLE %s (id INTEGER PRIMARY KEY, ticket "
+                  "INTEGER, dia TEXT, codigo TEXT, cantidad INTEGER, "
+                  "descuento REAL)" % tb)
+    c.executemany("INSERT INTO productos VALUES (?, ?, ?, ?)", prods)
+    c.executemany("INSERT INTO ventas (ticket, dia, codigo, cantidad, "
+                  "descuento) VALUES (?, ?, ?, ?, ?)", lin)
+    c.commit()
+    return c
+
+def _cat_ref(prods, lin, desde, hasta):
+    info = {p[0]: p for p in prods}
+    acu = {}
+    for tk, dia, k, u, d in lin:
+        if u is None or k not in info or not (desde <= dia <= hasta):
+            continue
+        cat, pre = info[k][2], info[k][3]
+        a = acu.setdefault(cat, [0, 0.0])
+        a[0] += u
+        a[1] += u * pre * (1 - (d or 0))
+    return sorted(((c, a[0], round(a[1], 2)) for c, a in acu.items()),
+                  key=lambda x: (-x[2], x[0]))
+
+def _igual_cat(r, e):
+    r = list(r)
+    return len(r) == len(e) and all(
+        x[0] == y[0] and int(x[1]) == y[1] and abs(x[2] - y[2]) <= 0.011
+        for x, y in zip(r, e))
+
+_g = _rnd.Random(2828)
+_prods, _lin_a, _lin_b = _genera(_g, 1500, 1200, dias=20)
+_pn = [(k, n + "'" if i % 7 == 0 else n, c, p)
+       for i, (k, n, c, p) in enumerate(_prods)]
+_c2 = _base(_pn, _lin_a)
+_RANGOS = [("2026-06-01", "2026-06-30"), ("2026-06-05", "2026-06-05"),
+           ("2026-06-10", "2026-06-17"), ("2026-06-15", "2026-06-03"),
+           ("2026-07-01", "2026-07-09")]
+
+def _r1():
+    return all(_igual_cat(por_categoria(_c2, a, b),
+                          _cat_ref(_pn, _lin_a, a, b))
+               for a, b in _RANGOS)
+
+def _r2():
+    info = {p[1]: p for p in _pn}
+    for nombre in ("Galletas Sol'", "Leche Sol", "Atún D'Amico",
+                   "Pan Valle", "x' OR '1'='1", "Jugo Norte", "nada",
+                   "Galletas O'Hara"):
+        u, imp = 0, 0.0
+        if nombre in info:
+            k, pre = info[nombre][0], info[nombre][3]
+            for _, _, kk, uu, d in _lin_a:
+                if kk == k and uu is not None:
+                    u += uu
+                    imp += uu * pre * (1 - (d or 0))
+        r = ventas_de(_c2, nombre)
+        if int(r[0]) != u or abs(r[1] - round(imp, 2)) > 0.011:
+            return False
+    return True
+
+def _r3():
+    cods = {p[0] for p in _pn}
+    esp = {"filas": len(_lin_a),
+           "sin_cantidad": sum(1 for x in _lin_a if x[3] is None),
+           "huerfanas": sum(1 for x in _lin_a if x[2] not in cods),
+           "sin_descuento": sum(1 for x in _lin_a if x[4] is None)}
+    return {k: int(v) for k, v in dict(calidad(_c2)).items()} == esp
+
+def _r4():
+    col = ["ticket", "dia", "codigo", "cantidad", "descuento"]
+    vb = _pd.DataFrame(_lin_b, columns=col)
+    pb = _pd.DataFrame(_pn, columns=["codigo", "nombre", "categoria",
+                                     "precio"])
+    return all(_igual_cat(por_categoria_b(vb, pb, a, b),
+                          _cat_ref(_pn, _lin_b, a, b))
+               for a, b in _RANGOS)
+
+def _r5():
+    prods, la, lb = _genera(_rnd.Random(28), 6000, 4000)
+    info = {p[0]: p[3] for p in prods}
+    tot = {}
+    for suc, lin in (("A", la), ("B", lb)):
+        for tk, _, k, u, d in lin:
+            if u is not None and k in info:
+                tot[(suc, tk)] = (tot.get((suc, tk), 0.0)
+                                  + u * info[k] * (1 - (d or 0)))
+    esp = round(sum(tot.values()) / len(tot), 2)
+    return abs(cesta_media - esp) < 0.006
+
+def _cuenta(c, tabla, tk):
+    return c.execute("SELECT COUNT(*) FROM %s WHERE ticket = ?" % tabla,
+                     (tk,)).fetchone()[0]
+
+def _r6():
+    c = _base(_pn, _lin_a)
+    n = sum(1 for x in _lin_a if x[0] == 40)
+    ids = sorted(r[0] for r in c.execute(
+        "SELECT id FROM ventas WHERE ticket = 40"))
+    if devuelve_ticket(c, 40) != n or _cuenta(c, "ventas", 40) != 0:
+        return False
+    if sorted(r[0] for r in c.execute(
+            "SELECT id FROM devoluciones WHERE ticket = 40")) != ids:
+        return False
+    total = c.execute("SELECT COUNT(*) FROM ventas").fetchone()[0]
+    for tk in (40, 999999):
+        try:
+            devuelve_ticket(c, tk)
+            return False
+        except ValueError:
+            pass
+    if c.execute("SELECT COUNT(*) FROM ventas").fetchone()[0] != total:
+        return False
+    for disparador in (
+            "CREATE TRIGGER _f1 BEFORE INSERT ON devoluciones "
+            "WHEN NEW.ticket = 55 "
+            "BEGIN SELECT RAISE(ABORT, 'no'); END",
+            "CREATE TRIGGER _f2 BEFORE DELETE ON ventas "
+            "WHEN OLD.ticket = 55 "
+            "BEGIN SELECT RAISE(ABORT, 'no'); END"):
+        c = _base(_pn, _lin_a)
+        c.execute(disparador)
+        c.commit()
+        n = _cuenta(c, "ventas", 55)
+        try:
+            devuelve_ticket(c, 55)
+            return False
+        except ValueError:
+            return False
+        except Exception:
+            pass
+        if _cuenta(c, "ventas", 55) != n or _cuenta(c, "devoluciones",
+                                                     55) != 0:
+            return False
+    return True
+
+_nombres = ["por_categoria", "ventas_de", "calidad", "por_categoria_b",
+            "cesta_media", "devuelve_ticket"]
+_ok = []
+for _f in (_r1, _r2, _r3, _r4, _r5, _r6):
+    try:
+        _ok.append(bool(_f()))
+    except Exception:
+        _ok.append(False)
+_lineas = ["requisito %d (%s): %s"
+           % (i + 1, _nombres[i], "cumplido" if v else "no cumplido")
+           for i, v in enumerate(_ok)]
+feedback = {"correct": all(_ok), "message": " · ".join(_lineas)}
+feedback
+```
+
+## Solución de referencia
+
+::: {.callout-note collapse="true"}
+## Ver la solución de referencia
+
+```python
+import random
+import sqlite3
+import pandas as pd
+random.seed(28)
+TIPOS = [("Galletas", "panaderia"), ("Pan", "panaderia"),
+         ("Leche", "lacteos"), ("Queso", "lacteos"),
+         ("Yogur", "lacteos"), ("Arroz", "despensa"),
+         ("Aceite", "despensa"), ("Atún", "despensa"),
+         ("Salsa", "despensa"), ("Jabón", "limpieza"),
+         ("Detergente", "limpieza"), ("Jugo", "bebidas")]
+MARCAS = ["Sol", "O'Hara", "Valle", "D'Amico", "Norte"]
+productos = []
+for tipo, categoria in TIPOS:
+    for marca in MARCAS:
+        codigo = "P%03d" % (len(productos) + 1)
+        precio = random.randint(60, 1500) / 100
+        nombre = tipo + " " + marca
+        productos.append((codigo, nombre, categoria, precio))
+
+def genera_lineas(n_tickets):
+    filas = []
+    for ticket in range(1, n_tickets + 1):
+        dia = "2026-06-%02d" % random.randint(1, 30)
+        for _ in range(random.randint(1, 8)):
+            if random.random() < 0.02:
+                k = random.randint(61, 65)          # fuera del catalogo
+            else:
+                k = random.randint(1, 60)
+            cantidad = random.randint(1, 6)
+            if random.random() < 0.03:
+                cantidad = None
+            descuento = random.choice([None, None, 0.0, 0.05, 0.1, 0.2])
+            codigo = "P%03d" % k
+            filas.append((ticket, dia, codigo, cantidad, descuento))
+    return filas
+
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE productos (codigo TEXT PRIMARY KEY, "
+            "nombre TEXT, categoria TEXT, precio REAL)")
+for tabla in ("ventas", "devoluciones"):
+    con.execute("CREATE TABLE %s (id INTEGER PRIMARY KEY, "
+                "ticket INTEGER, dia TEXT, codigo TEXT, "
+                "cantidad INTEGER, descuento REAL)" % tabla)
+con.executemany("INSERT INTO productos VALUES (?, ?, ?, ?)", productos)
+con.executemany("INSERT INTO ventas (ticket, dia, codigo, cantidad, "
+                "descuento) VALUES (?, ?, ?, ?, ?)",
+                genera_lineas(6000))
+con.commit()
+COLUMNAS = ["ticket", "dia", "codigo", "cantidad", "descuento"]
+ventas_b = pd.DataFrame(genera_lineas(4000), columns=COLUMNAS)
+productos_b = pd.DataFrame(productos,
+                           columns=["codigo", "nombre", "categoria",
+                                    "precio"])
+
+# Importe de una linea valida, escrito una vez para SQL
+IMPORTE = "v.cantidad * p.precio * (1 - COALESCE(v.descuento, 0))"
+
+
+# 1. La base filtra, une y agrega; a Python llega una fila por categoria
+def por_categoria(con, desde, hasta):
+    filas = con.execute(
+        "SELECT p.categoria, SUM(v.cantidad), SUM(" + IMPORTE + ") "
+        "FROM ventas AS v JOIN productos AS p ON p.codigo = v.codigo "
+        "WHERE v.cantidad IS NOT NULL AND v.dia BETWEEN ? AND ? "
+        "GROUP BY p.categoria", (desde, hasta)).fetchall()
+    filas = [(c, u, round(imp, 2)) for c, u, imp in filas]
+    return sorted(filas, key=lambda f: (-f[2], f[0]))
+
+
+# 2. El nombre viaja como parametro: el apostrofo no rompe nada
+def ventas_de(con, nombre):
+    u, imp = con.execute(
+        "SELECT COALESCE(SUM(v.cantidad), 0), "
+        "COALESCE(SUM(" + IMPORTE + "), 0) "
+        "FROM ventas AS v JOIN productos AS p ON p.codigo = v.codigo "
+        "WHERE p.nombre = ? AND v.cantidad IS NOT NULL",
+        (nombre,)).fetchone()
+    return (u, round(imp, 2))
+
+
+# 3. COUNT(*) cuenta filas y COUNT(columna) cuenta valores presentes
+def calidad(con):
+    filas, con_cantidad, con_descuento = con.execute(
+        "SELECT COUNT(*), COUNT(cantidad), COUNT(descuento) "
+        "FROM ventas").fetchone()
+    huerfanas = con.execute(
+        "SELECT COUNT(*) FROM ventas WHERE codigo NOT IN "
+        "(SELECT codigo FROM productos)").fetchone()[0]
+    return {"filas": filas, "sin_cantidad": filas - con_cantidad,
+            "huerfanas": huerfanas,
+            "sin_descuento": filas - con_descuento}
+
+
+# 4. La misma pregunta sobre tablas en memoria
+def lineas_validas(ventas, productos):
+    v = ventas.dropna(subset=["cantidad"]).merge(
+        productos[["codigo", "categoria", "precio"]], on="codigo")
+    descuento = v["descuento"].fillna(0)
+    importe = v["cantidad"] * v["precio"] * (1 - descuento)
+    return v.assign(importe=importe)
+
+def por_categoria_b(ventas, productos, desde, hasta):
+    dentro = (ventas["dia"] >= desde) & (ventas["dia"] <= hasta)
+    en_rango = ventas[dentro]
+    v = lineas_validas(en_rango, productos)
+    g = v.groupby("categoria").agg(unidades=("cantidad", "sum"),
+                                   importe=("importe", "sum"))
+    filas = [(c, int(f["unidades"]), round(f["importe"], 2))
+             for c, f in g.iterrows()]
+    return sorted(filas, key=lambda f: (-f[2], f[0]))
+
+
+# 5. Cesta media: la sucursal forma parte de la identidad del ticket
+tickets_a = con.execute(
+    "SELECT v.ticket, SUM(" + IMPORTE + ") "
+    "FROM ventas AS v JOIN productos AS p ON p.codigo = v.codigo "
+    "WHERE v.cantidad IS NOT NULL GROUP BY v.ticket").fetchall()
+tickets_b = lineas_validas(ventas_b, productos_b).groupby("ticket")[
+    "importe"].sum()
+importes = [imp for _, imp in tickets_a] + list(tickets_b)
+cesta_media = round(sum(importes) / len(importes), 2)
+
+
+# 6. Devolucion atomica: with confirma al salir o deshace si hay error
+def devuelve_ticket(con, ticket):
+    with con:
+        n = con.execute("SELECT COUNT(*) FROM ventas WHERE ticket = ?",
+                        (ticket,)).fetchone()[0]
+        if n == 0:
+            raise ValueError("el ticket %r no tiene lineas" % ticket)
+        con.execute(
+            "INSERT INTO devoluciones (id, ticket, dia, codigo, "
+            "cantidad, descuento) SELECT id, ticket, dia, codigo, "
+            "cantidad, descuento FROM ventas WHERE ticket = ?",
+            (ticket,))
+        con.execute("DELETE FROM ventas WHERE ticket = ?", (ticket,))
+    return n
+
+
+# 7. Informe
+MES = ("2026-06-01", "2026-06-30")
+for suc, filas in (("A", por_categoria(con, *MES)),
+                   ("B", por_categoria_b(ventas_b, productos_b, *MES))):
+    for categoria, unidades, importe in filas:
+        print("sucursal %s  %-10s %6d unidades  %10.2f"
+              % (suc, categoria, unidades, importe))
+for clave, valor in calidad(con).items():
+    print("calidad de A, %-14s: %d" % (clave, valor))
+print("cesta media de las dos sucursales:", cesta_media)
+```
+
+La sucursal A se consulta en SQL y la B con pandas, y las dos versiones de la pregunta aplican las mismas definiciones: `COALESCE(v.descuento, 0)` y `fillna(0)` tratan igual el descuento ausente, `v.cantidad IS NOT NULL` y `dropna` descartan la misma línea, y la unión interna con el catálogo deja fuera las huérfanas en los dos casos. En la base, filtrar y agregar dentro de la consulta hace que a Python llegue una fila por categoría, como en la Proposición 21.10. `calidad` usa la Proposición 21.8: la diferencia entre `COUNT(*)` y `COUNT(cantidad)` es el número de líneas sin cantidad. `devuelve_ticket` hace la inserción y el borrado dentro de `with con:`, que deshace los dos si el segundo falla; la comprobación lo prueba con un disparador que aborta la inserción y con otro que aborta el borrado. Con los datos de la celda, la sucursal A tiene 27 018 líneas, de las que 864 no tienen cantidad y 522 son huérfanas, y la cesta media de las dos sucursales es 103,83.
+:::

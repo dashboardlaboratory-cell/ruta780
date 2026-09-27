@@ -1,0 +1,535 @@
+---
+title: "Entregable 20: catálogo y ventas de un supermercado"
+subtitle: "Python · Lecciones 01 a 11"
+engine: markdown
+pyodide:
+  packages:
+    - numpy
+    - pandas
+---
+
+Este entregable se puede resolver con lo visto hasta la Lección 11 de Python, y con cualquier herramienta posterior.
+
+## Especificación
+
+La celda genera dos tablas de un supermercado durante dos semanas. `catalogo` tiene las columnas `producto`, `nombre`, `categoria` y `precio`; algunos códigos aparecen más de una vez porque el catálogo acumula los cambios de precio, y en ese caso vale la última aparición en la tabla, para todos sus campos. `ventas` tiene una fila por artículo cobrado, con las columnas `ticket`, `dia` (texto `AAAA-MM-DD`), `hora`, `caja`, `producto`, `cantidad` y `precio`, que es el precio cobrado en caja. Hay ventas de códigos que no están en el catálogo y productos del catálogo que no se vendieron. El importe de cada línea es la cantidad por el precio cobrado.
+
+El programa debe definir las cinco funciones siguientes y aplicarlas a las tablas generadas:
+
+1. `unir(ventas, catalogo)` devuelve una tabla con las columnas de `ventas` y, a continuación, `nombre`, `categoria` y `precio_lista`, que es el precio del catálogo. Tiene tantas filas como `ventas`, en el mismo orden y con índice de 0 a $n-1$. En las líneas cuyo código no está en el catálogo, `nombre` y `categoria` valen `"(sin catálogo)"` y `precio_lista` es un valor faltante.
+2. `huerfanos(ventas, catalogo)` devuelve una tupla `(sin_catalogo, sin_venta)` de dos listas ordenadas de códigos distintos: los que aparecen en `ventas` y no en el catálogo, y los que aparecen en el catálogo y no en `ventas`. Si `ventas` no tiene filas, la primera lista está vacía y la segunda contiene todos los códigos del catálogo, cada uno una vez.
+3. `discrepancias(unidas)` recibe la tabla que devuelve `unir` y devuelve una tabla con las columnas `ticket`, `producto`, `precio`, `precio_lista` y `diferencia`, con las líneas cuyo precio cobrado difiere del precio de lista en al menos un céntimo. `diferencia` es el precio cobrado menos el de lista, redondeada a 2 decimales. Las líneas sin precio de lista no se incluyen. Las filas se ordenan por el valor absoluto de la diferencia, de mayor a menor; a igual valor absoluto, por ticket y después por producto, en orden creciente. El índice va de 0 a $n-1$.
+4. `a_ancho(unidas, catalogo)` devuelve una tabla en forma ancha con una fila por cada día que aparece en `unidas`, en orden creciente, y una columna por cada categoría del catálogo una vez resueltos los códigos repetidos, en orden alfabético. Cada celda es el importe vendido ese día en esa categoría, redondeado a 2 decimales; una combinación sin ventas vale 0, y la tabla no contiene faltantes. Las líneas sin catálogo no entran en ninguna columna, pero su día sí tiene fila.
+5. `a_largo(ancho)` recibe una tabla de la misma forma que la que devuelve `a_ancho` y devuelve una tabla en forma larga con las columnas `dia`, `categoria` e `importe`, con una fila por cada celda de importe positivo, ordenada por día y después por categoría, con índice de 0 a $n-1$.
+6. El programa imprime un informe con el número de líneas vendidas, los códigos sin catálogo, los productos sin venta, el número de discrepancias y la suma de sus diferencias, el día de mayor venta con su importe y la categoría de mayor venta con su importe, un dato por línea y con rótulo.
+
+## Rúbrica
+
+| Criterio | Completo | Incompleto |
+|---|---|---|
+| Requisitos 1 a 5 | La comprobación automática marca los cinco como cumplidos, con los datos de la celda, con los que genera la comprobación y con los casos límite escritos a mano. | Alguno no se cumple. |
+| Requisito 6 | El informe contiene todos los datos, uno por línea, con rótulo, y las cifras son coherentes con las tablas: el importe del día de mayor venta es la suma de su fila en la tabla ancha. | Faltan datos, las cifras no llevan rótulo o no cuadran con las tablas. |
+| Claridad del código | Cada función resuelve un requisito y lleva un comentario con su número; los códigos repetidos del catálogo se resuelven en un solo lugar; los nombres dicen qué guarda cada tabla. | La regla de la última aparición está repetida en varias funciones, o hay bloques sin comentar y nombres de una letra. |
+| Razonamiento | Antes de unir se comprueba que cada código del catálogo aparece una sola vez, de modo que el número de filas de la unión queda determinado de antemano; la comparación de precios tolera la representación binaria de los decimales. | La unión multiplica filas sin que se note, o dos precios iguales se declaran distintos por un error de redondeo. |
+
+Los dos primeros criterios se comprueban con la celda de comprobación; los dos últimos, con la solución de referencia al final de la página.
+
+## Programa
+
+```{pyodide}
+#| exercise: ent_20
+import numpy as np
+import pandas as pd
+
+GRUPOS = [
+    ("abarrotes", ["arroz", "frijoles", "azucar", "aceite", "pasta",
+                   "sal"]),
+    ("bebidas", ["agua", "jugo de naranja", "refresco", "te frio",
+                 "bebida isotonica"]),
+    ("carnes", ["pollo", "carne molida", "chuleta", "salchichas"]),
+    ("frutas y verduras", ["banano", "manzana", "tomate", "papa",
+                           "cebolla", "zanahoria", "lechuga"]),
+    ("lacteos", ["leche", "yogur", "queso", "mantequilla", "natilla"]),
+    ("limpieza", ["detergente", "jabon", "cloro", "papel higienico",
+                  "esponja"]),
+    ("panaderia", ["pan de molde", "pan dulce", "galletas", "tortillas",
+                   "queque"]),
+    ("mascotas", ["alimento para perro", "arena para gato"]),
+]
+
+
+def generar(semilla, n_tickets):
+    rng = np.random.default_rng(semilla)
+    pares = [(c, n) for c, nombres in GRUPOS for n in nombres]
+    codigos = ["P%03d" % (i + 1) for i in range(len(pares))]
+    precios = [int(x) / 100 for x in rng.integers(50, 1200, len(pares))]
+    nuevo = {"P005": round(precios[4] + 0.25, 2),
+             "P021": round(precios[20] - 0.10, 2)}
+    catalogo = pd.DataFrame({
+        "producto": codigos + ["P005", "P021"],
+        "nombre": [n for _, n in pares] + ["pasta", "zanahoria bolsa"],
+        "categoria": [c for c, _ in pares] + ["abarrotes",
+                                              "frutas y verduras"],
+        "precio": precios + [nuevo["P005"], nuevo["P021"]],
+    })
+    filas = []
+    for t in range(1, n_tickets + 1):
+        dia = "2026-03-%02d" % rng.integers(2, 16)
+        hora, caja = int(rng.integers(8, 22)), int(rng.integers(1, 7))
+        for _ in range(int(rng.integers(1, 7))):
+            if rng.random() < 0.01:
+                cod = "P%03d" % rng.integers(40, 46)
+                p = int(rng.integers(50, 1200)) / 100
+            else:
+                k = int(rng.integers(1, 38))
+                cod, p = "P%03d" % k, precios[k - 1]
+                if cod in nuevo and dia >= "2026-03-09":
+                    p = nuevo[cod]
+                if rng.random() < 0.01:
+                    p = round(p * 1.1, 2)
+            q = int(rng.integers(1, 6))
+            filas.append((t, dia, hora, caja, cod, q, p))
+    ventas = pd.DataFrame(filas, columns=[
+        "ticket", "dia", "hora", "caja", "producto", "cantidad",
+        "precio"])
+    return catalogo, ventas
+
+
+catalogo, ventas = generar(20, 600)
+print(len(catalogo), "filas de catalogo,", len(ventas), "ventas")
+
+# 1. unir
+def unir(ventas, catalogo):
+    return None
+
+
+# 2. huerfanos
+def huerfanos(ventas, catalogo):
+    return None
+
+
+# 3. discrepancias
+def discrepancias(unidas):
+    return None
+
+
+# 4. a_ancho
+def a_ancho(unidas, catalogo):
+    return None
+
+
+# 5. a_largo
+def a_largo(ancho):
+    return None
+
+
+# 6. informe
+```
+
+::: {.hint exercise="ent_20"}
+Contar las filas antes de unir ahorra sorpresas: si un código aparece dos veces en el catálogo, cada venta de ese código sale dos veces en la unión. En la tabla generada, P005 y P021 cambian de precio el 9 de marzo, y las ventas anteriores de esos dos productos aparecen como discrepancias. Para la comparación de precios, `0.1 + 0.2` y `0.3` son el mismo precio.
+:::
+
+```{pyodide}
+#| exercise: ent_20
+#| check: true
+import math as _math
+import numpy as _np
+import pandas as _pd
+
+_GRUPOS = [
+    ("abarrotes", ["arroz", "frijoles", "azucar", "aceite", "pasta",
+                   "sal"]),
+    ("bebidas", ["agua", "jugo de naranja", "refresco", "te frio",
+                 "bebida isotonica"]),
+    ("carnes", ["pollo", "carne molida", "chuleta", "salchichas"]),
+    ("frutas y verduras", ["banano", "manzana", "tomate", "papa",
+                           "cebolla", "zanahoria", "lechuga"]),
+    ("lacteos", ["leche", "yogur", "queso", "mantequilla", "natilla"]),
+    ("limpieza", ["detergente", "jabon", "cloro", "papel higienico",
+                  "esponja"]),
+    ("panaderia", ["pan de molde", "pan dulce", "galletas", "tortillas",
+                   "queque"]),
+    ("mascotas", ["alimento para perro", "arena para gato"]),
+]
+_SC = "(sin catálogo)"
+
+
+def _generar(semilla, n_tickets):
+    rng = _np.random.default_rng(semilla)
+    pares = [(c, n) for c, nombres in _GRUPOS for n in nombres]
+    codigos = ["P%03d" % (i + 1) for i in range(len(pares))]
+    precios = [int(x) / 100 for x in rng.integers(50, 1200, len(pares))]
+    nuevo = {"P005": round(precios[4] + 0.25, 2),
+             "P021": round(precios[20] - 0.10, 2)}
+    cat = _pd.DataFrame({
+        "producto": codigos + ["P005", "P021"],
+        "nombre": [n for _, n in pares] + ["pasta", "zanahoria bolsa"],
+        "categoria": [c for c, _ in pares] + ["abarrotes",
+                                              "frutas y verduras"],
+        "precio": precios + [nuevo["P005"], nuevo["P021"]],
+    })
+    filas = []
+    for t in range(1, n_tickets + 1):
+        dia = "2026-03-%02d" % rng.integers(2, 16)
+        hora, caja = int(rng.integers(8, 22)), int(rng.integers(1, 7))
+        for _ in range(int(rng.integers(1, 7))):
+            if rng.random() < 0.01:
+                cod = "P%03d" % rng.integers(40, 46)
+                p = int(rng.integers(50, 1200)) / 100
+            else:
+                k = int(rng.integers(1, 38))
+                cod, p = "P%03d" % k, precios[k - 1]
+                if cod in nuevo and dia >= "2026-03-09":
+                    p = nuevo[cod]
+                if rng.random() < 0.01:
+                    p = round(p * 1.1, 2)
+            q = int(rng.integers(1, 6))
+            filas.append((t, dia, hora, caja, cod, q, p))
+    ven = _pd.DataFrame(filas, columns=[
+        "ticket", "dia", "hora", "caja", "producto", "cantidad",
+        "precio"])
+    return cat, ven
+
+
+def _ultimo(cat):
+    d = {}
+    for p, n, c, pr in cat[["producto", "nombre", "categoria",
+                            "precio"]].itertuples(index=False):
+        d[p] = (n, c, float(pr))
+    return d
+
+
+def _v(ven):
+    return list(ven[["ticket", "dia", "hora", "caja", "producto",
+                     "cantidad", "precio"]].itertuples(index=False))
+
+
+def _ref_unir(ven, cat):
+    u = _ultimo(cat)
+    return [tuple(r) + u.get(r[4], (_SC, _SC, None)) for r in _v(ven)]
+
+
+def _ref_huerf(ven, cat):
+    a, b = set(ven["producto"]), set(cat["producto"])
+    return sorted(a - b), sorted(b - a)
+
+
+def _ref_disc(ven, cat):
+    s = []
+    for r in _ref_unir(ven, cat):
+        if r[9] is not None and abs(r[6] - r[9]) >= 0.005:
+            s.append((int(r[0]), r[4], r[6], r[9],
+                      round(r[6] - r[9], 2)))
+    s.sort(key=lambda x: (-abs(x[4]), x[0], x[1]))
+    return s
+
+
+def _ref_ancho(ven, cat):
+    cats = sorted({c for _, c, _ in _ultimo(cat).values()})
+    dias = sorted(set(ven["dia"]))
+    tot = {(d, c): 0.0 for d in dias for c in cats}
+    for r in _ref_unir(ven, cat):
+        if r[8] != _SC:
+            tot[(r[1], r[8])] += r[5] * r[6]
+    return dias, cats, tot
+
+
+def _unidas(ven, cat):
+    return _pd.DataFrame(_ref_unir(ven, cat), columns=[
+        "ticket", "dia", "hora", "caja", "producto", "cantidad",
+        "precio", "nombre", "categoria", "precio_lista"])
+
+
+def _cerca(a, b, tol=0.0101):
+    return abs(float(a) - float(b)) < tol
+
+
+def _ok_unir(ven, cat):
+    obt = unir(ven, cat)
+    esp = _ref_unir(ven, cat)
+    cols = ["ticket", "dia", "hora", "caja", "producto", "cantidad",
+            "precio", "nombre", "categoria", "precio_lista"]
+    if list(obt.columns) != cols or len(obt) != len(esp):
+        return False
+    if list(obt.index) != list(range(len(esp))):
+        return False
+    for a, b in zip(obt[cols].itertuples(index=False), esp):
+        if tuple(a[:9]) != tuple(b[:9]):
+            return False
+        if b[9] is None:
+            if not _pd.isna(a[9]):
+                return False
+        elif _pd.isna(a[9]) or not _cerca(a[9], b[9], 1e-9):
+            return False
+    return True
+
+
+def _ok_disc(ven, cat):
+    obt = discrepancias(_unidas(ven, cat))
+    esp = _ref_disc(ven, cat)
+    cols = ["ticket", "producto", "precio", "precio_lista",
+            "diferencia"]
+    if list(obt.columns) != cols or len(obt) != len(esp):
+        return False
+    if list(obt.index) != list(range(len(esp))):
+        return False
+    return all(int(a[0]) == b[0] and a[1] == b[1]
+               and all(_cerca(x, y, 1e-6) for x, y in zip(a[2:], b[2:]))
+               for a, b in zip(obt[cols].itertuples(index=False), esp))
+
+
+def _ok_ancho(ven, cat):
+    obt = a_ancho(_unidas(ven, cat), cat)
+    dias, cats, tot = _ref_ancho(ven, cat)
+    if [str(x) for x in obt.index] != dias:
+        return False
+    if [str(x) for x in obt.columns] != cats:
+        return False
+    if obt.isna().any().any():
+        return False
+    return all(_cerca(obt.loc[d, c], tot[(d, c)])
+               for d in dias for c in cats)
+
+
+def _ok_largo(ancho, esp):
+    obt = a_largo(ancho)
+    if list(obt.columns) != ["dia", "categoria", "importe"]:
+        return False
+    if list(obt.index) != list(range(len(esp))) or len(obt) != len(esp):
+        return False
+    return all(str(a[0]) == b[0] and str(a[1]) == b[1]
+               and _cerca(a[2], b[2])
+               for a, b in zip(obt.itertuples(index=False), esp))
+
+
+_cat_s, _ven_s = _generar(2026, 350)
+_cat_m = _pd.DataFrame({
+    "producto": ["P001", "P002", "P003", "P002", "P009"],
+    "nombre": ["arroz", "leche", "pan", "leche entera", "cloro"],
+    "categoria": ["abarrotes", "bebidas", "panaderia", "lacteos",
+                  "hogar"],
+    "precio": [1.0, 0.8, 0.3, 0.9, 2.0]})
+_ven_m = _pd.DataFrame({
+    "ticket": [7, 3, 3, 5, 5, 8],
+    "dia": ["2026-03-04", "2026-03-02", "2026-03-02", "2026-03-03",
+            "2026-03-03", "2026-03-05"],
+    "hora": [9, 10, 10, 11, 11, 12], "caja": [1, 2, 2, 1, 1, 3],
+    "producto": ["P002", "P001", "P777", "P003", "P002", "P888"],
+    "cantidad": [2, 1, 1, 3, 1, 4],
+    "precio": [0.8, 1.0, 5.0, 0.1 + 0.2, 0.9, 1.5]})
+_datos = [(ventas, catalogo), (_ven_s, _cat_s), (_ven_m, _cat_m)]
+
+
+def _r1():
+    return all(_ok_unir(v, c) for v, c in _datos)
+
+
+def _r2():
+    ok = all(tuple(huerfanos(v, c)) == _ref_huerf(v, c)
+             for v, c in _datos)
+    vacias = _ven_m.iloc[0:0]
+    return ok and tuple(huerfanos(vacias, _cat_m)) == (
+        [], ["P001", "P002", "P003", "P009"])
+
+
+def _r3():
+    ok = all(_ok_disc(v, c) for v, c in _datos)
+    d = discrepancias(_unidas(_ven_m, _cat_m))
+    return ok and len(d) == 1 and int(d["ticket"].iloc[0]) == 7
+
+
+def _r4():
+    ok = all(_ok_ancho(v, c) for v, c in _datos)
+    a = a_ancho(_unidas(_ven_m, _cat_m), _cat_m)
+    return (ok and [str(x) for x in a.columns] ==
+            ["abarrotes", "hogar", "lacteos", "panaderia"]
+            and float(a.loc["2026-03-05"].sum()) == 0.0)
+
+
+def _r5():
+    a = _pd.DataFrame({"abarrotes": [0.0, 3.5], "lacteos": [2.25, 0.0],
+                       "bebidas": [1.0, 0.0]},
+                      index=["2026-03-02", "2026-03-03"])
+    ok = _ok_largo(a, [("2026-03-02", "bebidas", 1.0),
+                       ("2026-03-02", "lacteos", 2.25),
+                       ("2026-03-03", "abarrotes", 3.5)])
+    for v, c in _datos:
+        dias, cats, tot = _ref_ancho(v, c)
+        esp = [(d, k, round(tot[(d, k)], 2)) for d in dias for k in cats
+               if round(tot[(d, k)], 2) > 0]
+        ancho = _pd.DataFrame(
+            [[round(tot[(d, k)], 2) for k in cats] for d in dias],
+            index=dias, columns=cats)
+        ok = ok and _ok_largo(ancho, esp)
+    return ok
+
+
+_nombres = ["unir", "huerfanos", "discrepancias", "a_ancho", "a_largo"]
+_ok = []
+for _f in (_r1, _r2, _r3, _r4, _r5):
+    try:
+        _ok.append(bool(_f()))
+    except Exception:
+        _ok.append(False)
+_lineas = ["requisito %d (%s): %s" % (i + 1, _nombres[i],
+           "cumplido" if v else "no cumplido")
+           for i, v in enumerate(_ok)]
+feedback = {"correct": all(_ok), "message": " · ".join(_lineas)}
+feedback
+```
+
+## Solución de referencia
+
+::: {.callout-note collapse="true"}
+## Ver la solución de referencia
+
+```python
+import numpy as np
+import pandas as pd
+
+GRUPOS = [
+    ("abarrotes", ["arroz", "frijoles", "azucar", "aceite", "pasta",
+                   "sal"]),
+    ("bebidas", ["agua", "jugo de naranja", "refresco", "te frio",
+                 "bebida isotonica"]),
+    ("carnes", ["pollo", "carne molida", "chuleta", "salchichas"]),
+    ("frutas y verduras", ["banano", "manzana", "tomate", "papa",
+                           "cebolla", "zanahoria", "lechuga"]),
+    ("lacteos", ["leche", "yogur", "queso", "mantequilla", "natilla"]),
+    ("limpieza", ["detergente", "jabon", "cloro", "papel higienico",
+                  "esponja"]),
+    ("panaderia", ["pan de molde", "pan dulce", "galletas", "tortillas",
+                   "queque"]),
+    ("mascotas", ["alimento para perro", "arena para gato"]),
+]
+
+
+def generar(semilla, n_tickets):
+    rng = np.random.default_rng(semilla)
+    pares = [(c, n) for c, nombres in GRUPOS for n in nombres]
+    codigos = ["P%03d" % (i + 1) for i in range(len(pares))]
+    precios = [int(x) / 100 for x in rng.integers(50, 1200, len(pares))]
+    nuevo = {"P005": round(precios[4] + 0.25, 2),
+             "P021": round(precios[20] - 0.10, 2)}
+    catalogo = pd.DataFrame({
+        "producto": codigos + ["P005", "P021"],
+        "nombre": [n for _, n in pares] + ["pasta", "zanahoria bolsa"],
+        "categoria": [c for c, _ in pares] + ["abarrotes",
+                                              "frutas y verduras"],
+        "precio": precios + [nuevo["P005"], nuevo["P021"]],
+    })
+    filas = []
+    for t in range(1, n_tickets + 1):
+        dia = "2026-03-%02d" % rng.integers(2, 16)
+        hora, caja = int(rng.integers(8, 22)), int(rng.integers(1, 7))
+        for _ in range(int(rng.integers(1, 7))):
+            if rng.random() < 0.01:
+                cod = "P%03d" % rng.integers(40, 46)
+                p = int(rng.integers(50, 1200)) / 100
+            else:
+                k = int(rng.integers(1, 38))
+                cod, p = "P%03d" % k, precios[k - 1]
+                if cod in nuevo and dia >= "2026-03-09":
+                    p = nuevo[cod]
+                if rng.random() < 0.01:
+                    p = round(p * 1.1, 2)
+            q = int(rng.integers(1, 6))
+            filas.append((t, dia, hora, caja, cod, q, p))
+    ventas = pd.DataFrame(filas, columns=[
+        "ticket", "dia", "hora", "caja", "producto", "cantidad",
+        "precio"])
+    return catalogo, ventas
+
+
+catalogo, ventas = generar(20, 600)
+SIN = "(sin catálogo)"
+
+
+# Catalogo con un solo registro por codigo: vale la ultima aparicion
+def catalogo_vigente(catalogo):
+    return catalogo.drop_duplicates(subset="producto", keep="last")
+
+
+# 1. Union por la izquierda: una fila por cada linea de venta
+def unir(ventas, catalogo):
+    vigente = catalogo_vigente(catalogo).rename(
+        columns={"precio": "precio_lista"})
+    unidas = ventas.merge(vigente, on="producto", how="left",
+                          validate="many_to_one")
+    unidas["nombre"] = unidas["nombre"].fillna(SIN)
+    unidas["categoria"] = unidas["categoria"].fillna(SIN)
+    return unidas
+
+
+# 2. Codigos vendidos sin catalogo y codigos del catalogo sin venta
+def huerfanos(ventas, catalogo):
+    vendidos = set(ventas["producto"])
+    listados = set(catalogo["producto"])
+    return sorted(vendidos - listados), sorted(listados - vendidos)
+
+
+# 3. Lineas cuyo precio cobrado difiere del de lista en un centimo
+def discrepancias(unidas):
+    d = unidas[unidas["precio_lista"].notna()].copy()
+    d["diferencia"] = (d["precio"] - d["precio_lista"]).round(2)
+    d = d[d["diferencia"].abs() >= 0.01]
+    d["absoluta"] = d["diferencia"].abs()
+    d = d.sort_values(["absoluta", "ticket", "producto"],
+                      ascending=[False, True, True])
+    columnas = ["ticket", "producto", "precio", "precio_lista",
+                "diferencia"]
+    return d[columnas].reset_index(drop=True)
+
+
+# 4. Importe por dia y categoria, con ceros donde no hubo venta
+def a_ancho(unidas, catalogo):
+    vigente = catalogo_vigente(catalogo)
+    categorias = sorted(vigente["categoria"].unique())
+    dias = sorted(unidas["dia"].unique())
+    con_cat = unidas[unidas["categoria"] != SIN]
+    con_cat = con_cat.assign(
+        importe=con_cat["cantidad"] * con_cat["precio"])
+    ancho = con_cat.pivot_table(index="dia", columns="categoria",
+                                values="importe", aggfunc="sum")
+    ancho = ancho.reindex(index=dias, columns=categorias)
+    return ancho.fillna(0.0).round(2)
+
+
+# 5. De ancho a largo, sin las celdas en cero
+def a_largo(ancho):
+    largo = (ancho.rename_axis(index="dia", columns="categoria")
+                  .reset_index()
+                  .melt(id_vars="dia", var_name="categoria",
+                        value_name="importe"))
+    largo = largo[largo["importe"] > 0]
+    largo = largo.sort_values(["dia", "categoria"])
+    return largo.reset_index(drop=True)
+
+
+unidas = unir(ventas, catalogo)
+sin_catalogo, sin_venta = huerfanos(ventas, catalogo)
+difs = discrepancias(unidas)
+ancho = a_ancho(unidas, catalogo)
+largo = a_largo(ancho)
+
+# 6. Informe
+por_dia = ancho.sum(axis=1)
+por_cat = ancho.sum(axis=0)
+print("lineas vendidas         :", len(ventas))
+print("filas tras la union     :", len(unidas))
+print("codigos sin catalogo    :", sin_catalogo)
+print("productos sin venta     :", sin_venta)
+print("discrepancias de precio :", len(difs))
+suma_difs = round(float(difs["diferencia"].sum()), 2)
+print("suma de las diferencias :", suma_difs)
+print("dia de mayor venta      :", por_dia.idxmax(),
+      round(float(por_dia.max()), 2))
+print("categoria de mayor venta:", por_cat.idxmax(),
+      round(float(por_cat.max()), 2))
+```
+
+Con la semilla 20, las 2166 líneas de venta dan 2166 filas tras la unión. Sin resolver antes los códigos repetidos, la unión interna habría dado 2261 filas, porque cada venta de P005 y de P021 se empareja con las dos filas del catálogo; la Proposición 11.2 predice ese número sumando los productos de multiplicidades, y `validate="many_to_one"` convierte la repetición en un error visible. Hay 19 líneas de seis códigos sin catálogo (P040 a P045) y dos productos sin venta, los de la categoría mascotas, que aparece en la tabla ancha como una columna de ceros.
+
+De las 71 discrepancias, 58 son ventas de P005 y P021 cobradas al precio anterior al cambio del 9 de marzo, con diferencias de $-0{,}25$ y $0{,}10$; las 13 restantes son cobros un 10 % por encima del precio de lista. Las dos causas se compensan en parte, y la suma de las diferencias queda en 2,08. El día de mayor venta es el 14 de marzo, con 4069,20, y la categoría de mayor venta es frutas y verduras, con 10236,30.
+:::

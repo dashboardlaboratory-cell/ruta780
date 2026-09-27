@@ -1,0 +1,560 @@
+---
+title: "Entregable 32: rendimiento del cierre de caja"
+subtitle: "Python · Lecciones 01 a 27"
+engine: markdown
+---
+
+Este entregable se puede resolver con lo visto hasta la Lección 27 de Python, y con cualquier herramienta posterior. Corresponde al bloque de proyecto del viernes, unos 180 minutos. Se resuelve en una sola celda, desde el principio, como un programa completo; cómo se mide, qué se acelera y cómo se explora la concurrencia forma parte del ejercicio.
+
+## Especificación
+
+La celda genera las transacciones de un día en una cadena de supermercados: cinco millones de filas repartidas en cuatro arrays de NumPy de la misma longitud. `caja` y `medio` son enteros de 8 bits con el número de caja, de 0 a 39, y el medio de pago, de 0 a 3, donde el 0 es el efectivo. `importe` es un decimal con dos cifras, negativo en las devoluciones, y `anulada` es un booleano. `declarado` contiene, para cada caja, el efectivo que el cajero declara al cerrar. La celda trae además `cierre_lento`, el cierre como se escribió la primera vez, que recorre las transacciones una a una y llama a `normaliza`, `clasifica` y `acumula`; `COSTE`, el coste por llamada de esas cuatro funciones en unidades de trabajo; y dos planes de uso de cerrojos, `CAJERO` y `SUPERVISOR`.
+
+El programa debe definir las siguientes funciones, con los nombres y las firmas indicados:
+
+1. `cuenta(f)`: devuelve una función que se comporta como `f` (mismos argumentos, mismo resultado, mismas excepciones), conserva su `__name__` y tiene un atributo `llamadas` con el número de veces que se ha llamado hasta el momento. Las llamadas que terminan en excepción también cuentan. Cada función envuelta lleva su propia cuenta.
+2. `cierre(caja, medio, importe, anulada, n_cajas, n_medios)`: devuelve la matriz de `n_cajas` filas y `n_medios` columnas (lista de listas o array de dos dimensiones) cuya celda `[c][m]` es la suma de los importes no anulados de la caja `c` con el medio `m`, redondeada a dos decimales. Una caja o un medio sin transacciones dan 0. Un código de caja o de medio fuera de su rango levanta `ValueError`. Los arrays pueden estar vacíos.
+3. Con cinco millones de transacciones, 40 cajas y 4 medios, `cierre` no tarda más de cinco veces lo que tarda una implementación de referencia que la comprobación ejecuta antes en el mismo equipo, con un margen fijo de 0,05 segundos; cada tiempo es el mejor de dos intentos. Como orientación, esa referencia tarda unos 0,07 segundos en un portátil actual.
+4. `cuadre(totales, declarado, tolerancia)`: `totales` es una matriz como la que devuelve `cierre`, en cualquiera de sus dos formas. Devuelve la lista de tuplas `(caja, diferencia)` de las cajas en que la diferencia, igual a lo declarado menos el efectivo de `totales` y redondeada a dos decimales, supera `tolerancia` en valor absoluto; una diferencia igual a la tolerancia no se incluye. La lista va de mayor a menor valor absoluto de la diferencia y, con el mismo valor absoluto, por número de caja creciente.
+5. `mejora(perfil, factores)`: `perfil` asocia a cada nombre de función una tupla `(llamadas, coste)`; el peso de una función es el producto de las dos cifras y el tiempo total es la suma de los pesos. `factores` asocia a algunos de esos nombres un factor de aceleración, que divide su peso. Devuelve la tupla `(mejora, techo)`: `mejora` es el tiempo total antes dividido entre el tiempo total después, y `techo` es la mejora que se obtendría si las funciones de `factores` no costaran nada, o `math.inf` si son todas las del perfil. Sin factores, las dos valen 1. Un nombre de `factores` que no está en `perfil` levanta `KeyError`; un factor menor que 1 levanta `ValueError`.
+6. `interbloqueo(plan_a, plan_b)`: un plan es una lista de acciones `("toma", cerrojo)` o `("suelta", cerrojo)`. Dos procesos, A con `plan_a` y B con `plan_b`, avanzan por turnos, y en cada turno el proceso al que le toca intenta su siguiente acción. Tomar un cerrojo libre se lo asigna y avanza; tomar un cerrojo que tiene el otro proceso no avanza, y el proceso espera; soltar un cerrojo lo libera y avanza; un proceso que terminó su plan no hace nada. Hay interbloqueo cuando ninguno de los dos ha terminado y la siguiente acción de cada uno es tomar un cerrojo que tiene el otro. La función devuelve `None` si ninguna sucesión de turnos lleva a un interbloqueo y, si alguna lleva, una lista de turnos (`"A"` o `"B"`) que, ejecutada desde el principio, deja a los dos procesos interbloqueados.
+7. Un informe impreso con el número de llamadas y el peso de cada función de `cierre_lento` sobre las primeras 20 000 transacciones, contados con `cuenta` y ordenados de mayor a menor peso con su porcentaje; los valores de `mejora` y `techo` que se obtienen acelerando 10 veces la función de mayor peso; el tiempo de `cierre` sobre los cinco millones de transacciones; las cajas que no cuadran con una tolerancia de 0,50 y su diferencia; y el resultado de `interbloqueo` con `CAJERO` y `SUPERVISOR`, y con `CAJERO` frente a sí mismo. Una línea por dato, con rótulo.
+
+## Rúbrica
+
+| Criterio | Completo | Incompleto |
+|---|---|---|
+| Requisitos 1 a 6 | La comprobación automática marca los seis como cumplidos. | Alguno no se cumple. |
+| Requisito 7 | El informe contiene todos los datos, uno por línea, con un rótulo que dice qué es cada cifra. | Faltan datos o las cifras no llevan rótulo. |
+| Claridad del código | Cada función lleva un comentario con el número del requisito que resuelve; la búsqueda del interbloqueo describe en un comentario qué es un estado y cuándo se considera visitado. | La búsqueda recorre estados sin que el código diga cuáles ni por qué termina. |
+| Razonamiento | La optimización se elige por el peso medido y no por el número de llamadas, el techo se calcula antes de optimizar, el cierre recorre los datos sin un bucle de Python por fila, y la búsqueda del interbloqueo explora todos los estados alcanzables en lugar de ensayar órdenes al azar. | Se acelera la función más llamada sin mirar su peso, o la búsqueda depende de probar algunas intercalaciones. |
+
+Los dos primeros criterios se comprueban con la celda de comprobación; los dos últimos, con la solución de referencia al final de la página.
+
+## Programa
+
+```{pyodide}
+#| exercise: ent_32
+import time
+import numpy as np
+
+rng = np.random.default_rng(32)
+N, CAJAS, MEDIOS = 5_000_000, 40, 4     # medio 0 es efectivo
+caja = rng.integers(0, CAJAS, N).astype(np.int8)
+medio = rng.integers(0, MEDIOS, N).astype(np.int8)
+importe = np.round(0.5 + 80 * rng.random(N), 2)
+devolucion = rng.random(N) < 0.01
+importe[devolucion] = -importe[devolucion]
+anulada = rng.random(N) < 0.02
+# efectivo que cada caja declara al cerrar; algunas no cuadran
+esperado = np.zeros(CAJAS)
+filtro = (medio == 0) & ~anulada
+np.add.at(esperado, caja[filtro], importe[filtro])
+desvio = np.where(rng.random(CAJAS) < 0.2,
+                  np.round(40 * rng.random(CAJAS) - 20, 2), 0.0)
+declarado = np.round(esperado + desvio, 2)
+
+# El cierre como se escribio la primera vez, fila a fila
+def normaliza(x):
+    return round(float(x), 2)
+
+def clasifica(m):
+    return ["efectivo", "tarjeta", "transferencia", "vale"][m]
+
+def acumula(tabla, c, nombre, x):
+    tabla[(c, nombre)] = tabla.get((c, nombre), 0.0) + x
+
+def cierre_lento(caja, medio, importe, anulada):
+    tabla = {}
+    for c, m, x, a in zip(caja, medio, importe, anulada):
+        if not a:
+            acumula(tabla, int(c), clasifica(int(m)), normaliza(x))
+    return tabla
+
+# coste por llamada de cada funcion, en unidades de trabajo
+COSTE = {"cierre_lento": 5000, "normaliza": 3, "clasifica": 1,
+         "acumula": 4}
+
+# Dos procesos que toman los mismos dos cerrojos
+CAJERO = [("toma", "cajon"), ("toma", "registro"),
+          ("suelta", "registro"), ("suelta", "cajon")]
+SUPERVISOR = [("toma", "registro"), ("toma", "cajon"),
+              ("suelta", "cajon"), ("suelta", "registro")]
+
+# 1. cuenta
+def cuenta(f):
+    pass
+
+# 2 y 3. cierre
+def cierre(caja, medio, importe, anulada, n_cajas, n_medios):
+    pass
+
+# 4. cuadre
+def cuadre(totales, declarado, tolerancia):
+    pass
+
+# 5. mejora
+def mejora(perfil, factores):
+    pass
+
+# 6. interbloqueo
+def interbloqueo(plan_a, plan_b):
+    pass
+
+# 7. informe
+```
+
+::: {.hint exercise="ent_32"}
+La celda `[c][m]` de la matriz es una suma por grupos, y el par `(c, m)` se puede convertir en un único número de celda, `c * n_medios + m`; conviene hacer esa cuenta con enteros de 64 bits, porque con 8 bits se desborda. Para el interbloqueo, un estado queda descrito por cuántas acciones lleva cada proceso y quién tiene cada cerrojo, y hay pocos estados distintos.
+:::
+
+```{pyodide}
+#| exercise: ent_32
+#| check: true
+import math as _math, random as _random, time as _time
+import numpy as _np
+
+_ok = []
+
+# 1. cuenta
+def _fib(n):
+    return n if n < 2 else _fib(n - 1) + _fib(n - 2)
+
+def _falla(x, y=0):
+    raise ZeroDivisionError("a proposito")
+
+try:
+    _fib = cuenta(_fib)
+    _e = _fib(10) == 55 and _fib.llamadas == 177
+    _e = _e and _fib.__name__ == "_fib"
+    _g = cuenta(_falla)
+    for _ in range(3):
+        try:
+            _g(1, y=2)
+            _e = False
+        except ZeroDivisionError:
+            pass
+    _h = cuenta(lambda a, b=10: a * b)
+    _e = _e and _g.llamadas == 3 and _h(3, b=2) == 6 and _h(4) == 40
+    _e = _e and _h.llamadas == 2 and _fib.llamadas == 177
+    _ok.append(bool(_e))
+except Exception:
+    _ok.append(False)
+
+# 2. cierre: cuentas correctas y casos limite
+def _datos(semilla, n, cajas, medios):
+    _g = _np.random.default_rng(semilla)
+    _c = _g.integers(0, cajas, n).astype(_np.int8)
+    _m = _g.integers(0, medios, n).astype(_np.int8)
+    _x = _np.round(1 + 99 * _g.random(n), 2)
+    _x[_g.random(n) < 0.05] *= -1
+    _a = _g.random(n) < 0.1
+    return _c, _m, _x, _a
+
+def _espera(c, m, x, a, cajas, medios):
+    _t = [[0.0] * medios for _ in range(cajas)]
+    for _ci, _mi, _xi, _ai in zip(c.tolist(), m.tolist(), x.tolist(),
+                                  a.tolist()):
+        if not _ai:
+            _t[_ci][_mi] += _xi
+    return _np.array([[round(v, 2) for v in f] for f in _t])
+
+def _igual(r, t):
+    _r = _np.asarray(r, dtype=float)
+    return (_r.shape == t.shape
+            and bool(_np.all(_np.abs(_r - t) < 0.005)))
+
+try:
+    _c, _m, _x, _a = _datos(3232, 60000, 40, 4)
+    _c[_c == 7] = 8                      # la caja 7 no vende
+    _e = _igual(cierre(_c, _m, _x, _a, 40, 4),
+                _espera(_c, _m, _x, _a, 40, 4))
+    _e = _e and _igual(cierre(_c, _m, _x, _np.ones(len(_c), bool),
+                              40, 4),
+                       _np.zeros((40, 4)))
+    _v = _np.array([], dtype=_np.int8)
+    _e = _e and _igual(cierre(_v, _v, _np.array([]),
+                              _np.array([], bool), 3, 2),
+                       _np.zeros((3, 2)))
+    _i8 = lambda v: _np.array(v, _np.int8)
+    for _cc, _mm in ((_i8([0, 3]), _i8([0, 1])),
+                     (_i8([0, 1]), _i8([0, -1])),
+                     (_i8([0, 1]), _i8([2, 0]))):
+        try:
+            cierre(_cc, _mm, _np.array([1.0, 2.0]),
+                   _np.array([False, False]), 3, 2)
+            _e = False
+        except ValueError:
+            pass
+    _ok.append(bool(_e))
+except Exception:
+    _ok.append(False)
+
+# 3. cierre: tiempo sobre cinco millones de transacciones, relativo
+# a una referencia vectorizada ejecutada antes en este equipo
+def _ref_cierre(c, m, x, a, cajas, medios):
+    if len(c) and (c.min() < 0 or c.max() >= cajas
+                   or m.min() < 0 or m.max() >= medios):
+        raise ValueError("fuera de rango")
+    _v = ~a
+    _b = _np.bincount(c[_v].astype(_np.int64) * medios + m[_v],
+                      weights=x[_v], minlength=cajas * medios)
+    return _np.round(_b.reshape(cajas, medios), 2)
+
+def _mejor_de(f, tope=None):
+    """Mejor de dos intentos, en segundos, y el ultimo resultado; el
+    segundo intento se omite si el primero ya queda dentro de tope."""
+    _m, _x = None, None
+    for _ in range(2):
+        _t0 = _time.perf_counter()
+        _x = f()
+        _d = _time.perf_counter() - _t0
+        _m = _d if _m is None else min(_m, _d)
+        if tope is not None and _m <= tope:
+            break
+    return _m, _x
+
+_t_ref, _tope, _mejor = None, None, None
+try:
+    _c, _m, _x, _a = _datos(3233, 5_000_000, 40, 4)
+    _t_ref, _b = _mejor_de(lambda: _ref_cierre(_c, _m, _x, _a, 40, 4))
+    _tope = 5 * _t_ref + 0.05
+    _mejor, _r = _mejor_de(lambda: cierre(_c, _m, _x, _a, 40, 4),
+                           _tope)
+    _ok.append(_igual(_r, _b) and _mejor <= _tope)
+except Exception:
+    _ok.append(False)
+
+# 4. cuadre
+def _cuadre(tot, dec, tol):
+    _f = []
+    for _k in range(len(dec)):
+        _d = round(float(dec[_k]) - float(tot[_k][0]), 2)
+        if abs(_d) > tol:
+            _f.append((_k, _d))
+    return sorted(_f, key=lambda t: (-abs(t[1]), t[0]))
+
+try:
+    _r2 = _random.Random(32)
+    _tot = [[round(_r2.random() * 900, 2), 1.0] for _ in range(25)]
+    _saltos = [0, 0, 0.3, -2.25, 7.5, -7.5, 0.5]
+    _dec = [round(t[0] + _r2.choice(_saltos), 2) for t in _tot]
+    _e = True
+    for _tt in (_tot, _np.array(_tot)):
+        _s = cuadre(_tt, _dec, 0.5)
+        _e = _e and [(int(a), round(float(b), 2)) for a, b in _s] \
+            == _cuadre(_tot, _dec, 0.5)
+    _s = cuadre([[10.0, 0], [20.0, 0], [5.0, 0], [8.0, 0]],
+                [10.5, 17.0, 8.0, 8.0], 0.5)
+    _e = _e and [(int(a), round(float(b), 2)) for a, b in _s] \
+        == [(1, -3.0), (2, 3.0)]
+    _e = _e and list(cuadre([], [], 1.0)) == []
+    _ok.append(bool(_e))
+except Exception:
+    _ok.append(False)
+
+# 5. mejora
+def _mejora(p, f):
+    _w = {k: n * c for k, (n, c) in p.items()}
+    _T = sum(_w.values())
+    _q = sum(_w[k] for k in f)
+    _nuevo = _T - _q + sum(_w[k] / s for k, s in f.items())
+    return _T / _nuevo, (_math.inf if _T == _q else _T / (_T - _q))
+
+def _cerca(a, b):
+    if _math.isinf(b):
+        return _math.isinf(a)
+    return abs(a - b) <= 1e-9 * max(1.0, abs(b))
+
+try:
+    _e = True
+    for _ in range(40):
+        _p = {"f%d" % i: (_r2.randint(1, 10000), _r2.randint(1, 50))
+              for i in range(_r2.randint(1, 6))}
+        _f = {k: _r2.choice([1, 2, 4, 10, 1000])
+              for k in _p if _r2.random() < 0.5}
+        _a1, _b1 = mejora(_p, _f)
+        _a2, _b2 = _mejora(_p, _f)
+        _e = _e and _cerca(_a1, _a2) and _cerca(_b1, _b2)
+    _p = {"a": (10, 3), "b": (1, 30)}
+    _e = (_e and _cerca(mejora(_p, {})[0], 1.0)
+          and _cerca(mejora(_p, {})[1], 1.0))
+    _e = _e and _math.isinf(mejora(_p, {"a": 2, "b": 3})[1])
+    for _f, _err in (({"c": 2}, KeyError), ({"a": 0.5}, ValueError)):
+        try:
+            mejora(_p, _f)
+            _e = False
+        except _err:
+            pass
+    _ok.append(bool(_e))
+except Exception:
+    _ok.append(False)
+
+# 6. interbloqueo
+def _paso(planes, prog, duenos, h):
+    if prog[h] >= len(planes[h]):
+        return
+    _acc, _cual = planes[h][prog[h]]
+    if _acc == "toma":
+        if duenos.get(_cual) is None:
+            duenos[_cual] = h
+            prog[h] += 1
+    else:
+        duenos.pop(_cual, None)
+        prog[h] += 1
+
+def _bloq(planes, prog, duenos, h):
+    if prog[h] >= len(planes[h]):
+        return False
+    _acc, _cual = planes[h][prog[h]]
+    return _acc == "toma" and duenos.get(_cual) not in (None, h)
+
+def _alcanza(planes):
+    _pila, _vistos = [({"A": 0, "B": 0}, {})], set()
+    while _pila:
+        _p, _d = _pila.pop()
+        _k = (_p["A"], _p["B"], tuple(sorted(_d.items())))
+        if _k in _vistos:
+            continue
+        _vistos.add(_k)
+        if _bloq(planes, _p, _d, "A") and _bloq(planes, _p, _d, "B"):
+            return True
+        for _h in "AB":
+            _p2, _d2 = dict(_p), dict(_d)
+            _paso(planes, _p2, _d2, _h)
+            _pila.append((_p2, _d2))
+    return False
+
+def _plan(r):
+    _tiene, _fuera = [], []
+    for _ in range(r.randint(1, 4)):
+        _libres = [x for x in "xyz" if x not in _tiene]
+        if _libres and (not _tiene or r.random() < 0.6):
+            _l = r.choice(_libres)
+            _tiene.append(_l)
+            _fuera.append(("toma", _l))
+        else:
+            _l = r.choice(_tiene)
+            _tiene.remove(_l)
+            _fuera.append(("suelta", _l))
+    for _l in reversed(_tiene):
+        _fuera.append(("suelta", _l))
+    return _fuera
+
+try:
+    _e = True
+    _pares = [([("toma", "x"), ("toma", "y"),
+                ("suelta", "y"), ("suelta", "x")],
+               [("toma", "y"), ("toma", "x"),
+                ("suelta", "x"), ("suelta", "y")]),
+              ([("toma", "x"), ("suelta", "x")],
+               [("toma", "x"), ("suelta", "x")]),
+              ([], [("toma", "y"), ("suelta", "y")])]
+    _pares += [(_plan(_r2), _plan(_r2)) for _ in range(150)]
+    _hay = 0
+    for _pa, _pb in _pares:
+        _planes = {"A": _pa, "B": _pb}
+        _s = interbloqueo(_pa, _pb)
+        if not _alcanza(_planes):
+            _e = _e and _s is None
+            continue
+        _hay += 1
+        _p, _d = {"A": 0, "B": 0}, {}
+        for _h in list(_s):
+            _paso(_planes, _p, _d, _h)
+        _e = (_e and _bloq(_planes, _p, _d, "A")
+              and _bloq(_planes, _p, _d, "B"))
+    _ok.append(bool(_e) and _hay > 5)
+except Exception:
+    _ok.append(False)
+
+_nombres = ["cuenta", "cierre", "tiempo del cierre", "cuadre", "mejora",
+            "interbloqueo"]
+_lineas = ["requisito %d (%s): %s" % (i + 1, _nombres[i],
+           "cumplido" if v else "no cumplido")
+           for i, v in enumerate(_ok)]
+if _t_ref is not None:
+    _lineas.append("tiempo de cierre: %s; referencia en este equipo: "
+                   "%.3f s; tope: %.3f s"
+                   % ("sin medir" if _mejor is None
+                      else "%.3f s" % _mejor, _t_ref, _tope))
+feedback = {"correct": all(_ok), "message": " · ".join(_lineas)}
+feedback
+```
+
+## Solución de referencia
+
+::: {.callout-note collapse="true"}
+## Ver la solución de referencia
+
+```python
+import time
+import numpy as np
+
+rng = np.random.default_rng(32)
+N, CAJAS, MEDIOS = 5_000_000, 40, 4     # medio 0 es efectivo
+caja = rng.integers(0, CAJAS, N).astype(np.int8)
+medio = rng.integers(0, MEDIOS, N).astype(np.int8)
+importe = np.round(0.5 + 80 * rng.random(N), 2)
+devolucion = rng.random(N) < 0.01
+importe[devolucion] = -importe[devolucion]
+anulada = rng.random(N) < 0.02
+# efectivo que cada caja declara al cerrar; algunas no cuadran
+esperado = np.zeros(CAJAS)
+filtro = (medio == 0) & ~anulada
+np.add.at(esperado, caja[filtro], importe[filtro])
+desvio = np.where(rng.random(CAJAS) < 0.2,
+                  np.round(40 * rng.random(CAJAS) - 20, 2), 0.0)
+declarado = np.round(esperado + desvio, 2)
+
+# El cierre como se escribio la primera vez, fila a fila
+def normaliza(x):
+    return round(float(x), 2)
+
+def clasifica(m):
+    return ["efectivo", "tarjeta", "transferencia", "vale"][m]
+
+def acumula(tabla, c, nombre, x):
+    tabla[(c, nombre)] = tabla.get((c, nombre), 0.0) + x
+
+def cierre_lento(caja, medio, importe, anulada):
+    tabla = {}
+    for c, m, x, a in zip(caja, medio, importe, anulada):
+        if not a:
+            acumula(tabla, int(c), clasifica(int(m)), normaliza(x))
+    return tabla
+
+# coste por llamada de cada funcion, en unidades de trabajo
+COSTE = {"cierre_lento": 5000, "normaliza": 3, "clasifica": 1,
+         "acumula": 4}
+
+# Dos procesos que toman los mismos dos cerrojos
+CAJERO = [("toma", "cajon"), ("toma", "registro"),
+          ("suelta", "registro"), ("suelta", "cajon")]
+SUPERVISOR = [("toma", "registro"), ("toma", "cajon"),
+              ("suelta", "cajon"), ("suelta", "registro")]
+
+import math
+
+# 1. Contador de llamadas
+def cuenta(f):
+    def envoltorio(*args, **kwargs):
+        envoltorio.llamadas += 1
+        return f(*args, **kwargs)
+    envoltorio.llamadas = 0
+    envoltorio.__name__ = f.__name__
+    return envoltorio
+
+# 2. Cierre vectorizado: una suma por celda (caja, medio)
+def cierre(caja, medio, importe, anulada, n_cajas, n_medios):
+    caja = np.asarray(caja)
+    medio = np.asarray(medio)
+    if len(caja) and (caja.min() < 0 or caja.max() >= n_cajas):
+        raise ValueError("codigo de caja fuera de rango")
+    if len(medio) and (medio.min() < 0 or medio.max() >= n_medios):
+        raise ValueError("codigo de medio fuera de rango")
+    vale = ~np.asarray(anulada, dtype=bool)
+    # en int64: con int8, caja * n_medios desborda a partir de 32
+    celda = caja[vale].astype(np.int64) * n_medios + medio[vale]
+    suma = np.bincount(celda, weights=np.asarray(importe)[vale],
+                       minlength=n_cajas * n_medios)
+    return np.round(suma.reshape(n_cajas, n_medios), 2)
+
+# 3. Cuadre del efectivo
+def cuadre(totales, declarado, tolerancia):
+    fuera = []
+    for c in range(len(declarado)):
+        d = round(float(declarado[c]) - float(totales[c][0]), 2)
+        if abs(d) > tolerancia:
+            fuera.append((c, d))
+    fuera.sort(key=lambda t: (-abs(t[1]), t[0]))
+    return fuera
+
+# 4. Mejora y techo al acelerar algunas funciones
+def mejora(perfil, factores):
+    peso = {k: n * c for k, (n, c) in perfil.items()}
+    total = sum(peso.values())
+    for k, s in factores.items():
+        if k not in peso:
+            raise KeyError(k)
+        if s < 1:
+            raise ValueError("un factor no puede ser menor que 1")
+    tocado = sum(peso[k] for k in factores)
+    acelerado = sum(peso[k] / s for k, s in factores.items())
+    nuevo = total - tocado + acelerado
+    resto = total - tocado
+    techo = math.inf if resto == 0 else total / resto
+    return total / nuevo, techo
+
+# 5. Busqueda de un interbloqueo entre dos planes
+def interbloqueo(plan_a, plan_b):
+    planes = {"A": plan_a, "B": plan_b}
+
+    def bloqueado(h, i, duenos):
+        if i[h] >= len(planes[h]):
+            return False
+        accion, cual = planes[h][i[h]]
+        return accion == "toma" and duenos.get(cual) not in (None, h)
+
+    inicio = ({"A": 0, "B": 0}, {})
+    frontera = [(inicio, [])]
+    vistos = set()
+    while frontera:
+        siguiente = []
+        for (i, duenos), camino in frontera:
+            clave = (i["A"], i["B"], tuple(sorted(duenos.items())))
+            if clave in vistos:
+                continue
+            vistos.add(clave)
+            if bloqueado("A", i, duenos) and bloqueado("B", i, duenos):
+                return camino
+            for h in ("A", "B"):
+                if i[h] >= len(planes[h]) or bloqueado(h, i, duenos):
+                    continue
+                accion, cual = planes[h][i[h]]
+                d2 = dict(duenos)
+                if accion == "toma":
+                    d2[cual] = h
+                else:
+                    d2.pop(cual, None)
+                i2 = dict(i)
+                i2[h] += 1
+                siguiente.append(((i2, d2), camino + [h]))
+        frontera = siguiente
+    return None
+
+# 6. Informe
+for nombre in ("normaliza", "clasifica", "acumula", "cierre_lento"):
+    globals()[nombre] = cuenta(globals()[nombre])
+M = 20000
+cierre_lento(caja[:M], medio[:M], importe[:M], anulada[:M])
+perfil = {k: (globals()[k].llamadas, COSTE[k]) for k in COSTE}
+peso = {k: n * c for k, (n, c) in perfil.items()}
+mas_pesada = max(peso, key=peso.get)
+
+t0 = time.perf_counter()
+totales = cierre(caja, medio, importe, anulada, CAJAS, MEDIOS)
+segundos = time.perf_counter() - t0
+descuadres = cuadre(totales, declarado, 0.50)
+
+print("llamadas en el cierre lento sobre %d filas:" % M)
+for k in sorted(peso, key=peso.get, reverse=True):
+    print("  %-12s %7d llamadas, peso %8d (%.1f %%)"
+          % (k, perfil[k][0], peso[k],
+             100 * peso[k] / sum(peso.values())))
+m, t = mejora(perfil, {mas_pesada: 10})
+print("acelerar %s 10 veces: mejora %.2f, techo %.2f"
+      % (mas_pesada, m, t))
+print("cierre de %d transacciones: %.3f s" % (N, segundos))
+print("total de la cadena       : %.2f" % totales.sum())
+print("cajas descuadradas (> 0.50):", len(descuadres))
+for c, d in descuadres[:5]:
+    print("  caja %2d: declarado menos esperado = %7.2f" % (c, d))
+print("interbloqueo cajero/supervisor:",
+      interbloqueo(CAJERO, SUPERVISOR))
+print("con el mismo orden           :",
+      interbloqueo(CAJERO, CAJERO))
+```
+
+Sobre las primeras 20 000 transacciones, `normaliza`, `clasifica` y `acumula` se llaman 19 622 veces cada una, una por transacción no anulada, y `cierre_lento` una sola vez. Por peso, `acumula` ocupa el 48,5 % y `cierre_lento`, con un coste por llamada de 5000, solo el 3,1 %. Acelerar `acumula` 10 veces da una mejora de 1,77, y su techo, con `acumula` a coste cero, es 1,94: por mucho que se optimice esa función, el cierre no llega a ir dos veces más rápido. El cierre vectorizado convierte cada par `(caja, medio)` en un número de celda y suma por celdas en una sola pasada; en un portátil tarda unos 0,07 segundos sobre los cinco millones de filas, lo mismo que la referencia de la comprobación. Agrupar con una tabla de pandas por caja y medio tarda unas tres veces más y también cumple el requisito 3; recorrer las transacciones con un bucle de Python tarda entre 1,6 y 2,7 segundos, entre 23 y 41 veces la referencia. Hacer la cuenta del número de celda con los enteros de 8 bits de los datos desbordaría a partir de la caja 32 y mezclaría las sumas de cajas distintas sin ningún error. Cuatro cajas no cuadran, la mayor con 17,99 de menos. `CAJERO` y `SUPERVISOR` toman los dos cerrojos en orden cruzado y se interbloquean en dos turnos, `['A', 'B']`; dos procesos con el mismo orden no se interbloquean nunca, que es la Proposición 27.8.
+:::
