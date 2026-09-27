@@ -5155,6 +5155,50 @@ niveles). El borrador tenía una demostración de intercambio que no era
 rigurosa y atribuía el resultado a autores que no se pueden citar con las
 reglas 3 y 4; se sustituyó por la comprobación y se declara en Fuentes.
 
+### 3.97 Entregables: catálogo (27-09-2026)
+
+Luis pidió llevar a todo el sitio el formato de los entregables del curso de
+Python del INCAE (regla 25): programas completos desde cero, dificultad
+creciente, sin indicar qué herramienta usar, y con los mismos sistemas
+volviendo con NumPy y pandas. Catálogo, con la lección a partir de la cual se
+puede resolver cada uno:
+
+| N | Desde | Sistema | Qué pide |
+|---|---|---|---|
+| 01 | Fund. 03 | Caja registradora | subtotal, impuesto, descuento por monto, cambio en billetes y monedas |
+| 02 | Fund. 04 | Nómina semanal | horas por día, horas extra, deducciones escalonadas, entradas inválidas |
+| 03 | Fund. 06 | Dados | conteo, frecuencias, rachas, suma hasta 1000, categorías (piloto) |
+| 04 | Fund. 07 | Lista de compras | procesar una secuencia de comandos (agregar, quitar, total, existe) |
+| 05 | Fund. 08 | Inventario | entradas y salidas, agotados, reposición, productos sin movimiento |
+| 06 | Fund. 09 | Tickets como texto | leer líneas «cant x producto @ precio», errores de formato, ticket alineado |
+| 07 | Fund. 10 | Conversor de monedas | funciones probadas con datos nuevos, conversiones encadenadas |
+| 08 | Fund. 10 | Empleados | altas, bajas, cambios de salario, informe por departamento, por comandos |
+| 09 | Fund. 11 | Calificaciones | promedios ponderados, letras, ranking con empates, estadísticas |
+| 10 | Fund. 12 | Reservas de una sala | asientos contiguos para grupos, rechazos, ocupación |
+| 11 | Fund. 12 | Fila de cajas | espera media y máxima, número de cajas para una espera objetivo |
+| 12 | Fund. 12 | Caja completa | catálogo, promociones 2x1, por categoría y por volumen, cuadre de caja |
+| 13 | Py. 02 | Caja con funciones | funciones puras, promociones como funciones, estado encapsulado |
+| 14 | Py. 03 | Flujo de transacciones | un millón de transacciones sin guardarlas, totales por hora |
+| 15 | Py. 04 | Tickets desde archivos | archivos con errores, registro de líneas inválidas, resumen escrito |
+| 16 | Py. 06 | Caja con NumPy | un millón de tickets con requisito de tiempo |
+| 17 | Py. 07 | Dados con NumPy | diez millones de tiradas, varios jugadores, frecuencias conjuntas |
+| 18 | Py. 08 | Afluencia por minuto | ventanas, medias móviles, picos |
+| 19 | Py. 10 | Limpieza de transacciones | CSV sucio: fechas, duplicados, nulos, tipos |
+| 20 | Py. 11 | Catálogo y ventas | uniones, huérfanos, formato ancho y largo |
+| 21 | Py. 12 | Informe de ventas | agregados por categoría, hora y día, cesta media, participación |
+| 22 | Py. 13 | Informe visual | gráficos del cuadre diario |
+| 23 | Py. 14 | Ventas diarias | remuestreo, estacionalidad semanal, feriados |
+| 24 | Py. 15 | Escala | diez millones de filas con requisito de tiempo y memoria |
+| 25 | Py. 17 | Caja con clases | catálogo, caja y promociones como clases y protocolos |
+| 26 | Py. 19 | Validación y caché | decoradores y anotaciones de tipo |
+| 27 | Py. 20 | Nombres de productos | normalización de texto y búsqueda |
+| 28 | Py. 21 | Ventas en SQL | la misma pregunta en SQL y en pandas |
+| 29 | Py. 22 | Tipo de cambio | servicio simulado que falla, reintentos |
+| 30 | Py. 23 | Archivo histórico | formatos columnares |
+| 31 | Py. 25 | Sistema probado | pruebas y depuración de la caja completa |
+| 32 | Py. 27 | Rendimiento | perfilado y concurrencia del cierre de caja |
+| 33 | Py. 30 | Cadena en varios países | datos que no caben, categóricos, zonas horarias |
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

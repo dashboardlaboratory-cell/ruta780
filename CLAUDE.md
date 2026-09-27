@@ -17,6 +17,7 @@ python3 verificar/salidas.py     && \
 python3 verificar/formato.py     && \
 python3 verificar/tono.py --estricto && \
 python3 verificar/ejercicios.py --estricto && \
+python3 verificar/entregables.py && \
 python3 verificar/visuales.py --estricto
 ```
 
@@ -137,21 +138,27 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
     · Ninguna línea de la celda ni de la solución pasa de 72 caracteres: el
       cuadro de código no se desplaza en horizontal.
 
-15. **Cero contexto de su empresa.** Nada de CBTL, tiendas, tickets,
-    sucursales, Multiplaza, café. Ejemplos neutros y clásicos: dados, pesos
-    al nacer, ingresos, los datasets que usan los propios libros.
-16. **Todo símbolo se declara** en la tabla `::: {.notacion}` al inicio y
-    en su primer uso. `n` = tamaño de la muestra, siempre.
-17. **Todo término técnico va al glosario** (`glosario/glosario.json`) y se
-    marca en el texto como `[término]{.g}` (o `[flexión]{.g data-t="clave"}`).
-18. **Hilo explícito** con `:::: {.hilo}`: *De dónde viene* (lecciones y
-    resultados concretos que usa) y *Para qué sirve después* (lecciones y
-    métodos concretos que lo necesitan). Nombrados, no vagos.
-19. **Citar textualmente, no parafrasear**, en `::: {.cita-libro}` con
-    sección y licencia. Think Stats es CC BY-NC-SA: se puede citar con
-    libertad. MML, ISLP y McKinney tienen copyright: solo definiciones de
-    una o dos frases, con atribución. Si no se puede extraer el texto de
-    forma verificable, no se cita y se dice.
+25. **Entregables (27-09-2026, a partir de los del curso de Python del INCAE).**
+    Además de los ejercicios de cada lección, `fundamentos/entregable-NN.qmd` y
+    `python/entregable-NN.qmd` son programas completos que se escriben desde
+    el principio a partir de una especificación con requisitos numerados. Su
+    valor está en que **el enunciado dice qué debe hacer el programa y nunca
+    con qué herramienta**: quien resuelve decide si usa listas, diccionarios,
+    funciones, NumPy o pandas, con todo lo aprendido hasta ahí. La dificultad
+    crece, y los mismos sistemas (caja de supermercado, inventario, nómina,
+    dados, fila de cajas, reservas) vuelven más adelante con más datos y más
+    reglas: lo que se resolvió con listas se rehace con NumPy y con pandas, y
+    un requisito de tiempo obliga a vectorizar sin decirlo. Desde que hay
+    funciones, la comprobación llama a las funciones con datos nuevos, para que
+    no se pueda acertar copiando cifras. `verificar/entregables.py` comprueba
+    que la solución de referencia pasa, que la plantilla vacía no pasa y que el
+    enunciado no prescribe herramientas. El catálogo está en `ESTADO.md` §3.97.
+
+15. **Cero contexto de su empresa.** Nada de CBTL, café, Multiplaza ni datos
+    reales de su trabajo. Desde el 27-09-2026 (pedido de Luis) sí se admiten los
+    casos clásicos de programación de supermercado, caja, inventario o nómina,
+    siempre con datos sintéticos generados en la celda. En las lecciones siguen
+    siendo preferibles los ejemplos neutros de los libros.
 
 19b. **Un control que no mueve el dibujo es un control roto.** Encontrado por
     Luis el 12-09-2026 en `estadistica/08`: los dos paneles reescalaban sus
