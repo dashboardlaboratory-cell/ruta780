@@ -189,6 +189,7 @@ LIMPIAS = [
     "ml/40-regularizacion-y-dropout.qmd",
     "ml/41-convolucion-y-vision.qmd",
     "ml/42-discriminante-regularizado.qmd",
+    "ml/43-discriminante-flexible.qmd",
     "ml/index.qmd",
     "python/01-tipos-y-estructuras.qmd",
     "python/02-funciones-y-scope.qmd",

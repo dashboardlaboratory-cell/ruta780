@@ -5251,6 +5251,19 @@ con una covarianza aleatoria distinta por clase, hacía ganar siempre a QDA; se
 cambió por una común con perturbaciones pequeñas, que es el caso en que el
 discriminante regularizado tiene sentido.
 
+### 3.100 ML 43: discriminante flexible (27-09-2026)
+
+La puntuación óptima (regresión lineal de las indicadoras de clase más un
+problema de autovalores) da las mismas predicciones que LDA en las 8000 filas
+de prueba. Con una base polinómica, clases en anillos con un 8 % de etiquetas
+cambiadas bajan de 0,4375 (LDA) y 0,3624 (QDA) a 0,0978 con grado 4; el mínimo
+es 0,0533. El discriminante penalizado ayuda con pocas filas por columna (80
+filas, 44 columnas: 0,2582 → 0,1601) y perjudica con 300. Una primera tabla con
+300 y 1500 filas no mostraba ninguna ganancia de la penalización; en lugar de
+forzar la conclusión se midió con menos filas, donde la teoría dice que
+importa. La sesión se cortó con la lección escrita y sin registrar; se retomó
+sin pérdidas.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

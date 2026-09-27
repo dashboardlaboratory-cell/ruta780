@@ -1,0 +1,528 @@
+---
+title: "Discriminante flexible: fronteras no lineales"
+subtitle: "Machine Learning · Lección 43"
+nivel: L3
+modulo: ml
+fase: F3
+prereqs: [ml/42-discriminante-regularizado, ml/27-expansiones-en-base, ml/08-ridge-y-lasso]
+siguientes: []
+libro: "ESL §12.5 Flexible Discriminant Analysis · §12.6 Penalized Discriminant Analysis"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="ml/43-discriminante-flexible"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F3]{.item}
+[**Libro** ESL 12.5 · 12.6]{.item}
+[**Prereqs** [Discriminante regularizado](42-discriminante-regularizado.qmd) · [Expansiones en base](27-expansiones-en-base.qmd) · [Ridge y lasso](08-ridge-y-lasso.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Calcular LDA mediante puntuación óptima: una regresión lineal de las indicadoras de clase seguida de un problema de autovalores. En la celda, las predicciones coinciden con las de LDA en todas las filas de prueba.
+2. Definir el discriminante flexible, que sustituye la regresión lineal por una regresión sobre una base no lineal, y medir que con clases en anillos baja el error de 0,4375 de LDA y 0,3624 de QDA a 0,0978 con polinomios de grado 4.
+3. Definir el discriminante penalizado y medir cuándo ayuda la penalización: con 80 filas y 44 columnas el error baja de 0,2582 a 0,1601; con 300 filas la penalización lo sube.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 42**: LDA como clasificación en las variables canónicas.
+- **Machine Learning 27**: las expansiones en base, que convierten una regresión lineal en una no lineal.
+- **Machine Learning 8**: ridge, la penalización cuadrática de los coeficientes.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 44**: el discriminante por mezclas, otra forma de obtener fronteras no lineales.
+- **Machine Learning 45**: el discriminante con variables mixtas, que usa la base de esta lección con columnas categóricas.
+- **Machine Learning 31**: MARS, que se puede usar como regresión dentro del discriminante flexible.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $K$ | ka | Número de clases |
+| $Y$ | ye mayúscula | Matriz de indicadoras de clase, $n\times K$ |
+| $\theta$ | theta | Vector de puntuaciones de las clases |
+| $h(x)$ | hache de equis | Vector de funciones de base evaluadas en $x$ |
+| $\eta(x)$ | eta de equis | Puntuación ajustada de una fila |
+| $r^2$ | erre cuadrado | Autovalor de la puntuación óptima |
+| $\lambda$ | lambda | Peso de la penalización |
+| $\Omega$ | omega mayúscula | Matriz de la penalización cuadrática |
+| $\beta$ | beta | Coeficientes de la regresión de las puntuaciones |
+| $\Sigma_W$ | sigma sub doble uve | Covarianza común dentro de las clases |
+| $p$ | pe | Número de variables |
+| $\alpha$ | alfa | Peso de la covarianza propia en el discriminante regularizado de la Lección 42 |
+:::
+
+## 1. Puntuación óptima
+
+::: {.definicion}
+**Definición 43.1 ([puntuación óptima]{.g}).** Asignar a cada clase $k$ una puntuación $\theta_k$ y buscar a la vez las puntuaciones y los coeficientes $\beta$ que minimizan $\sum_i(\theta_{g_i}-x_i^\top\beta)^2$, con las puntuaciones centradas y de varianza unitaria. Con $K$ clases hay $K-1$ soluciones no triviales, ortogonales entre sí, que se obtienen como autovectores de $Y^\top\hat Y$ en la métrica de las proporciones de clase, donde $\hat Y$ es el ajuste de la regresión lineal de $Y$ sobre $X$.
+:::
+
+::: {.proposicion}
+**Proposición 43.2 (LDA como regresión).** Clasificar por el centroide más cercano en el espacio de las puntuaciones ajustadas $\eta_\ell(x)$, con pesos $1/(r_\ell^2(1-r_\ell^2))$, da las mismas predicciones que LDA. En la celda, con 4 clases y 5 variables, hay 3 puntuaciones no triviales y las predicciones coinciden en las 8000 filas de prueba.
+:::
+
+::: {.demostracion}
+*Demostración.* El ajuste $\eta_\ell(x)=x^\top\beta_\ell$ de cada puntuación óptima es proporcional a una variable canónica de la Lección 42, porque la regresión de las indicadoras sobre $X$ pasa por la covarianza común y la de los centroides. El factor de proporcionalidad depende de $r_\ell^2$, y los pesos $1/(r_\ell^2(1-r_\ell^2))$ lo deshacen, de modo que la distancia ponderada en el espacio de las $\eta_\ell$ es la distancia de Mahalanobis de LDA. La celda lo comprueba con la regla de LDA de la Lección 42. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def lda_ajusta(H, y, lam=0.0):
+    """LDA sobre las columnas de H; lam suma lam*I a la covarianza comun
+    (discriminante penalizado)."""
+    K = y.max() + 1
+    mu = np.array([H[y == k].mean(0) for k in range(K)])
+    R = H - mu[y]
+    W = R.T @ R / (len(y) - K) + lam * np.eye(H.shape[1])
+    Wi = np.linalg.pinv(W)
+    logpi = np.log(np.bincount(y) / len(y))
+    return mu, Wi, logpi
+
+def lda_predice(m, H):
+    mu, Wi, logpi = m
+    s = H @ Wi @ mu.T - 0.5 * np.einsum("kj,jl,kl->k", mu, Wi, mu) + logpi
+    return np.argmax(s, axis=1)
+
+def base_polinomica(X, grado):
+    """Todos los monomios de x1 y x2 de grado 1 a 'grado'."""
+    cols = [X[:, 0] ** i * X[:, 1] ** j for g in range(1, grado + 1)
+            for i in range(g + 1) for j in [g - i]]
+    return np.column_stack(cols)
+
+def estandariza(H, Ht):
+    """Centra y escala las columnas con la media y la desviacion del entrenamiento."""
+    m, s = H.mean(0), H.std(0)
+    return (H - m) / s, (Ht - m) / s
+
+def puntuacion_optima(X, y):
+    """Regresion lineal de las indicadoras de clase sobre X y puntuaciones
+    optimas: autovectores de Y'Yhat con la restriccion Theta' D Theta = I."""
+    n, K = len(y), y.max() + 1
+    Y = np.eye(K)[y]
+    A = np.column_stack([np.ones(n), X])
+    B = np.linalg.lstsq(A, Y, rcond=None)[0]
+    Yh = A @ B
+    D = np.diag(np.bincount(y) / n)
+    # problema generalizado Y'Yh/n theta = r2 D theta
+    M = np.linalg.solve(D, Y.T @ Yh / n)
+    r2, Th = np.linalg.eig(M)
+    orden = np.argsort(-np.real(r2)); r2, Th = np.real(r2[orden]), np.real(Th[:, orden])
+    Th = Th / np.sqrt(np.einsum("kl,kk,kl->l", Th, D, Th))
+    keep = r2 < 1 - 1e-9                       # la puntuacion trivial (constante) tiene r2 = 1
+    r2, Th = r2[keep], Th[:, keep]
+    return A, B, Th, r2
+
+rng = np.random.default_rng(12)
+K, p, n = 4, 5, 400
+M = rng.standard_normal((K, p)) * 1.3
+X = np.vstack([M[k] + rng.standard_normal((n // K, p)) for k in range(K)])
+y = np.repeat(np.arange(K), n // K)
+Xt = np.vstack([M[k] + rng.standard_normal((2000, p)) for k in range(K)])
+yt = np.repeat(np.arange(K), 2000)
+
+A, B, Th, r2 = puntuacion_optima(X, y)
+eta = lambda Z: np.column_stack([np.ones(len(Z)), Z]) @ B @ Th
+w = 1.0 / (r2 * (1 - r2))                     # pesos de la distancia en el espacio ajustado
+cent = np.array([eta(X[y == k]).mean(0) for k in range(K)])
+def por_puntuacion(Z):
+    d = (((eta(Z)[:, None, :] - cent[None]) ** 2) * w).sum(axis=2)
+    return np.argmin(d - 2 * np.log(np.bincount(y) / len(y)), axis=1)
+p_os, p_lda = por_puntuacion(Xt), lda_predice(lda_ajusta(X, y), Xt)
+print("cuatro clases, cinco variables")
+print("  puntuaciones no triviales                    : %d" % len(r2))
+print("  predicciones iguales a las de LDA            : %s" % bool(np.all(p_os == p_lda)))
+print("  error de prueba, LDA                         : %.4f" % np.mean(p_lda != yt))
+```
+
+## 2. Discriminante flexible
+
+::: {.definicion}
+**Definición 43.3 ([discriminante flexible]{.g}).** La puntuación óptima con la regresión lineal sustituida por una regresión no paramétrica: sobre una base de funciones $h(x)$, un spline o MARS. Con una base fija y sin penalización, equivale a LDA sobre las columnas $h(x)$.
+:::
+
+::: {.proposicion}
+**Proposición 43.4 (fronteras no lineales).** Con tres clases dispuestas en un disco, un anillo y el exterior, 600 filas y un 8 % de etiquetas cambiadas al azar, el error de prueba es 0,4375 con LDA y 0,3624 con QDA. El discriminante flexible con polinomios de $x_1$ y $x_2$ da 0,1777 con grado 2, 0,1816 con grado 3, 0,0978 con grado 4 y 0,1195 con grado 6. El error mínimo que imponen las etiquetas cambiadas es 0,0533.
+:::
+
+::: {.demostracion}
+*Demostración.* La frontera entre dos clases en el discriminante flexible es el conjunto donde se igualan dos funciones de $\eta(x)$, y cada $\eta_\ell$ es una combinación lineal de $h(x)$. Con polinomios de grado 2, las fronteras son cónicas y pueden rodear el disco; con grado 4 aproximan mejor los dos círculos. Con grado 6 hay 27 columnas para 600 filas y la varianza de los coeficientes empieza a dominar. El error mínimo es la fracción de etiquetas cambiadas que acaban en otra clase: $0{,}08\cdot 2/3$. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def lda_ajusta(H, y, lam=0.0):
+    """LDA sobre las columnas de H; lam suma lam*I a la covarianza comun
+    (discriminante penalizado)."""
+    K = y.max() + 1
+    mu = np.array([H[y == k].mean(0) for k in range(K)])
+    R = H - mu[y]
+    W = R.T @ R / (len(y) - K) + lam * np.eye(H.shape[1])
+    Wi = np.linalg.pinv(W)
+    logpi = np.log(np.bincount(y) / len(y))
+    return mu, Wi, logpi
+
+def lda_predice(m, H):
+    mu, Wi, logpi = m
+    s = H @ Wi @ mu.T - 0.5 * np.einsum("kj,jl,kl->k", mu, Wi, mu) + logpi
+    return np.argmax(s, axis=1)
+
+def base_polinomica(X, grado):
+    """Todos los monomios de x1 y x2 de grado 1 a 'grado'."""
+    cols = [X[:, 0] ** i * X[:, 1] ** j for g in range(1, grado + 1)
+            for i in range(g + 1) for j in [g - i]]
+    return np.column_stack(cols)
+
+def estandariza(H, Ht):
+    """Centra y escala las columnas con la media y la desviacion del entrenamiento."""
+    m, s = H.mean(0), H.std(0)
+    return (H - m) / s, (Ht - m) / s
+
+def anillos(n, semilla):
+    """Tres clases por el radio: disco, anillo y exterior, con un 8 % de
+    etiquetas cambiadas al azar."""
+    rng = np.random.default_rng(semilla)
+    X = rng.uniform(-3, 3, (n, 2))
+    r = np.hypot(X[:, 0], X[:, 1])
+    y = np.where(r < 1.1, 0, np.where(r < 2.2, 1, 2))
+    cambia = rng.random(n) < 0.08
+    y[cambia] = rng.integers(0, 3, cambia.sum())
+    return X, y
+
+def qda(X, y, Xt):
+    s = []
+    for k in range(3):
+        mu, S = X[y == k].mean(0), np.cov(X[y == k].T)
+        d = Xt - mu
+        s.append(-0.5 * np.linalg.slogdet(S)[1] - 0.5 * np.einsum("ij,ij->i", d @ np.linalg.inv(S), d)
+                 + np.log(np.mean(y == k)))
+    return np.argmax(np.array(s), axis=0)
+
+X, y = anillos(600, 1); Xt, yt = anillos(20000, 2)
+print("tres clases en anillos, 600 filas; error de prueba")
+print("  LDA sobre x1, x2                      : %.4f" % np.mean(lda_predice(lda_ajusta(X, y), Xt) != yt))
+print("  QDA                                   : %.4f" % np.mean(qda(X, y, Xt) != yt))
+for g in (2, 3, 4, 6):
+    H, Ht = base_polinomica(X, g), base_polinomica(Xt, g)
+    print("  flexible, polinomios de grado %d (%2d columnas): %.4f"
+          % (g, H.shape[1], np.mean(lda_predice(lda_ajusta(H, y), Ht) != yt)))
+print("  error minimo, por las etiquetas cambiadas (0.08 * 2/3): %.4f" % (0.08 * 2 / 3))
+```
+
+```{=html}
+<div class="viz-fda">
+  <div class="controles">
+    <label>Grado de la base <input id="fd-g" type="range" min="1" max="9" step="1" value="1"> <span id="fd-g-v">1</span></label>
+    <label>Penalización λ <input id="fd-l" type="range" min="-4" max="1" step="0.25" value="-4"> <span id="fd-l-v">0,0001</span></label>
+  </div>
+  <svg id="fd-svg" viewBox="0 0 660 280" role="img" aria-label="Dos clases en una variable, la clase interior entre dos cortes, la puntuación ajustada por regresión sobre una base polinómica y las regiones de decisión que produce."></svg>
+  <p class="lectura" id="fd-lectura"></p>
+</div>
+<style>
+.viz-fda { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-fda .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-fda label { display: flex; align-items: center; gap: .4rem; }
+.viz-fda input[type=range] { width: 150px; padding: 0; }
+.viz-fda svg { width: 100%; height: auto; display: block; }
+.viz-fda .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("fd-svg"), lec = document.getElementById("fd-lectura");
+  var cg = document.getElementById("fd-g"), cl = document.getElementById("fd-l");
+  var eg = document.getElementById("fd-g-v"), el_ = document.getElementById("fd-l-v");
+  var X0 = 50, X1 = 630, Y0 = 20, Y1 = 220, XL = 3;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // 70 puntos fijos: clase 1 si |x| < 1.2, con un 10 % de etiquetas cambiadas
+  var s = 7, xs = [], ys = [], i;
+  function u() { s = (s * 48271) % 2147483647; return s / 2147483647; }
+  for (i = 0; i < 70; i++) { var x = -XL + 2 * XL * u(), c = Math.abs(x) < 1.2 ? 1 : 0; if (u() < 0.1) c = 1 - c; xs.push(x); ys.push(c ? 1 : -1); }
+  function fila(x, g) { var r = [1], k; for (k = 1; k <= g; k++) r.push(Math.pow(x / XL, k)); return r; }
+  function resuelve(A, b) {
+    var n = b.length, M = A.map(function (r, i) { return r.concat([b[i]]); }), i, j, k;
+    for (i = 0; i < n; i++) {
+      var piv = i; for (j = i + 1; j < n; j++) if (Math.abs(M[j][i]) > Math.abs(M[piv][i])) piv = j;
+      var t = M[i]; M[i] = M[piv]; M[piv] = t;
+      for (j = i + 1; j < n; j++) { var f = M[j][i] / M[i][i]; for (k = i; k <= n; k++) M[j][k] -= f * M[i][k]; }
+    }
+    var sol = new Array(n);
+    for (i = n - 1; i >= 0; i--) { var sum = M[i][n]; for (k = i + 1; k < n; k++) sum -= M[i][k] * sol[k]; sol[i] = sum / M[i][i]; }
+    return sol;
+  }
+  function px(x) { return X0 + (x + XL) / (2 * XL) * (X1 - X0); }
+  function py(v) { return (Y0 + Y1) / 2 - Math.max(-2, Math.min(2, v)) / 2 * (Y1 - Y0) / 2; }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var g = +cg.value, lam = Math.pow(10, +cl.value), n = xs.length, j, k;
+    eg.textContent = String(g); el_.textContent = lam < 0.01 ? lam.toFixed(4).replace(".", ",") : lam.toFixed(2).replace(".", ",");
+    var A = [], b = [];
+    for (j = 0; j <= g; j++) { A.push(new Array(g + 1).fill(0)); b.push(0); }
+    for (i = 0; i < n; i++) { var h = fila(xs[i], g); for (j = 0; j <= g; j++) { b[j] += h[j] * ys[i]; for (k = 0; k <= g; k++) A[j][k] += h[j] * h[k]; } }
+    for (j = 1; j <= g; j++) A[j][j] += lam * n;            // el intercepto no se penaliza
+    var coef = resuelve(A, b);
+    function f(x) { var h = fila(x, g), v = 0; for (j = 0; j <= g; j++) v += coef[j] * h[j]; return v; }
+    // regiones de decision: signo de la puntuacion
+    var paso = 0.02, x, prev = f(-XL) > 0, ini = -XL, cortes = 0, tramos = [];
+    for (x = -XL + paso; x <= XL + 1e-9; x += paso) {
+      var act = f(x) > 0;
+      if (act !== prev) { tramos.push([ini, x, prev]); ini = x; prev = act; cortes++; }
+    }
+    tramos.push([ini, XL, prev]);
+    tramos.forEach(function (t) {
+      svg.appendChild(el("rect", { x: px(t[0]).toFixed(1), y: Y0, width: (px(t[1]) - px(t[0])).toFixed(1), height: Y1 - Y0, fill: t[2] ? C_B : C_A, "fill-opacity": 0.1 }));
+    });
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(0) + " L" + X1 + " " + py(0), stroke: C_L, "stroke-width": 1 }));
+    [-1.2, 1.2].forEach(function (c) {
+      svg.appendChild(el("path", { d: "M" + px(c).toFixed(1) + " " + Y0 + " L" + px(c).toFixed(1) + " " + Y1, stroke: C_T, "stroke-width": 1, "stroke-dasharray": "4 4", opacity: 0.5 }));
+    });
+    var err = 0;
+    for (i = 0; i < n; i++) {
+      var pred = f(xs[i]) > 0 ? 1 : -1; if (pred !== ys[i]) err++;
+      svg.appendChild(el("circle", { cx: px(xs[i]).toFixed(1), cy: py(ys[i] * 0.9).toFixed(1), r: 3.6, fill: ys[i] > 0 ? C_B : C_A, "fill-opacity": 0.8 }));
+    }
+    var d = "";
+    for (x = -XL; x <= XL + 1e-9; x += 0.02) d += (x === -XL ? "M" : " L") + px(x).toFixed(1) + " " + py(f(x)).toFixed(1);
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_T, "stroke-width": 2.4 }));
+    [-3, -2, -1, 0, 1, 2, 3].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y1 + 18, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, String(v)));
+    });
+    lec.innerHTML = "Con una base de grado <strong>" + g + "</strong> y λ = " + el_.textContent + ", la puntuación ajustada (curva negra) cambia de signo <strong>" + cortes +
+      "</strong> vez" + (cortes === 1 ? "" : "es") + " y separa <strong>" + tramos.length + "</strong> región" + (tramos.length === 1 ? "" : "es") +
+      ". El error de entrenamiento es <strong>" + err + "</strong> de " + n + ". La clase roja ocupa el tramo entre −1,2 y 1,2, las líneas discontinuas: con grado 1 la frontera es un solo corte y no puede aislar ese tramo; " +
+      "con grado 2 o más aparecen dos cortes, y con grado alto y λ pequeño la curva sigue las etiquetas cambiadas. Subir λ la suaviza.";
+  }
+  cg.addEventListener("input", dibujar); cl.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Discriminante penalizado
+
+::: {.definicion}
+**Definición 43.5 ([discriminante penalizado]{.g}).** El discriminante flexible con una penalización cuadrática $\lambda\,\beta^\top\Omega\beta$ en la regresión. Equivale a LDA sobre $h(x)$ con la covarianza común sustituida por $\Sigma_W+\lambda\Omega$. En la celda, $\Omega=I$ sobre columnas estandarizadas.
+:::
+
+::: {.proposicion}
+**Proposición 43.6 (cuándo ayuda la penalización).** Con polinomios de grado 8, que son 44 columnas, y 20 muestras por tamaño, el error medio de prueba es el de la tabla. Con 80 y 120 filas el mínimo está en $\lambda=0{,}03$; con 300 filas, en $\lambda=0$.
+
+| $\lambda$ | 80 filas | 120 filas | 300 filas |
+|---|---|---|---|
+| 0 | 0,2582 | 0,1689 | 0,1086 |
+| 0,01 | 0,1662 | 0,1449 | 0,1187 |
+| 0,03 | 0,1601 | 0,1437 | 0,1128 |
+| 0,1 | 0,1793 | 0,1659 | 0,1405 |
+| 0,3 | 0,2107 | 0,2057 | 0,1905 |
+:::
+
+::: {.demostracion}
+*Demostración.* Con 80 filas y 44 columnas, la covarianza común tiene autovalores pequeños mal estimados y su inversa da fronteras que siguen el ruido. Sumar $\lambda I$ acota esos autovalores por debajo, igual que ridge en Machine Learning 8, y reduce la varianza a costa de sesgo. Con 300 filas la covarianza está bien estimada, el sesgo pasa a dominar y la penalización empeora el error. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def lda_ajusta(H, y, lam=0.0):
+    """LDA sobre las columnas de H; lam suma lam*I a la covarianza comun
+    (discriminante penalizado)."""
+    K = y.max() + 1
+    mu = np.array([H[y == k].mean(0) for k in range(K)])
+    R = H - mu[y]
+    W = R.T @ R / (len(y) - K) + lam * np.eye(H.shape[1])
+    Wi = np.linalg.pinv(W)
+    logpi = np.log(np.bincount(y) / len(y))
+    return mu, Wi, logpi
+
+def lda_predice(m, H):
+    mu, Wi, logpi = m
+    s = H @ Wi @ mu.T - 0.5 * np.einsum("kj,jl,kl->k", mu, Wi, mu) + logpi
+    return np.argmax(s, axis=1)
+
+def base_polinomica(X, grado):
+    """Todos los monomios de x1 y x2 de grado 1 a 'grado'."""
+    cols = [X[:, 0] ** i * X[:, 1] ** j for g in range(1, grado + 1)
+            for i in range(g + 1) for j in [g - i]]
+    return np.column_stack(cols)
+
+def estandariza(H, Ht):
+    """Centra y escala las columnas con la media y la desviacion del entrenamiento."""
+    m, s = H.mean(0), H.std(0)
+    return (H - m) / s, (Ht - m) / s
+
+def anillos(n, semilla):
+    """Tres clases por el radio: disco, anillo y exterior, con un 8 % de
+    etiquetas cambiadas al azar."""
+    rng = np.random.default_rng(semilla)
+    X = rng.uniform(-3, 3, (n, 2))
+    r = np.hypot(X[:, 0], X[:, 1])
+    y = np.where(r < 1.1, 0, np.where(r < 2.2, 1, 2))
+    cambia = rng.random(n) < 0.08
+    y[cambia] = rng.integers(0, 3, cambia.sum())
+    return X, y
+
+def qda(X, y, Xt):
+    s = []
+    for k in range(3):
+        mu, S = X[y == k].mean(0), np.cov(X[y == k].T)
+        d = Xt - mu
+        s.append(-0.5 * np.linalg.slogdet(S)[1] - 0.5 * np.einsum("ij,ij->i", d @ np.linalg.inv(S), d)
+                 + np.log(np.mean(y == k)))
+    return np.argmax(np.array(s), axis=0)
+
+Xt, yt = anillos(20000, 2)
+print("polinomios de grado 8 (44 columnas), error de prueba medio en 20 muestras")
+print("  %-8s %10s %10s %10s" % ("lambda", "80 filas", "120 filas", "300 filas"))
+for lam in (0.0, 0.01, 0.03, 0.1, 0.3):
+    fila = []
+    for n in (80, 120, 300):
+        e = []
+        for s in range(20):
+            X, y = anillos(n, 100 + s)
+            H, Ht = estandariza(base_polinomica(X, 8), base_polinomica(Xt, 8))
+            e.append(np.mean(lda_predice(lda_ajusta(H, y, lam), Ht) != yt))
+        fila.append(np.mean(e))
+    print("  %-8g %10.4f %10.4f %10.4f" % (lam, fila[0], fila[1], fila[2]))
+```
+
+**Modo de falla.** El discriminante flexible se ajusta con una base de grado alto sobre pocas filas, el error de entrenamiento es casi cero y el de prueba es peor que el de QDA. El grado de la base y $\lambda$ son parámetros que se eligen con validación, igual que $\alpha$ en la Lección 42.
+
+## 4. Limitaciones
+
+La base polinómica crece con el número de variables: con $p$ variables y grado $g$ tiene del orden de $p^g$ columnas. Con muchas variables se usan bases aditivas, splines por variable o MARS, que ESL §12.5 emplea como regresión dentro del discriminante flexible.
+
+El discriminante flexible modela las fronteras, no las clases. Una clase formada por varios grupos separados se trata de forma más directa con una mezcla de normales por clase, que es la Lección 44.
+
+## Ejercicios
+
+### Ejercicio 1, Columnas de la base polinómica
+
+La celda define la lista `grados`. Completar la línea de `columnas` con el número de monomios de grado 1 a $g$ en dos variables, que es $g(g+3)/2$, para cada $g$. La lista debe dar 5, 14, 27 y 44.
+
+```{pyodide}
+#| exercise: ex_cols
+grados = [2, 4, 6, 8]
+
+columnas = [______ for g in grados]
+
+print(columnas)
+```
+
+::: {.hint exercise="ex_cols"}
+En grado $k$ hay $k+1$ monomios $x_1^i x_2^{k-i}$; la suma de $k+1$ para $k$ de 1 a $g$ es $g(g+3)/2$. La división debe ser entera.
+:::
+
+::: {.solution exercise="ex_cols"}
+```{pyodide}
+grados = [2, 4, 6, 8]
+
+columnas = [g * (g + 3) // 2 for g in grados]
+
+print(columnas)
+```
+
+Con grado 8 hay 44 columnas. Con 80 filas quedan menos de dos filas por columna, que es el caso en que la Proposición 43.6 mide la mayor ganancia de la penalización.
+:::
+
+```{pyodide}
+#| exercise: ex_cols
+#| check: true
+if columnas == [5, 14, 27, 44]:
+    feedback = {"correct": True, "message": "Correcto: 5, 14, 27 y 44."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [5, 14, 27, 44]."}
+feedback
+```
+
+### Ejercicio 2, Error mínimo con etiquetas cambiadas
+
+Si una fracción $q$ de las etiquetas se sustituye por una clase elegida al azar entre las $K$, una fracción $q(K-1)/K$ acaba en una clase distinta de la verdadera, y ningún clasificador baja de ese error. La celda define la lista `casos` de pares $(q, K)$. Completar la línea de `minimos`, redondeando a 4 decimales. La lista debe dar 0,0533, 0,1 y 0,08.
+
+```{pyodide}
+#| exercise: ex_min
+casos = [(0.08, 3), (0.2, 2), (0.1, 5)]
+
+minimos = [______ for q, K in casos]
+
+print(minimos)
+```
+
+::: {.hint exercise="ex_min"}
+Para cada par, `round(q * (K - 1) / K, 4)`.
+:::
+
+::: {.solution exercise="ex_min"}
+```{pyodide}
+casos = [(0.08, 3), (0.2, 2), (0.1, 5)]
+
+minimos = [round(q * (K - 1) / K, 4) for q, K in casos]
+
+print(minimos)
+```
+
+El primer caso es el de la Proposición 43.4: con grado 4 el discriminante flexible queda a 0,0445 de ese mínimo.
+:::
+
+```{pyodide}
+#| exercise: ex_min
+#| check: true
+if minimos == [0.0533, 0.1, 0.08]:
+    feedback = {"correct": True, "message": "Correcto: 0,0533, 0,1 y 0,08."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [0.0533, 0.1, 0.08]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **ML 43**:
+
+1. Sustituir la base polinómica por splines cúbicos de cada variable y comparar el error con el de grado 4 en los datos en anillos.
+2. Elegir el grado y $\lambda$ por validación cruzada con 150 filas y comparar con la mejor combinación de la tabla.
+3. Construir un caso con clases separadas por una frontera en forma de S y comparar QDA con el discriminante flexible. Guardar el caso en `50-Errores/`.
+
+## Del libro
+
+El capítulo 12 de ESL generaliza LDA en tres direcciones. La §12.5, *Flexible Discriminant Analysis*, reformula LDA como un problema de puntuación óptima, en el que se regresan puntuaciones de las clases sobre las variables, y sustituye la regresión lineal por una regresión no paramétrica, como MARS o un modelo aditivo, para obtener fronteras no lineales. La §12.6, *Penalized Discriminant Analysis*, añade una penalización cuadrática a esa regresión cuando la base tiene muchas columnas, y muestra que equivale a LDA con la covarianza común penalizada.
+
+Esta lección comprueba la equivalencia con LDA en una celda y mide el efecto del grado de la base y de la penalización sobre datos con fronteras circulares.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- LDA equivale a una regresión de puntuaciones de clase sobre las variables: la puntuación óptima.
+- Discriminante flexible: la misma puntuación óptima con una regresión sobre una base no lineal.
+- Clases en anillos: LDA 0,4375, QDA 0,3624, flexible de grado 4 0,0978; el mínimo es 0,0533.
+- Discriminante penalizado: LDA sobre la base con $\Sigma_W+\lambda\Omega$.
+- La penalización ayuda con pocas filas por columna (80 filas y 44 columnas: 0,2582 → 0,1601) y perjudica con muchas.
+- El grado de la base y $\lambda$ se eligen por validación.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos: que la puntuación óptima reproduce las predicciones de LDA con 3 puntuaciones no triviales y un error de prueba de 0,0820; los errores con clases en anillos (0,4375; 0,3624; 0,1777; 0,1816; 0,0978 y 0,1195, con un mínimo de 0,0533); y la tabla de la Proposición 43.6.
+
+**Lo que se usa de otras lecciones sin repetir.** LDA y las variables canónicas son de Machine Learning 42; las expansiones en base, de Machine Learning 27; ridge, de Machine Learning 8.
+
+**Lo que se enuncia sin demostrar.** La demostración de la Proposición 43.2 es un esbozo: la proporcionalidad entre las puntuaciones ajustadas y las variables canónicas se usa sin derivar el factor, y la celda la comprueba numéricamente.
+
+**Lo que es mío, no del libro.** Los datos en anillos y la medición del error por grado de la base. La tabla de la penalización con tres tamaños de muestra, que muestra que la penalización deja de ayudar cuando hay suficientes filas por columna.
+:::
