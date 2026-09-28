@@ -1,0 +1,426 @@
+---
+title: "Métricas de evaluación según el coste de cada error"
+subtitle: "ML aplicado · Lección 07"
+nivel: L3
+modulo: aplicado
+fase: F4
+prereqs: [aplicado/01-planteamiento-y-linea-base, estadistica/16-calibracion, aplicado/03-atipicos]
+siguientes: []
+libro: "FES §3.2 Measuring Performance"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="aplicado/07-metricas-de-evaluacion"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F4]{.item}
+[**Libro** FES 3.2]{.item}
+[**Prereqs** [Planteamiento](01-planteamiento-y-linea-base.qmd) · [Calibración](../estadistica/16-calibracion.qmd) · [Valores atípicos](03-atipicos.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Clasificar las métricas en tres grupos, según evalúen decisiones con un umbral, ordenaciones o probabilidades, y elegir el grupo a partir del uso del modelo.
+2. Derivar la precisión a partir de la sensibilidad, la especificidad y la prevalencia, y medir su caída: con el mismo clasificador y el mismo umbral, la precisión pasa de 0,8121 con prevalencia 0,5 a 0,0420 con prevalencia 0,01, mientras el AUC se mantiene entre 0,8522 y 0,8554.
+3. Demostrar que la puntuación de Brier es una regla de puntuación propia y medir que el AUC no detecta la descalibración: tres modelos con AUC 0,8161 tienen puntuaciones de Brier de 0,1590, 0,1907 y 0,1917.
+4. Relacionar las métricas de regresión con el valor central que premian: la raíz del error cuadrático medio, con la media; el error absoluto medio, con la mediana.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **ML aplicado 01**: la matriz de costes y el umbral, que definen la métrica de una decisión binaria.
+- **Estadística 16**: la calibración y su diagrama.
+- **ML aplicado 03**: la media y la mediana como objetivos de la pérdida cuadrática y de la absoluta.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **ML aplicado 08**: las clases desbalanceadas, donde las métricas que dependen de la prevalencia se leen con la prevalencia de uso.
+- **ML aplicado 11**: el análisis de errores, que desglosa estas métricas por segmentos.
+- **Series 11**: la evaluación de pronósticos, con métricas relativas como el MAPE.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $\pi$ | pi | La prevalencia: la proporción de positivos en los datos de uso |
+| $S$ | ese | La sensibilidad: la proporción de positivos detectados |
+| $E$ | e | La especificidad: la proporción de negativos que no se marcan |
+| $\mathrm{VPP}$ | ve pe pe | La precisión o valor predictivo positivo: la proporción de marcados que son positivos |
+| $q$ | cu | La probabilidad predicha de positivo |
+| $p$ | pe | La probabilidad verdadera de positivo |
+| $\mathrm{BS}$ | be ese | La puntuación de Brier: la media de $(q-y)^2$ |
+| $\mathrm{LL}$ | ele ele | La pérdida logarítmica: menos la media de $y\log q+(1-y)\log(1-q)$ |
+| AP | a pe | La precisión media: el área bajo la curva de precisión y exhaustividad |
+| RECM | erre e ce eme | La raíz del error cuadrático medio |
+| EAM | e a eme | El error absoluto medio |
+:::
+
+## 1. Tres tipos de métricas
+
+FES §3.2 presenta las métricas de clasificación en dos grupos, las que usan predicciones de clase y las que usan probabilidades, y las curvas ROC y de precisión y exhaustividad, que recorren todos los umbrales. Esta lección las ordena según la pregunta que contestan.
+
+::: {.definicion}
+**Definición 7.1 (tipos de métricas de clasificación).**
+
+1. **Métricas de decisión**: evalúan las clases asignadas con un umbral fijo. Acierto, sensibilidad, especificidad, precisión, $F_1$ y el coste de ML aplicado 01.
+2. **Métricas de ordenación**: evalúan si los positivos reciben puntuaciones más altas que los negativos, sin fijar umbral. El AUC y la precisión media.
+3. **Métricas de probabilidad**: evalúan las probabilidades como números. La puntuación de Brier y la pérdida logarítmica.
+:::
+
+La elección se deduce del uso del modelo. Si decide con un umbral fijo, la métrica es el coste de esa decisión. Si ordena una lista para trabajarla de arriba abajo hasta agotar un presupuesto, la métrica es de ordenación. Si sus probabilidades entran en un cálculo, como un ingreso esperado, la métrica es de probabilidad.
+
+## 2. Métricas que dependen de la prevalencia
+
+::: {.proposicion}
+**Proposición 7.2 (precisión y prevalencia).** Con sensibilidad $S$, especificidad $E$ y prevalencia $\pi$,
+$$
+\mathrm{VPP}=\frac{S\,\pi}{S\,\pi+(1-E)(1-\pi)} .
+$$
+Con $S$ y $E$ fijas, la precisión tiende a 0 cuando $\pi$ tiende a 0. El AUC, que compara positivos con negativos, no depende de $\pi$.
+:::
+
+::: {.demostracion}
+*Demostración.* Entre las unidades marcadas, los verdaderos positivos son una fracción $S\pi$ de la población y los falsos positivos una fracción $(1-E)(1-\pi)$, y la precisión es la proporción de los primeros. El AUC es la probabilidad de que un positivo tomado al azar puntúe más que un negativo tomado al azar (Atributos 02), y esa probabilidad solo depende de las distribuciones de las puntuaciones dentro de cada clase. La celda genera puntuaciones normales separadas 1,5 desviaciones típicas, con 2000 positivos y los negativos que corresponden a cada prevalencia, y marca las unidades con puntuación mayor que 1. Con $S=0{,}6915$, $E=0{,}8413$ y $\pi=0{,}01$, la fórmula da 0,0422 y la celda mide 0,0420. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def puntuaciones(n_pos, n_neg, rng, sep=1.5):
+    """Puntuaciones de un clasificador: normales separadas sep desviaciones."""
+    s = np.concatenate([rng.normal(sep, 1, n_pos), rng.normal(0, 1, n_neg)])
+    y = np.concatenate([np.ones(n_pos), np.zeros(n_neg)])
+    return y, s
+
+def auc(y, s):
+    o = np.argsort(s, kind="stable")
+    r = np.empty(len(s)); r[o] = np.arange(1.0, len(s) + 1.0)
+    n1 = y.sum(); n0 = len(y) - n1
+    return (r[y == 1].sum() - n1 * (n1 + 1.0) / 2.0) / (n1 * n0)
+
+def precision_media(y, s):
+    """Area bajo la curva de precision y exhaustividad (precision media)."""
+    o = np.argsort(-s, kind="stable")
+    yo = y[o]
+    vp = np.cumsum(yo)
+    prec = vp / np.arange(1, len(y) + 1)
+    return float(np.sum(prec * yo) / yo.sum())
+
+print("prevalencia  sensibilidad  especificidad  precision  AUC     precision media")
+for pi in (0.5, 0.2, 0.05, 0.01):
+    rng = np.random.default_rng(70)
+    n_pos = 2000; n_neg = int(round(n_pos * (1 - pi) / pi))
+    y, s = puntuaciones(n_pos, n_neg, rng)
+    a = s > 1.0                                        # umbral fijo
+    sens = np.mean(a[y == 1]); esp = np.mean(~a[y == 0]); prec = np.mean(y[a] == 1)
+    print("%10.2f %13.4f %14.4f %10.4f %7.4f %12.4f" % (pi, sens, esp, prec, auc(y, s), precision_media(y, s)))
+sens, esp = 0.6915, 0.8413
+print("precision de la formula con pi = 0.01: %.4f" % (sens * 0.01 / (sens * 0.01 + (1 - esp) * 0.99)))
+```
+
+La precisión media, que resume la curva de precisión y exhaustividad, también depende de la prevalencia: baja de 0,8553 a 0,1178. Una precisión media de 0,12 con prevalencia 0,01 corresponde al mismo clasificador que una de 0,86 con prevalencia 0,5. Las métricas que dependen de la prevalencia se calculan con la prevalencia de los datos de uso, y no se comparan entre conjuntos con prevalencias distintas.
+
+**Modo de falla.** Se valida con una muestra equilibrada, 50 % de positivos, y se informa de una precisión de 0,81. En producción la prevalencia es del 1 % y cuatro de cada cien alertas son positivos reales. El equipo que las revisa abandona el sistema.
+
+El visual dibuja la curva ROC y la de precisión y exhaustividad de un clasificador con puntuaciones normales. La prevalencia solo mueve la segunda.
+
+```{=html}
+<div class="viz-curvas07">
+  <div class="controles">
+    <label>Prevalencia π <input id="m7-p" type="range" min="-2.5" max="-0.3" step="0.05" value="-1.3"> <span id="m7-p-v">0.050</span></label>
+    <label>Separación de las clases <input id="m7-s" type="range" min="0.5" max="3" step="0.1" value="1.5"> <span id="m7-s-v">1.5</span></label>
+  </div>
+  <svg id="m7-svg" viewBox="0 0 660 300" role="img" aria-label="Curva ROC y curva de precisión y exhaustividad del mismo clasificador para la prevalencia elegida."></svg>
+  <p class="lectura" id="m7-lectura"></p>
+</div>
+<style>
+.viz-curvas07 { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-curvas07 .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-curvas07 label { display: flex; align-items: center; gap: .4rem; }
+.viz-curvas07 input[type=range] { width: 150px; padding: 0; }
+.viz-curvas07 svg { width: 100%; height: auto; display: block; }
+.viz-curvas07 .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("m7-svg"), lec = document.getElementById("m7-lectura");
+  var cp = document.getElementById("m7-p"), cs = document.getElementById("m7-s");
+  var ep = document.getElementById("m7-p-v"), es = document.getElementById("m7-s-v");
+  var W = 250, H = 210, PX = [56, 386], Y0 = 34;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function Phi(z) {
+    var t = 1 / (1 + 0.3275911 * Math.abs(z) / Math.SQRT2);
+    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-z * z / 2);
+    return z >= 0 ? 0.5 * (1 + y) : 0.5 * (1 - y);
+  }
+  function marco(x0, titulo, ex, ey) {
+    svg.appendChild(el("rect", { x: x0, y: Y0, width: W, height: H, fill: "none", stroke: C_L }));
+    svg.appendChild(el("text", { x: x0, y: Y0 - 10, "font-size": 11, fill: C_T, opacity: .85 }, titulo));
+    svg.appendChild(el("text", { x: x0 + W, y: Y0 + H + 16, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, ex));
+    svg.appendChild(el("text", { x: x0 - 6, y: Y0 + 10, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, "1"));
+    svg.appendChild(el("text", { x: x0 - 6, y: Y0 + H, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, "0"));
+    svg.appendChild(el("text", { x: x0, y: Y0 + H + 16, "font-size": 10, fill: C_T, opacity: .7 }, ey));
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var pi = Math.pow(10, +cp.value), sep = +cs.value;
+    ep.textContent = pi.toFixed(3); es.textContent = sep.toFixed(1);
+    marco(PX[0], "ROC", "falsos positivos →", "0");
+    marco(PX[1], "precisión y exhaustividad", "exhaustividad →", "0");
+    var roc = "", pr = "", ap = 0, prevR = 0, k;
+    for (k = 0; k <= 400; k++) {
+      var t = 6 - 12 * k / 400;
+      var tpr = Phi(sep - t), fpr = Phi(-t);
+      roc += (k ? " L" : "M") + (PX[0] + fpr * W).toFixed(1) + " " + (Y0 + H - tpr * H).toFixed(1);
+      var prec = tpr * pi + fpr * (1 - pi) > 0 ? tpr * pi / (tpr * pi + fpr * (1 - pi)) : 1;
+      pr += (k ? " L" : "M") + (PX[1] + tpr * W).toFixed(1) + " " + (Y0 + H - prec * H).toFixed(1);
+      ap += (tpr - prevR) * prec; prevR = tpr;
+    }
+    svg.appendChild(el("path", { d: "M" + PX[0] + " " + (Y0 + H) + " L" + (PX[0] + W) + " " + Y0, stroke: C_L, "stroke-dasharray": "3 3" }));
+    svg.appendChild(el("path", { d: roc, fill: "none", stroke: C_A, "stroke-width": 2.2 }));
+    svg.appendChild(el("path", { d: "M" + PX[1] + " " + (Y0 + H - pi * H).toFixed(1) + " L" + (PX[1] + W) + " " + (Y0 + H - pi * H).toFixed(1), stroke: C_B, "stroke-dasharray": "3 3" }));
+    svg.appendChild(el("path", { d: pr, fill: "none", stroke: C_A, "stroke-width": 2.2 }));
+    var auc = Phi(sep / Math.SQRT2);
+    lec.innerHTML = "Con separación <strong>" + sep.toFixed(1) + "</strong> el AUC vale <strong>" + auc.toFixed(4) + "</strong> para cualquier prevalencia. Con prevalencia <strong>" + pi.toFixed(3) +
+      "</strong>, la precisión media vale <strong>" + ap.toFixed(4) + "</strong>; la línea discontinua de la derecha es la precisión de marcar al azar, igual a la prevalencia.";
+  }
+  cp.addEventListener("input", dibujar);
+  cs.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Métricas de probabilidad
+
+::: {.definicion}
+**Definición 7.3 ([regla de puntuación propia]{.g}).** Una métrica que asigna una penalización $L(q,y)$ a la probabilidad predicha $q$ cuando el resultado es $y$ es una regla de puntuación propia si, para cualquier probabilidad verdadera $p$, la penalización esperada $pL(q,1)+(1-p)L(q,0)$ es mínima en $q=p$.
+:::
+
+::: {.proposicion}
+**Proposición 7.4 (Brier es propia).** Con $L(q,y)=(q-y)^2$, la penalización esperada es $p(1-q)^2+(1-p)q^2$, cuyo mínimo está en $q=p$.
+:::
+
+::: {.demostracion}
+*Demostración.* La derivada respecto de $q$ es $-2p(1-q)+2(1-p)q=2(q-p)$, que se anula en $q=p$, y la segunda derivada vale 2. La pérdida logarítmica también es propia: la derivada de $-p\log q-(1-p)\log(1-q)$ es $-p/q+(1-p)/(1-q)$, que se anula en $q=p$. El AUC y el acierto no son propias: el AUC solo depende del orden, y cualquier transformación creciente de $q$ lo deja igual. La celda compara tres modelos con el mismo orden: las probabilidades verdaderas, su cuadrado y su versión encogida hacia 0,5. Los tres tienen AUC 0,8161; la puntuación de Brier es 0,1590, 0,1907 y 0,1917, y la pérdida logarítmica 0,4828, 0,6204 y 0,5731. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def puntuaciones(n_pos, n_neg, rng, sep=1.5):
+    """Puntuaciones de un clasificador: normales separadas sep desviaciones."""
+    s = np.concatenate([rng.normal(sep, 1, n_pos), rng.normal(0, 1, n_neg)])
+    y = np.concatenate([np.ones(n_pos), np.zeros(n_neg)])
+    return y, s
+
+def auc(y, s):
+    o = np.argsort(s, kind="stable")
+    r = np.empty(len(s)); r[o] = np.arange(1.0, len(s) + 1.0)
+    n1 = y.sum(); n0 = len(y) - n1
+    return (r[y == 1].sum() - n1 * (n1 + 1.0) / 2.0) / (n1 * n0)
+
+def precision_media(y, s):
+    """Area bajo la curva de precision y exhaustividad (precision media)."""
+    o = np.argsort(-s, kind="stable")
+    yo = y[o]
+    vp = np.cumsum(yo)
+    prec = vp / np.arange(1, len(y) + 1)
+    return float(np.sum(prec * yo) / yo.sum())
+
+rng = np.random.default_rng(71)
+n = 20000
+z = rng.normal(-1.0, 1.5, n)
+p = 1 / (1 + np.exp(-z))                      # probabilidad verdadera
+y = (rng.random(n) < p).astype(float)
+modelos = {"calibrado": p, "cuadrado de p": p ** 2, "encogido hacia 0.5": 0.5 + 0.4 * (p - 0.5)}
+print("modelo               AUC     Brier   perdida logaritmica  media predicha")
+for nombre, q in modelos.items():
+    q = np.clip(q, 1e-12, 1 - 1e-12)
+    brier = np.mean((q - y) ** 2)
+    ll = -np.mean(y * np.log(q) + (1 - y) * np.log(1 - q))
+    print("%-19s %6.4f %7.4f %20.4f %15.4f" % (nombre, auc(y, q), brier, ll, q.mean()))
+print("proporcion de positivos: %.4f" % y.mean())
+```
+
+La media predicha del modelo que eleva al cuadrado es 0,1696, frente a una proporción de positivos de 0,3307. Si sus probabilidades se usan para estimar cuántos clientes abandonarán, la estimación es la mitad de la real, y el AUC no lo indica. Estadística 16 trata cómo recalibrar un modelo con buen orden y probabilidades desplazadas.
+
+## 4. Métricas de regresión
+
+::: {.proposicion}
+**Proposición 7.5 (valor central de cada métrica).** Entre las predicciones constantes, la raíz del error cuadrático medio es mínima en la media de $y$, y el error absoluto medio es mínimo en la mediana.
+:::
+
+::: {.demostracion}
+*Demostración.* $\sum(y_i-c)^2$ tiene derivada $-2\sum(y_i-c)$, nula en la media, y $\sum|y_i-c|$ tiene subgradiente igual al número de observaciones por debajo de $c$ menos el número por encima, nulo en la mediana. En la celda, con un gasto lognormal de media 30,11 y mediana 20,09, predecir la media da la menor raíz del error cuadrático medio, 33,289 frente a 34,762, y predecir la mediana el menor error absoluto medio, 19,019 frente a 20,873. ∎
+:::
+
+```{pyodide}
+import numpy as np
+rng = np.random.default_rng(72)
+y = rng.lognormal(3.0, 0.9, 50000)          # un gasto con cola a la derecha
+media, mediana = y.mean(), np.median(y)
+print("media %.2f   mediana %.2f" % (media, mediana))
+print("prediccion constante   RECM      EAM")
+for nombre, c in (("la media", media), ("la mediana", mediana)):
+    print("%-20s %8.3f %8.3f" % (nombre, np.sqrt(np.mean((y - c) ** 2)), np.mean(np.abs(y - c))))
+cs = np.linspace(5, 60, 1101)
+print("constante que minimiza el EAM en la rejilla: %.2f" % cs[np.argmin([np.mean(np.abs(y - c)) for c in cs])])
+```
+
+Evaluar con el error absoluto un modelo ajustado por mínimos cuadrados, o al revés, mezcla dos objetivos. Con una variable asimétrica como el gasto, la media y la mediana difieren un 50 %, y el modelo que gana según una métrica pierde según la otra. La métrica se elige por el valor central que necesita la decisión: la media para un total, la mediana para un valor típico.
+
+## 5. Limitaciones
+
+- La lección trata la clasificación binaria. En clasificación con varias clases, las métricas de decisión se promedian por clase, con pesos iguales o proporcionales al tamaño de cada clase, y los dos promedios pueden diferir mucho con clases raras.
+- La precisión media se calculó como la suma de las precisiones en los positivos ordenados. Hay otras formas de interpolar la curva, que dan valores ligeramente distintos.
+- FES §3.2 incluye el coeficiente de correlación de concordancia y el kappa de Cohen, que no se tratan aquí.
+- Las métricas relativas, como el MAPE, se tratan en Series de tiempo 11.
+
+## Ejercicios
+
+### Ejercicio 1, Precisión según la prevalencia
+
+Un clasificador tiene sensibilidad `S` y especificidad `E`. Completar la línea de `precision` con la precisión de la Proposición 7.2 para cada prevalencia del vector `pi`. La celda imprime las tres precisiones; deben dar `[0.8889, 0.4706, 0.0748]`.
+
+```{pyodide}
+#| exercise: ex_vpp
+import numpy as np
+
+S, E = 0.8, 0.9
+pi = np.array([0.5, 0.1, 0.01])
+
+precision = ______
+
+print([round(float(v), 4) for v in precision])
+```
+
+::: {.hint exercise="ex_vpp"}
+El numerador es `S * pi`; el denominador suma los falsos positivos, `(1 - E) * (1 - pi)`. Las operaciones con el vector se hacen elemento a elemento.
+:::
+
+::: {.solution exercise="ex_vpp"}
+```{pyodide}
+import numpy as np
+
+S, E = 0.8, 0.9
+pi = np.array([0.5, 0.1, 0.01])
+
+precision = S * pi / (S * pi + (1 - E) * (1 - pi))
+
+print([round(float(v), 4) for v in precision])
+```
+
+Con prevalencia 0,01, de cada 1000 unidades hay 10 positivas, de las que se marcan 8, y 990 negativas, de las que se marcan 99. De las 107 marcadas, 8 son positivas: un 7,5 %.
+:::
+
+```{pyodide}
+#| exercise: ex_vpp
+#| check: true
+import numpy as np
+if np.allclose(np.asarray(precision, float), [0.8889, 0.4706, 0.0748], atol=5e-5):
+    feedback = {"correct": True, "message": "Correcto: la precisión cae de 0.8889 a 0.0748 con el mismo clasificador."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [0.8889, 0.4706, 0.0748]."}
+feedback
+```
+
+### Ejercicio 2, Puntuación de Brier y pérdida logarítmica
+
+La celda fija cinco resultados `y` y las probabilidades predichas `q`. Completar la línea de `brier` con la puntuación de Brier y la de `perdida` con la pérdida logarítmica de la Definición 7.3. La celda imprime las dos; deben dar `0.092 0.3414`.
+
+```{pyodide}
+#| exercise: ex_brier
+import numpy as np
+
+y = np.array([1, 0, 1, 1, 0.0])
+q = np.array([0.9, 0.2, 0.6, 0.7, 0.4])
+
+brier = ______
+perdida = ______
+
+print(round(float(brier), 4), round(float(perdida), 4))
+```
+
+::: {.hint exercise="ex_brier"}
+La puntuación de Brier es la media de `(q - y) ** 2`. La pérdida logarítmica es menos la media de `y * np.log(q) + (1 - y) * np.log(1 - q)`.
+:::
+
+::: {.solution exercise="ex_brier"}
+```{pyodide}
+import numpy as np
+
+y = np.array([1, 0, 1, 1, 0.0])
+q = np.array([0.9, 0.2, 0.6, 0.7, 0.4])
+
+brier = np.mean((q - y) ** 2)
+perdida = -np.mean(y * np.log(q) + (1 - y) * np.log(1 - q))
+
+print(round(float(brier), 4), round(float(perdida), 4))
+```
+
+Las dos filas con más penalización son la tercera y la quinta, en las que el modelo asigna 0,6 al resultado observado. La pérdida logarítmica penaliza más que Brier las probabilidades cercanas a 0 asignadas a un resultado que ocurre: con $q=0{,}01$ y $y=1$, Brier vale 0,98 y la pérdida logarítmica 4,6.
+:::
+
+```{pyodide}
+#| exercise: ex_brier
+#| check: true
+if abs(float(brier) - 0.092) < 5e-5 and abs(float(perdida) - 0.3414) < 5e-5:
+    feedback = {"correct": True, "message": "Correcto: Brier 0.092 y pérdida logarítmica 0.3414."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba Brier 0.092 y pérdida logarítmica 0.3414."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Aplicado 7**:
+
+1. Demostrar que la pérdida absoluta $|q-y|$ no es una regla de puntuación propia para probabilidades, encontrando el $q$ que minimiza su penalización esperada, y comprobarlo numéricamente.
+2. Repetir la Sección 2 con la puntuación $F_1$ y buscar el umbral que la maximiza con cada prevalencia; comparar ese umbral con el de costes de ML aplicado 01.
+3. Construir dos modelos de regresión para el gasto de la Sección 4, uno ajustado por mínimos cuadrados y otro por error absoluto, y evaluar los dos con las dos métricas. Guardar en `50-Errores/` la regla para elegir la métrica según la decisión.
+
+## Del libro
+
+FES §3.2, *Measuring Performance*, presenta la raíz del error cuadrático medio, $R^2$ y la correlación de concordancia para regresión, y para clasificación el acierto, kappa, sensibilidad, especificidad, precisión y exhaustividad, la verosimilitud binomial y las medidas de impureza, junto con las curvas ROC y de precisión y exhaustividad. Advierte que el acierto engaña cuando las clases están desequilibradas, con un ejemplo en el que la clase de interés es el 18,5 % de los perfiles. Esta lección agrupa esas métricas según la pregunta que contestan y mide su dependencia de la prevalencia y de la calibración.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- Tres tipos de métricas: de decisión, de ordenación y de probabilidad; se elige por el uso del modelo.
+- $\mathrm{VPP}=S\pi/(S\pi+(1-E)(1-\pi))$: con $S$ y $E$ fijas, tiende a 0 con la prevalencia.
+- Mismo clasificador y mismo umbral: precisión 0,8121 con $\pi=0{,}5$ y 0,0420 con $\pi=0{,}01$.
+- El AUC no depende de la prevalencia; la precisión media sí: de 0,8553 a 0,1178.
+- Las métricas que dependen de la prevalencia se calculan con la prevalencia de uso.
+- Brier y la pérdida logarítmica son reglas propias: su esperanza es mínima en la probabilidad verdadera.
+- El AUC no detecta la descalibración: tres modelos con AUC 0,8161 y Brier de 0,1590 a 0,1917.
+- La RECM premia la media; el EAM, la mediana.
+- Con un gasto asimétrico, media 30,11 y mediana 20,09: cada métrica elige un valor distinto.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos. Con puntuaciones normales separadas 1,5 desviaciones típicas y umbral 1: sensibilidad 0,6895, especificidades de 0,8405 a 0,8436, precisiones de 0,8121, 0,5206, 0,1884 y 0,0420 con prevalencias de 0,5, 0,2, 0,05 y 0,01, AUC entre 0,8522 y 0,8554, y precisiones medias de 0,8553, 0,6396, 0,3480 y 0,1178; la fórmula da 0,0422 con la prevalencia menor. Con 20 000 filas y proporción de positivos 0,3307: AUC 0,8161 en los tres modelos, Brier 0,1590, 0,1907 y 0,1917, pérdida logarítmica 0,4828, 0,6204 y 0,5731, y medias predichas 0,3285, 0,1696 y 0,4314. Con 50 000 gastos lognormales: RECM 33,289 y 34,762, EAM 20,873 y 19,019, y mínimo del EAM en 20,10. El AUC, la precisión media y las demás métricas están escritas con NumPy. Las Proposiciones 7.2, 7.4 y 7.5 se demuestran en la página.
+
+**Lo que viene de los libros.** El catálogo de métricas de regresión y clasificación, las curvas ROC y de precisión y exhaustividad, y la advertencia sobre el acierto con clases desequilibradas, de FES §3.2.
+
+**Lo que se usa de otras lecciones sin repetir.** La matriz de costes, de ML aplicado 01. La calibración, de Estadística 16. El AUC como probabilidad de ordenar bien un par, de Atributos 02. La media y la mediana como minimizadores, de ML aplicado 03.
+
+**Lo que es mío, no del libro.** La clasificación de las métricas en tres tipos según el uso del modelo. La medición de la precisión y de la precisión media con el mismo clasificador y prevalencias distintas. Los tres modelos con el mismo orden y distinta calibración. Y el visual de las dos curvas con la prevalencia como control.
+:::
