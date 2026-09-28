@@ -1,0 +1,464 @@
+---
+title: "Pipelines: el preprocesamiento dentro de la validación"
+subtitle: "ML aplicado · Lección 05"
+nivel: L3
+modulo: aplicado
+fase: F4
+prereqs: [aplicado/04-particion-de-los-datos, atributos/13-datos-faltantes, atributos/02-el-proceso-y-la-fuga]
+siguientes: []
+libro: "FES §3.8 Feature Engineering Without Overfitting"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="aplicado/05-pipelines"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F4]{.item}
+[**Libro** FES 3.8]{.item}
+[**Prereqs** [Partición de los datos](04-particion-de-los-datos.qmd) · [Datos faltantes](../atributos/13-datos-faltantes.qmd) · [El proceso y la fuga](../atributos/02-el-proceso-y-la-fuga.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Escribir un pipeline desde cero, con imputación, escalado, variables ficticias y un modelo lineal, y comprobar que predice lo mismo que el de scikit-learn a $10^{-9}$ en las filas con niveles conocidos.
+2. Medir el desfase entre entrenamiento y uso: si un lote nuevo se reescala con sus propios estadísticos, un aumento del 40 % del ingreso deja la predicción media del gasto en 99,12 cuando el gasto real es 120,23.
+3. Distinguir los pasos que filtran información al ajustarse fuera de la validación: imputar y escalar fuera cambia el $R^2$ de −0,5398 a −0,5346; elegir columnas por su relación con $y$ fuera lo lleva a +0,1799 con una respuesta sin relación con los datos.
+4. Explicar por qué, con ficticias de rango completo e intercepto, la predicción para un nivel nuevo depende del solucionador: los dos pipelines difieren en 25,84 en esas filas.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **ML aplicado 04**: la partición de los datos, dentro de cuyos pliegues se ajusta el pipeline.
+- **Atributos 13**: la imputación, primer paso del pipeline de esta lección.
+- **Atributos 02**: las tres fugas medidas a mano, que un pipeline evita por construcción.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **ML aplicado 06**: el ajuste de hiperparámetros, que trata los parámetros del preprocesamiento como hiperparámetros del pipeline.
+- **ML aplicado 12**: el modelo en producción, que guarda el pipeline completo y no solo el modelo.
+- **Atributos 16**: el pipeline con selección de atributos.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $T$ | te mayúscula | Un transformador: un paso que aprende parámetros con `fit` y los aplica con `transform` |
+| $\theta_T$ | theta sub te | Los parámetros aprendidos por $T$: una mediana, una media, una lista de niveles |
+| $D_{\text{ent}}$ | de entrenamiento | Las filas con que se ajusta el pipeline |
+| $s$ | ese | El aumento relativo del ingreso en un lote nuevo |
+| $R^2$ | erre cuadrado | El coeficiente de determinación, medido por validación cruzada |
+:::
+
+## 1. Transformadores y pipelines
+
+::: {.definicion}
+**Definición 5.1 ([transformador]{.g}).** Un transformador $T$ tiene dos operaciones. `fit` calcula sus parámetros $\theta_T$ a partir de unas filas, y `transform` aplica a cualquier fila la transformación definida por $\theta_T$, sin volver a calcularlos. La imputación por la mediana aprende la mediana; el escalado, la media y la desviación típica; las variables ficticias, la lista de niveles.
+:::
+
+::: {.definicion}
+**Definición 5.2 ([pipeline]{.g}).** Un pipeline es una secuencia de transformadores seguida de un modelo. Ajustarlo con $D_{\text{ent}}$ ajusta cada transformador con la salida del anterior sobre $D_{\text{ent}}$, y después el modelo. Predecir aplica a las filas nuevas los transformadores con los parámetros aprendidos, en el mismo orden, y después el modelo.
+:::
+
+::: {.proposicion}
+**Proposición 5.3 (un único objeto para ajustar y predecir).** Si el pipeline se ajusta dentro de cada pliegue, todos los parámetros $\theta_T$ se calculan con las filas de entrenamiento del pliegue, y la validación cruzada evalúa el proceso completo, como exige Atributos 02. El mismo objeto transforma después los datos nuevos con los parámetros aprendidos, sin posibilidad de aplicarles una transformación distinta.
+:::
+
+::: {.demostracion}
+*Demostración.* Se sigue de la Definición 5.2: `fit` solo recibe $D_{\text{ent}}$, y `predict` solo usa $\theta_T$. La celda escribe un pipeline con tres transformadores y mínimos cuadrados, y lo compara con el equivalente de scikit-learn, construido con `ColumnTransformer`. En los datos nuevos, las predicciones coinciden a $10^{-9}$ en las filas con niveles vistos al entrenar. ∎
+:::
+
+```{pyodide}
+import numpy as np
+import pandas as pd
+
+def clientes(n, rng, desplaza=0.0):
+    """Edad (con faltantes), ingreso, plan y gasto mensual."""
+    edad = rng.normal(41, 12, n)
+    ingreso = np.exp(rng.normal(np.log(2400), 0.4, n)) * (1 + desplaza)
+    plan = rng.choice(["basico", "estandar", "premium"], n, p=[0.5, 0.35, 0.15])
+    gasto = (15 + 0.6 * edad + 0.02 * ingreso + np.where(plan == "premium", 25, 0)
+             + np.where(plan == "estandar", 10, 0) + rng.normal(0, 8, n))
+    edad[rng.random(n) < 0.2] = np.nan
+    return pd.DataFrame({"edad": edad, "ingreso": ingreso, "plan": plan}), gasto
+
+
+class Mediana:
+    def fit(self, x):
+        self.m = np.nanmedian(x, axis=0); return self
+    def transform(self, x):
+        return np.where(np.isnan(x), self.m, x)
+
+class Estandar:
+    def fit(self, x):
+        self.mu, self.sd = x.mean(0), x.std(0); return self
+    def transform(self, x):
+        return (x - self.mu) / self.sd
+
+class Ficticias:
+    def fit(self, c):
+        self.niveles = np.unique(c); return self
+    def transform(self, c):
+        return (c[:, None] == self.niveles[None, :]).astype(float)   # nivel nuevo: ceros
+
+class MiPipeline:
+    """Preprocesa las numericas y la categorica y ajusta minimos cuadrados.
+    Todos los parametros salen de los datos que recibe fit."""
+    def fit(self, t, y):
+        x = t[["edad", "ingreso"]].to_numpy(float)
+        self.med = Mediana().fit(x)
+        self.est = Estandar().fit(self.med.transform(x))
+        self.fic = Ficticias().fit(t["plan"].to_numpy())
+        Z = self._matriz(t)
+        self.b = np.linalg.lstsq(Z, y, rcond=None)[0]
+        return self
+    def _matriz(self, t):
+        x = self.est.transform(self.med.transform(t[["edad", "ingreso"]].to_numpy(float)))
+        return np.column_stack([np.ones(len(t)), x, self.fic.transform(t["plan"].to_numpy())])
+    def predict(self, t):
+        return self._matriz(t) @ self.b
+
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.linear_model import LinearRegression
+
+rng = np.random.default_rng(50)
+t, y = clientes(3000, rng)
+tn, yn = clientes(1000, rng)
+tn.loc[:4, "plan"] = "empresa"                  # un nivel que no aparecio al entrenar
+
+sk = Pipeline([
+    ("prep", ColumnTransformer([
+        ("num", Pipeline([("imp", SimpleImputer(strategy="median")),
+                          ("esc", StandardScaler())]), ["edad", "ingreso"]),
+        ("cat", OneHotEncoder(handle_unknown="ignore"), ["plan"])])),
+    ("modelo", LinearRegression())])
+sk.fit(t, y)
+mio = MiPipeline().fit(t, y)
+dif = np.abs(sk.predict(tn) - mio.predict(tn))
+nuevo = (tn["plan"] == "empresa").to_numpy()
+print("filas con niveles vistos: coinciden a 1e-9:", bool(dif[~nuevo].max() < 1e-9))
+print("filas con el nivel nuevo: diferencias", np.round(dif[nuevo], 2))
+print("ECM en datos nuevos, niveles vistos: %.4f" % np.mean((yn - mio.predict(tn))[~nuevo] ** 2))
+```
+
+Las cinco filas con el nivel `empresa`, que no apareció al entrenar, difieren en 25,84 entre los dos pipelines. Los dos codifican el nivel nuevo con ceros en todas las ficticias. Con una ficticia por nivel y un intercepto, la matriz de diseño no tiene rango completo: sumar una constante al intercepto y restarla a las tres ficticias no cambia ninguna predicción en los niveles conocidos. El solucionador de NumPy y el de scikit-learn eligen repartos distintos, y la fila con todos los ceros solo recibe el intercepto, que es distinto en cada uno. Atributos 10 trata las alternativas: una categoría «otros» o una media encogida.
+
+## 2. El desfase entre entrenamiento y uso
+
+El error opuesto a la fuga ocurre al usar el modelo: aplicar a los datos nuevos una transformación distinta de la del entrenamiento.
+
+::: {.proposicion}
+**Proposición 5.4 ([desfase entre entrenamiento y uso]{.g}).** Si un lote de datos nuevos se escala con su propia media y su propia desviación típica, cada atributo escalado tiene media 0 en el lote, cualquiera que sea su media real. Un cambio en la media de un atributo entre el entrenamiento y el lote no se transmite a las predicciones.
+:::
+
+::: {.demostracion}
+*Demostración.* Si $x$ tiene media $\bar x_{\text{lote}}$ en el lote, $(x-\bar x_{\text{lote}})/s_{\text{lote}}$ tiene media 0 en el lote. Con los parámetros del entrenamiento, $(x-\bar x_{\text{ent}})/s_{\text{ent}}$ tiene media $(\bar x_{\text{lote}}-\bar x_{\text{ent}})/s_{\text{ent}}$, que refleja el cambio. En la celda, el gasto aumenta 0,02 por cada dólar de ingreso. Con el ingreso un 40 % más alto, el gasto real medio es 120,23 y el pipeline predice 120,15. Reescalando el lote, la predicción media es 99,12 para cualquier aumento. ∎
+:::
+
+```{pyodide}
+import numpy as np
+import pandas as pd
+
+def clientes(n, rng, desplaza=0.0):
+    """Edad (con faltantes), ingreso, plan y gasto mensual."""
+    edad = rng.normal(41, 12, n)
+    ingreso = np.exp(rng.normal(np.log(2400), 0.4, n)) * (1 + desplaza)
+    plan = rng.choice(["basico", "estandar", "premium"], n, p=[0.5, 0.35, 0.15])
+    gasto = (15 + 0.6 * edad + 0.02 * ingreso + np.where(plan == "premium", 25, 0)
+             + np.where(plan == "estandar", 10, 0) + rng.normal(0, 8, n))
+    edad[rng.random(n) < 0.2] = np.nan
+    return pd.DataFrame({"edad": edad, "ingreso": ingreso, "plan": plan}), gasto
+
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.linear_model import LinearRegression
+
+def prep():
+    return ColumnTransformer([
+        ("num", Pipeline([("imp", SimpleImputer(strategy="median")),
+                          ("esc", StandardScaler())]), ["edad", "ingreso"]),
+        ("cat", OneHotEncoder(handle_unknown="ignore"), ["plan"])])
+
+rng = np.random.default_rng(51)
+t, y = clientes(3000, rng)
+p = prep().fit(t)
+modelo = LinearRegression().fit(p.transform(t), y)
+
+print("aumento del ingreso  gasto real  pipeline  lote reescalado")
+for s in (0.0, 0.1, 0.2, 0.4):
+    tn, yn = clientes(2000, np.random.default_rng(52), desplaza=s)
+    bien = modelo.predict(p.transform(tn))              # parametros del entrenamiento
+    mal = modelo.predict(prep().fit_transform(tn))      # parametros del propio lote
+    print("%18.0f %% %11.2f %9.2f %16.2f" % (100 * s, yn.mean(), bien.mean(), mal.mean()))
+```
+
+El error aparece en código que llama a `fit_transform` sobre los datos nuevos, o que calcula la media «del mes» para escalar. Con un pipeline guardado, la única operación disponible sobre los datos nuevos es `predict`, que usa los parámetros del entrenamiento.
+
+**Modo de falla.** Un proceso nocturno puntúa a los clientes de cada día y los estandariza con la media del día. Un día con clientes de ingreso alto recibe las mismas puntuaciones medias que un día normal, y el modelo parece estable mientras la población cambia.
+
+El visual muestra el gasto medio real y las dos predicciones medias en función del aumento del ingreso.
+
+```{=html}
+<div class="viz-desfase05">
+  <div class="controles">
+    <label>Aumento del ingreso en el lote <input id="p5-s" type="range" min="-0.3" max="0.6" step="0.01" value="0.2"> <span id="p5-s-v">20 %</span></label>
+  </div>
+  <svg id="p5-svg" viewBox="0 0 660 270" role="img" aria-label="Gasto medio real y predicciones medias del pipeline y del lote reescalado en función del aumento del ingreso."></svg>
+  <p class="lectura" id="p5-lectura"></p>
+</div>
+<style>
+.viz-desfase05 { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-desfase05 .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-desfase05 label { display: flex; align-items: center; gap: .4rem; }
+.viz-desfase05 input[type=range] { width: 200px; padding: 0; }
+.viz-desfase05 svg { width: 100%; height: auto; display: block; }
+.viz-desfase05 .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("p5-svg"), lec = document.getElementById("p5-lectura");
+  var cs = document.getElementById("p5-s"), es = document.getElementById("p5-s-v");
+  var X0 = 56, X1 = 620, Y0 = 34, Y1 = 220;
+  // medias del proceso de la celda: ingreso lognormal de mediana 2400 y sigma 0.4
+  var ING = 2400 * Math.exp(0.08), BASE = 15 + 0.6 * 41 + 25 * 0.15 + 10 * 0.35;
+  function real(s) { return BASE + 0.02 * ING * (1 + s); }
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var s = +cs.value;
+    es.textContent = Math.round(100 * s) + " %";
+    var px = function (v) { return X0 + (v + 0.3) / 0.9 * (X1 - X0); };
+    var ymin = real(-0.3) - 4, ymax = real(0.6) + 4;
+    var py = function (v) { return Y1 - (v - ymin) / (ymax - ymin) * (Y1 - Y0); };
+    svg.appendChild(el("path", { d: "M" + X0 + " " + Y1 + " L" + X1 + " " + Y1, stroke: C_L }));
+    [-0.2, 0, 0.2, 0.4, 0.6].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y1 + 16, "text-anchor": "middle", "font-size": 10, fill: C_T, opacity: .7 }, Math.round(100 * v) + " %"));
+    });
+    svg.appendChild(el("text", { x: X1, y: Y1 + 34, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "aumento del ingreso →"));
+    svg.appendChild(el("path", { d: "M" + px(-0.3) + " " + py(real(-0.3)).toFixed(1) + " L" + px(0.6) + " " + py(real(0.6)).toFixed(1), stroke: C_A, "stroke-width": 2.4 }));
+    svg.appendChild(el("path", { d: "M" + px(-0.3) + " " + py(real(0)).toFixed(1) + " L" + px(0.6) + " " + py(real(0)).toFixed(1), stroke: C_B, "stroke-width": 2.4, "stroke-dasharray": "6 4" }));
+    svg.appendChild(el("text", { x: px(0.6) - 4, y: py(real(0.6)) + 16, "text-anchor": "end", "font-size": 10.5, fill: C_A }, "real y pipeline"));
+    svg.appendChild(el("text", { x: px(-0.3) + 4, y: py(real(0)) - 6, "font-size": 10.5, fill: C_B }, "lote reescalado"));
+    svg.appendChild(el("path", { d: "M" + px(s).toFixed(1) + " " + Y0 + " L" + px(s).toFixed(1) + " " + Y1, stroke: C_T, opacity: .4 }));
+    svg.appendChild(el("circle", { cx: px(s).toFixed(1), cy: py(real(s)).toFixed(1), r: 5, fill: C_A }));
+    svg.appendChild(el("circle", { cx: px(s).toFixed(1), cy: py(real(0)).toFixed(1), r: 5, fill: C_B }));
+    lec.innerHTML = "Con un aumento del ingreso del <strong>" + Math.round(100 * s) + " %</strong>, el gasto medio esperado es <strong>" + real(s).toFixed(2) +
+      "</strong>, y el pipeline lo sigue porque escala con la media del entrenamiento. El lote reescalado predice <strong>" + real(0).toFixed(2) +
+      "</strong> para cualquier aumento: el error es de <strong>" + (real(s) - real(0)).toFixed(2) + "</strong>. Las cifras son las esperanzas del proceso de la celda, sin el ruido de la muestra.";
+  }
+  cs.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Qué pasos filtran información
+
+La Proposición 5.3 garantiza que el pipeline no filtra. No todos los pasos filtran lo mismo cuando se ajustan fuera de la validación, y Atributos 02 midió que el tamaño de la fuga depende del uso que el paso hace de la variable objetivo.
+
+::: {.proposicion}
+**Proposición 5.5 (fuga según el paso).** Un paso cuyos parámetros no dependen de $y$, como la imputación por la mediana o el escalado, ajustado con todas las filas antes de la validación, solo transmite a los pliegues estadísticos de los atributos, y su efecto sobre la estimación es del orden del error de muestreo de esos estadísticos. Un paso cuyos parámetros dependen de $y$, como la selección de columnas por su correlación con $y$, transmite información de la respuesta de las filas de prueba.
+:::
+
+::: {.demostracion}
+*Demostración.* La mediana y la media calculadas con todas las filas difieren de las calculadas en el entrenamiento de un pliegue en una cantidad del orden de $1/\sqrt n$, y no contienen información sobre $y$. La selección elige las columnas que más se correlacionan con $y$ en todas las filas, incluidas las de prueba de cada pliegue. En la celda, con 100 filas, 500 columnas de ruido con un 10 % de faltantes y una respuesta independiente de ellas, imputar y escalar fuera da $R^2=-0{,}5346$ y hacerlo dentro $-0{,}5398$. Elegir 10 columnas antes de validar da $+0{,}1799$. ∎
+:::
+
+```{pyodide}
+import numpy as np
+from sklearn.pipeline import Pipeline
+from sklearn.feature_selection import SelectKBest, f_regression
+from sklearn.linear_model import LinearRegression
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import KFold, cross_val_score
+
+rng = np.random.default_rng(53)
+X = rng.standard_normal((100, 500))
+X[rng.random(X.shape) < 0.1] = np.nan
+y = rng.standard_normal(100)                    # sin relacion con X
+cv = KFold(5, shuffle=True, random_state=0)
+
+def r2(modelo, X):
+    return cross_val_score(modelo, X, y, cv=cv, scoring="r2").mean()
+
+# pasos que no miran y: imputar y escalar fuera o dentro de la validacion
+Xp = StandardScaler().fit_transform(SimpleImputer(strategy="median").fit_transform(X))
+sel = SelectKBest(f_regression, k=10)
+fuera = r2(Pipeline([("sel", sel), ("m", LinearRegression())]), Xp)
+dentro = r2(Pipeline([("imp", SimpleImputer(strategy="median")), ("esc", StandardScaler()),
+                      ("sel", SelectKBest(f_regression, k=10)), ("m", LinearRegression())]), X)
+print("imputar y escalar fuera, elegir dentro : R2 = %+.4f" % fuera)
+print("todo dentro del pipeline              : R2 = %+.4f" % dentro)
+# el paso que mira y, fuera de la validacion
+Xs = SelectKBest(f_regression, k=10).fit_transform(Xp, y)
+print("elegir las 10 columnas antes de validar: R2 = %+.4f" % r2(LinearRegression(), Xs))
+```
+
+El $R^2$ negativo de las dos primeras filas es el valor correcto: el modelo con diez columnas de ruido predice peor que la media. El pipeline completo protege de los dos tipos de pasos sin necesidad de clasificarlos, y por eso se usa aunque en un caso concreto la fuga fuera despreciable.
+
+## 4. Limitaciones
+
+- El pipeline de la Sección 1 trata una sola variable categórica y dos numéricas. `ColumnTransformer` generaliza la asignación de columnas a transformadores; la versión escrita a mano solo muestra el mecanismo.
+- La Proposición 5.4 trata un cambio en la media. Un cambio en la relación entre los atributos y $y$ no se corrige con ningún escalado; es la deriva de ML aplicado 12.
+- El pipeline no resuelve la fuga temporal: si un atributo se calcula con información posterior al momento de corte, el pipeline lo transforma igual que cualquier otro. La protección está en la definición del problema (ML aplicado 01).
+- La predicción para un nivel nuevo depende del solucionador cuando las ficticias tienen rango completo. Con una ficticia menos, o con regularización, queda determinada.
+
+## Ejercicios
+
+### Ejercicio 1, Escalar con los parámetros correctos
+
+La celda fija un atributo de entrenamiento `x_tr` y un lote nuevo `x_nuevo` con una media un 20 % mayor. Completar la línea de `z_nuevo` con el lote escalado con la media y la desviación típica del entrenamiento, y la de `z_lote` con el lote escalado con sus propios estadísticos. La celda imprime la media de cada uno; deben dar `0.9178 0.0`.
+
+```{pyodide}
+#| exercise: ex_escala
+import numpy as np
+
+rng = np.random.default_rng(7)
+x_tr = rng.normal(2400, 500, 400)
+x_nuevo = rng.normal(2880, 500, 100)
+
+z_nuevo = ______
+z_lote = ______
+
+print(round(float(np.mean(z_nuevo)), 4),
+      round(float(np.mean(z_lote)), 4) + 0.0)
+```
+
+::: {.hint exercise="ex_escala"}
+Escalar es restar una media y dividir por una desviación típica. La diferencia entre las dos líneas es de qué array salen esos dos números.
+:::
+
+::: {.solution exercise="ex_escala"}
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(7)
+x_tr = rng.normal(2400, 500, 400)
+x_nuevo = rng.normal(2880, 500, 100)
+
+z_nuevo = (x_nuevo - x_tr.mean()) / x_tr.std()
+z_lote = (x_nuevo - x_nuevo.mean()) / x_nuevo.std()
+
+print(round(float(np.mean(z_nuevo)), 4),
+      round(float(np.mean(z_lote)), 4) + 0.0)
+```
+
+Con los parámetros del entrenamiento, el lote queda 0,92 desviaciones típicas por encima de cero, cerca del aumento de 480 dividido por la desviación típica de 500. Con los suyos, la media es 0 por construcción y el aumento desaparece.
+:::
+
+```{pyodide}
+#| exercise: ex_escala
+#| check: true
+import numpy as np
+if abs(float(np.mean(z_nuevo)) - 0.9178) < 5e-5 and abs(float(np.mean(z_lote))) < 1e-9:
+    feedback = {"correct": True, "message": "Correcto: 0.9178 con los parámetros del entrenamiento y 0 con los del lote."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba una media de 0.9178 para z_nuevo y de 0 para z_lote."}
+feedback
+```
+
+### Ejercicio 2, Ficticias con un nivel nuevo
+
+La celda fija los niveles aprendidos al entrenar, `niveles`, y una columna nueva `c` que contiene un nivel que no está en ellos. Completar la línea de `F` con la matriz de ficticias de `c`, con una columna por nivel de `niveles` y enteros 0 y 1, en la que una fila con un nivel desconocido tiene ceros en todas las columnas. La celda imprime las sumas por fila y por columna; deben dar `[1, 1, 0, 1, 0]` y `[1, 1, 1]`.
+
+```{pyodide}
+#| exercise: ex_ficticias
+import numpy as np
+
+niveles = np.array(["basico", "estandar", "premium"])
+c = np.array(["premium", "basico", "empresa", "estandar", "empresa"])
+
+F = ______
+
+print(np.asarray(F).sum(axis=1).tolist(),
+      np.asarray(F).sum(axis=0).tolist())
+```
+
+::: {.hint exercise="ex_ficticias"}
+La comparación `c[:, None] == niveles[None, :]` da una matriz booleana de 5 filas y 3 columnas; `.astype(int)` la convierte en ceros y unos.
+:::
+
+::: {.solution exercise="ex_ficticias"}
+```{pyodide}
+import numpy as np
+
+niveles = np.array(["basico", "estandar", "premium"])
+c = np.array(["premium", "basico", "empresa", "estandar", "empresa"])
+
+F = (c[:, None] == niveles[None, :]).astype(int)
+
+print(np.asarray(F).sum(axis=1).tolist(),
+      np.asarray(F).sum(axis=0).tolist())
+```
+
+Las dos filas con `empresa` tienen todas las ficticias a cero. La matriz tiene siempre tres columnas, las del entrenamiento, aunque el lote nuevo tenga otros niveles o le falte alguno; construirla con los niveles del propio lote cambiaría el número de columnas y su significado.
+:::
+
+```{pyodide}
+#| exercise: ex_ficticias
+#| check: true
+import numpy as np
+_F = np.asarray(F)
+if _F.shape == (5, 3) and _F.sum(axis=1).tolist() == [1, 1, 0, 1, 0] and _F.tolist()[0] == [0, 0, 1]:
+    feedback = {"correct": True, "message": "Correcto: tres columnas fijas y ceros en las filas con el nivel nuevo."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba una matriz de 5 × 3 con sumas por fila [1, 1, 0, 1, 0]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Aplicado 5**:
+
+1. Añadir al pipeline escrito a mano un paso de codificación por el objetivo con suavizado, y comprobar con validación cruzada que ajustarlo dentro de cada pliegue elimina la fuga medida en Atributos 02.
+2. Guardar el pipeline de scikit-learn con `pickle`, cargarlo en otra sesión y comprobar que las predicciones coinciden; repetir guardando solo el modelo y aplicando a mano el preprocesamiento, y anotar qué hay que guardar además del modelo.
+3. Construir un ejemplo en el que imputar por la mediana fuera de la validación sí cambie el resultado de forma apreciable, por ejemplo con muy pocas filas por pliegue. Guardar en `50-Errores/` la regla sobre qué pasos pueden ajustarse fuera.
+
+## Del libro
+
+FES §3.8, *Feature Engineering Without Overfitting*, sostiene que todas las operaciones de ingeniería de atributos deben evaluarse con datos que no intervinieron en ellas, y que los patrones observados durante la exploración deben confirmarse con datos independientes. Esta lección implementa esa regla como objeto: un pipeline que se ajusta dentro de cada pliegue y que aplica a los datos nuevos los parámetros del entrenamiento. La medición del desfase entre entrenamiento y uso es de esta página.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- Transformador: `fit` aprende parámetros; `transform` los aplica sin recalcularlos.
+- Pipeline: transformadores y modelo en un solo objeto; `fit` con el entrenamiento, `predict` con los parámetros aprendidos.
+- El pipeline escrito a mano y el de scikit-learn predicen lo mismo a $10^{-9}$ con niveles conocidos.
+- Con ficticias de rango completo e intercepto, un nivel nuevo recibe una predicción que depende del solucionador: 25,84 de diferencia.
+- Reescalar un lote con sus propios estadísticos borra los cambios de media: 99,12 predicho frente a 120,23 real.
+- Pasos que no usan $y$, fuera de la validación: −0,5346 frente a −0,5398, del orden del ruido.
+- Elegir columnas por su relación con $y$ fuera de la validación: $R^2=+0{,}1799$ con ruido puro.
+- El pipeline protege de los dos tipos de pasos sin clasificarlos.
+- Se guarda el pipeline completo, no solo el modelo.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos. El pipeline escrito a mano coincide con el de scikit-learn a $10^{-9}$ en las filas con niveles vistos, difiere en 25,84 en las cinco filas con el nivel nuevo, y tiene un error cuadrático medio de 82,1090 en los datos nuevos con niveles vistos. El desfase: gasto real medio de 99,30, 104,53, 109,77 y 120,23 con aumentos del ingreso del 0, 10, 20 y 40 %, predicciones del pipeline de 99,21, 104,44, 109,68 y 120,15, y del lote reescalado de 99,12 en los cuatro casos. La fuga por pasos: $R^2$ de −0,5346 imputando y escalando fuera, −0,5398 con todo dentro y +0,1799 eligiendo columnas fuera. Las celdas se comprobaron con scikit-learn 0.24 y 1.9 y en el navegador, con idénticos resultados.
+
+**Lo que viene de los libros.** La regla de evaluar toda operación de ingeniería de atributos con datos independientes, de FES §3.8.
+
+**Lo que se usa de otras lecciones sin repetir.** Las tres fugas y su dependencia del uso de $y$, de Atributos 02. Los niveles nuevos y sus alternativas, de Atributos 10. La imputación por la mediana, de Atributos 13.
+
+**Lo que es mío, no del libro.** El pipeline escrito a mano como demostración del mecanismo. La Proposición 5.4 y la medición del desfase entre entrenamiento y uso. La explicación de la diferencia en el nivel nuevo por la falta de rango de la matriz de diseño. Y el visual del desfase, construido con las esperanzas del proceso de la celda.
+:::

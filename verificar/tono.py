@@ -84,6 +84,7 @@ LIMPIAS = [
     "aplicado/02-exploracion-y-calidad.qmd",
     "aplicado/03-atipicos.qmd",
     "aplicado/04-particion-de-los-datos.qmd",
+    "aplicado/05-pipelines.qmd",
     "atributos/index.qmd",
     "causal/01-resultados-potenciales.qmd",
     "causal/02-dags-y-puerta-trasera.qmd",
