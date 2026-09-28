@@ -1,0 +1,239 @@
+---
+title: "Caso 9. Precio y elasticidad de un producto en línea"
+subtitle: "ML aplicado · Caso integrador 9"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="aplicado/caso-9-precios"}
+[**Caso** 9]{.item}
+[**Fase** F4]{.item}
+[**Usa** Estadística 10 y 11 · Causal 01, 02 y 05 · ML aplicado 01]{.item}
+:::
+
+Este caso trata una decisión de precios con datos históricos y con un experimento. Corresponde a un bloque de trabajo de unas cuatro horas. La situación y los datos son inventados.
+
+## Situación
+
+Una empresa vende en línea un kit de herramientas a 49 dólares; cada unidad le cuesta 18. El equipo comercial revisó dos años de ventas semanales y concluyó que el precio apenas afecta a la demanda: en las semanas de precio alto se vendió más. Propone subirlo a 64 dólares para todos los clientes.
+
+Antes de decidir, el área de analítica hizo un experimento de cuatro semanas: a cada visitante de la página se le mostró, al azar, uno de seis precios entre 39 y 64 dólares, y se registró si compró. La dirección quiere saber qué precio fijar y si conviene fijar uno distinto por tipo de visitante.
+
+## Los datos
+
+La página carga al abrirse dos tablas. `historico` tiene una fila por semana de 2024 y 2025, con el precio vigente, las visitas a la página y las unidades vendidas. `experimento` tiene una fila por visitante del experimento, con su segmento, el precio que vio y si compró.
+
+| Columna | Descripción |
+|---|---|
+| `semana` | Lunes de la semana. Solo en `historico` |
+| `precio` | Precio mostrado, en dólares |
+| `visitas`, `ventas` | Visitas y unidades vendidas en la semana. Solo en `historico` |
+| `visitante` | Número del visitante. Solo en `experimento` |
+| `segmento` | `nuevo_movil`, `nuevo_escritorio` o `recurrente`. Solo en `experimento` |
+| `compra` | 1 si el visitante compró. Solo en `experimento` |
+
+En el experimento, el 45 % de los visitantes son nuevos en el móvil, el 30 % nuevos en el escritorio y el 25 % recurrentes, igual que en el tráfico habitual.
+
+```{pyodide}
+#| include: false
+# Genera los datos del caso. Va oculta: el mecanismo es lo que el caso pide descubrir.
+import numpy as np
+import pandas as pd
+
+PRECIOS = np.array([39.0, 44.0, 49.0, 54.0, 59.0, 64.0])
+
+def conversion(precio, segmento, estacion=1.0):
+    """Probabilidad de compra de un visitante; cada segmento tiene su sensibilidad."""
+    a = {"nuevo_movil": 0.9, "nuevo_escritorio": 0.6, "recurrente": 0.2}[segmento]
+    b = {"nuevo_movil": 0.075, "nuevo_escritorio": 0.055, "recurrente": 0.030}[segmento]
+    z = a - b * (precio - 39.0) + np.log(estacion)
+    return 0.12 / (1 + np.exp(-z)) * 2
+
+def genera_precios(semilla=909):
+    rng = np.random.default_rng(semilla)
+    segs = np.array(["nuevo_movil", "nuevo_escritorio", "recurrente"])
+    pesos = np.array([0.45, 0.30, 0.25])
+    # 1. historico semanal: el equipo subia el precio cuando esperaba mas demanda
+    semanas = pd.date_range("2024-01-01", periods=104, freq="W-MON")
+    est = 1 + 0.45 * np.sin(2 * np.pi * (np.arange(104) - 10) / 52) + rng.normal(0, 0.05, 104)
+    precio_h = np.clip(49 + 14 * (est - 1) + rng.normal(0, 2, 104), 39, 64).round()
+    visitas = rng.poisson(9000 * (0.8 + 0.4 * est))
+    ventas = []
+    for k in range(104):
+        s = rng.choice(3, visitas[k], p=pesos)
+        conv = np.array([conversion(precio_h[k], segs[j], est[k]) for j in range(3)])
+        ventas.append(int((rng.random(visitas[k]) < conv[s]).sum()))
+    hist = pd.DataFrame({"semana": semanas, "precio": precio_h, "visitas": visitas, "ventas": ventas})
+    # 2. experimento: cuatro semanas, precio al azar por visitante, estacion neutra
+    n = 60000
+    s = rng.choice(3, n, p=pesos)
+    p = rng.choice(PRECIOS, n)
+    conv = np.array([conversion(p[i], segs[s[i]]) for i in range(n)])
+    exp = pd.DataFrame({"visitante": np.arange(1, n + 1), "segmento": segs[s], "precio": p,
+                        "compra": (rng.random(n) < conv).astype(int)})
+    return hist, exp
+
+
+historico, experimento = genera_precios()
+```
+
+```{pyodide}
+print(historico.shape, experimento.shape)
+print(historico.head(5).to_string())
+print(experimento.head(5).to_string())
+```
+
+## Preguntas
+
+Las preguntas 1 y 2 tienen comprobación automática. La 3 y la 4 se evalúan con la rúbrica.
+
+```{pyodide}
+#| exercise: [c9_historico, c9_precios]
+#| setup: true
+import numpy as np
+import pandas as pd
+
+PRECIOS = np.array([39.0, 44.0, 49.0, 54.0, 59.0, 64.0])
+
+def conversion(precio, segmento, estacion=1.0):
+    """Probabilidad de compra de un visitante; cada segmento tiene su sensibilidad."""
+    a = {"nuevo_movil": 0.9, "nuevo_escritorio": 0.6, "recurrente": 0.2}[segmento]
+    b = {"nuevo_movil": 0.075, "nuevo_escritorio": 0.055, "recurrente": 0.030}[segmento]
+    z = a - b * (precio - 39.0) + np.log(estacion)
+    return 0.12 / (1 + np.exp(-z)) * 2
+
+def genera_precios(semilla=909):
+    rng = np.random.default_rng(semilla)
+    segs = np.array(["nuevo_movil", "nuevo_escritorio", "recurrente"])
+    pesos = np.array([0.45, 0.30, 0.25])
+    # 1. historico semanal: el equipo subia el precio cuando esperaba mas demanda
+    semanas = pd.date_range("2024-01-01", periods=104, freq="W-MON")
+    est = 1 + 0.45 * np.sin(2 * np.pi * (np.arange(104) - 10) / 52) + rng.normal(0, 0.05, 104)
+    precio_h = np.clip(49 + 14 * (est - 1) + rng.normal(0, 2, 104), 39, 64).round()
+    visitas = rng.poisson(9000 * (0.8 + 0.4 * est))
+    ventas = []
+    for k in range(104):
+        s = rng.choice(3, visitas[k], p=pesos)
+        conv = np.array([conversion(precio_h[k], segs[j], est[k]) for j in range(3)])
+        ventas.append(int((rng.random(visitas[k]) < conv[s]).sum()))
+    hist = pd.DataFrame({"semana": semanas, "precio": precio_h, "visitas": visitas, "ventas": ventas})
+    # 2. experimento: cuatro semanas, precio al azar por visitante, estacion neutra
+    n = 60000
+    s = rng.choice(3, n, p=pesos)
+    p = rng.choice(PRECIOS, n)
+    conv = np.array([conversion(p[i], segs[s[i]]) for i in range(n)])
+    exp = pd.DataFrame({"visitante": np.arange(1, n + 1), "segmento": segs[s], "precio": p,
+                        "compra": (rng.random(n) < conv).astype(int)})
+    return hist, exp
+
+
+historico, experimento = genera_precios()
+```
+
+### Pregunta 1, La elasticidad que ve el equipo comercial
+
+Asignar a `elasticidad_historica` la pendiente de la regresión del logaritmo de las ventas semanales sobre el logaritmo del precio, con los datos de `historico`.
+
+```{pyodide}
+#| exercise: c9_historico
+elasticidad_historica = ______
+
+print(round(elasticidad_historica, 3))
+```
+
+::: {.solution exercise="c9_historico"}
+```python
+import numpy as np
+
+elasticidad_historica = float(np.polyfit(np.log(historico["precio"]),
+                                         np.log(historico["ventas"]), 1)[0])
+
+print(round(elasticidad_historica, 3))
+```
+:::
+
+```{pyodide}
+#| exercise: c9_historico
+#| check: true
+try:
+    _ok = abs(float(elasticidad_historica) - 1.099) < 0.005
+    _m = ("Correcto: la pendiente es positiva, 1.099. Según el histórico, subir el precio aumentaría las ventas." if _ok
+          else "Se esperaba una pendiente de 1.099 en escala logarítmica.")
+except Exception as _e:
+    _ok, _m = False, str(_e)
+feedback = {"correct": _ok, "message": _m}
+feedback
+```
+
+### Pregunta 2, Precio por segmento
+
+Asignar a `precios` un diccionario con el precio que conviene mostrar a cada segmento, elegido entre los seis del experimento, para maximizar la ganancia por visitante. La comprobación calcula la ganancia esperada por cada 1000 visitantes con el comportamiento real de los clientes y exige al menos 3930 dólares; mostrar 49 dólares a todos da 3827.
+
+```{pyodide}
+#| exercise: c9_precios
+precios = ______
+
+print(precios)
+```
+
+::: {.solution exercise="c9_precios"}
+```python
+tabla = experimento.groupby(["segmento", "precio"])["compra"].mean().unstack()
+ganancia = tabla * (tabla.columns.to_numpy() - 18.0)
+precios = {s: float(ganancia.loc[s].idxmax()) for s in ganancia.index}
+
+print(precios)
+```
+:::
+
+```{pyodide}
+#| exercise: c9_precios
+#| check: true
+import numpy as _np
+try:
+    _w = {"nuevo_movil": 0.45, "nuevo_escritorio": 0.30, "recurrente": 0.25}
+    _g = 1000 * sum(_w[s] * (float(precios[s]) - 18) * conversion(float(precios[s]), s) for s in _w)
+    _base = 1000 * sum(_w[s] * (49 - 18) * conversion(49.0, s) for s in _w)
+    _ok = all(float(precios[s]) in PRECIOS for s in _w) and _g >= 3930
+    _m = "ganancia esperada %.0f dólares por cada 1000 visitantes, frente a %.0f con 49 para todos." % (_g, _base)
+except Exception as _e:
+    _ok, _m = False, "precios debe tener un precio del experimento para cada segmento: %s" % _e
+feedback = {"correct": _ok, "message": ("Correcto: " if _ok else "Todavía no: ") + _m}
+feedback
+```
+
+### Pregunta 3, Por qué el histórico engaña
+
+Mostrar con los datos por qué la pendiente de la pregunta 1 es positiva: relacionar el precio semanal con las visitas y con la época del año, y estimar la elasticidad del experimento en cada segmento con su intervalo de confianza. Calcular qué pasaría con la ganancia si se aplicara la propuesta del equipo comercial, 64 dólares para todos, y si la diferencia entre los dos mejores precios de cada segmento es mayor que el error del experimento.
+
+```{pyodide}
+# histórico frente a experimento
+```
+
+### Pregunta 4, Recomendación a la dirección
+
+Redactar un informe de entre 250 y 400 palabras con el precio recomendado, la ganancia esperada frente al precio actual y frente a la propuesta comercial, y una discusión de los riesgos de fijar precios distintos por segmento: cómo se aplicaría, qué percibirían los clientes y qué efectos de largo plazo no mide un experimento de cuatro semanas.
+
+## Rúbrica
+
+| Criterio | Completo | Incompleto |
+|---|---|---|
+| Preguntas 1 y 2 | La comprobación automática marca las dos como correctas. | Alguna no se cumple. |
+| Histórico | Identifica que el precio se subía en las semanas de más demanda, lo muestra con cifras y lo relaciona con la confusión de Causal 02. | Descarta el histórico sin explicar por qué engaña. |
+| Experimento | Estima la conversión y la ganancia por precio y segmento con intervalos, y discute cuándo dos precios no se distinguen. | Elige el máximo sin considerar el error. |
+| Propuesta comercial | Calcula la ganancia de 64 dólares para todos y la compara con la recomendación. | No la evalúa. |
+| Informe | Tiene entre 250 y 400 palabras y trata los riesgos de la diferenciación de precios. | Falta alguna de las partes. |
+
+<!-- verificacion
+import numpy as np
+h, e = genera_precios()
+b = np.polyfit(np.log(h["precio"]), np.log(h["ventas"]), 1)[0]
+assert b > 0.5
+cc = np.polyfit(h["precio"], h["visitas"], 1)[0]
+assert cc > 0
+w = {"nuevo_movil": 0.45, "nuevo_escritorio": 0.30, "recurrente": 0.25}
+g = lambda pr: 1000 * sum(w[s] * (pr[s] - 18) * conversion(pr[s], s) for s in w)
+opt = {s: max(PRECIOS, key=lambda p: (p - 18) * conversion(p, s)) for s in w}
+assert len(set(opt.values())) == 3
+print("pendiente histórica %.3f; precios óptimos %s; ganancia por 1000 visitantes %.0f frente a %.0f con 49 y %.0f con 64"
+      % (b, {k: float(v) for k, v in opt.items()}, g(opt), g({s: 49.0 for s in w}), g({s: 64.0 for s in w})))
+-->
