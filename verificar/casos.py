@@ -32,8 +32,14 @@ SONDA = ("\nimport json as _j\nprint('@@FB@@' + _j.dumps({'c': bool(feedback['co
          " 'm': str(feedback['message'])}))\n")
 
 
+CARPETA = RAIZ
+
+
 def ejecuta(codigo):
-    r = subprocess.run([sys.executable, "-c", codigo], capture_output=True, text=True, timeout=900)
+    # se ejecuta desde la carpeta de la página: allí están los archivos de
+    # datos que la página declara en «pyodide: resources»
+    r = subprocess.run([sys.executable, "-c", codigo], capture_output=True, text=True,
+                       timeout=900, cwd=CARPETA)
     return r.returncode, r.stdout, r.stderr
 
 
@@ -47,6 +53,8 @@ def resultado(codigo):
 
 
 def revisar(p):
+    global CARPETA
+    CARPETA = p.parent
     t = p.read_text(encoding="utf-8")
     h = []
     setup = re.search(r"```\{pyodide\}\n#\| exercise: \[[^\]]*\]\n#\| setup: true\n(.*?)```", t, re.S)
