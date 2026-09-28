@@ -195,6 +195,7 @@ MIGRADAS = {
     "atributos/09-codificacion-supervisada.qmd",
     "atributos/10-niveles-nuevos-orden-y-arboles.qmd",
     "aplicado/01-planteamiento-y-linea-base.qmd",
+    "aplicado/02-exploracion-y-calidad.qmd",
     "causal/16-metalearners.qmd",
     "causal/17-double-machine-learning.qmd",
     "causal/18-r-learner-y-r-score.qmd",

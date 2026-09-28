@@ -1,0 +1,606 @@
+---
+title: "Exploración y calidad de los datos"
+subtitle: "ML aplicado · Lección 02"
+nivel: L3
+modulo: aplicado
+fase: F4
+prereqs: [aplicado/01-planteamiento-y-linea-base, python/10-carga-formatos-y-limpieza, atributos/02-el-proceso-y-la-fuga]
+siguientes: []
+libro: "FES, cap. 4 Exploratory Visualizations"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="aplicado/02-exploracion-y-calidad"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F4]{.item}
+[**Libro** FES 4]{.item}
+[**Prereqs** [Planteamiento](01-planteamiento-y-linea-base.qmd) · [Carga, formatos y limpieza](../python/10-carga-formatos-y-limpieza.qmd) · [El proceso y la fuga](../atributos/02-el-proceso-y-la-fuga.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Construir el perfil de una tabla (tipo, nulos, valores únicos, mínimo y máximo de cada columna) y leer en él cuatro problemas de calidad: un valor centinela, unidades mezcladas, categorías escritas de varias formas y filas duplicadas.
+2. Derivar el efecto de un valor centinela sobre la media, $(1-f)\mu+fc$, y medirlo: un 2,84 % de edades grabadas como 999 lleva la media de 41,14 a 68,35 y la correlación con el abandono de 0,1561 a 0,0142, mientras la mediana no cambia.
+3. Detectar unidades mezcladas en la escala logarítmica. Los 249 ingresos grabados en miles quedan tres décadas por debajo del resto, y el criterio «menos de la mediana dividida por 100» los separa todos.
+4. Medir la fuga que producen las filas duplicadas en una partición aleatoria: con un 8 % de filas repetidas, el vecino más cercano valida 0,7134 frente a 0,6861 sin duplicados y 0,6755 en datos nuevos.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **ML aplicado 01**: el planteamiento del problema, que fija la unidad y con ella qué cuenta como fila duplicada.
+- **Python 10**: la carga de datos y la limpieza de formatos con pandas.
+- **Atributos 02**: la fuga por la unidad de partición, de la que los duplicados son un caso particular.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **ML aplicado 03**: los valores atípicos, que son los valores válidos pero extremos que quedan tras esta revisión.
+- **ML aplicado 04**: la partición de los datos, que agrupa las filas repetidas antes de partir.
+- **Atributos 13**: los datos faltantes, en los que se convierten los valores centinela.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $c$ | ce | El valor centinela: un número que representa un dato desconocido |
+| $f$ | efe | La fracción de filas con el valor centinela |
+| $\mu$ | mu | La media de la columna sin el valor centinela |
+| $\bar x$ | x barra | La media calculada con el valor centinela incluido |
+| $\sigma$ | sigma | La desviación típica del logaritmo decimal del ingreso |
+| $n$ | ene | El número de filas |
+:::
+
+## 1. El perfil de una tabla
+
+Antes de explorar relaciones entre variables hay que comprobar que cada columna contiene lo que su nombre indica. Esa comprobación se hace con un resumen por columna.
+
+::: {.definicion}
+**Definición 2.1 ([perfil de una tabla]{.g}).** El perfil de una tabla es un resumen con una fila por columna: el tipo, el número de nulos, el número de valores distintos y, para las numéricas, el mínimo y el máximo. Cada columna tiene además un **dominio**, el conjunto de valores posibles según su definición: una edad está entre 0 y 120, un ingreso es positivo, un plan pertenece a una lista cerrada.
+:::
+
+::: {.definicion}
+**Definición 2.2 (problemas de calidad).** Se consideran cuatro tipos:
+
+1. **[valor centinela]{.g}**: un número dentro del tipo de la columna que se usa para indicar un dato desconocido, como 999, $-1$ o 0;
+2. **unidades mezcladas**: una parte de las filas registra la misma magnitud en otra unidad, como miles en lugar de unidades;
+3. **grafías distintas**: un mismo nivel de una categórica escrito de varias formas (mayúsculas, espacios, acentos);
+4. **filas duplicadas**: la misma unidad registrada más de una vez, por ejemplo por una carga repetida.
+:::
+
+La celda construye una tabla de 5000 clientes con los cuatro problemas plantados y la resume con una función de perfil escrita a mano.
+
+```{pyodide}
+import numpy as np
+import pandas as pd
+
+def clientes(n, semilla):
+    """Tabla de clientes con cuatro problemas de calidad plantados."""
+    rng = np.random.default_rng(semilla)
+    edad = np.clip(rng.normal(41, 12, n), 18, 85).round()
+    ingreso = np.exp(rng.normal(np.log(2400), 0.45, n)).round(2)   # mensual
+    plan = rng.choice(["basico", "estandar", "premium"], n, p=[0.5, 0.35, 0.15])
+    z = -1.2 + 0.035 * (edad - 41) - 0.9 * (np.log(ingreso) - np.log(2400)) \
+        + np.where(plan == "premium", -0.8, 0.0)
+    y = (rng.random(n) < 1 / (1 + np.exp(-z))).astype(int)
+    t = pd.DataFrame({"edad": edad, "ingreso": ingreso, "plan": plan, "abandona": y})
+    # 1. centinela: la edad desconocida se grabo como 999
+    c = rng.random(n) < 0.03
+    t.loc[c, "edad"] = 999
+    # 2. unidades: parte de los ingresos se grabo en miles
+    m = rng.random(n) < 0.05
+    t.loc[m, "ingreso"] = (t.loc[m, "ingreso"] / 1000).round(4)
+    # 3. categorias escritas de varias formas
+    v = rng.random(n) < 0.06
+    t.loc[v, "plan"] = t.loc[v, "plan"].str.upper()
+    # 4. filas duplicadas por una carga repetida
+    d = rng.choice(n, int(0.08 * n), replace=False)
+    t = pd.concat([t, t.iloc[d]], ignore_index=True)
+    return t, c, m, v, d
+
+t, c, m, v, d = clientes(5000, 21)
+
+def perfil(t):
+    print("%-9s %-8s %6s %7s %10s %10s" % ("columna", "tipo", "nulos", "unicos", "minimo", "maximo"))
+    for col in t.columns:
+        s = t[col]
+        num = pd.api.types.is_numeric_dtype(s)
+        print("%-9s %-8s %6d %7d %10s %10s" % (
+            col, "numero" if num else "texto", s.isna().sum(), s.nunique(),
+            ("%.4g" % s.min()) if num else "", ("%.4g" % s.max()) if num else ""))
+
+print("filas:", len(t))
+perfil(t)
+print()
+print("niveles de plan:", sorted(t["plan"].unique()))
+print("filas identicas a otra anterior:", int(t.duplicated().sum()))
+print("edades iguales a 999:", int((t["edad"] == 999).sum()))
+```
+
+El perfil muestra los cuatro problemas sin mirar ningún gráfico. La edad máxima es 999, fuera del dominio. El ingreso va de 0,73 a $1{,}22\cdot 10^{4}$, un rango de cuatro órdenes de magnitud para un ingreso mensual. La columna `plan` tiene 6 valores distintos donde el dominio tiene 3. La tabla tiene 5400 filas y 400 son idénticas a otra anterior.
+
+Ninguno de los cuatro produce un error al ajustar un modelo. Todos cambian los resultados.
+
+## 2. Valores centinela
+
+::: {.proposicion}
+**Proposición 2.3 (el centinela en la media).** Si una fracción $f$ de las filas vale $c$ y el resto tiene media $\mu$, la media calculada es
+$$
+\bar x=(1-f)\,\mu+f\,c .
+$$
+Con $c$ muy alejado del dominio, un $f$ pequeño basta para desplazar la media. La mediana apenas cambia mientras $f$ sea pequeño, porque solo depende del orden de los valores.
+:::
+
+::: {.demostracion}
+*Demostración.* La suma de la columna es $n(1-f)\mu+nfc$; al dividir por $n$ se obtiene la fórmula. La mediana es el valor central del orden. Un centinela mayor que todos los datos válidos solo mueve el valor central desde el cuantil $0{,}5$ de los datos válidos hasta su cuantil $0{,}5/(1-f)$. En la tabla sin duplicados, $f=0{,}0284$, $\mu=41{,}14$ y la media calculada es 68,35, igual a la fórmula. La mediana vale 41,0 con y sin el centinela. ∎
+:::
+
+```{pyodide}
+import numpy as np
+import pandas as pd
+
+def clientes(n, semilla):
+    """Tabla de clientes con cuatro problemas de calidad plantados."""
+    rng = np.random.default_rng(semilla)
+    edad = np.clip(rng.normal(41, 12, n), 18, 85).round()
+    ingreso = np.exp(rng.normal(np.log(2400), 0.45, n)).round(2)   # mensual
+    plan = rng.choice(["basico", "estandar", "premium"], n, p=[0.5, 0.35, 0.15])
+    z = -1.2 + 0.035 * (edad - 41) - 0.9 * (np.log(ingreso) - np.log(2400)) \
+        + np.where(plan == "premium", -0.8, 0.0)
+    y = (rng.random(n) < 1 / (1 + np.exp(-z))).astype(int)
+    t = pd.DataFrame({"edad": edad, "ingreso": ingreso, "plan": plan, "abandona": y})
+    # 1. centinela: la edad desconocida se grabo como 999
+    c = rng.random(n) < 0.03
+    t.loc[c, "edad"] = 999
+    # 2. unidades: parte de los ingresos se grabo en miles
+    m = rng.random(n) < 0.05
+    t.loc[m, "ingreso"] = (t.loc[m, "ingreso"] / 1000).round(4)
+    # 3. categorias escritas de varias formas
+    v = rng.random(n) < 0.06
+    t.loc[v, "plan"] = t.loc[v, "plan"].str.upper()
+    # 4. filas duplicadas por una carga repetida
+    d = rng.choice(n, int(0.08 * n), replace=False)
+    t = pd.concat([t, t.iloc[d]], ignore_index=True)
+    return t, c, m, v, d
+
+t, c, m, v, d = clientes(5000, 21)
+t = t.drop_duplicates().reset_index(drop=True)
+f = float((t["edad"] == 999).mean())
+limpia = t["edad"].where(t["edad"] != 999)
+mu = limpia.mean()
+print("fraccion de 999          : %.4f" % f)
+print("media con el 999         : %.2f" % t["edad"].mean())
+print("(1-f)*media real + f*999 : %.2f" % ((1 - f) * mu + f * 999))
+print("media sin el 999         : %.2f" % mu)
+print("mediana con y sin el 999 : %.1f  %.1f" % (t["edad"].median(), limpia.median()))
+print("correlacion edad-abandono con el 999 : %+.4f" % t["edad"].corr(t["abandona"]))
+print("correlacion edad-abandono sin el 999 : %+.4f" % limpia.corr(t["abandona"]))
+```
+
+La correlación de la edad con el abandono baja de 0,1561 a 0,0142 con el centinela. Un análisis que descarte las variables con correlación baja eliminaría la edad por un error de registro. La corrección consiste en sustituir el centinela por un valor faltante, y a partir de ahí se aplican los métodos de Atributos 13.
+
+**Modo de falla.** El sistema de origen usa 999 para la edad desconocida, 0 para el ingreso no declarado y $-1$ para la fecha ausente, y la tabla llega sin nulos. El perfil no marca ningún problema en la columna de nulos. Solo la comparación del mínimo y el máximo con el dominio lo detecta.
+
+El visual genera 800 edades y sustituye una fracción por un valor centinela. El tercer control convierte el centinela en un valor faltante.
+
+```{=html}
+<div class="viz-centinela02">
+  <div class="controles">
+    <label>Fracción con centinela <input id="c2-f" type="range" min="0" max="0.2" step="0.01" value="0.05"> <span id="c2-f-v">0.05</span></label>
+    <label>Valor centinela
+      <select id="c2-c">
+        <option value="999" selected>999</option>
+        <option value="99">99</option>
+        <option value="0">0</option>
+        <option value="-1">−1</option>
+      </select>
+    </label>
+    <label><input id="c2-n" type="checkbox"> tratarlo como faltante</label>
+  </div>
+  <svg id="c2-svg" viewBox="0 0 660 280" role="img" aria-label="Histograma de edades con una fracción de valores centinela, con la media y la mediana marcadas."></svg>
+  <p class="lectura" id="c2-lectura"></p>
+</div>
+<style>
+.viz-centinela02 { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-centinela02 .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-centinela02 label { display: flex; align-items: center; gap: .4rem; }
+.viz-centinela02 input[type=range] { width: 150px; padding: 0; }
+.viz-centinela02 select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-centinela02 svg { width: 100%; height: auto; display: block; }
+.viz-centinela02 .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("c2-svg"), lec = document.getElementById("c2-lectura");
+  var cf = document.getElementById("c2-f"), cc = document.getElementById("c2-c"), cn = document.getElementById("c2-n");
+  var ef = document.getElementById("c2-f-v");
+  var X0 = 40, X1 = 540, XF0 = 568, XF1 = 628, Y0 = 44, Y1 = 236, N = 800;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var sem = 17, EDAD = [], ORDEN = [], i;
+  function u() { sem = (sem * 48271) % 2147483647; return sem / 2147483647; }
+  for (i = 0; i < N; i++) {
+    var a = Math.max(u(), 1e-9), b = u();
+    var z = Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b);
+    EDAD.push(Math.round(Math.min(85, Math.max(18, 41 + 12 * z))));
+    ORDEN.push(u());
+  }
+  function mediana(v) {
+    var s = v.slice().sort(function (p, q) { return p - q; }), m = s.length;
+    return m % 2 ? s[(m - 1) / 2] : (s[m / 2 - 1] + s[m / 2]) / 2;
+  }
+  function media(v) { var s = 0; v.forEach(function (x) { s += x; }); return s / v.length; }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var f = +cf.value, c = +cc.value, faltante = cn.checked;
+    ef.textContent = f.toFixed(2);
+    var obs = [], k = 0, validas = [];
+    for (i = 0; i < N; i++) {
+      var es = ORDEN[i] < f;
+      if (es) k++; else validas.push(EDAD[i]);
+      if (es && faltante) continue;
+      obs.push(es ? c : EDAD[i]);
+    }
+    var mu = media(EDAD), m = media(obs), me = mediana(obs);
+    var px = function (v) { return X0 + (v + 5) / 105 * (X1 - X0); };
+    // histograma en clases de 5 años entre -5 y 100
+    var cls = [], j;
+    for (j = 0; j < 21; j++) cls.push(0);
+    var fuera = 0;
+    obs.forEach(function (x) { if (x > 100) fuera++; else cls[Math.min(20, Math.floor((x + 5) / 5))]++; });
+    var HM = Math.max.apply(null, cls.concat([fuera, 1]));
+    var py = function (h) { return Y1 - h / HM * (Y1 - Y0); };
+    for (j = 0; j < 21; j++) {
+      if (!cls[j]) continue;
+      svg.appendChild(el("rect", { x: px(j * 5 - 5) + 1, y: py(cls[j]), width: (X1 - X0) / 21 - 2, height: Y1 - py(cls[j]), fill: C_A, "fill-opacity": .55 }));
+    }
+    svg.appendChild(el("path", { d: "M" + X0 + " " + Y1 + " L" + X1 + " " + Y1, stroke: C_L, "stroke-width": 1 }));
+    [0, 20, 40, 60, 80, 100].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y1 + 16, "text-anchor": "middle", "font-size": 10, fill: C_T, opacity: .7 }, v));
+    });
+    svg.appendChild(el("text", { x: X0, y: Y1 + 34, "font-size": 10.5, fill: C_T, opacity: .7 }, "edad"));
+    // caja aparte para los valores por encima de 100
+    svg.appendChild(el("rect", { x: XF0, y: Y0, width: XF1 - XF0, height: Y1 - Y0, fill: "none", stroke: C_L, "stroke-dasharray": "3 3" }));
+    if (fuera) svg.appendChild(el("rect", { x: XF0 + 12, y: py(fuera), width: XF1 - XF0 - 24, height: Y1 - py(fuera), fill: C_B, "fill-opacity": .6 }));
+    svg.appendChild(el("text", { x: (XF0 + XF1) / 2, y: Y1 + 16, "text-anchor": "middle", "font-size": 10, fill: C_T, opacity: .7 }, "> 100"));
+
+    function marca(v, col, fila, txt) {
+      var x = v > 100 ? (XF0 + XF1) / 2 : px(v);
+      svg.appendChild(el("path", { d: "M" + x.toFixed(1) + " " + (Y0 - 6) + " L" + x.toFixed(1) + " " + Y1, stroke: col, "stroke-width": 2, "stroke-dasharray": fila ? "5 3" : "" }));
+      var ancla = x > 470 ? "end" : "start";
+      svg.appendChild(el("text", { x: x + (ancla === "end" ? -4 : 4), y: 14 + 16 * fila, "text-anchor": ancla, "font-size": 10.5, fill: col }, txt));
+    }
+    marca(me, C_T, 0, "mediana " + me.toFixed(1));
+    marca(m, C_G, 1, "media " + m.toFixed(2));
+
+    var muv = media(validas), formula = (1 - k / N) * muv + (k / N) * c;
+    lec.innerHTML = (faltante
+      ? "Los <strong>" + k + "</strong> centinelas se tratan como faltantes: la media de las " + obs.length + " edades restantes es <strong>" + m.toFixed(2) + "</strong> y la mediana <strong>" + me.toFixed(1) + "</strong>. Los centinelas se eligieron al azar, de modo que la media se mantiene cerca de la de las 800 edades, " + mu.toFixed(2) + "."
+      : "Con <strong>" + k + "</strong> de 800 edades iguales a " + c + " (f = " + (k / N).toFixed(4) + "), la media vale <strong>" + m.toFixed(2) + "</strong>, igual a (1 − f)·" + muv.toFixed(2) + " + f·" + c + " = " + formula.toFixed(2) +
+        ". La mediana vale <strong>" + me.toFixed(1) + "</strong>" + (Math.abs(m - muv) > 5 ? ", y la media se ha alejado " + Math.abs(m - muv).toFixed(1) + " años de la de los datos válidos." : "."));
+  }
+  cf.addEventListener("input", dibujar);
+  cc.addEventListener("change", dibujar);
+  cn.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Unidades mezcladas
+
+Una columna con dos unidades tiene dos copias de la misma distribución, una desplazada respecto de la otra. En escala logarítmica el desplazamiento es constante.
+
+::: {.proposicion}
+**Proposición 2.4 (unidades mezcladas en escala logarítmica).** Si una fracción de las filas registra $x/1000$ en lugar de $x$, la distribución de $\log_{10}$ de la columna es una mezcla de la distribución original y de una copia desplazada tres unidades a la izquierda. Si $\log_{10} x$ tiene desviación típica $\sigma$, las dos copias quedan separadas por $3/\sigma$ desviaciones típicas.
+:::
+
+::: {.demostracion}
+*Demostración.* $\log_{10}(x/1000)=\log_{10}x-3$ para todo $x>0$, de modo que cada fila afectada se desplaza tres unidades y la forma de la distribución no cambia. En la tabla, $\log x$ tiene desviación típica 0,45 en logaritmo natural, que son $\sigma=0{,}45/\ln 10=0{,}195$ en logaritmo decimal. Las dos copias quedan separadas por unas 15 desviaciones típicas. Un corte dos décadas por debajo de la mediana, $x<\text{mediana}/100$, queda a más de 10 desviaciones típicas de la copia original y a unas 5 de la desplazada. La celda lo aplica: marca 249 filas, que son las 249 plantadas, y el cociente entre las medianas de los dos grupos es 993,8. ∎
+:::
+
+```{pyodide}
+import numpy as np
+import pandas as pd
+
+def clientes(n, semilla):
+    """Tabla de clientes con cuatro problemas de calidad plantados."""
+    rng = np.random.default_rng(semilla)
+    edad = np.clip(rng.normal(41, 12, n), 18, 85).round()
+    ingreso = np.exp(rng.normal(np.log(2400), 0.45, n)).round(2)   # mensual
+    plan = rng.choice(["basico", "estandar", "premium"], n, p=[0.5, 0.35, 0.15])
+    z = -1.2 + 0.035 * (edad - 41) - 0.9 * (np.log(ingreso) - np.log(2400)) \
+        + np.where(plan == "premium", -0.8, 0.0)
+    y = (rng.random(n) < 1 / (1 + np.exp(-z))).astype(int)
+    t = pd.DataFrame({"edad": edad, "ingreso": ingreso, "plan": plan, "abandona": y})
+    # 1. centinela: la edad desconocida se grabo como 999
+    c = rng.random(n) < 0.03
+    t.loc[c, "edad"] = 999
+    # 2. unidades: parte de los ingresos se grabo en miles
+    m = rng.random(n) < 0.05
+    t.loc[m, "ingreso"] = (t.loc[m, "ingreso"] / 1000).round(4)
+    # 3. categorias escritas de varias formas
+    v = rng.random(n) < 0.06
+    t.loc[v, "plan"] = t.loc[v, "plan"].str.upper()
+    # 4. filas duplicadas por una carga repetida
+    d = rng.choice(n, int(0.08 * n), replace=False)
+    t = pd.concat([t, t.iloc[d]], ignore_index=True)
+    return t, c, m, v, d
+
+t, c, m, v, d = clientes(5000, 21)
+t = t.drop_duplicates().reset_index(drop=True)
+dec = np.floor(np.log10(t["ingreso"])).astype(int)
+print("decada de log10(ingreso)  filas")
+for k, cnt in dec.value_counts().sort_index().items():
+    print("   10^%d a 10^%d %12d" % (k, k + 1, cnt))
+sospecha = t["ingreso"] < t["ingreso"].median() / 100
+print("filas por debajo de la mediana / 100:", int(sospecha.sum()))
+print("filas grabadas en miles (plantadas):", int(m.sum()))
+print("coinciden con las plantadas       :", int((sospecha.values & m).sum()))
+print("cociente de medianas: %.1f" % (t.loc[~sospecha, "ingreso"].median() / t.loc[sospecha, "ingreso"].median()))
+```
+
+La tabla por décadas muestra la mezcla: 4608 filas entre $10^3$ y $10^4$ y 137 entre $10^2$ y $10^3$, que son ingresos válidos; 243 entre $10^0$ y $10^1$, que junto con las 5 de la década inferior y la única fila entre $10^1$ y $10^2$ forman las 249 de la copia desplazada. Un histograma del ingreso en escala lineal muestra una barra junto a cero que puede leerse como clientes sin ingresos. El cociente entre las medianas de los dos grupos, cercano a 1000, identifica la unidad.
+
+## 4. Filas duplicadas
+
+Una fila duplicada aparece dos veces en la tabla. Si la partición en entrenamiento y prueba es aleatoria por filas, las dos copias pueden quedar en conjuntos distintos. Es la fuga por la unidad de partición de Atributos 02, en el caso extremo de dos filas idénticas.
+
+::: {.proposicion}
+**Proposición 2.5 (duplicados y validación).** Si una fila de prueba tiene una copia exacta en entrenamiento, el vecino más cercano la clasifica con la etiqueta de su copia, que es la suya. El acierto validado sobre esas filas es 1, independientemente de la dificultad del problema, y el acierto validado total sobreestima el acierto en datos nuevos.
+:::
+
+::: {.demostracion}
+*Demostración.* La distancia de la fila de prueba a su copia es cero, y ninguna otra fila está más cerca. En la celda, tras corregir el centinela, las unidades y las grafías, 115 de las 998 filas de prueba tienen una copia en entrenamiento. El acierto validado es 0,7134 con los duplicados, 0,6861 sin ellos y 0,6755 en 5000 clientes nuevos del mismo proceso. ∎
+:::
+
+```{pyodide}
+import numpy as np
+import pandas as pd
+
+def clientes(n, semilla):
+    """Tabla de clientes con cuatro problemas de calidad plantados."""
+    rng = np.random.default_rng(semilla)
+    edad = np.clip(rng.normal(41, 12, n), 18, 85).round()
+    ingreso = np.exp(rng.normal(np.log(2400), 0.45, n)).round(2)   # mensual
+    plan = rng.choice(["basico", "estandar", "premium"], n, p=[0.5, 0.35, 0.15])
+    z = -1.2 + 0.035 * (edad - 41) - 0.9 * (np.log(ingreso) - np.log(2400)) \
+        + np.where(plan == "premium", -0.8, 0.0)
+    y = (rng.random(n) < 1 / (1 + np.exp(-z))).astype(int)
+    t = pd.DataFrame({"edad": edad, "ingreso": ingreso, "plan": plan, "abandona": y})
+    # 1. centinela: la edad desconocida se grabo como 999
+    c = rng.random(n) < 0.03
+    t.loc[c, "edad"] = 999
+    # 2. unidades: parte de los ingresos se grabo en miles
+    m = rng.random(n) < 0.05
+    t.loc[m, "ingreso"] = (t.loc[m, "ingreso"] / 1000).round(4)
+    # 3. categorias escritas de varias formas
+    v = rng.random(n) < 0.06
+    t.loc[v, "plan"] = t.loc[v, "plan"].str.upper()
+    # 4. filas duplicadas por una carga repetida
+    d = rng.choice(n, int(0.08 * n), replace=False)
+    t = pd.concat([t, t.iloc[d]], ignore_index=True)
+    return t, c, m, v, d
+
+
+def matriz(t):
+    return np.column_stack([(t["edad"] - 41) / 12, np.log(t["ingreso"]) / 0.45,
+                            (t["plan"] == "premium") * 2.0])
+
+def vecino(Xtr, ytr, Xte):
+    d = (Xte ** 2).sum(1)[:, None] + (Xtr ** 2).sum(1)[None, :] - 2.0 * Xte @ Xtr.T
+    return ytr[d.argmin(axis=1)]
+
+def validar(t, semilla):
+    """Parte las filas al azar, 80 / 20, y mide el acierto del vecino mas cercano."""
+    o = np.random.default_rng(semilla).permutation(len(t))
+    corte = int(0.8 * len(t))
+    tr, te = o[:corte], o[corte:]
+    X, y = matriz(t), t["abandona"].to_numpy()
+    return np.mean(vecino(X[tr], y[tr], X[te]) == y[te]), tr, te
+
+# tabla sin centinelas ni unidades mezcladas, con las filas duplicadas
+t, c, m, v, d = clientes(5000, 21)
+t = t[(t["edad"] != 999) & (t["ingreso"] > 100)].copy()
+t["plan"] = t["plan"].str.lower()
+con, tr, te = validar(t.reset_index(drop=True), 0)
+sin, _, _ = validar(t.drop_duplicates().reset_index(drop=True), 0)
+
+# datos nuevos del mismo proceso, sin problemas de calidad
+n2, _, _, _, _ = clientes(5000, 22)
+n2 = n2[(n2["edad"] != 999) & (n2["ingreso"] > 100)]
+n2 = n2.drop_duplicates()
+n2["plan"] = n2["plan"].str.lower()
+base = t.drop_duplicates()
+real = np.mean(vecino(matriz(base), base["abandona"].to_numpy(), matriz(n2)) == n2["abandona"].to_numpy())
+
+tt = t.reset_index(drop=True)
+clave = tt.astype(str).agg("|".join, axis=1)
+en_train = set(clave.iloc[tr])
+print("filas de prueba con una copia en entrenamiento:", int(clave.iloc[te].isin(en_train).sum()), "de", len(te))
+print("acierto validado con duplicados   : %.4f" % con)
+print("acierto validado sin duplicados   : %.4f" % sin)
+print("acierto en datos nuevos           : %.4f" % real)
+```
+
+La sobreestimación, 0,0273 frente a la validación sin duplicados, es menor que las fugas de Atributos 02 porque solo afecta a una de cada nueve filas de prueba. Crece con la fracción de duplicados. El Reto 3 mide cómo depende de la flexibilidad del modelo.
+
+**Modo de falla.** Las filas repetidas no son idénticas porque cada carga añadió una columna con la fecha de carga, y `duplicated()` no marca ninguna. La comparación debe hacerse sobre las columnas que identifican la unidad, definida en el planteamiento (ML aplicado 01), y no sobre la fila completa.
+
+## 5. Limitaciones
+
+- Los cuatro problemas se plantaron con reglas conocidas, y por eso cada criterio de detección se puede comprobar contra la verdad. En una tabla real, un criterio como «menos de la mediana dividida por 100» marca también valores válidos extremos, y cada fila marcada requiere una decisión.
+- El perfil detecta problemas en una columna. Las incoherencias entre columnas, como una fecha de baja anterior a la de alta o un cliente de 19 años con 30 años de antigüedad, requieren reglas que relacionen varias columnas y no se tratan aquí.
+- La lección no trata la visualización de relaciones entre variables, que es el tema del capítulo 4 de FES. Se ha tratado la revisión previa, sin la cual esas visualizaciones muestran los errores de registro como si fueran patrones.
+- Las correcciones se aplicaron a la tabla completa antes de partir. Son correcciones de registro que no usan la variable objetivo; una imputación o un recorte que dependan de los datos se ajustan dentro de la validación (ML aplicado 05).
+
+## Ejercicios
+
+### Ejercicio 1, Media con un valor centinela
+
+La celda fija una serie `edad` de 200 valores en la que alrededor del 10 % vale 999. Completar la línea de `f` con la fracción de filas iguales a 999, y la de `limpia` con la serie en la que los 999 se sustituyen por un valor faltante. La celda imprime `f`, la media de `edad`, la media de `limpia` y la media que da la Proposición 2.3; deben dar `0.075 116.66 45.12` y `116.66`.
+
+```{pyodide}
+#| exercise: ex_centinela
+import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(4)
+edad = pd.Series(rng.integers(20, 70, 200).astype(float))
+edad[rng.random(200) < 0.1] = 999.0
+
+f = ______
+limpia = ______
+
+print(round(f, 3), round(float(edad.mean()), 2),
+      round(float(np.nanmean(limpia)), 2))
+print(round((1 - f) * float(np.nanmean(limpia)) + f * 999, 2))
+```
+
+::: {.hint exercise="ex_centinela"}
+La media de una comparación booleana es la fracción de valores `True`. El método `where` de una serie conserva los valores que cumplen la condición y pone un valor faltante en los demás; `np.nanmean` ignora los faltantes.
+:::
+
+::: {.solution exercise="ex_centinela"}
+```{pyodide}
+import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(4)
+edad = pd.Series(rng.integers(20, 70, 200).astype(float))
+edad[rng.random(200) < 0.1] = 999.0
+
+f = float((edad == 999).mean())
+limpia = edad.where(edad != 999)
+
+print(round(f, 3), round(float(edad.mean()), 2),
+      round(float(np.nanmean(limpia)), 2))
+print(round((1 - f) * float(np.nanmean(limpia)) + f * 999, 2))
+```
+
+Con 15 centinelas de 200, $f=0{,}075$ y la media pasa de 45,12 a 116,66, una edad fuera del dominio. La fórmula reproduce la media calculada. Sustituir el 999 por `np.nan` con `replace` da el mismo resultado.
+:::
+
+```{pyodide}
+#| exercise: ex_centinela
+#| check: true
+import numpy as np
+_l = np.asarray(limpia, float)
+if (abs(float(f) - 0.075) < 1e-9 and int(np.isnan(_l).sum()) == 15
+        and abs(float(np.nanmean(_l)) - 45.12) < 0.005):
+    feedback = {"correct": True, "message": "Correcto: 15 centinelas, f = 0.075 y media válida 45.12."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba f = 0.075 y una serie con 15 faltantes y media 45.12."}
+feedback
+```
+
+### Ejercicio 2, Duplicados ocultos por las grafías
+
+La celda fija una tabla `t` de ocho filas con las columnas `cliente` y `plan`, en la que el plan está escrito con mayúsculas y espacios variables. Completar la línea de `plan_norm` con la columna `plan` sin espacios en los extremos y en minúsculas, y la de `n_dup` con el número de filas duplicadas de la tabla `limpia`, que usa esa columna. La celda imprime los niveles de `plan_norm`, `n_dup` y el número de duplicados de la tabla original; deben dar `['basico', 'estandar', 'premium'] 3 1`.
+
+```{pyodide}
+#| exercise: ex_grafias
+import pandas as pd
+
+t = pd.DataFrame({
+    "cliente": [101, 102, 103, 101, 104, 102, 105, 103],
+    "plan": ["basico", "Premium", "estandar", "Basico ", "premium",
+             "PREMIUM", "basico", "estandar"],
+})
+
+plan_norm = ______
+limpia = t.assign(plan=plan_norm)
+n_dup = ______
+
+print(sorted(pd.Series(plan_norm).unique()), n_dup,
+      int(t.duplicated().sum()))
+```
+
+::: {.hint exercise="ex_grafias"}
+Los métodos de texto de una serie se encadenan: `t["plan"].str.strip()` quita los espacios y `.str.lower()` pasa a minúsculas. `duplicated()` marca cada fila igual a otra anterior.
+:::
+
+::: {.solution exercise="ex_grafias"}
+```{pyodide}
+import pandas as pd
+
+t = pd.DataFrame({
+    "cliente": [101, 102, 103, 101, 104, 102, 105, 103],
+    "plan": ["basico", "Premium", "estandar", "Basico ", "premium",
+             "PREMIUM", "basico", "estandar"],
+})
+
+plan_norm = t["plan"].str.strip().str.lower()
+limpia = t.assign(plan=plan_norm)
+n_dup = int(limpia.duplicated().sum())
+
+print(sorted(pd.Series(plan_norm).unique()), n_dup,
+      int(t.duplicated().sum()))
+```
+
+En la tabla original solo el cliente 103 aparece dos veces con la misma grafía. Tras normalizar, los clientes 101 y 102 también aparecen repetidos, y hay tres duplicados. La normalización de las grafías va antes de la búsqueda de duplicados.
+:::
+
+```{pyodide}
+#| exercise: ex_grafias
+#| check: true
+if (sorted(pd.Series(plan_norm).unique()) == ["basico", "estandar", "premium"]
+        and int(n_dup) == 3):
+    feedback = {"correct": True, "message": "Correcto: tres niveles y tres filas duplicadas tras normalizar."}
+else:
+    feedback = {"correct": False, "message": "Se esperaban los niveles ['basico', 'estandar', 'premium'] y 3 duplicados."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Aplicado 2**:
+
+1. Escribir una función de perfil que añada, a las columnas de esta lección, el valor más frecuente de cada columna y su frecuencia, y comprobar que detecta el centinela aunque su valor quede dentro del dominio, como 0 en una columna de ingresos.
+2. Plantar en la tabla una incoherencia entre columnas, como una fecha de baja anterior a la de alta, y escribir la regla que la detecta.
+3. Repetir la Sección 4 con un árbol de decisión sin límite de profundidad y con una regresión logística, y comparar la sobreestimación de los dos. Guardar en `50-Errores/` el orden de revisión (centinelas, unidades, grafías, duplicados) y la razón de ese orden.
+
+## Del libro
+
+El capítulo 4 de FES, *Exploratory Visualizations*, trata la visualización antes y después de ajustar un modelo con los datos de viajeros de un tren urbano: diagramas de caja, de violín e histogramas, gráficos de dispersión, mapas de calor, matrices de correlación, componentes principales y gráficos para datos categóricos. Su objetivo es encontrar formas reproducibles de explicar la variación de la respuesta, y en ese recorrido identifica valores extremos que corresponden a sucesos reales, como un día de frío récord. Esta lección trata la revisión que precede a esas visualizaciones: los errores de registro que un gráfico mostraría como si fueran patrones.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- Perfil de una tabla: tipo, nulos, únicos, mínimo y máximo por columna, comparados con el dominio.
+- Cuatro problemas: centinela, unidades mezcladas, grafías distintas y filas duplicadas.
+- Media con centinela: $(1-f)\mu+fc$. Con 2,84 % de 999, la media pasa de 41,14 a 68,35.
+- La mediana no cambia: 41,0 con y sin el centinela.
+- La correlación de la edad con el abandono baja de 0,1561 a 0,0142 por el centinela.
+- Una tabla sin nulos puede tener datos faltantes codificados como números.
+- Unidades mezcladas: dos copias de la distribución separadas tres décadas en escala logarítmica.
+- Con $\sigma=0{,}195$ décadas, las copias quedan a unas 15 desviaciones típicas; el corte mediana/100 separa las 249 filas.
+- Duplicados y partición aleatoria: una copia en entrenamiento da la etiqueta exacta a su gemela de prueba.
+- Con un 8 % de duplicados: 0,7134 validado, 0,6861 sin duplicados, 0,6755 en datos nuevos.
+- Los duplicados se buscan sobre las columnas que identifican la unidad, después de normalizar las grafías.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos, sobre una tabla sintética de 5000 clientes con los cuatro problemas plantados: 3 % de edades en 999, 5 % de ingresos en miles, 6 % de planes en mayúsculas y 8 % de filas repetidas. El perfil (edad máxima 999, ingreso entre 0,7266 y $1{,}22\cdot 10^{4}$, 6 niveles de plan, 400 filas repetidas de 5400, 156 edades en 999). El centinela: $f=0{,}0284$, media 68,35 frente a 41,14, mediana 41,0 en los dos casos y correlación con el abandono 0,0142 frente a 0,1561. Las unidades: 4608 filas en la década de $10^3$, 243 en la de $10^0$, 249 filas marcadas que coinciden con las 249 plantadas y un cociente de medianas de 993,8. Los duplicados: 115 de 998 filas de prueba con copia en entrenamiento y aciertos de 0,7134, 0,6861 y 0,6755. El vecino más cercano está escrito con NumPy.
+
+**Lo que viene de los libros.** El papel de la exploración visual antes y después del ajuste, el catálogo de gráficos y la distinción entre valores extremos que corresponden a sucesos reales y patrones de la respuesta, de FES cap. 4.
+
+**Lo que se usa de otras lecciones sin repetir.** La lectura y la limpieza de formatos con pandas, de Python 10. La fuga por la unidad de partición, de Atributos 02. El planteamiento del problema y la unidad, de ML aplicado 01.
+
+**Lo que es mío, no del libro.** La clasificación de los problemas de calidad en cuatro tipos y el perfil como primer paso. La Proposición 2.3 con la mediana como contraste, y el efecto del centinela sobre la correlación. La Proposición 2.4, que expresa la separación de las dos unidades en desviaciones típicas del logaritmo y justifica el corte en la mediana dividida por 100. La medición de la fuga de los duplicados con el vecino más cercano y datos nuevos del mismo proceso. Y el visual, que muestra la media y la mediana con un centinela elegido y su conversión en faltante.
+:::
