@@ -204,6 +204,7 @@ LIMPIAS = [
     "ml/41-convolucion-y-vision.qmd",
     "ml/42-discriminante-regularizado.qmd",
     "ml/43-discriminante-flexible.qmd",
+    "ml/44-discriminante-mezclas-y-nucleo.qmd",
     "ml/46-clustering-mixto.qmd",
     "ml/45-discriminante-mixto.qmd",
     "ml/index.qmd",

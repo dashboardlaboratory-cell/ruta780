@@ -1,0 +1,495 @@
+---
+title: "Discriminante por mezclas y por densidad de núcleo"
+subtitle: "Machine Learning · Lección 44"
+nivel: L3
+modulo: ml
+fase: F3
+prereqs: [ml/43-discriminante-flexible, ml/30-algoritmo-em, ml/11-suavizado-y-gams]
+siguientes: []
+libro: "ESL §12.7 Mixture Discriminant Analysis · §6.6 Kernel Density Estimation and Classification"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="ml/44-discriminante-mezclas-y-nucleo"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F3]{.item}
+[**Libro** ESL 12.7 · 6.6]{.item}
+[**Prereqs** [Discriminante flexible](43-discriminante-flexible.qmd) · [El algoritmo EM](30-algoritmo-em.qmd) · [Suavizado y GAMs](11-suavizado-y-gams.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Definir el discriminante por mezclas, que modela cada clase como una mezcla de normales con una covarianza común, y ajustarlo con el algoritmo EM.
+2. Demostrar que con una normal por clase coincide con LDA, y medir el efecto de añadir subclases: con dos grupos por clase, el error baja de 0,3634 de LDA a 0,0954 con dos subclases, frente a 0,1308 de QDA y 0,0930 de la regla de Bayes.
+3. Clasificar con estimaciones de densidad de núcleo y medir el efecto del ancho: el error es 0,1322 con $h=0{,}05$, 0,0884 con $h=0{,}5$ y 0,1352 con $h=2$.
+4. Medir el efecto de la dimensión: con ocho columnas de ruido, la densidad conjunta sube a 0,1812 y el Bayes ingenuo, que multiplica densidades de una variable, queda en 0,1014.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 43**: el discriminante flexible, otra forma de obtener fronteras no lineales a partir de LDA.
+- **Machine Learning 30**: el algoritmo EM para mezclas de normales.
+- **Machine Learning 11**: el suavizado por núcleos y la elección del ancho.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Machine Learning 45**: el discriminante con variables mixtas, que combina estos modelos con variables categóricas.
+- **Machine Learning 46**: el clustering con variables mixtas, que usa mezclas sin etiquetas.
+- **ML aplicado 13**: la detección de anomalías, que usa densidades para señalar puntos poco probables.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $K$ | ka | El número de clases |
+| $R$ | erre | El número de subclases de cada clase |
+| $\pi_k$ | pi ka | La probabilidad a priori de la clase $k$ |
+| $w_{kr}$ | uve doble ka erre | El peso de la subclase $r$ dentro de la clase $k$ |
+| $\mu_{kr}$ | mu ka erre | La media de la subclase $r$ de la clase $k$ |
+| $\Sigma$ | sigma mayúscula | La covarianza común a todas las subclases |
+| $\gamma_{ir}$ | gamma i erre | La probabilidad de que la fila $i$ pertenezca a la subclase $r$ de su clase |
+| $h$ | hache | El ancho del núcleo |
+| $\hat f_k$ | efe gorro ka | La densidad estimada de la clase $k$ |
+| $p$ | pe | El número de columnas |
+:::
+
+## 1. Discriminante por mezclas
+
+::: {.definicion}
+**Definición 44.1 ([discriminante por mezclas]{.g}).** El discriminante por mezclas modela la densidad de cada clase como una mezcla de $R$ normales con una covarianza común a todas las subclases de todas las clases:
+$$
+f_k(x)=\sum_{r=1}^Rw_{kr}\,\phi(x;\mu_{kr},\Sigma),\qquad\sum_rw_{kr}=1,
+$$
+y clasifica en la clase que maximiza $\pi_kf_k(x)$.
+:::
+
+::: {.proposicion}
+**Proposición 44.2 (EM con covarianza común y el caso $R=1$).** Los parámetros se estiman con el algoritmo EM de Machine Learning 30, con dos cambios: las responsabilidades $\gamma_{ir}$ se calculan solo entre las subclases de la clase de la fila, que se conoce, y la covarianza se actualiza con todas las filas de todas las clases,
+$$
+\Sigma=\frac1n\sum_k\sum_{i:\,y_i=k}\sum_r\gamma_{ir}(x_i-\mu_{kr})(x_i-\mu_{kr})^\top .
+$$
+Con $R=1$, el modelo es LDA.
+:::
+
+::: {.demostracion}
+*Demostración.* La etiqueta de clase se observa y la de subclase no, de modo que el paso E solo reparte cada fila entre las subclases de su clase. En el paso M, la verosimilitud completa esperada es una suma sobre clases y subclases con la misma $\Sigma$; derivando respecto de $\Sigma$ se obtiene la media ponderada de los productos de las desviaciones de todas las filas. Con $R=1$, $\gamma_{i1}=1$, $\mu_{k1}$ es la media de la clase y $\Sigma$ la covarianza agrupada, que son las estimaciones de LDA. La celda lo comprueba: con $R=1$ el error de prueba coincide con el de LDA, 0,3634. ∎
+:::
+
+La celda genera dos clases con dos grupos cada una: la clase 0 a ambos lados del eje horizontal y la clase 1 en el centro y arriba. Ninguna frontera lineal separa esa disposición.
+
+```{pyodide}
+import numpy as np
+
+def datos(n, rng, ruido=0):
+    """Clase 0: dos grupos a los lados. Clase 1: un grupo en el centro y otro arriba.
+    'ruido' anade columnas sin informacion."""
+    y = (rng.random(n) < 0.5).astype(int)
+    lado = rng.random(n) < 0.5
+    c0 = np.where(lado[:, None], [-2.2, 0.0], [2.2, 0.0])
+    c1 = np.where(lado[:, None], [0.0, -0.3], [0.0, 2.4])
+    X = np.where(y[:, None] == 0, c0, c1) + rng.normal(0, 0.8, (n, 2))
+    if ruido:
+        X = np.column_stack([X, rng.normal(0, 1, (n, ruido))])
+    return X, y
+
+def logdens_normal(X, mu, S):
+    D = X - mu
+    Si = np.linalg.inv(S)
+    return -0.5 * np.einsum("ij,jk,ik->i", D, Si, D) - 0.5 * np.linalg.slogdet(2 * np.pi * S)[1]
+
+def lda(X, y, Xt):
+    S = sum(np.cov(X[y == k], rowvar=False) * (np.sum(y == k) - 1) for k in (0, 1)) / (len(y) - 2)
+    sc = [logdens_normal(Xt, X[y == k].mean(0), S) + np.log(np.mean(y == k)) for k in (0, 1)]
+    return (sc[1] > sc[0]).astype(int)
+
+def qda(X, y, Xt):
+    sc = [logdens_normal(Xt, X[y == k].mean(0), np.cov(X[y == k], rowvar=False)) + np.log(np.mean(y == k)) for k in (0, 1)]
+    return (sc[1] > sc[0]).astype(int)
+
+def mda(X, y, Xt, R, semilla=0, iters=200):
+    """Discriminante por mezclas: cada clase es una mezcla de R normales, con
+    una covarianza comun a todas las subclases de todas las clases (EM)."""
+    rng = np.random.default_rng(semilla)
+    n, p = X.shape
+    clases = (0, 1)
+    mu = {k: X[y == k][rng.choice(np.sum(y == k), R, replace=False)] for k in clases}
+    w = {k: np.full(R, 1.0 / R) for k in clases}
+    S = np.cov(X, rowvar=False)
+    for _ in range(iters):
+        Snuevo = np.zeros((p, p))
+        for k in clases:
+            A = X[y == k]
+            L = np.column_stack([np.log(w[k][r]) + logdens_normal(A, mu[k][r], S) for r in range(R)])
+            L -= L.max(1, keepdims=True); G = np.exp(L); G /= G.sum(1, keepdims=True)
+            Nk = G.sum(0); w[k] = Nk / len(A)
+            mu[k] = (G.T @ A) / Nk[:, None]
+            Snuevo += sum((G[:, r, None] * (A - mu[k][r])).T @ (A - mu[k][r]) for r in range(R))
+        S = Snuevo / n
+    sc = []
+    for k in clases:
+        dens = sum(w[k][r] * np.exp(logdens_normal(Xt, mu[k][r], S)) for r in range(R))
+        sc.append(np.log(dens + 1e-300) + np.log(np.mean(y == k)))
+    return (sc[1] > sc[0]).astype(int)
+
+rng = np.random.default_rng(440)
+X, y = datos(600, rng); Xt, yt = datos(20000, rng)
+print("metodo               error de prueba")
+print("LDA                  %.4f" % np.mean(lda(X, y, Xt) != yt))
+print("QDA                  %.4f" % np.mean(qda(X, y, Xt) != yt))
+for R in (1, 2, 3, 5):
+    print("mezcla, R = %d        %.4f" % (R, np.mean(mda(X, y, Xt, R) != yt)))
+# regla de Bayes con las densidades verdaderas
+def dens(X, centros):
+    return sum(np.exp(-((X - c) ** 2).sum(1) / (2 * 0.64)) for c in centros)
+b = dens(Xt, [(0, -0.3), (0, 2.4)]) > dens(Xt, [(-2.2, 0), (2.2, 0)])
+print("regla de Bayes       %.4f" % np.mean(b.astype(int) != yt))
+```
+
+Con dos subclases, el error baja a 0,0954, cerca de la regla de Bayes, 0,0930. QDA obtiene 0,1308: una normal con covarianza propia por clase se estira para cubrir los dos grupos de la clase 0 y asigna a ella la zona central, que es de la clase 1. Más subclases que grupos no empeoran el error en este caso: 0,0955 con $R=3$ y 0,0941 con $R=5$. ESL §12.7 presenta el modelo como una generalización de LDA con prototipos, en la línea del discriminante flexible de Machine Learning 43.
+
+## 2. Clasificación con densidades de núcleo
+
+::: {.definicion}
+**Definición 44.3 ([clasificación por densidad de núcleo]{.g}).** Con $n_k$ filas de la clase $k$, la densidad de núcleo gaussiano de ancho $h$ es
+$$
+\hat f_k(x)=\frac{1}{n_k}\sum_{i:\,y_i=k}\phi\bigl(x;\,x_i,\,h^2I\bigr),
+$$
+y se clasifica en la clase que maximiza $\hat\pi_k\hat f_k(x)$.
+:::
+
+::: {.proposicion}
+**Proposición 44.4 (el ancho y la dimensión).** Con $h$ pequeño, $\hat f_k$ es una suma de picos sobre las filas de entrenamiento y la frontera las rodea; con $h$ grande, las densidades se aplanan y la frontera se acerca a la de las medias. Con $p$ columnas, el número de filas necesario para estimar la densidad con un error dado crece con $p$ de forma exponencial, y las columnas sin información añaden ruido a todas las distancias.
+:::
+
+::: {.demostracion}
+*Demostración.* Es el intercambio entre sesgo y varianza del suavizado por núcleos de Machine Learning 11, aplicado a cada densidad. La celda lo mide con las dos clases de la Sección 1: el error de prueba es 0,1322 con $h=0{,}05$, 0,0884 con $h=0{,}5$ y 0,1352 con $h=2$, frente a 0,0864 de la regla de Bayes en esa muestra. Al añadir ocho columnas de ruido, la densidad conjunta con $h=0{,}5$ da 0,1812, y el mejor ancho de la rejilla, elegido con la propia prueba, 0,1266. ∎
+:::
+
+ESL §6.6 propone para dimensiones altas el Bayes ingenuo: se supone que, dentro de cada clase, las columnas son independientes, y $\hat f_k(x)=\prod_j\hat f_{kj}(x_j)$ con densidades de núcleo de una variable. Cada factor se estima en una dimensión y el problema de la dimensión desaparece, a cambio de un sesgo si las columnas dependen entre sí dentro de las clases.
+
+```{pyodide}
+import numpy as np
+
+def datos(n, rng, ruido=0):
+    """Clase 0: dos grupos a los lados. Clase 1: un grupo en el centro y otro arriba.
+    'ruido' anade columnas sin informacion."""
+    y = (rng.random(n) < 0.5).astype(int)
+    lado = rng.random(n) < 0.5
+    c0 = np.where(lado[:, None], [-2.2, 0.0], [2.2, 0.0])
+    c1 = np.where(lado[:, None], [0.0, -0.3], [0.0, 2.4])
+    X = np.where(y[:, None] == 0, c0, c1) + rng.normal(0, 0.8, (n, 2))
+    if ruido:
+        X = np.column_stack([X, rng.normal(0, 1, (n, ruido))])
+    return X, y
+
+def logdens_normal(X, mu, S):
+    D = X - mu
+    Si = np.linalg.inv(S)
+    return -0.5 * np.einsum("ij,jk,ik->i", D, Si, D) - 0.5 * np.linalg.slogdet(2 * np.pi * S)[1]
+
+def lda(X, y, Xt):
+    S = sum(np.cov(X[y == k], rowvar=False) * (np.sum(y == k) - 1) for k in (0, 1)) / (len(y) - 2)
+    sc = [logdens_normal(Xt, X[y == k].mean(0), S) + np.log(np.mean(y == k)) for k in (0, 1)]
+    return (sc[1] > sc[0]).astype(int)
+
+def qda(X, y, Xt):
+    sc = [logdens_normal(Xt, X[y == k].mean(0), np.cov(X[y == k], rowvar=False)) + np.log(np.mean(y == k)) for k in (0, 1)]
+    return (sc[1] > sc[0]).astype(int)
+
+def mda(X, y, Xt, R, semilla=0, iters=200):
+    """Discriminante por mezclas: cada clase es una mezcla de R normales, con
+    una covarianza comun a todas las subclases de todas las clases (EM)."""
+    rng = np.random.default_rng(semilla)
+    n, p = X.shape
+    clases = (0, 1)
+    mu = {k: X[y == k][rng.choice(np.sum(y == k), R, replace=False)] for k in clases}
+    w = {k: np.full(R, 1.0 / R) for k in clases}
+    S = np.cov(X, rowvar=False)
+    for _ in range(iters):
+        Snuevo = np.zeros((p, p))
+        for k in clases:
+            A = X[y == k]
+            L = np.column_stack([np.log(w[k][r]) + logdens_normal(A, mu[k][r], S) for r in range(R)])
+            L -= L.max(1, keepdims=True); G = np.exp(L); G /= G.sum(1, keepdims=True)
+            Nk = G.sum(0); w[k] = Nk / len(A)
+            mu[k] = (G.T @ A) / Nk[:, None]
+            Snuevo += sum((G[:, r, None] * (A - mu[k][r])).T @ (A - mu[k][r]) for r in range(R))
+        S = Snuevo / n
+    sc = []
+    for k in clases:
+        dens = sum(w[k][r] * np.exp(logdens_normal(Xt, mu[k][r], S)) for r in range(R))
+        sc.append(np.log(dens + 1e-300) + np.log(np.mean(y == k)))
+    return (sc[1] > sc[0]).astype(int)
+
+
+def log_kde(A, Xt, h, bloque=1000):
+    """Logaritmo de la densidad de nucleo gaussiano de las filas A en Xt."""
+    p = A.shape[1]; out = np.empty(len(Xt))
+    for i in range(0, len(Xt), bloque):
+        B = Xt[i:i + bloque]
+        d2 = (B ** 2).sum(1)[:, None] + (A ** 2).sum(1)[None] - 2 * B @ A.T
+        L = -d2 / (2 * h * h)
+        m = L.max(1)
+        out[i:i + bloque] = m + np.log(np.exp(L - m[:, None]).mean(1)) - 0.5 * p * np.log(2 * np.pi * h * h)
+    return out
+
+def kde_clasif(X, y, Xt, h):
+    sc = [log_kde(X[y == k], Xt, h) + np.log(np.mean(y == k)) for k in (0, 1)]
+    return (sc[1] > sc[0]).astype(int)
+
+def kde_ingenuo(X, y, Xt, h):
+    """Bayes ingenuo: producto de densidades de nucleo de una variable."""
+    sc = []
+    for k in (0, 1):
+        A = X[y == k]
+        sc.append(sum(log_kde(A[:, [j]], Xt[:, [j]], h) for j in range(X.shape[1])) + np.log(np.mean(y == k)))
+    return (sc[1] > sc[0]).astype(int)
+
+def bayes(Xt):
+    d = lambda c: sum(np.exp(-((Xt[:, :2] - np.array(m)) ** 2).sum(1) / (2 * 0.64)) for m in c)
+    return (d([(0, -0.3), (0, 2.4)]) > d([(-2.2, 0), (2.2, 0)])).astype(int)
+
+rng = np.random.default_rng(441)
+X, y = datos(600, rng); Xt, yt = datos(5000, rng)
+print("regla de Bayes en esta prueba: %.4f" % np.mean(bayes(Xt) != yt))
+print("ancho h   error con 2 columnas")
+for h in (0.05, 0.2, 0.5, 1.0, 2.0):
+    print("%7.2f %12.4f" % (h, np.mean(kde_clasif(X, y, Xt, h) != yt)))
+X, y = datos(600, rng, ruido=8); Xt, yt = datos(5000, rng, ruido=8)
+print("con 8 columnas de ruido, h = 0.5")
+print("  densidad conjunta, h = 0.5    %.4f" % np.mean(kde_clasif(X, y, Xt, 0.5) != yt))
+print("  mejor h, elegido con la prueba %.4f" % min(np.mean(kde_clasif(X, y, Xt, h) != yt) for h in (0.2, 0.5, 1.0, 2.0)))
+print("  Bayes ingenuo, h = 0.5        %.4f" % np.mean(kde_ingenuo(X, y, Xt, 0.5) != yt))
+```
+
+El Bayes ingenuo obtiene 0,1014 con las ocho columnas de ruido. En estos datos el supuesto de independencia se cumple dentro de cada grupo, pero no dentro de cada clase, porque la clase 0 tiene dos grupos. La pérdida por ese sesgo es menor que la que causa el ruido en la densidad conjunta.
+
+El visual clasifica en una dimensión con densidades de núcleo. La clase 0 tiene dos grupos, en $-2{,}2$ y $2{,}2$; la clase 1, uno en el centro.
+
+```{=html}
+<div class="viz-nucleo44">
+  <div class="controles">
+    <label>Ancho h <input id="n44-h" type="range" min="-1.5" max="0.5" step="0.05" value="-0.3"> <span id="n44-h-v">0.50</span></label>
+  </div>
+  <svg id="n44-svg" viewBox="0 0 660 260" role="img" aria-label="Densidades de núcleo de dos clases en una dimensión y las regiones asignadas a cada clase."></svg>
+  <p class="lectura" id="n44-lectura"></p>
+</div>
+<style>
+.viz-nucleo44 { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-nucleo44 .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-nucleo44 label { display: flex; align-items: center; gap: .4rem; }
+.viz-nucleo44 input[type=range] { width: 200px; padding: 0; }
+.viz-nucleo44 svg { width: 100%; height: auto; display: block; }
+.viz-nucleo44 .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("n44-svg"), lec = document.getElementById("n44-lectura");
+  var ch = document.getElementById("n44-h"), eh = document.getElementById("n44-h-v");
+  var X0 = 40, X1 = 620, Y0 = 30, Y1 = 190, N = 40;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var sem = 4444, A = [], B = [], i;
+  function u() { sem = (sem * 48271) % 2147483647; return sem / 2147483647; }
+  function nor() { var a = Math.max(u(), 1e-9), b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); }
+  for (i = 0; i < N; i++) { A.push((u() < 0.5 ? -2.2 : 2.2) + 0.8 * nor()); B.push(0.8 * nor()); }
+  function kde(S, x, h) { var s = 0; S.forEach(function (v) { s += Math.exp(-0.5 * Math.pow((x - v) / h, 2)); }); return s / (S.length * h * Math.sqrt(2 * Math.PI)); }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var h = Math.pow(10, +ch.value);
+    eh.textContent = h.toFixed(2);
+    var px = function (x) { return X0 + (x + 5) / 10 * (X1 - X0); };
+    var M = 400, xs = [], fa = [], fb = [], k, fmax = 0;
+    for (k = 0; k <= M; k++) {
+      var x = -5 + 10 * k / M; xs.push(x);
+      fa.push(kde(A, x, h)); fb.push(kde(B, x, h));
+      fmax = Math.max(fmax, fa[k], fb[k]);
+    }
+    var py = function (f) { return Y1 - f / fmax * (Y1 - Y0); };
+    // regiones: franja inferior coloreada por la clase elegida
+    var regiones = 1;
+    for (k = 0; k < M; k++) {
+      var c = fb[k] > fa[k];
+      if (k > 0 && c !== (fb[k - 1] > fa[k - 1])) regiones++;
+      svg.appendChild(el("rect", { x: px(xs[k]).toFixed(1), y: Y1 + 4, width: ((X1 - X0) / M + 0.6).toFixed(2), height: 10, fill: c ? C_B : C_A, "fill-opacity": .6 }));
+    }
+    function curva(f, col) {
+      var d = ""; f.forEach(function (v, q) { d += (q ? " L" : "M") + px(xs[q]).toFixed(1) + " " + py(v).toFixed(1); });
+      svg.appendChild(el("path", { d: d, fill: "none", stroke: col, "stroke-width": 2 }));
+    }
+    curva(fa, C_A); curva(fb, C_B);
+    A.forEach(function (v) { svg.appendChild(el("path", { d: "M" + px(v).toFixed(1) + " " + (Y1 + 18) + " l0 8", stroke: C_A, opacity: .7 })); });
+    B.forEach(function (v) { svg.appendChild(el("path", { d: "M" + px(v).toFixed(1) + " " + (Y1 + 30) + " l0 8", stroke: C_B, opacity: .7 })); });
+    [["clase 0", C_A], ["clase 1", C_B]].forEach(function (l, q) {
+      svg.appendChild(el("rect", { x: X0 + q * 100, y: 10, width: 12, height: 3, fill: l[1] }));
+      svg.appendChild(el("text", { x: X0 + q * 100 + 17, y: 15, "font-size": 10.5, fill: C_T, opacity: .85 }, l[0]));
+    });
+    var err = 0;
+    A.forEach(function (v) { if (kde(B, v, h) > kde(A, v, h)) err++; });
+    B.forEach(function (v) { if (kde(A, v, h) >= kde(B, v, h)) err++; });
+    lec.innerHTML = "Con ancho <strong>" + h.toFixed(2) + "</strong>, la recta se divide en <strong>" + regiones + "</strong> regiones, y el error en las 80 filas de entrenamiento es <strong>" + (err / 80).toFixed(3) +
+      "</strong>. Con un ancho pequeño la frontera rodea cada fila y el error de entrenamiento tiende a cero; con uno grande, la clase 0 pierde sus dos grupos.";
+  }
+  ch.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Limitaciones
+
+- El número de subclases $R$ se fijó igual en las dos clases. Puede elegirse por validación, por separado para cada clase.
+- EM encuentra un máximo local de la verosimilitud, que depende de la inicialización. La celda usa un único inicio; en la práctica se prueban varios y se conserva el de mayor verosimilitud.
+- El ancho del núcleo se comparó en una rejilla evaluada con la prueba, lo que sobreestima el resultado del mejor ancho (ML aplicado 06). Se elige por validación cruzada o por la verosimilitud dejando una fila fuera.
+- La densidad de núcleo usa el mismo ancho en todas las columnas. Con columnas de escalas distintas, se estandarizan antes o se usa un ancho por columna.
+
+## Ejercicios
+
+### Ejercicio 1, Densidad de núcleo en un punto
+
+La celda fija tres observaciones `xs`, el ancho `h` y un punto `x`. Completar la línea de `f` con la densidad de núcleo gaussiano de la Definición 44.3 en `x`, en una dimensión. La celda la imprime; debe dar `0.2037`.
+
+```{pyodide}
+#| exercise: ex_kde
+import numpy as np
+
+xs = np.array([0.0, 1.0, 3.0])
+h = 1.0
+x = 1.5
+
+f = ______
+
+print(round(float(f), 4))
+```
+
+::: {.hint exercise="ex_kde"}
+Es la media, sobre las tres observaciones, de la densidad normal de media $x_i$ y desviación típica $h$ evaluada en $x$: `np.exp(-(x - xs) ** 2 / (2 * h * h)) / np.sqrt(2 * np.pi * h * h)`.
+:::
+
+::: {.solution exercise="ex_kde"}
+```{pyodide}
+import numpy as np
+
+xs = np.array([0.0, 1.0, 3.0])
+h = 1.0
+x = 1.5
+
+f = np.mean(np.exp(-(x - xs) ** 2 / (2 * h * h))
+            / np.sqrt(2 * np.pi * h * h))
+
+print(round(float(f), 4))
+```
+
+Las observaciones en 0 y en 3 están a la misma distancia, 1,5, y aportan lo mismo, 0,1295 cada una; la de 1, a distancia 0,5, aporta 0,3521. La media de los tres aportes es 0,2037.
+:::
+
+```{pyodide}
+#| exercise: ex_kde
+#| check: true
+if abs(float(f) - 0.2037) < 5e-5:
+    feedback = {"correct": True, "message": "Correcto: la densidad en 1.5 vale 0.2037."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba una densidad de 0.2037."}
+feedback
+```
+
+### Ejercicio 2, Responsabilidades del paso E
+
+Dos filas de una misma clase y dos subclases. La celda fija los pesos `w` de las subclases y la matriz `dens` con la densidad normal de cada fila (filas) en cada subclase (columnas). Completar la línea de `gamma` con las responsabilidades de la Proposición 44.2: para cada fila, el peso por la densidad de cada subclase, dividido por su suma. La celda las imprime; deben dar `[[0.6316, 0.3684], [0.0141, 0.9859]]`.
+
+```{pyodide}
+#| exercise: ex_responsabilidades
+import numpy as np
+
+w = np.array([0.3, 0.7])
+dens = np.array([[0.20, 0.05],
+                 [0.01, 0.30]])
+
+gamma = ______
+
+print(np.round(gamma, 4).tolist())
+```
+
+::: {.hint exercise="ex_responsabilidades"}
+`w * dens` multiplica cada columna por su peso. Dividir por `.sum(axis=1, keepdims=True)` normaliza cada fila.
+:::
+
+::: {.solution exercise="ex_responsabilidades"}
+```{pyodide}
+import numpy as np
+
+w = np.array([0.3, 0.7])
+dens = np.array([[0.20, 0.05],
+                 [0.01, 0.30]])
+
+gamma = w * dens / (w * dens).sum(axis=1, keepdims=True)
+
+print(np.round(gamma, 4).tolist())
+```
+
+La primera fila tiene una densidad cuatro veces mayor en la primera subclase, y aunque esta pesa menos, 0,3 frente a 0,7, recibe el 63 % de la fila. La segunda pertenece casi por completo a la segunda subclase.
+:::
+
+```{pyodide}
+#| exercise: ex_responsabilidades
+#| check: true
+import numpy as np
+if np.allclose(np.asarray(gamma, float), [[0.6316, 0.3684], [0.0141, 0.9859]], atol=5e-5):
+    feedback = {"correct": True, "message": "Correcto: cada fila reparte su peso entre las dos subclases."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [[0.6316, 0.3684], [0.0141, 0.9859]]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **ML 44**:
+
+1. Elegir el número de subclases de cada clase por validación cruzada, con $R$ entre 1 y 5, y comparar con el valor fijo de la celda.
+2. Elegir el ancho del núcleo por la verosimilitud dejando una fila fuera, sin usar la prueba, y comparar su error con el de la rejilla de la Sección 2.
+3. Construir unos datos en los que las columnas dependan entre sí dentro de cada clase, por ejemplo con correlación 0,9, y medir cuánto pierde el Bayes ingenuo frente a la densidad conjunta. Guardar en `50-Errores/` cuándo conviene cada uno.
+
+## Del libro
+
+ESL §12.7, *Mixture Discriminant Analysis*, modela cada clase como una mezcla de normales con una covarianza común, ajustada por EM, y la presenta como una forma de representar clases con varios prototipos, más flexible que LDA y con menos parámetros que QDA. ESL §6.6, *Kernel Density Estimation and Classification*, estima las densidades de las clases con núcleos, las usa en el teorema de Bayes para clasificar y presenta el Bayes ingenuo como la versión que multiplica densidades de una variable, útil cuando la dimensión es alta. Esta lección implementa los dos métodos y mide el efecto de las subclases, del ancho y de las columnas de ruido.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- Discriminante por mezclas: cada clase es una mezcla de $R$ normales con una covarianza común.
+- Se ajusta por EM, con las responsabilidades repartidas dentro de la clase conocida.
+- Con $R=1$ es LDA: 0,3634 en los dos casos.
+- Con dos grupos por clase: 0,0954 con $R=2$, 0,1308 con QDA, 0,0930 la regla de Bayes.
+- QDA estira una normal sobre los dos grupos de una clase y cubre la zona de la otra.
+- Densidad de núcleo: media de normales de ancho $h$ centradas en las filas.
+- Error según el ancho: 0,1322 con 0,05, 0,0884 con 0,5, 0,1352 con 2.
+- Con ocho columnas de ruido, la densidad conjunta sube a 0,1812.
+- Bayes ingenuo: producto de densidades de una variable; 0,1014 con las mismas columnas de ruido.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos. Con 600 filas de entrenamiento y 20 000 de prueba: errores de 0,3634 con LDA, 0,1308 con QDA, 0,3634, 0,0954, 0,0955 y 0,0941 con 1, 2, 3 y 5 subclases, y 0,0930 con la regla de Bayes. Con 5000 filas de prueba: 0,1322, 0,0992, 0,0884, 0,0926 y 0,1352 con anchos de 0,05 a 2, frente a 0,0864 de la regla de Bayes en esa muestra; con ocho columnas de ruido, 0,1812 con la densidad conjunta, 0,1266 con el mejor ancho elegido con la prueba y 0,1014 con el Bayes ingenuo. LDA, QDA, el discriminante por mezclas con EM y las densidades de núcleo están escritos con NumPy. La Proposición 44.2 se demuestra en la página; la 44.4 se argumenta y se mide.
+
+**Lo que viene de los libros.** El discriminante por mezclas con covarianza común y su ajuste por EM, de ESL §12.7. La clasificación con densidades de núcleo y el Bayes ingenuo, de ESL §6.6.
+
+**Lo que se usa de otras lecciones sin repetir.** El algoritmo EM, de Machine Learning 30. El suavizado por núcleos y la elección del ancho, de Machine Learning 11. El optimismo de elegir con la prueba, de ML aplicado 06.
+
+**Lo que es mío, no del libro.** Los datos con dos grupos por clase, que separan LDA, QDA y el discriminante por mezclas. La comprobación de que $R=1$ reproduce LDA. La medición del efecto de las columnas de ruido en la densidad conjunta frente al Bayes ingenuo. Y el visual de las regiones de decisión en una dimensión según el ancho.
+:::

@@ -5369,7 +5369,13 @@ conviene recordar:
 - Las lecciones 08, 12 y 13 no tienen libro verificado: el campo `libro` es
   «—» y el bloque Del libro lo dice.
 
-Siguiente: ML 44 (discriminante por mezclas y densidad de núcleo).
+ML 44 (discriminante por mezclas y densidad de núcleo) publicada el mismo día:
+con $R=1$ reproduce LDA, y con dos subclases llega a 0,0954 frente a 0,0930 de
+la regla de Bayes. El bloque de discriminante y clustering de ML (42 a 46)
+queda completo.
+
+Pendientes del plan: Feature Engineering 11, 12, 14, 15 y 16; el caso final de
+Series y el de Causal que propuso el formato de casos.
 
 ## 4. Cómo se escribe una lección
 
