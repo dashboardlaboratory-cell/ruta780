@@ -1,0 +1,234 @@
+---
+title: "Caso 8. Llamadas de una campaña de depósitos"
+subtitle: "ML aplicado · Caso integrador 8"
+engine: markdown
+resources:
+  - datos/banco.csv
+pyodide:
+  resources:
+    - datos/banco.csv
+---
+
+::: {.meta-leccion data-leccion="aplicado/caso-8-banco"}
+[**Caso** 8]{.item}
+[**Fase** F4]{.item}
+[**Usa** ML aplicado 01 a 12]{.item}
+:::
+
+Este caso usa datos reales y públicos. Corresponde a un bloque de trabajo de unas cuatro horas.
+
+## Situación
+
+Un banco portugués ofrece depósitos a plazo por teléfono. Cada llamada cuesta unos 10 euros entre el tiempo del agente y la gestión de la lista, y cada depósito contratado deja un margen de unos 100 euros. El banco tiene el registro de 45 211 llamadas de campañas anteriores, entre mayo de 2008 y noviembre de 2010, y quiere un criterio para elegir a quién llamar en la campaña siguiente.
+
+Un analista presentó un modelo con un AUC de 0,92 y propone llamar a los clientes a los que el modelo asigna una probabilidad mayor que 0,5.
+
+## Los datos
+
+La tabla `banco` es la base pública *Bank Marketing* del repositorio de aprendizaje automático de la Universidad de California en Irvine (S. Moro, P. Rita y P. Cortez, 2014, DOI 10.24432/C5K306), con licencia CC BY 4.0. Tiene una fila por llamada, ordenadas por fecha.
+
+| Columna | Descripción |
+|---|---|
+| `age`, `job`, `marital`, `education` | Edad, ocupación, estado civil y estudios del cliente |
+| `default`, `balance`, `housing`, `loan` | Si tiene créditos impagados, saldo medio anual en euros, y si tiene hipoteca o préstamo personal |
+| `contact`, `day`, `month` | Tipo de teléfono del último contacto, y día y mes en que se hizo |
+| `duration` | Duración del último contacto, en segundos |
+| `campaign` | Número de contactos con el cliente durante esta campaña, incluido el último |
+| `pdays`, `previous`, `poutcome` | Días desde el último contacto de una campaña anterior (−1 si no lo hubo), contactos anteriores y resultado de la campaña anterior |
+| `y` | `yes` si el cliente contrató el depósito |
+
+```{pyodide}
+import pandas as pd
+
+banco = pd.read_csv("datos/banco.csv", sep=";")
+print(banco.shape)
+print(banco.head(5).to_string())
+```
+
+Para las preguntas 2 y 3, salvo que se indique otra cosa, una fila de cada cinco (las de posición 0, 5, 10…) forma la muestra de prueba y el resto la de entrenamiento.
+
+## Preguntas
+
+Las preguntas 1 a 3 tienen comprobación automática. La 4 se evalúa con la rúbrica.
+
+```{pyodide}
+#| exercise: [c8_columnas, c8_auc, c8_llamadas]
+#| setup: true
+import pandas as pd
+
+banco = pd.read_csv("datos/banco.csv", sep=";")
+```
+
+### Pregunta 1, Información que no existe al elegir
+
+Asignar a `columnas_posteriores` la lista de columnas de `banco`, distintas de `y`, cuyo valor no se conoce en el momento de decidir si se llama al cliente.
+
+```{pyodide}
+#| exercise: c8_columnas
+columnas_posteriores = ______
+
+print(sorted(columnas_posteriores))
+```
+
+::: {.solution exercise="c8_columnas"}
+```python
+# la duración se conoce al colgar; el número de contactos de la campaña
+# incluye la llamada que se está decidiendo y las siguientes
+columnas_posteriores = ["duration", "campaign"]
+
+print(sorted(columnas_posteriores))
+```
+:::
+
+```{pyodide}
+#| exercise: c8_columnas
+#| check: true
+try:
+    _c = set(columnas_posteriores)
+    _ok = _c == {"duration", "campaign"}
+    _m = ("Correcto: la duración y el número de contactos de la campaña se conocen después de llamar." if _ok
+          else "Se esperaban dos columnas. Revisar la descripción de cada una: ¿cuáles dependen de la llamada que se está decidiendo?")
+except Exception as _e:
+    _ok, _m = False, str(_e)
+feedback = {"correct": _ok, "message": _m}
+feedback
+```
+
+### Pregunta 2, Tres estimaciones del AUC
+
+Con la muestra de entrenamiento y la de prueba, asignar a `auc_con_llamada` el AUC de un modelo que usa todas las columnas y a `auc_sin_llamada` el de un modelo que no usa las de la pregunta 1. Después, asignar a `auc_temporal` el AUC del segundo modelo entrenado con el 80 % más antiguo de las filas y evaluado con el 20 % más reciente.
+
+```{pyodide}
+#| exercise: c8_auc
+auc_con_llamada = ______
+auc_sin_llamada = ______
+auc_temporal = ______
+
+print(round(auc_con_llamada, 3), round(auc_sin_llamada, 3), round(auc_temporal, 3))
+```
+
+::: {.solution exercise="c8_auc"}
+```python
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.metrics import roc_auc_score
+
+y = (banco["y"] == "yes").astype(int).to_numpy()
+todas = pd.get_dummies(banco.drop(columns="y"), dtype=float)
+sin = pd.get_dummies(banco.drop(columns=["y", "duration", "campaign"]), dtype=float)
+n = len(banco)
+prueba = np.arange(n) % 5 == 0
+antiguas = np.arange(n) < int(0.8 * n)
+
+def auc(X, entreno, evalua):
+    m = GradientBoostingClassifier(random_state=0).fit(X[entreno], y[entreno])
+    return roc_auc_score(y[evalua], m.predict_proba(X[evalua])[:, 1])
+
+auc_con_llamada = auc(todas, ~prueba, prueba)
+auc_sin_llamada = auc(sin, ~prueba, prueba)
+auc_temporal = auc(sin, antiguas, ~antiguas)
+
+print(round(auc_con_llamada, 3), round(auc_sin_llamada, 3), round(auc_temporal, 3))
+```
+:::
+
+```{pyodide}
+#| exercise: c8_auc
+#| check: true
+try:
+    _a, _b, _c = float(auc_con_llamada), float(auc_sin_llamada), float(auc_temporal)
+    _ok = _a > 0.88 and 0.75 <= _b <= 0.83 and 0.60 <= _c <= 0.75 and _c < _b - 0.04
+    _m = ("%.3f con la duración, %.3f sin ella y %.3f al predecir el período siguiente." % (_a, _b, _c))
+except Exception as _e:
+    _ok, _m = False, str(_e)
+feedback = {"correct": _ok, "message": ("Correcto: " if _ok else "Todavía no: ") + _m}
+feedback
+```
+
+### Pregunta 3, A quién llamar
+
+Escribir la función `llamar(entreno, prueba)`, que devuelve un vector de valores lógicos, verdadero para las filas de `prueba` a las que conviene llamar. La comprobación la aplica a la muestra de prueba y calcula la ganancia neta: 100 euros por cada depósito contratado entre los llamados, menos 10 euros por llamada. Exige una ganancia de al menos 38 000 euros.
+
+```{pyodide}
+#| exercise: c8_llamadas
+def llamar(entreno, prueba):
+    ______
+
+import numpy as np
+fila = np.arange(len(banco))
+sel = llamar(banco[fila % 5 != 0], banco[fila % 5 == 0])
+print(int(sel.sum()), "llamadas")
+```
+
+::: {.solution exercise="c8_llamadas"}
+```python
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import GradientBoostingClassifier
+
+def llamar(entreno, prueba, coste=10, margen=100):
+    """Llamar cuando el margen esperado supera el coste de la llamada."""
+    quitar = ["y", "duration", "campaign"]
+    X = pd.get_dummies(pd.concat([entreno, prueba]).drop(columns=quitar), dtype=float)
+    Xe, Xp = X.iloc[:len(entreno)], X.iloc[len(entreno):]
+    m = GradientBoostingClassifier(random_state=0)
+    m.fit(Xe, (entreno["y"] == "yes").astype(int))
+    return m.predict_proba(Xp)[:, 1] * margen > coste
+
+fila = np.arange(len(banco))
+sel = llamar(banco[fila % 5 != 0], banco[fila % 5 == 0])
+print(int(sel.sum()), "llamadas")
+```
+:::
+
+```{pyodide}
+#| exercise: c8_llamadas
+#| check: true
+import numpy as _np
+try:
+    _f = _np.arange(len(banco))
+    _pr = banco[_f % 5 == 0]
+    _s = _np.asarray(llamar(banco[_f % 5 != 0].copy(), _pr.copy()), bool)
+    _y = (_pr["y"] == "yes").to_numpy().astype(int)
+    _g = float(_np.where(_s, 100 * _y - 10, 0).sum())
+    _todos = float((100 * _y - 10).sum())
+    _ok = len(_s) == len(_y) and _g >= 38000
+    _m = "%d llamadas, ganancia %.0f euros; llamar a todos daría %.0f." % (_s.sum(), _g, _todos)
+except Exception as _e:
+    _ok, _m = False, "error al ejecutar: %s" % _e
+feedback = {"correct": _ok, "message": ("Correcto: " if _ok else "Todavía no: ") + _m}
+feedback
+```
+
+### Pregunta 4, Informe para la dirección comercial
+
+Redactar un informe de entre 250 y 400 palabras que responda al analista: por qué su AUC de 0,92 no se alcanzará al elegir a quién llamar, por qué el umbral de 0,5 deja fuera clientes rentables, y qué cabe esperar en la campaña siguiente a la vista del AUC temporal. Incluir la proporción de éxito de cada año de la base y una recomendación sobre cada cuánto recalcular el modelo.
+
+## Rúbrica
+
+| Criterio | Completo | Incompleto |
+|---|---|---|
+| Preguntas 1 a 3 | La comprobación automática marca las tres como correctas. | Alguna no se cumple. |
+| Columnas posteriores | Explica por qué la duración y el número de contactos no están disponibles al decidir y mide su efecto en el AUC. | Menciona la duración sin medir el efecto, u omite el número de contactos. |
+| Umbral | Relaciona el umbral con el coste y el margen, y compara la ganancia con la regla del 0,5 y con llamar a todos. | Usa el 0,5 o un umbral sin justificación económica. |
+| Cambio en el tiempo | Compara el AUC al azar con el temporal, muestra la proporción de éxito por período y propone recalcular y recalibrar con los datos recientes. | No trata el orden temporal de los datos. |
+| Informe | Tiene entre 250 y 400 palabras y usa cifras de las preguntas. | Falta alguna de las partes. |
+
+<!-- verificacion
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.metrics import roc_auc_score
+y = (banco["y"] == "yes").astype(int).to_numpy()
+n = len(banco); pr = np.arange(n) % 5 == 0
+Xs = pd.get_dummies(banco.drop(columns=["y", "duration", "campaign"]), dtype=float)
+Xd = pd.get_dummies(banco.drop(columns=["y"]), dtype=float)
+ps = GradientBoostingClassifier(random_state=0).fit(Xs[~pr], y[~pr]).predict_proba(Xs[pr])[:, 1]
+pd_ = GradientBoostingClassifier(random_state=0).fit(Xd[~pr], y[~pr]).predict_proba(Xd[pr])[:, 1]
+a_s, a_d = roc_auc_score(y[pr], ps), roc_auc_score(y[pr], pd_)
+assert a_d - a_s > 0.08
+g = lambda s: float(np.where(s, 100 * y[pr] - 10, 0).sum())
+assert g(ps * 100 > 10) > g(ps > 0.5) + 20000
+print("AUC %.3f con la duración y %.3f sin ella; ganancia %.0f con el umbral de costes y %.0f con 0,5" % (a_d, a_s, g(ps * 100 > 10), g(ps > 0.5)))
+-->
