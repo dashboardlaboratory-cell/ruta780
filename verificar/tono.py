@@ -87,6 +87,7 @@ LIMPIAS = [
     "aplicado/05-pipelines.qmd",
     "aplicado/06-ajuste-de-hiperparametros.qmd",
     "aplicado/07-metricas-de-evaluacion.qmd",
+    "aplicado/08-clases-desbalanceadas.qmd",
     "atributos/index.qmd",
     "causal/01-resultados-potenciales.qmd",
     "causal/02-dags-y-puerta-trasera.qmd",

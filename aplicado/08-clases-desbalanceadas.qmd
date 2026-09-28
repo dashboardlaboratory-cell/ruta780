@@ -1,0 +1,452 @@
+---
+title: "Clases desbalanceadas: pesos, remuestreo y umbral"
+subtitle: "ML aplicado · Lección 08"
+nivel: L3
+modulo: aplicado
+fase: F4
+prereqs: [aplicado/07-metricas-de-evaluacion, aplicado/01-planteamiento-y-linea-base, ml/03-regresion-logistica]
+siguientes: []
+libro: "—"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="aplicado/08-clases-desbalanceadas"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F4]{.item}
+[**Libro** sin capítulo de referencia]{.item}
+[**Prereqs** [Métricas de evaluación](07-metricas-de-evaluacion.qmd) · [Planteamiento](01-planteamiento-y-linea-base.qmd) · [Regresión logística](../ml/03-regresion-logistica.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Explicar por qué un clasificador entrenado con un 2 % de positivos y usado con el umbral 0,5 casi no marca positivos, y por qué eso no indica un defecto del modelo.
+2. Comparar cuatro tratamientos con costes 1 y 20: umbral de costes, pesos, submuestreo de la clase mayoritaria y SMOTE. Los cuatro dan un coste por cada 1000 unidades entre 243,4 y 245,8 y un AUC entre 0,8659 y 0,8663.
+3. Derivar la corrección de las probabilidades tras submuestrear, $p=\beta q/(\beta q+1-q)$, y medirla: la media predicha pasa de 0,1842 a 0,0196, con una proporción real de 0,0195.
+4. Elegir entre mover el umbral y remuestrear según el uso de las probabilidades.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **ML aplicado 07**: las métricas que dependen de la prevalencia y las reglas de puntuación propias.
+- **ML aplicado 01**: el umbral de costes $t^{*}=c_{FP}/(c_{FP}+c_{FN})$.
+- **Machine Learning 3**: la regresión logística y su ajuste por máxima verosimilitud.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **ML aplicado 09**: el gradient boosting, en el que los pesos por clase se usan igual que aquí.
+- **Caso 2**: un comité de admisiones con una clase minoritaria y costes asimétricos.
+- **ML aplicado 13**: la detección de anomalías, el caso extremo en que la clase rara no tiene etiquetas.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $\pi$ | pi | La prevalencia de la clase positiva en los datos de uso |
+| $\beta$ | beta | La fracción de negativos que se conserva al submuestrear |
+| $w$ | uve doble | El peso de cada positivo en el ajuste, con peso 1 para los negativos |
+| $p$ | pe | La probabilidad de positivo en la población de uso |
+| $q$ | cu | La probabilidad que predice un modelo entrenado con los datos remuestreados |
+| $c_{FP}$, $c_{FN}$ | ce efe pe, ce efe ene | Los costes de los dos errores, como en ML aplicado 01 |
+| $t^{*}$ | te estrella | El umbral de costes |
+:::
+
+## 1. El problema
+
+Consideremos una empresa que revisa transacciones para detectar fraude. Un 2 % de las transacciones son fraudulentas, revisar una transacción legítima cuesta 1 y dejar pasar un fraude cuesta 20.
+
+::: {.definicion}
+**Definición 8.1 ([clases desbalanceadas]{.g}).** Un problema de clasificación binaria tiene clases desbalanceadas cuando la prevalencia de una clase es pequeña, del orden de unos pocos por ciento o menos. El término describe los datos; que el desbalance sea un problema depende del umbral y de la métrica con que se use el modelo.
+:::
+
+Un modelo calibrado entrenado con esos datos asigna probabilidades bajas a casi todas las transacciones, también a las fraudulentas: en la celda de la Sección 2, la mediana de su probabilidad es 0,067 y solo un 3,75 % supera 0,5, porque las transacciones con esos atributos siguen siendo mayoritariamente legítimas. Con el umbral 0,5, casi ninguna se marca. El modelo no ha fallado: sus probabilidades son correctas, y el umbral 0,5 corresponde a costes iguales (ML aplicado 01, Proposición 1.5). Con costes 1 y 20, el umbral de costes es $t^{*}=1/21=0{,}0476$.
+
+## 2. Cuatro tratamientos
+
+::: {.definicion}
+**Definición 8.2 (tratamientos del desbalance).**
+
+1. **Umbral de costes**: ajustar el modelo con los datos tal como son y marcar las unidades con $q>t^{*}$.
+2. **Pesos**: ajustar el modelo dando a cada positivo un peso $w$ en la verosimilitud, y usar el umbral 0,5.
+3. **Submuestreo**: conservar todos los positivos y una fracción $\beta$ de los negativos elegida al azar, ajustar y usar el umbral 0,5.
+4. **[SMOTE]{.g}**: añadir positivos sintéticos, cada uno en el segmento entre un positivo y uno de sus $k$ vecinos positivos más cercanos, en un punto elegido al azar; ajustar y usar el umbral 0,5.
+:::
+
+::: {.proposicion}
+**Proposición 8.3 (desplazamiento del intercepto).** En la regresión logística bien especificada, submuestrear los negativos con fracción $\beta$ multiplica las odds de positivo por $1/\beta$ y deja los demás coeficientes sin cambio: el intercepto aumenta en $-\log\beta$. Dar peso $w$ a los positivos tiene en esperanza el mismo efecto que $\beta=1/w$. Con $w=c_{FN}/c_{FP}$, el umbral 0,5 sobre $q$ equivale al umbral $t^{*}$ sobre $p$.
+:::
+
+::: {.demostracion}
+*Demostración.* Tras submuestrear, $P(y=1\mid x,\text{conservada})=p/(p+\beta(1-p))$, de modo que las odds pasan de $p/(1-p)$ a $p/(\beta(1-p))$. En escala logit es una suma de $-\log\beta$, que solo afecta al intercepto. Con pesos, la verosimilitud ponderada en esperanza es la de unos datos con cada positivo repetido $w$ veces, que multiplica las odds por $w$. El umbral $q>0{,}5$ equivale a odds $>1$ después del cambio, es decir a $p/(1-p)>1/w=c_{FP}/c_{FN}$, que es $p>c_{FP}/(c_{FP}+c_{FN})=t^{*}$. ∎
+:::
+
+La celda ajusta una regresión logística escrita a mano con 40 000 transacciones, de las que 780 son fraudulentas, y evalúa en 100 000 transacciones nuevas.
+
+```{pyodide}
+import numpy as np
+
+def sigmoide(z):
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -30.0, 30.0)))
+
+def logistica(X, y, w=None, pasos=30, lam=1e-6):
+    """Newton-Raphson con pesos por fila."""
+    Z = np.column_stack([np.ones(len(X)), X])
+    w = np.ones(len(y)) if w is None else w
+    b = np.zeros(Z.shape[1])
+    for _ in range(pasos):
+        p = sigmoide(Z @ b)
+        H = Z.T @ (Z * (w * p * (1 - p))[:, None]) + lam * np.eye(len(b))
+        b = b + np.linalg.solve(H, Z.T @ (w * (y - p)) - lam * b)
+    return b
+
+def prob(b, X):
+    return sigmoide(np.column_stack([np.ones(len(X)), X]) @ b)
+
+def auc(y, s):
+    o = np.argsort(s, kind="stable")
+    r = np.empty(len(s)); r[o] = np.arange(1.0, len(s) + 1.0)
+    n1 = y.sum(); n0 = len(y) - n1
+    return (r[y == 1].sum() - n1 * (n1 + 1.0) / 2.0) / (n1 * n0)
+
+def datos(n, rng):
+    X = rng.standard_normal((n, 4))
+    y = (rng.random(n) < sigmoide(-5.2 + 1.3 * X[:, 0] - 0.9 * X[:, 1] + 0.6 * X[:, 2])).astype(float)
+    return X, y
+
+def smote(X, y, rng, veces, k=5):
+    """Genera veces * (positivos) filas sinteticas interpolando entre vecinos positivos."""
+    P = X[y == 1]
+    d = ((P[:, None, :] - P[None, :, :]) ** 2).sum(2)
+    np.fill_diagonal(d, np.inf)
+    vec = np.argsort(d, axis=1)[:, :k]
+    i = rng.integers(0, len(P), veces * len(P))
+    j = vec[i, rng.integers(0, k, len(i))]
+    nuevos = P[i] + rng.random((len(i), 1)) * (P[j] - P[i])
+    return np.vstack([X, nuevos]), np.concatenate([y, np.ones(len(nuevos))])
+
+rng = np.random.default_rng(80)
+X, y = datos(40000, rng)
+Xt, yt = datos(100000, rng)
+print("positivos en entrenamiento: %d de %d (%.4f)" % (y.sum(), len(y), y.mean()))
+c_fp, c_fn = 1.0, 20.0
+t_opt = c_fp / (c_fp + c_fn)
+
+def coste(a):
+    return 1000 * (c_fp * np.sum(a & (yt == 0)) + c_fn * np.sum(~a & (yt == 1))) / len(yt)
+
+res = []
+b = logistica(X, y); q = prob(b, Xt)
+print("fraudes en prueba: mediana de su probabilidad %.3f, con mas de 0.5 un %.2f %%"
+      % (np.median(q[yt == 1]), 100 * np.mean(q[yt == 1] > 0.5)))
+res.append(("sin tocar, umbral 0.5", q, q > 0.5))
+res.append(("sin tocar, umbral de costes", q, q > t_opt))
+bw = logistica(X, y, w=np.where(y == 1, c_fn / c_fp, 1.0)); qw = prob(bw, Xt)
+res.append(("pesos 20 a 1, umbral 0.5", qw, qw > 0.5))
+r = np.random.default_rng(1)
+keep = (y == 1) | (r.random(len(y)) < 1 / 20)                   # quedarse con 1 de cada 20 negativos
+bs = logistica(X[keep], y[keep]); qs = prob(bs, Xt)
+res.append(("submuestreo 1 de 20, umbral 0.5", qs, qs > 0.5))
+Xm, ym = smote(X, y, np.random.default_rng(2), 19)
+bm = logistica(Xm, ym); qm = prob(bm, Xt)
+res.append(("SMOTE x20, umbral 0.5", qm, qm > 0.5))
+print("metodo                            AUC     coste por 1000  media predicha")
+for nombre, p, a in res:
+    print("%-32s %7.4f %12.1f %15.4f" % (nombre, auc(yt, p), coste(a), p.mean()))
+print("proporcion real en prueba: %.4f" % yt.mean())
+```
+
+Con el umbral 0,5 y los datos sin tocar, el coste es 375,5 por cada 1000 transacciones, cerca del de no revisar ninguna. Los otros cuatro tratamientos dan entre 243,4 y 245,8: las diferencias son del orden del ruido de estimación. El AUC es el mismo en los cinco, entre 0,8659 y 0,8663, porque ninguno cambia el orden de las puntuaciones más allá del ruido. La diferencia está en la última columna: el modelo sin tocar predice una media de 0,0195, igual a la proporción real; los tres remuestreados predicen alrededor de 0,18.
+
+**Modo de falla.** Se aplica SMOTE porque «las clases están desbalanceadas», se valida con AUC y se obtiene la misma cifra que sin SMOTE. Se concluye que SMOTE no ayudó, cuando el problema era el umbral. O se usan sus probabilidades para estimar cuántos fraudes habrá el mes siguiente, y la estimación es nueve veces la real.
+
+## 3. Corregir las probabilidades
+
+::: {.proposicion}
+**Proposición 8.4 (corrección tras submuestrear).** Si un modelo se entrenó con una fracción $\beta$ de los negativos y predice $q$, la probabilidad en la población de uso es
+$$
+p=\frac{\beta\,q}{\beta\,q+1-q} .
+$$
+:::
+
+::: {.demostracion}
+*Demostración.* Por la Proposición 8.3, las odds de $q$ son las de $p$ multiplicadas por $1/\beta$: $q/(1-q)=p/(\beta(1-p))$. Despejando $p$ se obtiene la fórmula. En la celda, con $\beta=1/20$, la media de las probabilidades submuestreadas es 0,1842 y la de las corregidas 0,0196, frente a una proporción real de 0,0195. La puntuación de Brier pasa de 0,07319 a 0,01709, igual a la del modelo sin submuestrear, 0,01710. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def sigmoide(z):
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -30.0, 30.0)))
+
+def logistica(X, y, w=None, pasos=30, lam=1e-6):
+    """Newton-Raphson con pesos por fila."""
+    Z = np.column_stack([np.ones(len(X)), X])
+    w = np.ones(len(y)) if w is None else w
+    b = np.zeros(Z.shape[1])
+    for _ in range(pasos):
+        p = sigmoide(Z @ b)
+        H = Z.T @ (Z * (w * p * (1 - p))[:, None]) + lam * np.eye(len(b))
+        b = b + np.linalg.solve(H, Z.T @ (w * (y - p)) - lam * b)
+    return b
+
+def prob(b, X):
+    return sigmoide(np.column_stack([np.ones(len(X)), X]) @ b)
+
+def auc(y, s):
+    o = np.argsort(s, kind="stable")
+    r = np.empty(len(s)); r[o] = np.arange(1.0, len(s) + 1.0)
+    n1 = y.sum(); n0 = len(y) - n1
+    return (r[y == 1].sum() - n1 * (n1 + 1.0) / 2.0) / (n1 * n0)
+
+def datos(n, rng):
+    X = rng.standard_normal((n, 4))
+    y = (rng.random(n) < sigmoide(-5.2 + 1.3 * X[:, 0] - 0.9 * X[:, 1] + 0.6 * X[:, 2])).astype(float)
+    return X, y
+
+def smote(X, y, rng, veces, k=5):
+    """Genera veces * (positivos) filas sinteticas interpolando entre vecinos positivos."""
+    P = X[y == 1]
+    d = ((P[:, None, :] - P[None, :, :]) ** 2).sum(2)
+    np.fill_diagonal(d, np.inf)
+    vec = np.argsort(d, axis=1)[:, :k]
+    i = rng.integers(0, len(P), veces * len(P))
+    j = vec[i, rng.integers(0, k, len(i))]
+    nuevos = P[i] + rng.random((len(i), 1)) * (P[j] - P[i])
+    return np.vstack([X, nuevos]), np.concatenate([y, np.ones(len(nuevos))])
+
+rng = np.random.default_rng(80)
+X, y = datos(40000, rng)
+Xt, yt = datos(100000, rng)
+r = np.random.default_rng(1)
+beta = 1 / 20                                      # fraccion de negativos que se conserva
+keep = (y == 1) | (r.random(len(y)) < beta)
+qs = prob(logistica(X[keep], y[keep]), Xt)
+corr = beta * qs / (beta * qs + 1 - qs)
+q = prob(logistica(X, y), Xt)
+print("probabilidades           media    Brier     AUC")
+for nombre, p in (("sin submuestrear", q), ("submuestreadas", qs), ("corregidas", corr)):
+    print("%-22s %8.4f %8.5f %7.4f" % (nombre, p.mean(), np.mean((p - yt) ** 2), auc(yt, p)))
+print("proporcion real en prueba: %.4f" % yt.mean())
+print("mayor diferencia entre corregidas y sin submuestrear: %.4f" % np.max(np.abs(corr - q)))
+```
+
+La corrección solo vale si se conoce $\beta$ y si los datos de uso tienen la prevalencia de los datos originales. SMOTE no tiene una corrección exacta, porque los positivos sintéticos no son una muestra de la población: se recalibra con los métodos de Estadística 16.
+
+El visual muestra la probabilidad que predice el modelo submuestreado en función de la probabilidad en la población, para la fracción de negativos elegida.
+
+```{=html}
+<div class="viz-submuestreo08">
+  <div class="controles">
+    <label>Fracción de negativos conservada β <input id="s8-b" type="range" min="-2" max="0" step="0.05" value="-1.3"> <span id="s8-b-v">0.050</span></label>
+  </div>
+  <svg id="s8-svg" viewBox="0 0 660 280" role="img" aria-label="Probabilidad del modelo submuestreado frente a la probabilidad en la población, con la diagonal y el umbral 0,5."></svg>
+  <p class="lectura" id="s8-lectura"></p>
+</div>
+<style>
+.viz-submuestreo08 { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-submuestreo08 .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-submuestreo08 label { display: flex; align-items: center; gap: .4rem; }
+.viz-submuestreo08 input[type=range] { width: 200px; padding: 0; }
+.viz-submuestreo08 svg { width: 100%; height: auto; display: block; }
+.viz-submuestreo08 .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("s8-svg"), lec = document.getElementById("s8-lectura");
+  var cb = document.getElementById("s8-b"), eb = document.getElementById("s8-b-v");
+  var X0 = 60, X1 = 620, Y0 = 30, Y1 = 230, PM = 0.2;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var beta = Math.pow(10, +cb.value);
+    eb.textContent = beta.toFixed(3);
+    var px = function (p) { return X0 + p / PM * (X1 - X0); };
+    var py = function (q) { return Y1 - q * (Y1 - Y0); };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: X1 - X0, height: Y1 - Y0, fill: "none", stroke: C_L }));
+    [0, 0.05, 0.1, 0.15, 0.2].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y1 + 16, "text-anchor": "middle", "font-size": 10, fill: C_T, opacity: .7 }, v.toFixed(2)));
+    });
+    [0, 0.5, 1].forEach(function (v) {
+      svg.appendChild(el("text", { x: X0 - 6, y: py(v) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, v.toFixed(1)));
+    });
+    svg.appendChild(el("text", { x: X1, y: Y1 + 34, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "probabilidad en la población p →"));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(0.5) + " L" + X1 + " " + py(0.5), stroke: C_B, "stroke-dasharray": "4 3" }));
+    svg.appendChild(el("text", { x: X0 + 6, y: py(0.5) - 6, "font-size": 10.5, fill: C_B }, "umbral 0.5"));
+    svg.appendChild(el("path", { d: "M" + px(0) + " " + py(0) + " L" + px(PM) + " " + py(PM), stroke: C_T, "stroke-dasharray": "2 3", opacity: .6 }));
+    var d = "", k;
+    for (k = 0; k <= 200; k++) {
+      var p = PM * k / 200, q = p / (p + beta * (1 - p));
+      d += (k ? " L" : "M") + px(p).toFixed(1) + " " + py(q).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_A, "stroke-width": 2.4 }));
+    var corte = beta / (1 + beta);
+    if (corte <= PM) {
+      svg.appendChild(el("circle", { cx: px(corte).toFixed(1), cy: py(0.5).toFixed(1), r: 5, fill: C_A }));
+      svg.appendChild(el("path", { d: "M" + px(corte).toFixed(1) + " " + py(0.5) + " L" + px(corte).toFixed(1) + " " + Y1, stroke: C_A, opacity: .5 }));
+    }
+    var qEj = 0.02 / (0.02 + beta * 0.98);
+    lec.innerHTML = "Con β = <strong>" + beta.toFixed(3) + "</strong>, el umbral 0.5 del modelo submuestreado equivale a marcar las unidades con p > β/(1 + β) = <strong>" + corte.toFixed(4) +
+      "</strong>" + (corte > PM ? ", fuera del rango dibujado" : "") + ". Una unidad con p = 0.02 recibe q = <strong>" + qEj.toFixed(4) + "</strong>, " + (qEj / 0.02).toFixed(1) + " veces su probabilidad real.";
+  }
+  cb.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 4. Cuándo remuestrear
+
+Con un modelo que produce probabilidades calibradas, el umbral de costes consigue lo mismo que el remuestreo sin deformar las probabilidades, y es la opción por defecto. El remuestreo o los pesos tienen dos usos:
+
+- Reducir el coste de entrenamiento. Con 40 000 filas y 780 positivos, el submuestreo con $\beta=1/20$ entrena con unas 2700 filas y obtiene el mismo coste. Con cientos de millones de filas, la reducción es la diferencia entre poder entrenar y no poder.
+- Modelos cuyo ajuste ignora la clase rara. Un árbol con un tamaño mínimo de hoja, o un modelo con regularización fuerte, pueden no llegar a separar una clase con pocas decenas de ejemplos. Los pesos cambian lo que el ajuste considera un error grande, y pueden cambiar el orden de las puntuaciones, no solo su escala.
+
+En los dos casos, las probabilidades resultantes se corrigen con la Proposición 8.4 o se recalibran antes de usarlas como probabilidades.
+
+## 5. Limitaciones
+
+- La Proposición 8.3 supone que el modelo logístico está bien especificado. Con un modelo mal especificado, los pesos cambian también los demás coeficientes, porque el ajuste da más importancia a la región donde están los positivos.
+- La comparación usó un modelo lineal, cuyo orden no cambia con los tratamientos. Con árboles o con gradient boosting, los tratamientos pueden dar órdenes distintos; el Reto 2 lo mide.
+- SMOTE interpola en el espacio de los atributos, lo que solo tiene sentido con atributos numéricos continuos. Con categóricas genera valores que no existen.
+- La prevalencia de uso puede diferir de la de entrenamiento. Si cambia, la corrección de la Proposición 8.4 se hace con la prevalencia de uso.
+
+## Ejercicios
+
+### Ejercicio 1, Corregir tras submuestrear
+
+Un modelo se entrenó conservando una fracción `beta` de los negativos y predice las probabilidades `q`. Completar la línea de `p` con las probabilidades corregidas según la Proposición 8.4. La celda imprime las tres; deben dar `[0.0909, 0.0244, 0.4737]`.
+
+```{pyodide}
+#| exercise: ex_corrige
+import numpy as np
+
+beta = 0.1
+q = np.array([0.5, 0.2, 0.9])
+
+p = ______
+
+print([round(float(v), 4) for v in p])
+```
+
+::: {.hint exercise="ex_corrige"}
+El numerador es `beta * q` y el denominador `beta * q + 1 - q`.
+:::
+
+::: {.solution exercise="ex_corrige"}
+```{pyodide}
+import numpy as np
+
+beta = 0.1
+q = np.array([0.5, 0.2, 0.9])
+
+p = beta * q / (beta * q + 1 - q)
+
+print([round(float(v), 4) for v in p])
+```
+
+Una predicción de 0,5 en el modelo submuestreado corresponde a 0,0909 en la población, que es $\beta/(1+\beta)$. Incluso una predicción de 0,9 queda por debajo de 0,5 tras la corrección.
+:::
+
+```{pyodide}
+#| exercise: ex_corrige
+#| check: true
+import numpy as np
+if np.allclose(np.asarray(p, float), [0.0909, 0.0244, 0.4737], atol=5e-5):
+    feedback = {"correct": True, "message": "Correcto: 0.5 en el modelo submuestreado es 0.0909 en la población."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [0.0909, 0.0244, 0.4737]."}
+feedback
+```
+
+### Ejercicio 2, El peso equivalente a un umbral
+
+Para cada umbral de costes del vector `t`, completar la línea de `w` con el peso de los positivos que, con el umbral 0,5, produce las mismas decisiones según la Proposición 8.3. La celda imprime los cuatro pesos; deben dar `[1.0, 9.0, 19.0, 99.0]`.
+
+```{pyodide}
+#| exercise: ex_peso
+import numpy as np
+
+t = np.array([0.5, 0.1, 0.05, 0.01])
+
+w = ______
+
+print([round(float(v), 2) for v in w])
+```
+
+::: {.hint exercise="ex_peso"}
+El umbral de costes es $t=1/(1+w)$ cuando $c_{FP}=1$ y $c_{FN}=w$. Despejar $w$.
+:::
+
+::: {.solution exercise="ex_peso"}
+```{pyodide}
+import numpy as np
+
+t = np.array([0.5, 0.1, 0.05, 0.01])
+
+w = (1 - t) / t
+
+print([round(float(v), 2) for v in w])
+```
+
+El peso es la razón de costes $c_{FN}/c_{FP}$. Un umbral de 0,01 equivale a dar a cada positivo el peso de 99 negativos.
+:::
+
+```{pyodide}
+#| exercise: ex_peso
+#| check: true
+import numpy as np
+if np.allclose(np.asarray(w, float), [1.0, 9.0, 19.0, 99.0], atol=1e-6):
+    feedback = {"correct": True, "message": "Correcto: el peso es (1 − t)/t."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [1.0, 9.0, 19.0, 99.0]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Aplicado 8**:
+
+1. Repetir la Sección 2 con un modelo mal especificado, omitiendo el atributo $x_3$, y medir si los pesos cambian los coeficientes de los demás atributos.
+2. Repetir la comparación con un árbol de decisión de profundidad 4 en lugar de la logística, y medir si los cuatro tratamientos dan el mismo AUC.
+3. Medir cómo cambia el coste de cada tratamiento cuando la prevalencia en prueba es el 1 % en lugar del 2 %, sin reentrenar. Guardar en `50-Errores/` la regla sobre cuándo remuestrear y cuándo mover el umbral.
+
+## Del libro
+
+Ninguno de los libros verificados del sitio dedica una sección al desbalance de clases. FES §3.2 lo menciona al advertir que el acierto engaña cuando una clase es minoritaria, y ML aplicado 07 lo desarrolla. Los resultados de esta lección se demuestran y se miden en la página; SMOTE se implementa a partir de su descripción, sin citar el artículo original, que no está en la bibliografía verificada.
+
+## Para el Cerebro
+
+- Con un 2 % de positivos, un modelo calibrado casi no marca positivos con el umbral 0,5: el umbral es el problema.
+- El umbral 0,5 corresponde a costes iguales; con costes 1 y 20, el umbral es 1/21.
+- Umbral de costes, pesos 20 a 1, submuestreo 1 de 20 y SMOTE: costes de 243,4 a 245,8.
+- El AUC no cambia con ninguno de los tratamientos: de 0,8659 a 0,8663.
+- Submuestrear con fracción $\beta$ suma $-\log\beta$ al intercepto y deja los demás coeficientes.
+- Pesos $w=c_{FN}/c_{FP}$ con umbral 0,5 equivalen al umbral $t^{*}$.
+- Tras remuestrear, las probabilidades están infladas: media 0,1842 frente a 0,0195 real.
+- Corrección: $p=\beta q/(\beta q+1-q)$; media corregida 0,0196.
+- SMOTE no tiene corrección exacta: se recalibra.
+- Remuestrear sirve para abaratar el entrenamiento o para modelos que ignoran la clase rara.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos, con 40 000 transacciones de entrenamiento con 780 positivos y 100 000 de prueba con proporción 0,0195. Costes por cada 1000 con costes 1 y 20: 375,5 con umbral 0,5, 244,9 con umbral de costes, 245,8 con pesos, 243,4 con submuestreo y 244,9 con SMOTE; AUC de 0,8659 a 0,8663; medias predichas de 0,0195, 0,1838, 0,1842 y 0,1799. La corrección: media 0,1842 antes y 0,0196 después, Brier 0,07319 y 0,01709 frente a 0,01710 sin submuestrear, y diferencia máxima de 0,0469 con las probabilidades del modelo sin submuestrear. La regresión logística ponderada, el submuestreo, SMOTE y el AUC están escritos con NumPy. Las Proposiciones 8.3 y 8.4 se demuestran en la página.
+
+**Lo que se usa de otras lecciones sin repetir.** El umbral de costes y el acierto como caso de costes iguales, de ML aplicado 01. Las métricas y su dependencia de la prevalencia, de ML aplicado 07. La recalibración, de Estadística 16.
+
+**Lo que es mío, no del libro.** La comparación de los cuatro tratamientos con el mismo modelo y la misma métrica de coste, que muestra que el umbral resuelve lo que se atribuye al desbalance. La equivalencia entre pesos, submuestreo y umbral en la Proposición 8.3. La lista de los dos usos del remuestreo. Y el visual de la deformación de las probabilidades según la fracción de negativos conservada.
+:::
