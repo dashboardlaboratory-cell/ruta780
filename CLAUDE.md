@@ -18,6 +18,7 @@ python3 verificar/formato.py     && \
 python3 verificar/tono.py --estricto && \
 python3 verificar/ejercicios.py --estricto && \
 python3 verificar/entregables.py && \
+python3 verificar/casos.py && \
 python3 verificar/visuales.py --estricto
 ```
 

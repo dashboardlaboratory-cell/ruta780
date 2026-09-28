@@ -5336,6 +5336,17 @@ producción y anomalías. Se abre `aplicado/` con 13 lecciones y 4 casos
 Orden de trabajo: aplicado 01, 02, 03, Feature Engineering 13, caso 1,
 aplicado 04 a 08, caso 2, 09 a 11, caso 3, 12, 13, caso 4, y después ML 44.
 
+Publicados el 27 y 28-09-2026: aplicado 01, 02 y 03, Feature Engineering 13 y
+el caso 1. Los casos tienen su propio verificador, `verificar/casos.py`, en el
+CI y en la lista de gates: ejecuta la celda de datos compartida (`#| setup:
+true` con la lista de preguntas), cada solución de referencia seguida de su
+comprobación, cada plantilla vacía, y el bloque `<!-- verificacion -->` con
+las aserciones sobre la trampa. Las soluciones van en bloques ```python para
+que `salidas.py` no las ejecute sin los datos. Se probó además en Pyodide
+0.28.1: las seis comprobaciones del caso 1 aceptan la solución en unos 3 s.
+Con pandas 3 las columnas de texto ya no son `object` y `.values` de un
+`DataFrame` es de solo lectura: usar `is_numeric_dtype` y `to_numpy(copy=True)`.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
