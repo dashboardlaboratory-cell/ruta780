@@ -1,0 +1,435 @@
+---
+title: "Ajuste de hiperparámetros y validación cruzada anidada"
+subtitle: "ML aplicado · Lección 06"
+nivel: L3
+modulo: aplicado
+fase: F4
+prereqs: [aplicado/05-pipelines, ml/06-validacion-cruzada, causal/05-potencia-y-mde]
+siguientes: []
+libro: "FES §3.5 Tuning Parameters and Overfitting · §3.6 Model Optimization and Tuning"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="aplicado/06-ajuste-de-hiperparametros"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F4]{.item}
+[**Libro** FES 3.5 · 3.6]{.item}
+[**Prereqs** [Pipelines](05-pipelines.qmd) · [Validación cruzada](../ml/06-validacion-cruzada.qmd) · [Potencia y MDE](../causal/05-potencia-y-mde.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Comparar la búsqueda en rejilla con la búsqueda aleatoria cuando un hiperparámetro importa más que otro. Con nueve evaluaciones, la rejilla obtiene 0,2307 o 0,1813 según dónde caigan sus valores de $k$; la búsqueda aleatoria obtiene una mediana de 0,1869, con un óptimo de 0,1752.
+2. Explicar por qué el mejor error de validación cruzada subestima el error del modelo elegido: es el mínimo de varias estimaciones con ruido.
+3. Implementar la validación cruzada anidada y medir su efecto: con 140 configuraciones, el mejor error de validación es 0,3190, el anidado 0,3519 y el real 0,3532.
+4. Tratar los parámetros del preprocesamiento como hiperparámetros del pipeline.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **ML aplicado 05**: el pipeline, cuyos parámetros de preprocesamiento se ajustan aquí junto con los del modelo.
+- **Machine Learning 6**: la validación cruzada, que aquí se anida dentro de sí misma.
+- **Causal 05**: la maldición del ganador, el sesgo del máximo de varias estimaciones con ruido.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **ML aplicado 07**: las métricas, que definen qué se minimiza al ajustar.
+- **ML aplicado 09**: el gradient boosting, con varios hiperparámetros que interactúan.
+- **Atributos 16**: la búsqueda global de subconjuntos de atributos, que es una búsqueda de hiperparámetros con un espacio muy grande.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $\lambda$ | lambda | Una configuración de hiperparámetros |
+| $\Lambda$ | lambda mayúscula | El conjunto de configuraciones que se evalúan |
+| $m$ | eme | El número de configuraciones, $\lvert\Lambda\rvert$ |
+| $d$ | de | El número de hiperparámetros |
+| $\hat e(\lambda)$ | e gorro de lambda | El error de validación cruzada de la configuración $\lambda$ |
+| $e(\lambda)$ | e de lambda | El error real de la configuración $\lambda$ en datos nuevos |
+| $k$ | ka | El número de vecinos |
+| $p$ | pe | El exponente de la distancia de Minkowski |
+| $\sigma$ | sigma | La desviación típica del error de estimación de $\hat e(\lambda)$ |
+:::
+
+## 1. Rejilla y búsqueda aleatoria
+
+::: {.definicion}
+**Definición 6.1 ([hiperparámetro]{.g} y búsqueda).** Un hiperparámetro es un valor que el ajuste del modelo no estima y que hay que fijar antes: el número de vecinos $k$, la penalización de ridge, la profundidad de un árbol. Ajustarlo es elegir, dentro de un conjunto de configuraciones $\Lambda$, la de menor error estimado $\hat e(\lambda)$. En la **búsqueda en rejilla**, $\Lambda$ es el producto de unos pocos valores de cada hiperparámetro; en la **búsqueda aleatoria**, $\Lambda$ son $m$ configuraciones tomadas al azar del espacio de valores.
+:::
+
+::: {.proposicion}
+**Proposición 6.2 (valores distintos por hiperparámetro).** Con $m$ evaluaciones y $d$ hiperparámetros, una rejilla regular prueba $m^{1/d}$ valores distintos de cada uno. Una búsqueda aleatoria sobre $M$ valores posibles de un hiperparámetro prueba en promedio $M\bigl(1-(1-1/M)^m\bigr)$ valores distintos, cerca de $m$ cuando $m$ es pequeño frente a $M$. Si solo uno de los hiperparámetros afecta al error, la búsqueda aleatoria explora ese hiperparámetro con más valores que la rejilla, con el mismo presupuesto.
+:::
+
+::: {.demostracion}
+*Demostración.* Una rejilla de $m$ puntos con $d$ ejes iguales tiene $m^{1/d}$ valores por eje. En la búsqueda aleatoria, cada valor posible queda sin probar con probabilidad $(1-1/M)^m$, y la suma sobre los $M$ valores da el número esperado de valores probados. La celda ajusta $k$ vecinos más cercanos con dos hiperparámetros: $k$, de 1 a 50, que hace variar el error de 0,1854 a 0,3249, y el exponente $p$ de la distancia, que lo hace variar de 0,1752 a 0,1933. Con nueve evaluaciones, la rejilla prueba tres valores de $k$ y la búsqueda aleatoria hasta nueve. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def datos(n, rng):
+    """Regresion con cuatro atributos, todos utiles."""
+    X = rng.uniform(-1, 1, (n, 4))
+    y = np.sin(3 * X[:, 0]) + X[:, 1] ** 2 + 0.5 * X[:, 2] - 0.5 * X[:, 3] + rng.normal(0, 0.3, n)
+    return X, y
+
+def distancias(A, B, p):
+    return (np.abs(A[:, None, :] - B[None, :, :]) ** p).sum(2) ** (1.0 / p)
+
+def knn(Xtr, ytr, Xte, k, p):
+    d = distancias(Xte, Xtr, p)
+    idx = np.argpartition(d, k - 1, axis=1)[:, :k]
+    return ytr[idx].mean(1)
+
+def ecm_cv(X, y, k, p, pliegues=5, semilla=0):
+    o = np.random.default_rng(semilla).permutation(len(y))
+    e = []
+    for f in range(pliegues):
+        te = o[f::pliegues]; tr = np.setdiff1d(o, te)
+        e.append(np.mean((y[te] - knn(X[tr], y[tr], X[te], k, p)) ** 2))
+    return float(np.mean(e))
+
+rng = np.random.default_rng(60)
+X, y = datos(300, rng)
+# superficie completa: k de 1 a 50 y p en 1, 1.5, 2, 2.5, 3
+ks = np.arange(1, 51); ps = np.array([1.0, 1.5, 2.0, 2.5, 3.0])
+S = np.array([[ecm_cv(X, y, k, p) for p in ps] for k in ks])
+i, j = np.unravel_index(S.argmin(), S.shape)
+print("mejor de la superficie: k = %d, p = %.1f, ECM = %.4f" % (ks[i], ps[j], S.min()))
+print("ECM al variar k con p = 2     : %.4f a %.4f" % (S[:, 2].min(), S[:, 2].max()))
+print("ECM al variar p con k = %2d    : %.4f a %.4f" % (ks[i], S[i].min(), S[i].max()))
+for nombre, kk in (("rejilla k en 1, 25, 50", (1, 25, 50)), ("rejilla k en 5, 25, 45", (5, 25, 45))):
+    r = min(S[k - 1, list(ps).index(p)] for k in kk for p in (1.0, 2.0, 3.0))
+    print("%-26s: mejor ECM %.4f" % (nombre, r))
+azar = []
+for s in range(30):
+    r = np.random.default_rng(100 + s)
+    ks9 = r.integers(1, 51, 9); ps9 = r.choice(ps, 9)
+    azar.append(min(S[k - 1, list(ps).index(p)] for k, p in zip(ks9, ps9)))
+azar = np.array(azar)
+print("9 puntos al azar, 30 veces   : mediana %.4f, peor %.4f, mejor %.4f" % (np.median(azar), azar.max(), azar.min()))
+```
+
+La rejilla con $k$ en 1, 25 y 50 obtiene 0,2307: ninguno de sus tres valores está cerca del óptimo, $k=6$. La rejilla con $k$ en 5, 25 y 45 obtiene 0,1813, mejor que la mediana de la búsqueda aleatoria, porque uno de sus valores cae cerca del óptimo. La búsqueda aleatoria no depende de esa elección: en 30 repeticiones su peor resultado es 0,2045. FES §3.6 describe las dos búsquedas y los métodos secuenciales, que eligen cada configuración nueva a partir de los resultados anteriores.
+
+## 2. El sesgo del mejor resultado
+
+::: {.proposicion}
+**Proposición 6.3 (optimismo del mínimo).** Si $\hat e(\lambda)=e(\lambda)+\varepsilon_\lambda$ con errores de estimación de media cero, el mínimo de $\hat e$ sobre $\Lambda$ cumple
+$$
+E\Bigl[\min_{\lambda\in\Lambda}\hat e(\lambda)\Bigr]\le\min_{\lambda\in\Lambda}e(\lambda),
+$$
+y la diferencia crece con el número de configuraciones y con la varianza de $\varepsilon_\lambda$. En el caso extremo de $m$ configuraciones con el mismo error real y errores de estimación independientes $N(0,\sigma^2)$, la diferencia es $\sigma$ por la esperanza del máximo de $m$ normales estándar.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $\lambda^{*}$ la configuración de menor error real. Para cualquier realización, $\min_\lambda\hat e(\lambda)\le\hat e(\lambda^{*})$, y tomando esperanzas $E[\min\hat e]\le E[\hat e(\lambda^{*})]=e(\lambda^{*})$. En el caso extremo, $\min_\lambda\hat e(\lambda)=e-\sigma\max_\lambda Z_\lambda$ con $Z_\lambda$ normales estándar, de modo que la diferencia es $\sigma\,E[\max Z_\lambda]$. Es la maldición del ganador de Causal 05. El error real del modelo elegido es además mayor o igual que $\min_\lambda e(\lambda)$, y los dos efectos se suman. ∎
+:::
+
+La consecuencia es que el mejor error de la búsqueda no sirve como estimación del error del modelo elegido. Hace falta una evaluación con datos que no intervinieron en la elección.
+
+::: {.definicion}
+**Definición 6.4 ([validación cruzada anidada]{.g}).** La validación cruzada anidada tiene dos niveles. El externo parte las filas en pliegues; para cada uno, la búsqueda completa de hiperparámetros se hace con validación cruzada dentro de las filas de entrenamiento de ese pliegue, y el modelo elegido se evalúa en las filas de prueba del pliegue externo. El error anidado es la media de esas evaluaciones.
+:::
+
+La celda repite el experimento en 20 muestras de 120 filas y compara, en media, el mejor error de la búsqueda, el error anidado y el error real del modelo elegido en 3000 filas nuevas. La primera búsqueda recorre 40 valores de $k$ con las diez columnas; la segunda, 7 valores de $k$ por 20 subconjuntos de columnas.
+
+```{pyodide}
+import numpy as np
+
+def datos(n, rng):
+    """Regresion con cuatro atributos utiles y seis de ruido."""
+    X = rng.uniform(-1, 1, (n, 10))
+    y = np.sin(3 * X[:, 0]) + X[:, 1] ** 2 + 0.5 * X[:, 2] - 0.5 * X[:, 3] + rng.normal(0, 0.3, n)
+    return X, y
+
+def vecinos(A, B):
+    """Indices de las filas de A ordenadas por distancia a cada fila de B."""
+    d = (B ** 2).sum(1)[:, None] + (A ** 2).sum(1)[None] - 2.0 * B @ A.T
+    return np.argsort(d, axis=1, kind="stable")
+
+def cv_todas(X, y, ks, subconjuntos, pliegues=5, semilla=0):
+    """ECM de validacion cruzada de cada par (columnas, k)."""
+    o = np.random.default_rng(semilla).permutation(len(y))
+    E = np.zeros((len(subconjuntos), len(ks)))
+    for f in range(pliegues):
+        te = o[f::pliegues]; tr = np.setdiff1d(o, te)
+        for s, cols in enumerate(subconjuntos):
+            orden = vecinos(X[tr][:, cols], X[te][:, cols])
+            medias = np.cumsum(y[tr][orden], axis=1) / np.arange(1, len(tr) + 1)
+            for j, k in enumerate(ks):
+                E[s, j] += np.mean((y[te] - medias[:, k - 1]) ** 2) / pliegues
+    return E
+
+def elige(X, y, ks, subs):
+    E = cv_todas(X, y, ks, subs)
+    s, j = np.unravel_index(E.argmin(), E.shape)
+    return subs[s], ks[j], E.min()
+
+def predice(X, y, Xn, cols, k):
+    return y[vecinos(X[:, cols], Xn[:, cols])[:, :k]].mean(1)
+
+def experimento(ks, subs, rep=20):
+    Xg, yg = datos(3000, np.random.default_rng(999))    # datos nuevos
+    res = []
+    for r in range(rep):
+        X, y = datos(120, np.random.default_rng(600 + r))
+        cols, k, mejor = elige(X, y, ks, subs)
+        real = np.mean((yg - predice(X, y, Xg, cols, k)) ** 2)
+        o = np.random.default_rng(1).permutation(len(y)); e = []
+        for f in range(5):                               # validacion anidada
+            te = o[f::5]; tr = np.setdiff1d(o, te)
+            c2, k2, _ = elige(X[tr], y[tr], ks, subs)    # la eleccion se repite
+            e.append(np.mean((y[te] - predice(X[tr], y[tr], X[te], c2, k2)) ** 2))
+        res.append((mejor, np.mean(e), real))
+    return np.array(res).mean(0)
+
+todas = [np.arange(10)]
+rng = np.random.default_rng(61)
+subs = todas + [np.sort(rng.choice(10, rng.integers(2, 8), replace=False)) for _ in range(19)]
+print("busqueda                    configuraciones  mejor en CV  anidada   real")
+for nombre, ks, ss in (("k de 1 a 40, 10 columnas", np.arange(1, 41), todas),
+                       ("7 valores de k x 20 conjuntos", np.array([1, 3, 5, 8, 12, 20, 30]), subs)):
+    m = experimento(ks, ss)
+    print("%-29s %14d %12.4f %9.4f %6.4f" % (nombre, len(ks) * len(ss), m[0], m[1], m[2]))
+```
+
+En las dos búsquedas, el mejor error de validación subestima el real: 0,4656 frente a 0,4929 con 40 configuraciones, y 0,3190 frente a 0,3532 con 140. La validación anidada da 0,5044 y 0,3519. En la primera sobreestima ligeramente, porque cada modelo externo se entrena con 96 filas en lugar de 120, el pesimismo de la validación cruzada que midió Atributos 02. En la segunda, el subconjunto de columnas añade una elección con mucho ruido, el optimismo del mínimo es mayor y la validación anidada lo corrige.
+
+**Modo de falla.** Se prueban 500 configuraciones con validación cruzada y se informa del error de la mejor como el error esperado del modelo. Con muestras pequeñas y muchas configuraciones, la cifra informada es la más optimista de 500 estimaciones con ruido.
+
+El visual muestra la distribución del mínimo de $m$ estimaciones con ruido de configuraciones que tienen el mismo error real, 0,30. La distancia entre la media del mínimo y 0,30 es el optimismo de la Proposición 6.3.
+
+```{=html}
+<div class="viz-ganador06">
+  <div class="controles">
+    <label>Configuraciones m <input id="g6-m" type="range" min="0" max="2.5" step="0.05" value="1.3"> <span id="g6-m-v">20</span></label>
+    <label>Ruido σ de la estimación <input id="g6-s" type="range" min="0.005" max="0.05" step="0.005" value="0.02"> <span id="g6-s-v">0.020</span></label>
+  </div>
+  <svg id="g6-svg" viewBox="0 0 660 260" role="img" aria-label="Histograma del mínimo de m estimaciones con ruido de un mismo error real, con el error real y la media del mínimo marcados."></svg>
+  <p class="lectura" id="g6-lectura"></p>
+</div>
+<style>
+.viz-ganador06 { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-ganador06 .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-ganador06 label { display: flex; align-items: center; gap: .4rem; }
+.viz-ganador06 input[type=range] { width: 160px; padding: 0; }
+.viz-ganador06 svg { width: 100%; height: auto; display: block; }
+.viz-ganador06 .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("g6-svg"), lec = document.getElementById("g6-lectura");
+  var cm = document.getElementById("g6-m"), cs = document.getElementById("g6-s");
+  var em = document.getElementById("g6-m-v"), es = document.getElementById("g6-s-v");
+  var X0 = 40, X1 = 620, Y0 = 30, Y1 = 206, R = 600, MMAX = 317;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // R repeticiones de MMAX normales estandar, fijas
+  var sem = 606, Z = [], i, j;
+  function u() { sem = (sem * 48271) % 2147483647; return sem / 2147483647; }
+  for (i = 0; i < R; i++) {
+    var fila = [];
+    for (j = 0; j < MMAX; j++) { var a = Math.max(u(), 1e-9), b = u(); fila.push(Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b)); }
+    Z.push(fila);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var m = Math.max(1, Math.round(Math.pow(10, +cm.value))), s = +cs.value;
+    em.textContent = m; es.textContent = s.toFixed(3);
+    var mins = [], suma = 0;
+    for (i = 0; i < R; i++) {
+      var mx = -1e9;
+      for (j = 0; j < m; j++) if (Z[i][j] > mx) mx = Z[i][j];
+      mins.push(0.30 - s * mx); suma += 0.30 - s * mx;
+    }
+    var media = suma / R, LO = 0.30 - 0.2, HI = 0.30 + 0.12;
+    var px = function (v) { return X0 + (v - LO) / (HI - LO) * (X1 - X0); };
+    var B = 64, cnt = [], k;
+    for (k = 0; k < B; k++) cnt.push(0);
+    mins.forEach(function (v) { var q = Math.floor((v - LO) / (HI - LO) * B); if (q >= 0 && q < B) cnt[q]++; });
+    var hm = Math.max.apply(null, cnt), w = (X1 - X0) / B;
+    for (k = 0; k < B; k++) if (cnt[k]) {
+      var h = cnt[k] / hm * (Y1 - Y0);
+      svg.appendChild(el("rect", { x: (X0 + k * w + 0.5).toFixed(1), y: (Y1 - h).toFixed(1), width: (w - 1).toFixed(1), height: h.toFixed(1), fill: C_A, "fill-opacity": .55 }));
+    }
+    svg.appendChild(el("path", { d: "M" + X0 + " " + Y1 + " L" + X1 + " " + Y1, stroke: C_L }));
+    [0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y1 + 16, "text-anchor": "middle", "font-size": 10, fill: C_T, opacity: .7 }, v.toFixed(2)));
+    });
+    svg.appendChild(el("path", { d: "M" + px(0.30) + " " + (Y0 - 4) + " L" + px(0.30) + " " + Y1, stroke: C_B, "stroke-width": 2 }));
+    svg.appendChild(el("text", { x: px(0.30) + 5, y: Y0 - 8, "font-size": 10.5, fill: C_B }, "error real 0.30"));
+    svg.appendChild(el("path", { d: "M" + px(media).toFixed(1) + " " + (Y0 + 10) + " L" + px(media).toFixed(1) + " " + Y1, stroke: C_T, "stroke-width": 1.6, "stroke-dasharray": "4 3" }));
+    svg.appendChild(el("text", { x: px(media) - 5, y: Y0 + 6, "text-anchor": "end", "font-size": 10.5, fill: C_T }, "media del mínimo " + media.toFixed(4)));
+    svg.appendChild(el("text", { x: X1, y: Y1 + 36, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "mejor error estimado →"));
+    lec.innerHTML = "Con <strong>" + m + "</strong> configuraciones del mismo error real, 0.30, y estimaciones con ruido de desviación típica <strong>" + s.toFixed(3) +
+      "</strong>, el mejor error estimado vale en media <strong>" + media.toFixed(4) + "</strong>: un optimismo de <strong>" + (0.30 - media).toFixed(4) +
+      "</strong>, que es σ por la media del máximo de " + m + " normales estándar, " + ((0.30 - media) / s).toFixed(3) + ". Resultados sobre 600 repeticiones.";
+  }
+  cm.addEventListener("input", dibujar);
+  cs.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Hiperparámetros del pipeline
+
+Los parámetros del preprocesamiento también son hiperparámetros cuando su valor no se estima con los datos: la estrategia de imputación, el número de columnas que se conservan en una selección, el grado de una expansión polinómica. En la segunda búsqueda de la celda, el subconjunto de columnas es un hiperparámetro de este tipo, y es el que más aumenta el optimismo del mínimo.
+
+Con un pipeline (ML aplicado 05), estos parámetros se incluyen en la misma búsqueda que los del modelo, y la validación anidada los trata igual. En scikit-learn, `GridSearchCV` y `RandomizedSearchCV` reciben el pipeline y nombran cada hiperparámetro con el nombre del paso: `prep__num__imp__strategy` o `modelo__alpha`. La validación anidada se obtiene pasando el objeto de búsqueda a `cross_val_score`.
+
+## 4. Limitaciones
+
+- La búsqueda aleatoria se comparó con nueve evaluaciones y dos hiperparámetros. Con presupuestos grandes y pocos hiperparámetros, una rejilla fina es igual de buena.
+- Los métodos secuenciales, como la optimización bayesiana, se nombran sin implementarlos. Modelan $\hat e(\lambda)$ con las evaluaciones anteriores y eligen la siguiente configuración donde ese modelo promete más; reducen el número de evaluaciones cuando cada una es cara.
+- La validación anidada estima el error del procedimiento completo de búsqueda, no el de una configuración concreta. Para el modelo final se repite la búsqueda con todas las filas.
+- La Proposición 6.3 no depende del método de búsqueda: cualquier elección del mínimo entre estimaciones con ruido es optimista. Un conjunto de prueba apartado, usado una sola vez, cumple la misma función que la validación anidada.
+
+## Ejercicios
+
+### Ejercicio 1, Valores distintos en cada búsqueda
+
+Con un presupuesto de `n` evaluaciones, `d` hiperparámetros y `m` valores posibles del hiperparámetro que importa, completar la línea de `valores_rejilla` con el número de valores de cada hiperparámetro en una rejilla regular, y la de `valores_azar` con el número esperado de valores distintos que prueba una búsqueda aleatoria, según la Proposición 6.2. La celda imprime los dos; deben dar `3 21.02`.
+
+```{pyodide}
+#| exercise: ex_valores
+n, d, m = 27, 3, 50
+
+valores_rejilla = ______
+valores_azar = ______
+
+print(valores_rejilla, round(float(valores_azar), 2))
+```
+
+::: {.hint exercise="ex_valores"}
+La rejilla tiene $n^{1/d}$ valores por eje; `round` lo convierte en entero. Para la búsqueda aleatoria, cada uno de los `m` valores queda sin probar con probabilidad $(1-1/m)^n$.
+:::
+
+::: {.solution exercise="ex_valores"}
+```{pyodide}
+n, d, m = 27, 3, 50
+
+valores_rejilla = round(n ** (1 / d))
+valores_azar = m * (1 - ((m - 1) / m) ** n)
+
+print(valores_rejilla, round(float(valores_azar), 2))
+```
+
+Con 27 evaluaciones, la rejilla de tres hiperparámetros prueba tres valores del que importa; la búsqueda aleatoria prueba unos 21 distintos, porque algunas de las 27 repiten valor.
+:::
+
+```{pyodide}
+#| exercise: ex_valores
+#| check: true
+if int(valores_rejilla) == 3 and abs(float(valores_azar) - 21.02) < 0.005:
+    feedback = {"correct": True, "message": "Correcto: 3 valores en la rejilla y 21.02 en la búsqueda aleatoria."}
+else:
+    feedback = {"correct": False, "message": "Se esperaban 3 valores por eje en la rejilla y 21.02 valores distintos al azar."}
+feedback
+```
+
+### Ejercicio 2, El mínimo de veinte estimaciones
+
+La celda simula 2000 veces la estimación con ruido del error de 20 configuraciones que tienen el mismo error real, 0,30, con una desviación típica de 0,02. Completar la línea de `minimos` con el menor error estimado de cada repetición, un vector de 2000 valores. La celda imprime su media y la fracción de repeticiones en que el mínimo queda por debajo de 0,30; deben dar `0.2627 1.0`.
+
+```{pyodide}
+#| exercise: ex_minimo
+import numpy as np
+
+rng = np.random.default_rng(8)
+est = rng.normal(0.30, 0.02, (2000, 20))
+
+minimos = ______
+
+print(round(float(np.mean(minimos)), 4),
+      round(float(np.mean(np.asarray(minimos) < 0.30)), 3))
+```
+
+::: {.hint exercise="ex_minimo"}
+Cada fila de `est` es una repetición con sus 20 estimaciones. El mínimo por fila se calcula sobre el eje 1.
+:::
+
+::: {.solution exercise="ex_minimo"}
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(8)
+est = rng.normal(0.30, 0.02, (2000, 20))
+
+minimos = est.min(axis=1)
+
+print(round(float(np.mean(minimos)), 4),
+      round(float(np.mean(np.asarray(minimos) < 0.30)), 3))
+```
+
+El optimismo medio es $0{,}30-0{,}2627=0{,}0373$, unas 1,87 veces la desviación típica, que es la media del máximo de 20 normales estándar. En las 2000 repeticiones, el mejor de los 20 queda por debajo del error real.
+:::
+
+```{pyodide}
+#| exercise: ex_minimo
+#| check: true
+import numpy as np
+_m = np.asarray(minimos, float)
+if _m.shape == (2000,) and abs(float(np.mean(_m)) - 0.2627) < 5e-5:
+    feedback = {"correct": True, "message": "Correcto: el mínimo vale 0.2627 en media, 0.0373 por debajo del error real."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba un vector de 2000 mínimos con media 0.2627."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Aplicado 6**:
+
+1. Repetir la comparación de la Sección 1 con 27 evaluaciones y un tercer hiperparámetro sin efecto, y comprobar si la ventaja de la búsqueda aleatoria crece como indica la Proposición 6.2.
+2. Implementar una búsqueda secuencial sencilla sobre $k$: evaluar tres valores, ajustar una parábola a los tres errores en función de $\log k$ y evaluar el mínimo de la parábola, repitiendo cinco veces. Comparar con la búsqueda aleatoria del mismo presupuesto.
+3. Repetir la validación anidada de la Sección 2 con 60 filas y con 480, y medir cómo cambia el optimismo del mejor error con el tamaño de la muestra. Guardar en `50-Errores/` la regla sobre cuándo hace falta la validación anidada.
+
+## Del libro
+
+FES §3.5, *Tuning Parameters and Overfitting*, presenta los hiperparámetros con el número de vecinos como ejemplo y describe cómo un valor demasiado flexible sobreajusta. FES §3.6, *Model Optimization and Tuning*, describe la búsqueda en rejilla, la búsqueda aleatoria y los métodos que eligen cada configuración a partir de las anteriores, y advierte del sesgo de optimización que aparece al elegir la mejor configuración con los mismos resultados con que se estima su rendimiento, para el que recomienda el remuestreo anidado. Esta lección mide el sesgo y la corrección con vecinos más cercanos escritos a mano.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- Hiperparámetro: un valor que el ajuste no estima y que se elige por validación.
+- Rejilla regular: $m^{1/d}$ valores de cada hiperparámetro; búsqueda aleatoria: cerca de $m$.
+- Si un hiperparámetro importa y otro no, la búsqueda aleatoria explora mejor el que importa.
+- El resultado de una rejilla depende de dónde caen sus valores: 0,2307 o 0,1813 con el mismo presupuesto.
+- El mínimo de varias estimaciones con ruido subestima el error real: $E[\min\hat e]\le\min e$.
+- Con $m$ configuraciones iguales, el optimismo es $\sigma$ por la media del máximo de $m$ normales.
+- Con 20 configuraciones y $\sigma=0{,}02$: optimismo de 0,0373.
+- Validación anidada: la búsqueda completa se repite dentro de cada pliegue externo.
+- Con 140 configuraciones: 0,3190 el mejor, 0,3519 anidado, 0,3532 real.
+- Los parámetros del preprocesamiento son hiperparámetros del pipeline.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos. La superficie del error de $k$ vecinos con 300 filas: óptimo 0,1752 con $k=6$ y $p=1$, variación de 0,1854 a 0,3249 con $k$ y de 0,1752 a 0,1933 con $p$; rejillas con 0,2307 y 0,1813; búsqueda aleatoria de nueve puntos con mediana 0,1869, peor 0,2045 y mejor 0,1752 en 30 repeticiones. La validación anidada, en 20 muestras de 120 filas: 0,4656, 0,5044 y 0,4929 con 40 configuraciones; 0,3190, 0,3519 y 0,3532 con 140. El mínimo de 20 estimaciones: media 0,2627. Los vecinos más cercanos, la validación cruzada y la validación anidada están escritos con NumPy. Las Proposiciones 6.2 y 6.3 se demuestran en la página.
+
+**Lo que viene de los libros.** Los hiperparámetros y el sobreajuste por flexibilidad, las búsquedas en rejilla, aleatoria y secuencial, el sesgo de optimización y la recomendación del remuestreo anidado, de FES §3.5 y §3.6.
+
+**Lo que se usa de otras lecciones sin repetir.** La validación cruzada y su pesimismo, de Machine Learning 6 y Atributos 02. La maldición del ganador, de Causal 05. El pipeline, de ML aplicado 05.
+
+**Lo que es mío, no del libro.** La comparación de la búsqueda aleatoria con dos rejillas del mismo presupuesto, que muestra que el resultado de la rejilla depende de la posición de sus valores. La cota de la Proposición 6.3 con el caso extremo de configuraciones iguales. La medición del sesgo y de la validación anidada con dos espacios de búsqueda, con la explicación de su ligero pesimismo en el primero. Y el visual del mínimo de $m$ estimaciones.
+:::

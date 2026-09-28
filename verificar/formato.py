@@ -200,6 +200,7 @@ MIGRADAS = {
     "aplicado/03-atipicos.qmd",
     "aplicado/04-particion-de-los-datos.qmd",
     "aplicado/05-pipelines.qmd",
+    "aplicado/06-ajuste-de-hiperparametros.qmd",
     "causal/16-metalearners.qmd",
     "causal/17-double-machine-learning.qmd",
     "causal/18-r-learner-y-r-score.qmd",
