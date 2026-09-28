@@ -1,0 +1,535 @@
+---
+title: "Valores atípicos: detección, recorte y modelos robustos"
+subtitle: "ML aplicado · Lección 03"
+nivel: L3
+modulo: aplicado
+fase: F4
+prereqs: [aplicado/02-exploracion-y-calidad, ml/02-diagnostico-regresion, estadistica/04-esperanza-varianza-momentos]
+siguientes: []
+libro: "ESL §10.6 Loss Functions and Robustness"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="aplicado/03-atipicos"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F4]{.item}
+[**Libro** ESL 10.6]{.item}
+[**Prereqs** [Exploración y calidad](02-exploracion-y-calidad.qmd) · [Qué rompe una regresión](../ml/02-diagnostico-regresion.qmd) · [Esperanza y varianza](../estadistica/04-esperanza-varianza-momentos.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Demostrar que la regla «$|z|>3$» no puede marcar un grupo de atípicos iguales que sea el 10 % de la muestra o más, por lejos que estén: su puntuación $z$ está acotada por $\sqrt{(1-f)/f}$. La regla basada en la mediana y la desviación absoluta mediana los marca todos.
+2. Implementar la regresión de Huber por mínimos cuadrados reponderados y medirla frente a mínimos cuadrados, la winsorización y el recorte por residuo. Con un 5,4 % de errores de registro, el error cuadrático en prueba es 6,0134 con mínimos cuadrados y 0,9907 con Huber, frente a 0,9960 sin errores.
+3. Medir el caso contrario: cuando los valores extremos forman parte del proceso, recortarlos o usar Huber subestima el total de la variable objetivo en un 13,63 % y un 12,99 %, frente a un 0,93 % de mínimos cuadrados.
+4. Elegir el tratamiento según el origen del valor extremo: un error de registro se corrige o se descarta; un valor real se conserva si la decisión depende de la media o del total.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **ML aplicado 02**: la revisión de calidad, que elimina los valores imposibles. Los atípicos de esta lección son valores posibles pero extremos.
+- **Machine Learning 2**: la palanca y los residuos de la regresión lineal.
+- **Estadística 4**: la media y la varianza, cuya sensibilidad a los valores extremos se cuantifica aquí.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Atributos 13**: los datos faltantes, en los que se convierten los errores de registro que no se pueden corregir.
+- **ML aplicado 09**: el gradient boosting con pérdida de Huber y de valor absoluto.
+- **ML aplicado 13**: la detección de anomalías, que generaliza la detección de esta lección a varias variables.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $f$ | efe | La fracción de valores atípicos en la muestra |
+| $z_i$ | zeta i | La puntuación típica: $(x_i-\bar x)/s$ |
+| $\bar x$ | x barra | La media muestral |
+| $s$ | ese | La desviación típica muestral |
+| $\operatorname{MAD}$ | mad | La desviación absoluta mediana: la mediana de $\lvert x_i-\operatorname{med}(x)\rvert$ |
+| $r_i$ | erre i | La puntuación robusta: $\lvert x_i-\operatorname{med}(x)\rvert/(1{,}4826\operatorname{MAD})$ |
+| $\rho_k$ | ro ka | La pérdida de Huber con parámetro $k$ |
+| $\psi_k$ | psi ka | La derivada de $\rho_k$ |
+| $d$ | de | La distancia de los atípicos a la media de los datos válidos |
+:::
+
+## 1. Detección en una variable
+
+::: {.definicion}
+**Definición 3.1 ([valor atípico]{.g}).** Un valor atípico es una observación alejada de la mayoría de los datos, dentro del dominio de la variable. Puede tener dos orígenes: un **error de registro**, que no representa a la unidad, o un **valor extremo real**, que forma parte del proceso que genera los datos.
+:::
+
+La distinción entre los dos orígenes no se puede hacer solo con los datos, y determina el tratamiento. La detección sí se puede hacer con los datos. La regla más citada marca los valores con $|z_i|>3$.
+
+::: {.proposicion}
+**Proposición 3.2 (enmascaramiento de la regla $z$).** Si una fracción $f$ de la muestra toma un mismo valor a distancia $d$ de la media de las demás observaciones, la puntuación $z$ de esas observaciones cumple
+$$
+|z|<\sqrt{\frac{1-f}{f}}
+$$
+para cualquier $d$. Con $f\ge 0{,}1$ la cota es 3 o menos, y la regla $|z|>3$ no marca ninguno de los atípicos.
+:::
+
+::: {.demostracion}
+*Demostración.* Sean $m$ y $v$ la media y la varianza de las observaciones válidas. La media de la muestra es $\bar x=m+fd$, de modo que los atípicos quedan a $(1-f)d$ de ella. La varianza de la muestra es $s^2=(1-f)v+f(1-f)d^2$, la varianza dentro de los dos grupos más la varianza entre ellos. Entonces
+$$
+|z|=\frac{(1-f)d}{\sqrt{(1-f)v+f(1-f)d^2}}<\frac{(1-f)d}{\sqrt{f(1-f)}\,d}=\sqrt{\frac{1-f}{f}} .
+$$
+Al alejar los atípicos, $d$ crece, pero la desviación típica crece en la misma proporción. La celda lo comprueba con 1000 observaciones normales: con $f=0{,}10$ y $d=100$ la puntuación máxima es 2,9985, bajo la cota 3, y la regla $z$ marca 0 de 100 atípicos. ∎
+:::
+
+La regla robusta sustituye la media por la mediana y la desviación típica por $1{,}4826\operatorname{MAD}$. El factor hace que, con datos normales, $1{,}4826\operatorname{MAD}$ estime la desviación típica. La mediana y la MAD no cambian mientras los atípicos sean menos de la mitad de la muestra, y la regla marca los valores con $r_i>3{,}5$.
+
+```{pyodide}
+import numpy as np
+
+def reglas(x):
+    z = np.abs(x - x.mean()) / x.std()
+    mad = 1.4826 * np.median(np.abs(x - np.median(x)))
+    r = np.abs(x - np.median(x)) / mad
+    return z > 3, r > 3.5
+
+rng = np.random.default_rng(5)
+n = 1000
+print("fraccion  distancia  cota sqrt((1-f)/f)  z maximo  marcados z  marcados MAD")
+for f in (0.01, 0.05, 0.10, 0.20):
+    for d in (10.0, 100.0):
+        k = int(f * n)
+        x = rng.standard_normal(n)
+        x[:k] = d
+        mz, mm = reglas(x)
+        zmax = np.max(np.abs(x - x.mean()) / x.std())
+        print("%7.2f %10.0f %18.4f %10.4f %10d %12d" % (
+            f, d, np.sqrt((1 - f) / f), zmax, mz[:k].sum(), mm[:k].sum()))
+```
+
+Con $f=0{,}05$ la cota es 4,3589 y la regla $z$ todavía marca los 50 atípicos. Con $f=0{,}10$ y $f=0{,}20$ no marca ninguno, y la regla robusta marca los 100 y los 200. El resultado explica un síntoma frecuente: al repetir la regla $z$ después de quitar los atípicos más grandes, aparecen atípicos nuevos que la primera pasada no marcó.
+
+## 2. Tratamiento de los errores de registro
+
+Una vez detectados, hay tres tratamientos habituales.
+
+::: {.definicion}
+**Definición 3.3 (tratamientos).**
+
+1. **Recortar**: eliminar las filas marcadas y ajustar con las restantes.
+2. **[Winsorizar]{.g}** al nivel $q$: sustituir los valores por debajo del cuantil $q$ por ese cuantil, y los valores por encima del cuantil $1-q$ por este otro.
+3. **Usar una pérdida robusta**: ajustar el modelo con una pérdida que crece más despacio que el cuadrado para residuos grandes. La [pérdida de Huber]{.g} es
+$$
+\rho_k(u)=\begin{cases} u^2/2 & |u|\le k\\ k|u|-k^2/2 & |u|>k\end{cases}
+$$
+sobre el residuo escalado $u=r/\hat s$, con $k=1{,}345$ y $\hat s=1{,}4826\operatorname{MAD}$ de los residuos.
+:::
+
+::: {.proposicion}
+**Proposición 3.4 (influencia acotada).** En mínimos cuadrados, la contribución de una observación a las ecuaciones de estimación es proporcional a su residuo, sin cota. Con la pérdida de Huber es proporcional a $\psi_k(u)=\max(-k,\min(k,u))$, que no supera $k$. El ajuste se calcula resolviendo mínimos cuadrados ponderados con pesos $w_i=\min(1,\,k/|u_i|)$ y repitiendo hasta la convergencia.
+:::
+
+::: {.demostracion}
+*Demostración.* Las ecuaciones de estimación de $\min_\beta\sum_i\rho_k(r_i/\hat s)$ son $\sum_i\psi_k(u_i)\,x_i=0$. Para mínimos cuadrados, $\rho(u)=u^2/2$ y $\psi(u)=u$. Para Huber, $\psi_k$ es la identidad en $[-k,k]$ y vale $\pm k$ fuera. Escribiendo $\psi_k(u_i)=w_i\,u_i$ con $w_i=\psi_k(u_i)/u_i=\min(1,k/|u_i|)$, las ecuaciones coinciden con las de mínimos cuadrados ponderados con pesos $w_i$, que dependen del ajuste anterior. ∎
+:::
+
+La celda simula 500 filas con $y=2+1{,}5x+\varepsilon$ y suma entre 30 y 60 unidades al 5 % de ellas, que representan errores de registro. La prueba se hace con 20 000 filas sin errores.
+
+```{pyodide}
+import numpy as np
+
+def mco(x, y, w=None):
+    Z = np.column_stack([np.ones(len(x)), x])
+    w = np.ones(len(x)) if w is None else w
+    return np.linalg.solve(Z.T @ (Z * w[:, None]), Z.T @ (w * y))
+
+def huber(x, y, k=1.345, pasos=50):
+    """Regresion de Huber por minimos cuadrados reponderados."""
+    b = mco(x, y)
+    for _ in range(pasos):
+        r = y - b[0] - b[1] * x
+        s = 1.4826 * np.median(np.abs(r - np.median(r)))
+        u = np.abs(r) / s
+        w = np.where(u <= k, 1.0, k / u)
+        b = mco(x, y, w)
+    return b
+
+def recorta(x, y):
+    """Quita las filas con residuo robusto mayor que 3.5 y reajusta."""
+    b = huber(x, y)
+    r = y - b[0] - b[1] * x
+    s = 1.4826 * np.median(np.abs(r - np.median(r)))
+    q = np.abs(r) / s <= 3.5
+    return mco(x[q], y[q])
+
+def winsoriza(x, y):
+    lo, hi = np.quantile(y, [0.01, 0.99])
+    return mco(x, np.clip(y, lo, hi))
+
+METODOS = [("minimos cuadrados", mco), ("winsorizar y al 1 %", winsoriza),
+           ("recortar por residuo", recorta), ("Huber", huber)]
+
+rng = np.random.default_rng(8)
+n = 500
+x = rng.uniform(0, 10, n); y = 2.0 + 1.5 * x + rng.standard_normal(n)
+malos = rng.random(n) < 0.05
+y_reg = y.copy(); y_reg[malos] += rng.uniform(30, 60, malos.sum())   # errores de registro
+xt = rng.uniform(0, 10, 20000); yt = 2.0 + 1.5 * xt + rng.standard_normal(20000)
+print("filas con error de registro:", int(malos.sum()))
+print("metodo                 intercepto  pendiente  ECM en prueba")
+for nombre, f in METODOS:
+    b = f(x, y_reg)
+    print("%-22s %10.4f %10.4f %13.4f" % (nombre, b[0], b[1], np.mean((yt - b[0] - b[1] * xt) ** 2)))
+b = mco(x, y)
+print("%-22s %10.4f %10.4f %13.4f" % ("sin errores (referencia)", b[0], b[1], np.mean((yt - b[0] - b[1] * xt) ** 2)))
+```
+
+Con 27 errores, mínimos cuadrados desplaza el intercepto de 1,9755 a 3,9093, y el error cuadrático en prueba sube de 0,9960 a 6,0134. Huber y el recorte por residuo quedan en 0,9907 y 0,9945, a la altura del ajuste sin errores.
+
+La winsorización al 1 % empeora el intercepto a 4,0533. Solo recorta el 1 % superior de $y$, y los errores son el 5,4 %: más de la mitad de ellos quedan por debajo del cuantil 0,99 y conservan su valor. El recorte inferior, en cambio, modifica valores válidos. La winsorización al nivel $q$ solo neutraliza una contaminación menor que $q$, y su nivel habitual, el 1 % o el 5 %, se elige sin conocer la contaminación.
+
+**Modo de falla.** Se winsoriza al 1 % por costumbre, el perfil de la tabla ya no muestra valores extremos y se da la revisión por terminada. Los errores que quedaron por debajo del cuantil siguen en los datos, ahora sin que el máximo los delate.
+
+El visual ajusta mínimos cuadrados y Huber a 200 puntos, con un número variable de errores de registro de tamaño variable.
+
+```{=html}
+<div class="viz-huber03">
+  <div class="controles">
+    <label>Errores de registro <input id="h3-k" type="range" min="0" max="60" step="1" value="12"> <span id="h3-k-v">12</span></label>
+    <label>Tamaño del error <input id="h3-d" type="range" min="2" max="40" step="1" value="20"> <span id="h3-d-v">20</span></label>
+  </div>
+  <svg id="h3-svg" viewBox="0 0 660 300" role="img" aria-label="Diagrama de dispersión con errores de registro y las rectas de mínimos cuadrados, de Huber y la verdadera."></svg>
+  <p class="lectura" id="h3-lectura"></p>
+</div>
+<style>
+.viz-huber03 { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-huber03 .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-huber03 label { display: flex; align-items: center; gap: .4rem; }
+.viz-huber03 input[type=range] { width: 160px; padding: 0; }
+.viz-huber03 svg { width: 100%; height: auto; display: block; }
+.viz-huber03 .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("h3-svg"), lec = document.getElementById("h3-lectura");
+  var ck = document.getElementById("h3-k"), cd = document.getElementById("h3-d");
+  var ek = document.getElementById("h3-k-v"), ed = document.getElementById("h3-d-v");
+  var X0 = 48, X1 = 628, Y0 = 40, Y1 = 250, N = 200;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var sem = 31, X = [], E = [], U = [], i;
+  function u() { sem = (sem * 48271) % 2147483647; return sem / 2147483647; }
+  for (i = 0; i < N; i++) {
+    X.push(10 * u());
+    var a = Math.max(u(), 1e-9), b = u();
+    E.push(Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b));
+    U.push(u());
+  }
+  function mcp(y, w) {
+    var s0 = 0, s1 = 0, s11 = 0, sy = 0, s1y = 0;
+    for (var j = 0; j < N; j++) {
+      s0 += w[j]; s1 += w[j] * X[j]; s11 += w[j] * X[j] * X[j]; sy += w[j] * y[j]; s1y += w[j] * X[j] * y[j];
+    }
+    var det = s0 * s11 - s1 * s1;
+    return [(s11 * sy - s1 * s1y) / det, (s0 * s1y - s1 * sy) / det];
+  }
+  function mediana(v) {
+    var s = v.slice().sort(function (p, q) { return p - q; }), m = s.length;
+    return m % 2 ? s[(m - 1) / 2] : (s[m / 2 - 1] + s[m / 2]) / 2;
+  }
+  function huber(y) {
+    var w = [], j, b;
+    for (j = 0; j < N; j++) w.push(1);
+    b = mcp(y, w);
+    for (var it = 0; it < 50; it++) {
+      var r = [];
+      for (j = 0; j < N; j++) r.push(y[j] - b[0] - b[1] * X[j]);
+      var med = mediana(r), s = 1.4826 * mediana(r.map(function (v) { return Math.abs(v - med); }));
+      for (j = 0; j < N; j++) { var q = Math.abs(r[j]) / s; w[j] = q <= 1.345 ? 1 : 1.345 / q; }
+      b = mcp(y, w);
+    }
+    return b;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var k = +ck.value, d = +cd.value;
+    ek.textContent = k; ed.textContent = d;
+    var y = [], y0 = [], malo = [], j, suma = 0, xm = 0;
+    for (j = 0; j < N; j++) {
+      malo.push(j < k);
+      var extra = j < k ? d * (0.75 + 0.5 * U[j]) : 0;
+      suma += extra; xm += X[j] / N;
+      y0.push(2 + 1.5 * X[j] + E[j]);
+      y.push(y0[j] + extra);
+    }
+    var uno = []; for (j = 0; j < N; j++) uno.push(1);
+    var bm = mcp(y, uno), bh = huber(y), b0 = mcp(y0, uno);
+    var salto = (bm[0] + bm[1] * xm) - (b0[0] + b0[1] * xm);
+    var YMX = Math.max(20, 17 + 1.25 * d + 3);
+    var px = function (v) { return X0 + v / 10 * (X1 - X0); };
+    var py = function (v) { return Y1 - (v + 2) / (YMX + 2) * (Y1 - Y0); };
+    svg.appendChild(el("path", { d: "M" + X0 + " " + Y1 + " L" + X1 + " " + Y1, stroke: C_L, "stroke-width": 1 }));
+    [0, 2, 4, 6, 8, 10].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y1 + 16, "text-anchor": "middle", "font-size": 10, fill: C_T, opacity: .7 }, v));
+    });
+    svg.appendChild(el("text", { x: X1, y: Y1 + 34, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "x →"));
+    for (j = 0; j < N; j++) {
+      svg.appendChild(el("circle", { cx: px(X[j]).toFixed(1), cy: py(y[j]).toFixed(1), r: 2.8,
+        fill: malo[j] ? C_B : C_A, "fill-opacity": malo[j] ? .85 : .45 }));
+    }
+    function recta(b, col, raya) {
+      var at = { d: "M" + px(0) + " " + py(b[0]).toFixed(1) + " L" + px(10) + " " + py(b[0] + 10 * b[1]).toFixed(1), stroke: col, "stroke-width": 2.2 };
+      if (raya) at["stroke-dasharray"] = raya;
+      svg.appendChild(el("path", at));
+    }
+    recta([2, 1.5], C_T, "3 3");
+    recta(bm, C_G, null);
+    recta(bh, C_A, null);
+    var ley = [["verdadera", C_T], ["mínimos cuadrados", C_G], ["Huber", C_A], ["error de registro", C_B]];
+    ley.forEach(function (l, q) {
+      svg.appendChild(el("rect", { x: X0 + q * 140, y: 10, width: 12, height: 3, fill: l[1] }));
+      svg.appendChild(el("text", { x: X0 + q * 140 + 17, y: 15, "font-size": 10.5, fill: C_T, opacity: .85 }, l[0]));
+    });
+    lec.innerHTML = "Con <strong>" + k + "</strong> errores de registro de 200 (" + (100 * k / N).toFixed(1) + " %) y tamaño medio <strong>" + d +
+      "</strong>, mínimos cuadrados estima intercepto <strong>" + bm[0].toFixed(3) + "</strong> y pendiente <strong>" + bm[1].toFixed(3) +
+      "</strong>; Huber, <strong>" + bh[0].toFixed(3) + "</strong> y <strong>" + bh[1].toFixed(3) + "</strong>. La recta verdadera tiene intercepto 2 y pendiente 1.5." +
+      (k > 0 ? " La recta de mínimos cuadrados pasa por el punto de medias: en x̄ = " + xm.toFixed(2) + " queda <strong>" + salto.toFixed(3) + "</strong> por encima de la ajustada sin errores, que es la suma de los errores dividida por 200, " + (suma / N).toFixed(3) + "." : "");
+  }
+  ck.addEventListener("input", dibujar);
+  cd.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Valores extremos reales
+
+Los resultados de la Sección 2 suponen que los valores extremos son errores y que los datos de prueba no los tienen. Cuando forman parte del proceso, la conclusión cambia.
+
+::: {.proposicion}
+**Proposición 3.5 (sesgo de la media al descartar la cola).** Si $y=\beta_0+\beta_1x+\varepsilon$ y el error $\varepsilon$ tiene una cola asimétrica con media $\mu_\varepsilon>0$, mínimos cuadrados estima $E[y\mid x]=\beta_0+\mu_\varepsilon+\beta_1x$. Un estimador robusto estima una medida de posición de $\varepsilon$ menos sensible a la cola, como su mediana, y su predicción de la media queda sesgada hacia abajo en aproximadamente la contribución de la cola a $\mu_\varepsilon$.
+:::
+
+::: {.demostracion}
+*Demostración.* Mínimos cuadrados minimiza el error cuadrático, cuyo minimizador es la media condicional. La pérdida de Huber y el recorte reducen o anulan el peso de los residuos grandes, que son los de la cola, y el intercepto ajustado se acerca a la posición del cuerpo de la distribución. En la celda, un 5 % de las filas suma una compra grande de media 30, que aporta $0{,}05\cdot 30=1{,}5$ a la media de $y$, alrededor de un 13,7 % de su media en prueba, 10,9618. Al predecir el total de 20 000 filas nuevas, el recorte lo subestima un 13,63 %, Huber un 12,99 % y mínimos cuadrados un 0,93 %. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def mco(x, y, w=None):
+    Z = np.column_stack([np.ones(len(x)), x])
+    w = np.ones(len(x)) if w is None else w
+    return np.linalg.solve(Z.T @ (Z * w[:, None]), Z.T @ (w * y))
+
+def huber(x, y, k=1.345, pasos=50):
+    """Regresion de Huber por minimos cuadrados reponderados."""
+    b = mco(x, y)
+    for _ in range(pasos):
+        r = y - b[0] - b[1] * x
+        s = 1.4826 * np.median(np.abs(r - np.median(r)))
+        u = np.abs(r) / s
+        w = np.where(u <= k, 1.0, k / u)
+        b = mco(x, y, w)
+    return b
+
+def recorta(x, y):
+    """Quita las filas con residuo robusto mayor que 3.5 y reajusta."""
+    b = huber(x, y)
+    r = y - b[0] - b[1] * x
+    s = 1.4826 * np.median(np.abs(r - np.median(r)))
+    q = np.abs(r) / s <= 3.5
+    return mco(x[q], y[q])
+
+def winsoriza(x, y):
+    lo, hi = np.quantile(y, [0.01, 0.99])
+    return mco(x, np.clip(y, lo, hi))
+
+METODOS = [("minimos cuadrados", mco), ("winsorizar y al 1 %", winsoriza),
+           ("recortar por residuo", recorta), ("Huber", huber)]
+
+def compras(n, rng):
+    x = rng.uniform(0, 10, n)
+    grande = rng.random(n) < 0.05
+    y = 2.0 + 1.5 * x + rng.standard_normal(n) + grande * rng.exponential(30.0, n)
+    return x, y
+rng = np.random.default_rng(9)
+x, y = compras(20000, rng)
+xt, yt = compras(20000, rng)
+print("media real de y en prueba: %.4f   total: %.1f" % (yt.mean(), yt.sum()))
+print("metodo                 pendiente  total predicho  error del total")
+for nombre, f in METODOS:
+    b = f(x, y)
+    tot = np.sum(b[0] + b[1] * xt)
+    print("%-22s %10.4f %15.1f %14.2f %%" % (nombre, b[1], tot, 100 * (tot - yt.sum()) / yt.sum()))
+```
+
+Las pendientes de los cuatro métodos están entre 1,47 y 1,51: la cola no afecta a la relación con $x$ porque es independiente de ella. El sesgo está en el nivel. Si el modelo sirve para ordenar clientes, el nivel no importa y el estimador robusto sirve. Si sirve para presupuestar ingresos, el total es la cantidad de interés y las compras grandes son parte de ella.
+
+**Modo de falla.** Se recortan los valores de gasto por encima del percentil 99 porque «distorsionan el modelo», y las previsiones de ingreso quedan por debajo de lo facturado todos los meses. Los clientes de gasto alto eran reales y aportaban una parte del total mayor que su proporción de filas.
+
+## 4. Limitaciones
+
+- La detección se trató en una variable. Un punto puede ser normal en cada variable por separado y atípico en la combinación; la detección en varias variables se trata en ML aplicado 13.
+- La palanca, que mide lo atípico de $x$ en regresión, se estudió en Machine Learning 2 y no se repite aquí. Los atípicos de esta lección están en $y$.
+- La distinción entre error de registro y valor real no se hace con los datos. Requiere información sobre cómo se generaron: el origen de la carga, el sistema que registró el valor o la consulta con quien conoce el proceso.
+- La constante $k=1{,}345$ de Huber se usa sin demostrar su origen: da un 95 % de la eficiencia de mínimos cuadrados cuando los errores son normales, resultado que se toma de la literatura de estimación robusta.
+
+## Ejercicios
+
+### Ejercicio 1, Regla z y regla robusta
+
+La celda fija un vector `x` de doce valores, tres de ellos mucho mayores que el resto. Completar la línea de `z` con las puntuaciones $|z_i|$ de la Proposición 3.2, usando `np.std` con su valor por defecto, y la de `r` con las puntuaciones robustas $r_i$. La celda imprime la mayor puntuación $z$, cuántos valores marca la regla $|z|>3$ y cuántos marca $r>3{,}5$; deben dar `1.8479 0 3`.
+
+```{pyodide}
+#| exercise: ex_reglas
+import numpy as np
+
+x = np.array([12.0, 15, 11, 14, 13, 90, 12, 16, 95, 13, 14, 88])
+mad = 1.4826 * np.median(np.abs(x - np.median(x)))
+
+z = ______
+r = ______
+
+print(round(float(np.max(z)), 4), int(np.sum(z > 3)),
+      int(np.sum(r > 3.5)))
+```
+
+::: {.hint exercise="ex_reglas"}
+$|z_i|$ es `np.abs(x - np.mean(x)) / np.std(x)`. La puntuación robusta usa la mediana en lugar de la media y `mad` en lugar de la desviación típica.
+:::
+
+::: {.solution exercise="ex_reglas"}
+```{pyodide}
+import numpy as np
+
+x = np.array([12.0, 15, 11, 14, 13, 90, 12, 16, 95, 13, 14, 88])
+mad = 1.4826 * np.median(np.abs(x - np.median(x)))
+
+z = np.abs(x - np.mean(x)) / np.std(x)
+r = np.abs(x - np.median(x)) / mad
+
+print(round(float(np.max(z)), 4), int(np.sum(z > 3)),
+      int(np.sum(r > 3.5)))
+```
+
+Los tres valores grandes son una cuarta parte de la muestra, y su puntuación $z$ máxima es 1,8479. La regla $z$ no marca ninguno. La mediana, 14, y la MAD no dependen de ellos, y la regla robusta los marca los tres.
+:::
+
+```{pyodide}
+#| exercise: ex_reglas
+#| check: true
+import numpy as np
+_z = np.asarray(z, float); _r = np.asarray(r, float)
+if (abs(float(np.max(_z)) - 1.8479) < 1e-4 and int(np.sum(_z > 3)) == 0
+        and int(np.sum(_r > 3.5)) == 3):
+    feedback = {"correct": True, "message": "Correcto: la regla z no marca ninguno y la robusta marca los tres."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba z máximo 1.8479, 0 marcados por z y 3 por la regla robusta."}
+feedback
+```
+
+### Ejercicio 2, Winsorizar una variable
+
+La celda fija 40 valores `y` con media 50, dos de ellos sustituidos por 400 y 350. Completar la línea de `lo, hi` con los cuantiles 0,05 y 0,95 de `y`, y la de `w` con `y` winsorizada a esos cuantiles. La celda imprime la media de `y`, la media de `w`, la mediana de `y` y cuántos valores cambió la winsorización; deben dar `66.8 51.86 51.43 4`.
+
+```{pyodide}
+#| exercise: ex_winsor
+import numpy as np
+
+rng = np.random.default_rng(6)
+y = rng.normal(50, 5, 40)
+y[:2] = [400.0, 350.0]
+
+lo, hi = ______
+w = ______
+
+print(round(float(np.mean(y)), 2), round(float(np.mean(w)), 2),
+      round(float(np.median(y)), 2), int(np.sum(w != y)))
+```
+
+::: {.hint exercise="ex_winsor"}
+`np.quantile(y, [0.05, 0.95])` devuelve los dos cuantiles, que se desempaquetan en `lo, hi`. `np.clip` sustituye los valores fuera de un intervalo por sus extremos.
+:::
+
+::: {.solution exercise="ex_winsor"}
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(6)
+y = rng.normal(50, 5, 40)
+y[:2] = [400.0, 350.0]
+
+lo, hi = np.quantile(y, [0.05, 0.95])
+w = np.clip(y, lo, hi)
+
+print(round(float(np.mean(y)), 2), round(float(np.mean(w)), 2),
+      round(float(np.median(y)), 2), int(np.sum(w != y)))
+```
+
+La media baja de 66,8 a 51,86, cerca de la mediana, 51,43. La winsorización cambia cuatro valores: los dos grandes y los dos más pequeños, que eran válidos. Con dos atípicos en 40 filas, un 5 %, el nivel 0,05 basta. Con tres, el cuantil 0,95 quedaría entre dos de ellos y los tres conservarían valores extremos.
+:::
+
+```{pyodide}
+#| exercise: ex_winsor
+#| check: true
+import numpy as np
+_w = np.asarray(w, float)
+if (abs(float(np.mean(_w)) - 51.86) < 0.005 and int(np.sum(_w != y)) == 4
+        and abs(float(lo) - float(np.quantile(y, 0.05))) < 1e-9):
+    feedback = {"correct": True, "message": "Correcto: media 51.86 y cuatro valores winsorizados."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba una media de 51.86 con cuatro valores cambiados."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Aplicado 3**:
+
+1. Repetir la tabla de la Sección 1 con atípicos repartidos uniformemente entre $d$ y $2d$, y comprobar si la cota de la Proposición 3.2 sigue describiendo el comportamiento de la regla $z$.
+2. Ajustar una regresión por la mediana (pérdida absoluta) a los datos de la Sección 3 y comparar su error en el total con el de Huber, explicando la diferencia con la Proposición 3.5.
+3. Construir un ejemplo en el que un punto no es atípico en ninguna variable por separado y sí lo es en la combinación de dos. Guardar en `50-Errores/` el caso y la regla con la que se detectaría.
+
+## Del libro
+
+ESL §10.6, *Loss Functions and Robustness*, compara pérdidas para regresión y clasificación según su comportamiento con errores grandes. Para regresión contrasta el error cuadrático, el error absoluto y la pérdida de Huber, que es cuadrática para residuos pequeños y lineal para los grandes, y explica que el error cuadrático da un peso excesivo a las observaciones con residuos absolutos grandes cuando los errores tienen colas largas. La sección motiva así el uso de pérdidas robustas en el boosting, que se retoma en ML aplicado 09. Esta lección usa la pérdida de Huber en un modelo lineal y añade el caso en que la cola forma parte de la cantidad que se quiere predecir.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- Atípico: valor posible pero alejado de la mayoría. Dos orígenes: error de registro o valor extremo real.
+- La regla $|z|>3$ tiene una cota: $|z|<\sqrt{(1-f)/f}$ para un grupo de atípicos iguales.
+- Con un 10 % o más de atípicos iguales, la regla $z$ no marca ninguno, por lejos que estén.
+- Regla robusta: mediana y $1{,}4826\operatorname{MAD}$, con corte en 3,5.
+- Huber: pérdida cuadrática hasta $k$ y lineal después; influencia acotada por $k$.
+- Huber se ajusta por mínimos cuadrados reponderados con pesos $\min(1,k/|u|)$.
+- Con 5,4 % de errores de registro: ECM en prueba 6,0134 con mínimos cuadrados, 0,9907 con Huber, 0,9960 sin errores.
+- Winsorizar al nivel $q$ solo neutraliza una contaminación menor que $q$.
+- Si la cola es real, recortarla subestima la media: el total queda un 13,63 % por debajo.
+- Mínimos cuadrados estima la media condicional; un estimador robusto, una posición del cuerpo de la distribución.
+- Para ordenar sirve cualquiera de los dos; para presupuestar un total, la media.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos. La tabla de enmascaramiento con 1000 normales y atípicos iguales: con $f=0{,}10$ y $d=100$, $z$ máximo 2,9985 frente a la cota 3 y 0 de 100 marcados por la regla $z$, frente a 100 por la robusta; con $f=0{,}05$, cota 4,3589 y 50 de 50 marcados por las dos. Los errores de registro, 27 de 500 filas: intercepto y pendiente 3,9093 y 1,5642 con mínimos cuadrados, 4,0533 y 1,5186 winsorizando al 1 %, 1,9689 y 1,4928 recortando por residuo, 2,0622 y 1,4924 con Huber, y 1,9755 y 1,4897 sin errores; errores cuadráticos en prueba de 6,0134, 5,6058, 0,9945, 0,9907 y 0,9960. La cola real, con 20 000 filas de entrenamiento y otras tantas de prueba de media 10,9618: errores del total de −0,93 %, −3,53 %, −13,63 % y −12,99 %. La regresión de Huber, la winsorización y el recorte están escritos con NumPy. Las Proposiciones 3.2 y 3.4 se demuestran en la página; la 3.5 se argumenta y se mide.
+
+**Lo que viene de los libros.** La comparación de pérdidas según su robustez, la pérdida de Huber como compromiso entre el error cuadrático y el absoluto, y el argumento del peso excesivo que el error cuadrático da a los residuos grandes con colas largas, de ESL §10.6.
+
+**Lo que se usa de otras lecciones sin repetir.** La palanca y los residuos, de Machine Learning 2. La media, la varianza y su descomposición en varianza dentro y entre grupos, de Estadística 4. La revisión de los valores imposibles, de ML aplicado 02.
+
+**Lo que se enuncia sin demostrar.** El factor 1,4826, que hace que la MAD estime la desviación típica con datos normales, y la eficiencia del 95 % de la constante $k=1{,}345$, tomados de la literatura de estimación robusta.
+
+**Lo que es mío, no del libro.** La cota $\sqrt{(1-f)/f}$ de la Proposición 3.2 como explicación del enmascaramiento de la regla $z$, con su demostración por la descomposición de la varianza. La comparación de los cuatro tratamientos con errores de registro, incluida la explicación del fallo de la winsorización al 1 %. La Proposición 3.5 y su medición sobre el total, que separan el uso de un modelo para ordenar del uso para presupuestar. Y el visual, que compara el desplazamiento de mínimos cuadrados en la media de $x$ con la suma de los errores dividida por el número de filas.
+:::
