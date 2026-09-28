@@ -1,0 +1,402 @@
+---
+title: "Análisis de errores y curvas de aprendizaje"
+subtitle: "ML aplicado · Lección 11"
+nivel: L3
+modulo: aplicado
+fase: F4
+prereqs: [aplicado/10-interpretabilidad, ml/29-sesgo-varianza-formal, ml/22-pruebas-multiples]
+siguientes: []
+libro: "FES §4.4 Post Modeling Exploratory Visualizations"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="aplicado/11-analisis-de-errores"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F4]{.item}
+[**Libro** FES 4.4]{.item}
+[**Prereqs** [Interpretabilidad](10-interpretabilidad.qmd) · [Sesgo y varianza, formal](../ml/29-sesgo-varianza-formal.qmd) · [Pruebas múltiples](../ml/22-pruebas-multiples.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Construir curvas de aprendizaje y leer en ellas si un modelo necesita más datos o más flexibilidad. Con una frontera circular, la regresión logística se estanca en un error de 0,39 en entrenamiento y en validación; el vecino más cercano con $k=15$ baja a 0,1860, cerca del error de Bayes, 0,1745.
+2. Evaluar el error por segmentos con su intervalo de confianza y encontrar un segmento con el doble de error, 0,2802 frente a una media de 0,1688.
+3. Calcular cuánto se aleja el peor de muchos segmentos sin diferencias reales: con 40 segmentos de 300 filas y un error común de 0,15, el peor vale en media 0,1957.
+4. Corregir el umbral para declarar un segmento problemático cuando se revisan muchos, con el ajuste de Bonferroni.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **ML aplicado 10**: las herramientas que describen el modelo en su conjunto; aquí se describen sus errores.
+- **Machine Learning 29**: la descomposición del error en sesgo y varianza.
+- **Machine Learning 22**: las pruebas múltiples y la corrección de Bonferroni.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **ML aplicado 12**: la vigilancia del modelo en producción, que repite el análisis por segmentos cada mes.
+- **Caso 3**: el riesgo de impago, con segmentos de clientes que el modelo trata peor.
+- **Atributos 12**: la detección de interacciones, que empieza donde el análisis de errores encuentra un segmento mal ajustado.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | Filas de entrenamiento |
+| $e_{\text{ent}}(n)$ | e de entrenamiento | El error medido en las mismas filas de entrenamiento |
+| $e_{\text{val}}(n)$ | e de validación | El error medido en filas de validación |
+| $e^{*}$ | e estrella | El error de Bayes: el de la mejor regla posible |
+| $K$ | ka | El número de segmentos que se revisan |
+| $m$ | eme | Las filas de un segmento |
+| $\hat e_k$ | e gorro ka | El error medido en el segmento $k$ |
+| $z_{K}$ | zeta sub ka | El cuantil de la normal con la corrección de Bonferroni para $K$ segmentos |
+:::
+
+## 1. Curvas de aprendizaje
+
+::: {.definicion}
+**Definición 11.1 ([curva de aprendizaje]{.g}).** La curva de aprendizaje de un modelo es el error de entrenamiento $e_{\text{ent}}(n)$ y el error de validación $e_{\text{val}}(n)$ en función del número de filas de entrenamiento $n$, con las filas de validación fijas.
+:::
+
+::: {.proposicion}
+**Proposición 11.2 (lectura de las curvas).** Cuando $n$ crece, $e_{\text{val}}(n)$ tiende a disminuir y $e_{\text{ent}}(n)$ a aumentar, y las dos convergen hacia el error del mejor modelo de la familia. Si las curvas ya se han juntado lejos de $e^{*}$, el modelo tiene sesgo y más datos no lo reducen; hace falta un modelo más flexible o atributos nuevos. Si las curvas siguen separadas, la varianza domina y más datos o más regularización reducen el error de validación.
+:::
+
+::: {.demostracion}
+*Demostración.* Con pocas filas, el modelo se ajusta a ellas y su error de entrenamiento es optimista; con muchas, el ajuste se acerca al mejor de la familia, y los dos errores estiman el error de ese modelo. La distancia entre ese límite y $e^{*}$ es el sesgo de la familia (Machine Learning 29). En la celda, la frontera entre las clases es un círculo. La regresión logística, cuya frontera es una recta, tiene errores de entrenamiento y de validación de 0,3934 y 0,3877 con 3200 filas: se han juntado a 0,21 del error de Bayes. El vecino más cercano con $k=15$ pasa de 0,2300 a 0,1860 en validación, y su error de entrenamiento, 0,1656, sigue por debajo. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def sigmoide(z):
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -30.0, 30.0)))
+
+def logistica(X, y, pasos=25, lam=1e-4):
+    Z = np.column_stack([np.ones(len(X)), X])
+    b = np.zeros(Z.shape[1])
+    for _ in range(pasos):
+        p = sigmoide(Z @ b)
+        H = Z.T @ (Z * (p * (1 - p))[:, None]) + lam * np.eye(len(b))
+        b = b + np.linalg.solve(H, Z.T @ (y - p) - lam * b)
+    return b
+
+def prob(b, X):
+    return sigmoide(np.column_stack([np.ones(len(X)), X]) @ b)
+
+def vecinos(Xtr, ytr, Xte, k, bloque=500):
+    out = np.empty(len(Xte))
+    for i in range(0, len(Xte), bloque):
+        B = Xte[i:i + bloque]
+        d = (B ** 2).sum(1)[:, None] + (Xtr ** 2).sum(1)[None] - 2 * B @ Xtr.T
+        out[i:i + bloque] = ytr[np.argpartition(d, k - 1, axis=1)[:, :k]].mean(1)
+    return out
+
+def datos(n, rng):
+    X = rng.uniform(-2, 2, (n, 2))
+    z = 2.0 * (X[:, 0] ** 2 + X[:, 1] ** 2 < 1.6) - 1.0 + 0.6 * X[:, 0]
+    y = (rng.random(n) < sigmoide(2.2 * z)).astype(float)
+    return X, y
+
+rng = np.random.default_rng(110)
+Xg, yg = datos(4000, rng)                    # validacion
+print("filas   logistica: entren. valid.   vecinos k=15: entren. valid.")
+for n in (100, 200, 400, 800, 1600, 3200):
+    X, y = datos(n, np.random.default_rng(111 + n))
+    b = logistica(X, y)
+    e_lt = np.mean((prob(b, X) > 0.5) != y); e_lv = np.mean((prob(b, Xg) > 0.5) != yg)
+    e_kt = np.mean((vecinos(X, y, X, 15) > 0.5) != y); e_kv = np.mean((vecinos(X, y, Xg, 15) > 0.5) != yg)
+    print("%5d %18.4f %7.4f %22.4f %7.4f" % (n, e_lt, e_lv, e_kt, e_kv))
+z = 2.0 * (Xg[:, 0] ** 2 + Xg[:, 1] ** 2 < 1.6) - 1.0 + 0.6 * Xg[:, 0]
+print("error de la regla de Bayes en validacion: %.4f" % np.mean((z > 0) != yg))
+```
+
+Con la logística, duplicar los datos de 1600 a 3200 filas no cambia el error de validación: 0,3867 y 0,3877. La decisión útil sería un atributo nuevo, como $x_1^2+x_2^2$, con el que la frontera circular pasa a ser lineal. Con los vecinos, el error de validación todavía baja entre 800 y 3200 filas, y más datos tienen valor.
+
+**Modo de falla.** El error de validación es alto y se encarga la recolección de el doble de datos. La curva de aprendizaje habría mostrado que los errores de entrenamiento y de validación ya coincidían: el modelo no tenía flexibilidad para aprovecharlos.
+
+## 2. Error por segmentos
+
+Un error global puede ser aceptable y ocultar un segmento en el que el modelo falla. FES §4.4 propone explorar después del ajuste, representando los residuos frente a las variables, para encontrar dónde el modelo no se ajusta a los datos.
+
+::: {.definicion}
+**Definición 11.3 (error por segmentos).** Para una variable que define segmentos, como el canal de venta o la región, el error por segmentos es el error del modelo medido en las filas de cada segmento, $\hat e_k$, con su intervalo de confianza $\hat e_k\pm1{,}96\sqrt{\hat e_k(1-\hat e_k)/m_k}$.
+:::
+
+La celda simula los errores de un modelo en 12 000 filas repartidas entre ocho canales. En el canal 3 el error es 0,30; en los demás, 0,15.
+
+```{pyodide}
+import numpy as np
+rng = np.random.default_rng(112)
+# 1. un segmento con un problema real: el canal 3 tiene el doble de error
+n, K = 12000, 8
+canal = rng.integers(0, K, n)
+error = rng.random(n) < np.where(canal == 3, 0.30, 0.15)
+print("canal  filas  error   intervalo del 95 %")
+for k in range(K):
+    e = error[canal == k]; m = len(e); p = e.mean(); ee = np.sqrt(p * (1 - p) / m)
+    print("%5d %6d %6.4f   %.4f a %.4f" % (k, m, p, p - 1.96 * ee, p + 1.96 * ee))
+print("error global: %.4f" % error.mean())
+# 2. sin ningun segmento distinto: 40 segmentos de 300 filas con el mismo error 0.15
+peores = []
+for r in range(500):
+    e = np.random.default_rng(1000 + r).random((40, 300)) < 0.15
+    peores.append(e.mean(1).max())
+peores = np.array(peores)
+print("peor de 40 segmentos sin diferencias: media %.4f, percentil 95 %.4f" % (peores.mean(), np.quantile(peores, 0.95)))
+print("aproximacion 0.15 + sqrt(0.15*0.85/300)*sqrt(2 log 40): %.4f" % (0.15 + np.sqrt(0.15 * 0.85 / 300) * np.sqrt(2 * np.log(40))))
+```
+
+El canal 3 tiene un error de 0,2802, con un intervalo de 0,2580 a 0,3025 que no se solapa con el de ningún otro canal. El error global, 0,1688, no lo muestra: el canal 3 es una octava parte de las filas.
+
+::: {.proposicion}
+**Proposición 11.4 (el peor de muchos segmentos).** Si $K$ segmentos de $m$ filas tienen todos el mismo error $e$, el mayor error medido supera a $e$ en aproximadamente $\sqrt{e(1-e)/m}\sqrt{2\log K}$ cuando $K$ es grande. Declarar problemático al peor segmento sin corregir por $K$ encuentra un problema aunque no exista.
+:::
+
+::: {.demostracion}
+*Demostración.* Cada $\hat e_k$ es aproximadamente normal con media $e$ y desviación típica $\sqrt{e(1-e)/m}$, y el máximo de $K$ normales estándar independientes crece como $\sqrt{2\log K}$. Es el mecanismo de la Proposición 6.3 de ML aplicado 06 con el signo cambiado. En la celda, con 40 segmentos de 300 filas y $e=0{,}15$, el peor vale en media 0,1957 en 500 repeticiones, y en el 5 % de ellas supera 0,2133. La aproximación da 0,2060. ∎
+:::
+
+Para revisar muchos segmentos, el umbral de alarma se corrige como en Machine Learning 22: con la corrección de Bonferroni, un segmento se señala si su error supera al común en más de $z_K$ errores estándar, con $z_K$ el cuantil $1-0{,}05/(2K)$ de la normal.
+
+El visual simula los errores de $K$ segmentos de $m$ filas sin diferencias reales y marca el peor, con la banda del 95 % sin corregir y el umbral corregido.
+
+```{=html}
+<div class="viz-segmentos11">
+  <div class="controles">
+    <label>Segmentos K <input id="s11-k" type="range" min="2" max="100" step="1" value="40"> <span id="s11-k-v">40</span></label>
+    <label>Filas por segmento m <input id="s11-m" type="range" min="50" max="3000" step="50" value="300"> <span id="s11-m-v">300</span></label>
+  </div>
+  <svg id="s11-svg" viewBox="0 0 660 260" role="img" aria-label="Error de cada segmento simulado sin diferencias reales, con la banda del 95 % y el umbral corregido por Bonferroni."></svg>
+  <p class="lectura" id="s11-lectura"></p>
+</div>
+<style>
+.viz-segmentos11 { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-segmentos11 .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-segmentos11 label { display: flex; align-items: center; gap: .4rem; }
+.viz-segmentos11 input[type=range] { width: 150px; padding: 0; }
+.viz-segmentos11 svg { width: 100%; height: auto; display: block; }
+.viz-segmentos11 .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("s11-svg"), lec = document.getElementById("s11-lectura");
+  var ck = document.getElementById("s11-k"), cm = document.getElementById("s11-m");
+  var ek = document.getElementById("s11-k-v"), em = document.getElementById("s11-m-v");
+  var X0 = 56, X1 = 620, Y0 = 30, Y1 = 210, E = 0.15;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var sem = 1111, Z = [], i;
+  function u() { sem = (sem * 48271) % 2147483647; return sem / 2147483647; }
+  for (i = 0; i < 100; i++) { var a = Math.max(u(), 1e-9), b = u(); Z.push(Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b)); }
+  // cuantil de la normal por biseccion sobre la funcion de distribucion
+  function Phi(z) {
+    var t = 1 / (1 + 0.3275911 * Math.abs(z) / Math.SQRT2);
+    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-z * z / 2);
+    return z >= 0 ? 0.5 * (1 + y) : 0.5 * (1 - y);
+  }
+  function cuantil(p) { var lo = 0, hi = 8; for (var it = 0; it < 60; it++) { var m = (lo + hi) / 2; if (Phi(m) < p) lo = m; else hi = m; } return (lo + hi) / 2; }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var K = +ck.value, m = +cm.value;
+    ek.textContent = K; em.textContent = m;
+    var ee = Math.sqrt(E * (1 - E) / m), zk = cuantil(1 - 0.05 / (2 * K));
+    var vals = [], peor = 0;
+    for (i = 0; i < K; i++) { vals.push(E + ee * Z[i]); if (vals[i] > vals[peor]) peor = i; }
+    var lo = 0.0, hi = 0.35;
+    var px = function (k) { return X0 + (k + 0.5) / K * (X1 - X0); };
+    var py = function (v) { return Y1 - (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * (Y1 - Y0); };
+    svg.appendChild(el("rect", { x: X0, y: py(E + 1.96 * ee).toFixed(1), width: X1 - X0, height: (py(E - 1.96 * ee) - py(E + 1.96 * ee)).toFixed(1), fill: C_A, "fill-opacity": .12 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(E) + " L" + X1 + " " + py(E), stroke: C_A, "stroke-width": 1.4 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(E + zk * ee).toFixed(1) + " L" + X1 + " " + py(E + zk * ee).toFixed(1), stroke: C_G, "stroke-width": 1.6, "stroke-dasharray": "6 4" }));
+    svg.appendChild(el("text", { x: X1 - 4, y: py(E + zk * ee) - 6, "text-anchor": "end", "font-size": 10.5, fill: C_G }, "umbral corregido " + (E + zk * ee).toFixed(4)));
+    for (i = 0; i < K; i++) {
+      svg.appendChild(el("circle", { cx: px(i).toFixed(1), cy: py(vals[i]).toFixed(1), r: i === peor ? 5 : 3.2,
+        fill: i === peor ? C_B : (vals[i] > E + 1.96 * ee ? C_G : C_T), "fill-opacity": .8 }));
+    }
+    [0, 0.1, 0.2, 0.3].forEach(function (v) {
+      svg.appendChild(el("text", { x: X0 - 6, y: py(v) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, v.toFixed(1)));
+    });
+    svg.appendChild(el("text", { x: X1, y: Y1 + 18, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "segmentos, todos con error real 0.15"));
+    var fuera = 0; vals.forEach(function (v) { if (v > E + 1.96 * ee) fuera++; });
+    lec.innerHTML = "Con <strong>" + K + "</strong> segmentos de <strong>" + m + "</strong> filas y el mismo error real, 0.15, el peor mide <strong>" + vals[peor].toFixed(4) +
+      "</strong>, y <strong>" + fuera + "</strong> quedan por encima de la banda del 95 % sin corregir. El umbral corregido por Bonferroni, 0.15 + " + zk.toFixed(3) + " × " + ee.toFixed(4) +
+      " = <strong>" + (E + zk * ee).toFixed(4) + "</strong>, " + (vals[peor] > E + zk * ee ? "también lo supera el peor." : "no lo supera ninguno.");
+  }
+  ck.addEventListener("input", dibujar);
+  cm.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Del segmento al atributo
+
+Encontrar un segmento con más error es el principio del trabajo. Las preguntas siguientes son por qué el modelo falla en él y si se puede corregir. Hay tres causas habituales:
+
+1. el segmento tiene pocas filas en el entrenamiento y el modelo no aprendió su relación;
+2. la relación entre los atributos y $y$ es distinta en el segmento, una interacción que el modelo no representa (Atributos 12);
+3. el segmento es más difícil: su error de Bayes es mayor, y ningún modelo lo reduce.
+
+Las dos primeras se distinguen reentrenando con el segmento como atributo, o solo con sus filas, y comparando el error en validación. La tercera se reconoce cuando ninguna de las dos cambia el error del segmento.
+
+## 4. Limitaciones
+
+- Las curvas de aprendizaje se construyeron con una sola muestra por tamaño. Con pocas filas, las curvas oscilan; se promedian varias muestras de cada tamaño.
+- El error de Bayes solo se conoce en datos simulados. En datos reales, la distancia al mejor error posible se estima comparando varios modelos flexibles o con la variabilidad de etiquetas repetidas.
+- La corrección de Bonferroni supone que se revisan $K$ segmentos elegidos de antemano. Si los segmentos se eligen mirando los errores, el número efectivo de comparaciones es mayor.
+- El error por segmentos se trató con el error de clasificación. Con otras métricas, como el coste o el AUC, el intervalo se calcula por bootstrap.
+
+## Ejercicios
+
+### Ejercicio 1, Intervalo del error de un segmento
+
+Un segmento de `m` filas tiene `errores` filas mal clasificadas. Completar las líneas de `p`, la proporción de errores, `ee`, su error estándar, y `intervalo`, la tupla con los extremos del intervalo del 95 % de la Definición 11.3. La celda imprime los cuatro valores; deben dar `0.28 0.0259 0.2292 0.3308`.
+
+```{pyodide}
+#| exercise: ex_intervalo
+import numpy as np
+
+errores, m = 84, 300
+
+p = ______
+ee = ______
+intervalo = ______
+
+print(round(p, 4), round(float(ee), 4),
+      round(float(intervalo[0]), 4), round(float(intervalo[1]), 4))
+```
+
+::: {.hint exercise="ex_intervalo"}
+El error estándar de una proporción es $\sqrt{p(1-p)/m}$. El intervalo suma y resta 1,96 errores estándar.
+:::
+
+::: {.solution exercise="ex_intervalo"}
+```{pyodide}
+import numpy as np
+
+errores, m = 84, 300
+
+p = errores / m
+ee = np.sqrt(p * (1 - p) / m)
+intervalo = (p - 1.96 * ee, p + 1.96 * ee)
+
+print(round(p, 4), round(float(ee), 4),
+      round(float(intervalo[0]), 4), round(float(intervalo[1]), 4))
+```
+
+Con 300 filas, el intervalo tiene una anchura de 0,10. Un segmento con un error de 0,28 se distingue de uno de 0,15, pero no de uno de 0,24.
+:::
+
+```{pyodide}
+#| exercise: ex_intervalo
+#| check: true
+if (abs(float(p) - 0.28) < 1e-9 and abs(float(ee) - 0.0259) < 5e-5
+        and abs(float(intervalo[0]) - 0.2292) < 5e-5 and abs(float(intervalo[1]) - 0.3308) < 5e-5):
+    feedback = {"correct": True, "message": "Correcto: 0.28 con intervalo de 0.2292 a 0.3308."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba p = 0.28, ee = 0.0259 e intervalo de 0.2292 a 0.3308."}
+feedback
+```
+
+### Ejercicio 2, Umbral corregido para 40 segmentos
+
+Se revisan `K` segmentos de `m` filas y se quiere señalar los que tienen un error mayor que el común, `e`, con una probabilidad de falsa alarma del 5 % en el conjunto de los segmentos. Completar la línea de `z` con el cuantil $1-0{,}05/(2K)$ de la normal estándar, y la de `umbral` con el error por encima del cual se señala un segmento. La celda imprime los dos; deben dar `3.2272 0.2165`.
+
+```{pyodide}
+#| exercise: ex_bonferroni
+import numpy as np
+from statistics import NormalDist
+
+K, m, e = 40, 300, 0.15
+
+z = ______
+umbral = ______
+
+print(round(z, 4), round(float(umbral), 4))
+```
+
+::: {.hint exercise="ex_bonferroni"}
+`NormalDist().inv_cdf(q)` devuelve el cuantil `q` de la normal estándar. El umbral suma a `e` el producto de `z` por el error estándar $\sqrt{e(1-e)/m}$.
+:::
+
+::: {.solution exercise="ex_bonferroni"}
+```{pyodide}
+import numpy as np
+from statistics import NormalDist
+
+K, m, e = 40, 300, 0.15
+
+z = NormalDist().inv_cdf(1 - 0.05 / (2 * K))
+umbral = e + z * np.sqrt(e * (1 - e) / m)
+
+print(round(z, 4), round(float(umbral), 4))
+```
+
+Sin corregir, el umbral sería $0{,}15+1{,}96\cdot0{,}0206=0{,}1904$, por debajo del peor segmento medio sin diferencias reales, 0,1957: se señalaría casi siempre algún segmento. Con la corrección, el umbral, 0,2165, supera el percentil 95 del peor, 0,2133.
+:::
+
+```{pyodide}
+#| exercise: ex_bonferroni
+#| check: true
+if abs(float(z) - 3.2272) < 5e-5 and abs(float(umbral) - 0.2165) < 5e-5:
+    feedback = {"correct": True, "message": "Correcto: z = 3.2272 y umbral 0.2165."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba z = 3.2272 y un umbral de 0.2165."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Aplicado 11**:
+
+1. Añadir a la logística de la Sección 1 el atributo $x_1^2+x_2^2$ y repetir la curva de aprendizaje; comparar su límite con el error de Bayes.
+2. Promediar las curvas de aprendizaje de los vecinos sobre diez muestras por tamaño y comparar la dispersión de cada punto con la diferencia entre tamaños consecutivos.
+3. Ajustar un modelo a unos datos con un segmento cuya relación es distinta, encontrar el segmento con el análisis por segmentos corregido y decidir, con las tres causas de la Sección 3, cuál es la suya. Guardar en `50-Errores/` el procedimiento.
+
+## Del libro
+
+FES §4.4, *Post Modeling Exploratory Visualizations*, propone usar la visualización después de ajustar el modelo para evaluar la falta de ajuste y el valor potencial de predictores nuevos, representando los residuos frente a las variables disponibles. Esta lección formaliza esa exploración con las curvas de aprendizaje y el error por segmentos, y mide el riesgo de encontrar problemas por azar cuando se revisan muchos segmentos.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- Curva de aprendizaje: error de entrenamiento y de validación frente al número de filas.
+- Curvas juntas y lejos del error de Bayes: sesgo; más datos no ayudan.
+- Curvas separadas: varianza; más datos o más regularización ayudan.
+- Logística con frontera circular: 0,3934 y 0,3877 con 3200 filas, frente a un error de Bayes de 0,1745.
+- Vecinos con $k=15$: 0,1860 en validación, todavía bajando.
+- Error por segmentos con intervalo: $\hat e_k\pm1{,}96\sqrt{\hat e_k(1-\hat e_k)/m_k}$.
+- Un canal con 0,2802 de error se esconde en un error global de 0,1688.
+- El peor de 40 segmentos iguales mide en media 0,1957 con un error real de 0,15.
+- Bonferroni: señalar solo si se supera en $z_K$ errores estándar, con $z_{40}=3{,}2272$.
+- Tres causas de un segmento malo: pocas filas, relación distinta o más dificultad.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos. Las curvas de aprendizaje con 4000 filas de validación: la logística con errores de entrenamiento entre 0,3600 y 0,4900 y de validación entre 0,3837 y 0,3975, y 0,3934 y 0,3877 con 3200 filas; los vecinos con $k=15$ con validación de 0,2300 a 0,1860 y entrenamiento de 0,1656 con 3200 filas; el error de Bayes, 0,1745. Los segmentos: errores de 0,1344 a 0,1713 en siete canales y 0,2802 en el canal 3, con intervalos, y error global de 0,1688. El peor de 40 segmentos sin diferencias: media 0,1957 y percentil 95 de 0,2133 en 500 repeticiones, frente a la aproximación de 0,2060. La regresión logística y los vecinos están escritos con NumPy. Las Proposiciones 11.2 y 11.4 se argumentan y se miden.
+
+**Lo que viene de los libros.** La exploración visual después del ajuste para detectar falta de ajuste y predictores nuevos, de FES §4.4.
+
+**Lo que se usa de otras lecciones sin repetir.** La descomposición en sesgo y varianza, de Machine Learning 29. La corrección de Bonferroni, de Machine Learning 22. El optimismo del mínimo, de ML aplicado 06.
+
+**Lo que se enuncia sin demostrar.** El crecimiento del máximo de $K$ normales como $\sqrt{2\log K}$ se usa como aproximación, sin demostrarlo, y la celda muestra que sobreestima ligeramente con $K=40$.
+
+**Lo que es mío, no del libro.** La lectura de las curvas de aprendizaje con el error de Bayes como referencia. La medición del peor de muchos segmentos sin diferencias y la aplicación de Bonferroni al análisis por segmentos. Las tres causas de un segmento mal ajustado. Y el visual de los segmentos simulados con los dos umbrales.
+:::

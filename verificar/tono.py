@@ -85,6 +85,7 @@ LIMPIAS = [
     "aplicado/03-atipicos.qmd",
     "aplicado/09-boosting-en-la-practica.qmd",
     "aplicado/10-interpretabilidad.qmd",
+    "aplicado/11-analisis-de-errores.qmd",
     "aplicado/04-particion-de-los-datos.qmd",
     "aplicado/05-pipelines.qmd",
     "aplicado/06-ajuste-de-hiperparametros.qmd",
