@@ -30,5 +30,21 @@ for p in sorted(RAIZ.glob("*/[0-9]*.qmd")):
                 print("  X %s: ML %d no existe en el indice" % (p.name, n)); malos += 1
         print("%-34s ML %-12s -> %s" % (p.name, m.group(1), " | ".join(titulos.get(n, "???") for n in nums)))
         print("%-34s    dice: %s" % ("", m.group(2).strip()))
+# «ML aplicado N» contra aplicado/index.qmd, con la misma regla
+idx_ap = (RAIZ / "aplicado" / "index.qmd").read_text(encoding="utf-8")
+tit_ap = {}
+for f in re.findall(r'<div class="fila[^>]*>.*?</div>', idx_ap):
+    m = re.search(r'num">(\d+)<', f)
+    if m:
+        tit_ap[int(m.group(1))] = re.search(r'class="tit">(?:<a[^>]*>)?([^<]*)', f).group(1)
+for p in sorted(RAIZ.glob("*/[0-9]*.qmd")):
+    if p.parent.name == "_templates":
+        continue
+    for m in re.finditer(r'\*\*ML aplicado (\d+)\*\*:\s*(.{0,70})', p.read_text(encoding="utf-8")):
+        n = int(m.group(1))
+        if n not in tit_ap:
+            print("  X %s: ML aplicado %d no existe en el indice" % (p.name, n)); malos += 1
+        print("%-34s MLA %-11s -> %s" % (p.name, m.group(1), tit_ap.get(n, "???")))
+        print("%-34s    dice: %s" % ("", m.group(2).strip()))
 print("\nreferencias a filas inexistentes:", malos)
 sys.exit(1 if malos else 0)

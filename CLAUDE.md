@@ -154,6 +154,19 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
     que la solución de referencia pasa, que la plantilla vacía no pasa y que el
     enunciado no prescribe herramientas. El catálogo está en `ESTADO.md` §3.97.
 
+26. **Casos de ML aplicado (27-09-2026, a partir de los casos de Predictive
+    Analytics II del INCAE).** `aplicado/caso-N-*.qmd` cierra cada bloque del
+    módulo. Un caso empieza por una decisión de negocio, no por una técnica;
+    el error tiene un coste, a menudo asimétrico; los datos traen columnas que
+    no deben usarse, y el entregable es una recomendación para alguien que no
+    es técnico. **El texto y los datos de los casos originales no se copian**:
+    tienen copyright (IIM Bangalore, Kellogg) y el repo es público. Se escriben
+    situaciones propias con datos sintéticos generados por reglas conocidas
+    (qué variables importan, qué fuga o qué trampa se plantó), y un gate
+    comprueba que la respuesta correcta sale de los datos y que la trampa está
+    donde el caso dice. Las partes numéricas se corrigen solas; la
+    recomendación se evalúa con una rúbrica publicada en el mismo caso.
+
 15. **Cero contexto de su empresa.** Nada de CBTL, café, Multiplaza ni datos
     reales de su trabajo. Desde el 27-09-2026 (pedido de Luis) sí se admiten los
     casos clásicos de programación de supermercado, caja, inventario o nómina,

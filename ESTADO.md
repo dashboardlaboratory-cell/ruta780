@@ -5307,6 +5307,35 @@ Pendientes de la fase 3 que seguían abiertos:
 - **ML 39.** El autovalor mayor empezaba en 2 y el autovalor fijo λ = 3 quedaba
   fuera del área. El control empieza ahora en 4.
 
+### 3.104 Módulo ML aplicado (27-09-2026)
+
+Luis pidió contrastar el sitio con un curso completo de aprendizaje
+automático: preocupaba que no hubiera preparación de datos. Faltaba el oficio
+del proyecto: planteamiento y línea base, exploración y calidad, atípicos,
+partición, pipelines, ajuste de hiperparámetros, métricas según el coste,
+desbalance, boosting en la práctica, interpretabilidad, análisis de errores,
+producción y anomalías. Se abre `aplicado/` con 13 lecciones y 4 casos
+(regla 26), después de Feature Engineering en el menú.
+
+- ML 47 (desbalance) pasa a ML aplicado 08; ML 45 ya apunta ahí.
+- Los faltantes siguen en Feature Engineering 13: tres lecciones publicadas la
+  citan y FES 8 es su capítulo. El módulo la manda leer entre 03 y 04.
+- Casos, en el orden del módulo: 1 segmentación de encuestados para un
+  aparato nuevo (datos mixtos, crítica del método de descartar atributos por
+  correlación y de codificar categorías sin orden como números), 2 comité de
+  admisiones (coste asimétrico, columnas posteriores a la decisión, umbral,
+  desbalance), 3 riesgo de impago (faltantes, atípicos, calibración,
+  interpretabilidad), 4 demanda de supermercado (partición temporal, deriva).
+  Formato tomado de los casos IMB483 y KEL932 del curso de Luis; nada de su
+  texto ni de sus datos.
+- XGBoost, LightGBM y CatBoost no corren en Pyodide: la lección 09 usa
+  `HistGradientBoostingClassifier` en las celdas y muestra el código de las
+  tres como referencia local.
+- `referencias.py` resuelve también **ML aplicado N**.
+
+Orden de trabajo: aplicado 01, 02, 03, Feature Engineering 13, caso 1,
+aplicado 04 a 08, caso 2, 09 a 11, caso 3, 12, 13, caso 4, y después ML 44.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
