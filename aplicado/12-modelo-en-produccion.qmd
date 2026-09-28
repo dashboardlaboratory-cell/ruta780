@@ -1,0 +1,515 @@
+---
+title: "El modelo en producción: guardado, deriva y reentrenamiento"
+subtitle: "ML aplicado · Lección 12"
+nivel: L3
+modulo: aplicado
+fase: F4
+prereqs: [aplicado/05-pipelines, aplicado/04-particion-de-los-datos, aplicado/11-analisis-de-errores]
+siguientes: []
+libro: "—"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="aplicado/12-modelo-en-produccion"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F4]{.item}
+[**Libro** sin capítulo de referencia]{.item}
+[**Prereqs** [Pipelines](05-pipelines.qmd) · [Partición de los datos](04-particion-de-los-datos.qmd) · [Análisis de errores](11-analisis-de-errores.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Guardar un modelo con todo lo necesario para usarlo y para saber qué se está usando, y comprobar que predice lo mismo tras cargarlo.
+2. Distinguir la deriva de las covariables de la deriva del concepto y medir su efecto. Con deriva de las covariables, el índice de estabilidad de $x_1$ llega a 1,0325 y el AUC se mantiene en 0,8535; con deriva del concepto, el índice queda por debajo de 0,012 y el AUC cae de 0,7912 a 0,4202.
+3. Calcular el índice de estabilidad de la población y explicar por qué no basta para vigilar un modelo.
+4. Comparar tres políticas de reentrenamiento: con la relación estable, las tres dan un AUC de 0,835; con deriva del concepto, la ventana de tres meses da 0,7091, la ventana creciente 0,6581 y el modelo fijo 0,6213.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **ML aplicado 05**: el pipeline como objeto único, que es lo que se guarda.
+- **ML aplicado 04**: la partición temporal, que anticipó la caída del rendimiento en los meses siguientes.
+- **ML aplicado 11**: el análisis por segmentos, que se repite en cada periodo de vigilancia.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **ML aplicado 13**: la detección de anomalías, una forma de vigilar filas individuales.
+- **Caso 4**: el pronóstico de demanda, con deriva y reentrenamiento.
+- **Series 07**: la validación temporal con origen móvil, que simula el reentrenamiento periódico.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $P(x)$ | pe de equis | La distribución de los atributos |
+| $P(y\mid x)$ | pe de y dado equis | La relación entre los atributos y la variable objetivo |
+| $e_i$ | e i | La proporción de filas de referencia en el intervalo $i$ |
+| $a_i$ | a i | La proporción de filas nuevas en el intervalo $i$ |
+| $\mathrm{PSI}$ | pe ese i | El índice de estabilidad de la población |
+| $w$ | uve doble | El número de meses de la ventana de reentrenamiento |
+:::
+
+## 1. Qué se guarda
+
+::: {.definicion}
+**Definición 12.1 (artefacto del modelo).** El artefacto de un modelo es el objeto que se guarda para usarlo. Contiene el pipeline completo (ML aplicado 05) y los metadatos necesarios para saber qué hace: las columnas que espera, los datos con que se entrenó, la métrica de validación, el umbral de decisión y las versiones de las bibliotecas.
+:::
+
+```{pyodide}
+import numpy as np
+
+def sigmoide(z):
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -30.0, 30.0)))
+
+def logistica(X, y, pasos=25, lam=1e-4):
+    Z = np.column_stack([np.ones(len(X)), X])
+    b = np.zeros(Z.shape[1])
+    for _ in range(pasos):
+        p = sigmoide(Z @ b)
+        H = Z.T @ (Z * (p * (1 - p))[:, None]) + lam * np.eye(len(b))
+        b = b + np.linalg.solve(H, Z.T @ (y - p) - lam * b)
+    return b
+
+def prob(b, X):
+    return sigmoide(np.column_stack([np.ones(len(X)), X]) @ b)
+
+def auc(y, s):
+    o = np.argsort(s, kind="stable")
+    r = np.empty(len(s)); r[o] = np.arange(1.0, len(s) + 1.0)
+    n1 = y.sum(); n0 = len(y) - n1
+    return (r[y == 1].sum() - n1 * (n1 + 1.0) / 2.0) / (n1 * n0)
+
+def psi(ref, nuevo, B=10):
+    """Indice de estabilidad de la poblacion con B intervalos por cuantiles de ref."""
+    cortes = np.quantile(ref, np.linspace(0, 1, B + 1)[1:-1])
+    e = np.bincount(np.searchsorted(cortes, ref), minlength=B) / len(ref)
+    a = np.bincount(np.searchsorted(cortes, nuevo), minlength=B) / len(nuevo)
+    e, a = np.maximum(e, 1e-6), np.maximum(a, 1e-6)
+    return float(np.sum((a - e) * np.log(a / e)))
+
+def mes(m, n, rng, tipo):
+    """Un mes de datos. 'covariables': cambia la distribucion de x1.
+    'concepto': cambia la relacion de x1 y x2 con y. 'estable': nada cambia."""
+    w = (m - 1) / 23.0
+    X = rng.standard_normal((n, 2))
+    if tipo == "covariables":
+        X[:, 0] += 1.2 * w
+        z = -1.0 + 1.5 * X[:, 0] - 0.8 * X[:, 1]
+    elif tipo == "estable":
+        z = -1.0 + 1.5 * X[:, 0] - 0.8 * X[:, 1]
+    else:
+        z = -1.0 + (1.5 - 1.4 * w) * X[:, 0] + (-0.8 + 1.8 * w) * X[:, 1]
+    return X, (rng.random(n) < sigmoide(z)).astype(float)
+
+import pickle
+rng = np.random.default_rng(122)
+X, y = mes(1, 3000, rng, "estable")
+b = logistica(X, y)
+# todo lo necesario para predecir y para saber que se esta usando
+artefacto = {
+    "coeficientes": b,
+    "columnas": ["x1", "x2"],
+    "datos": "mes 1, 3000 filas",
+    "auc_validacion": round(float(auc(y, prob(b, X))), 4),
+    "umbral": 0.5,
+}
+contenido = pickle.dumps(artefacto)
+cargado = pickle.loads(contenido)
+Xn, _ = mes(2, 500, rng, "estable")
+print("predicciones iguales tras guardar y cargar:",
+      bool(np.array_equal(prob(cargado["coeficientes"], Xn), prob(b, Xn))))
+print("campos guardados:", sorted(cargado))
+```
+
+`pickle` guarda objetos de Python, y el objeto cargado predice lo mismo que el original. Tiene dos limitaciones. Un artefacto de `pickle` solo se carga con versiones compatibles de las bibliotecas con que se creó, y por eso las versiones forman parte de los metadatos. Y cargar un `pickle` ejecuta código, de modo que solo se cargan artefactos de origen conocido. Para modelos de scikit-learn, `joblib` hace lo mismo con archivos grandes; para intercambiar modelos entre lenguajes existen formatos como ONNX.
+
+## 2. Dos tipos de deriva
+
+::: {.definicion}
+**Definición 12.2 ([deriva de los datos]{.g}).** Hay **deriva de las covariables** cuando cambia la distribución de los atributos, $P(x)$, y la relación $P(y\mid x)$ se mantiene. Hay **deriva del concepto** cuando cambia $P(y\mid x)$.
+:::
+
+::: {.definicion}
+**Definición 12.3 ([índice de estabilidad de la población]{.g}).** Con $B$ intervalos definidos por los cuantiles de una variable en los datos de referencia, y las proporciones $e_i$ de referencia y $a_i$ de los datos nuevos en cada intervalo,
+$$
+\mathrm{PSI}=\sum_{i=1}^B(a_i-e_i)\ln\frac{a_i}{e_i} .
+$$
+Es la suma de las dos divergencias de Kullback-Leibler entre las dos distribuciones discretizadas, y vale 0 cuando coinciden.
+:::
+
+::: {.proposicion}
+**Proposición 12.4 (lo que el índice detecta).** El índice de estabilidad de un atributo detecta la deriva de las covariables en ese atributo y no detecta la deriva del concepto, porque solo compara distribuciones de $x$. Un modelo bien especificado puede mantener su rendimiento con deriva de las covariables y perderlo con deriva del concepto.
+:::
+
+::: {.demostracion}
+*Demostración.* El índice solo depende de las proporciones $a_i$ y $e_i$, que son funciones de $x$. Si $P(y\mid x)$ no cambia y el modelo la representa, sus predicciones siguen siendo correctas en cualquier región de $x$, también en las que ahora tienen más filas. La celda entrena una regresión logística con los meses 1 a 6 y la aplica a los meses 7 a 24 en dos escenarios. Con deriva de las covariables, la media de $x_1$ aumenta 1,2 a lo largo de los 24 meses: el índice de $x_1$ pasa de 0,0305 en el mes 7 a 1,0325 en el 24, el AUC se mantiene entre 0,8329 y 0,8654 y la media predicha sigue a la proporción real. Con deriva del concepto, los coeficientes de $x_1$ y $x_2$ cambian con el tiempo: el índice no pasa de 0,0112, y el AUC cae de 0,7912 a 0,4202, por debajo del azar. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def sigmoide(z):
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -30.0, 30.0)))
+
+def logistica(X, y, pasos=25, lam=1e-4):
+    Z = np.column_stack([np.ones(len(X)), X])
+    b = np.zeros(Z.shape[1])
+    for _ in range(pasos):
+        p = sigmoide(Z @ b)
+        H = Z.T @ (Z * (p * (1 - p))[:, None]) + lam * np.eye(len(b))
+        b = b + np.linalg.solve(H, Z.T @ (y - p) - lam * b)
+    return b
+
+def prob(b, X):
+    return sigmoide(np.column_stack([np.ones(len(X)), X]) @ b)
+
+def auc(y, s):
+    o = np.argsort(s, kind="stable")
+    r = np.empty(len(s)); r[o] = np.arange(1.0, len(s) + 1.0)
+    n1 = y.sum(); n0 = len(y) - n1
+    return (r[y == 1].sum() - n1 * (n1 + 1.0) / 2.0) / (n1 * n0)
+
+def psi(ref, nuevo, B=10):
+    """Indice de estabilidad de la poblacion con B intervalos por cuantiles de ref."""
+    cortes = np.quantile(ref, np.linspace(0, 1, B + 1)[1:-1])
+    e = np.bincount(np.searchsorted(cortes, ref), minlength=B) / len(ref)
+    a = np.bincount(np.searchsorted(cortes, nuevo), minlength=B) / len(nuevo)
+    e, a = np.maximum(e, 1e-6), np.maximum(a, 1e-6)
+    return float(np.sum((a - e) * np.log(a / e)))
+
+def mes(m, n, rng, tipo):
+    """Un mes de datos. 'covariables': cambia la distribucion de x1.
+    'concepto': cambia la relacion de x1 y x2 con y. 'estable': nada cambia."""
+    w = (m - 1) / 23.0
+    X = rng.standard_normal((n, 2))
+    if tipo == "covariables":
+        X[:, 0] += 1.2 * w
+        z = -1.0 + 1.5 * X[:, 0] - 0.8 * X[:, 1]
+    elif tipo == "estable":
+        z = -1.0 + 1.5 * X[:, 0] - 0.8 * X[:, 1]
+    else:
+        z = -1.0 + (1.5 - 1.4 * w) * X[:, 0] + (-0.8 + 1.8 * w) * X[:, 1]
+    return X, (rng.random(n) < sigmoide(z)).astype(float)
+
+print("mes   tipo          PSI de x1   AUC     media predicha  proporcion real")
+for tipo in ("covariables", "concepto"):
+    rng = np.random.default_rng(120)
+    datos = [mes(m, 1000, rng, tipo) for m in range(1, 25)]
+    X0 = np.vstack([d[0] for d in datos[:6]]); y0 = np.concatenate([d[1] for d in datos[:6]])
+    b = logistica(X0, y0)                                  # entrenado con los meses 1 a 6
+    for m in (7, 12, 18, 24):
+        X, y = datos[m - 1]
+        p = prob(b, X)
+        print("%3d   %-12s %10.4f %7.4f %12.4f %16.4f" % (m, tipo, psi(X0[:, 0], X[:, 0]), auc(y, p), p.mean(), y.mean()))
+```
+
+En el uso del crédito es habitual leer el índice con dos umbrales, 0,1 y 0,25, como cambio moderado y cambio grande. Son convenciones, no resultados estadísticos. La tabla muestra el problema de vigilar solo el índice: en el escenario de covariables daría una alarma grave en el mes 18 sin que el modelo haya empeorado, y en el de concepto no daría ninguna mientras el modelo pierde toda su capacidad.
+
+La vigilancia que detecta la deriva del concepto necesita las etiquetas: el AUC, la calibración y el coste por segmentos (ML aplicado 11), medidos cuando se conoce el resultado. Si el resultado tarda en conocerse, como el impago a doce meses, la vigilancia llega con ese retraso.
+
+**Modo de falla.** Se instala un tablero con el índice de estabilidad de cada atributo, en verde durante un año. El equipo de cobros señala que el modelo aprueba a clientes que no pagan. Al medir el AUC con las etiquetas del año, ha caído de 0,79 a 0,59, como entre los meses 7 y 18 de la celda, sin que ningún atributo haya cambiado de distribución.
+
+El visual compara la distribución de referencia de un atributo con la de un lote nuevo, desplazado y escalado, y calcula el índice con diez intervalos.
+
+```{=html}
+<div class="viz-psi12">
+  <div class="controles">
+    <label>Desplazamiento de la media <input id="p12-d" type="range" min="-1.5" max="1.5" step="0.05" value="0.5"> <span id="p12-d-v">0.50</span></label>
+    <label>Factor de escala <input id="p12-s" type="range" min="0.5" max="2" step="0.05" value="1"> <span id="p12-s-v">1.00</span></label>
+  </div>
+  <svg id="p12-svg" viewBox="0 0 660 260" role="img" aria-label="Proporción de filas de referencia y de filas nuevas en cada uno de los diez intervalos, con el índice de estabilidad."></svg>
+  <p class="lectura" id="p12-lectura"></p>
+</div>
+<style>
+.viz-psi12 { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-psi12 .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-psi12 label { display: flex; align-items: center; gap: .4rem; }
+.viz-psi12 input[type=range] { width: 150px; padding: 0; }
+.viz-psi12 svg { width: 100%; height: auto; display: block; }
+.viz-psi12 .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("p12-svg"), lec = document.getElementById("p12-lectura");
+  var cd = document.getElementById("p12-d"), cs = document.getElementById("p12-s");
+  var ed = document.getElementById("p12-d-v"), es = document.getElementById("p12-s-v");
+  var X0 = 56, X1 = 620, Y0 = 40, Y1 = 210, B = 10;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function Phi(z) {
+    var t = 1 / (1 + 0.3275911 * Math.abs(z) / Math.SQRT2);
+    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-z * z / 2);
+    return z >= 0 ? 0.5 * (1 + y) : 0.5 * (1 - y);
+  }
+  function cuantil(p) { var lo = -8, hi = 8; for (var it = 0; it < 60; it++) { var m = (lo + hi) / 2; if (Phi(m) < p) lo = m; else hi = m; } return (lo + hi) / 2; }
+  var CORTES = [];
+  for (var k = 1; k < B; k++) CORTES.push(cuantil(k / B));   // cuantiles de la normal estandar de referencia
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var d = +cd.value, s = +cs.value;
+    ed.textContent = d.toFixed(2); es.textContent = s.toFixed(2);
+    var a = [], prev = 0, i, psi = 0;
+    for (i = 0; i < B; i++) {
+      var hasta = i < B - 1 ? Phi((CORTES[i] - d) / s) : 1;
+      a.push(Math.max(hasta - prev, 1e-6)); prev = hasta;
+      psi += (a[i] - 0.1) * Math.log(a[i] / 0.1);
+    }
+    var AM = Math.max(0.3, Math.max.apply(null, a) * 1.1);
+    var w = (X1 - X0) / B;
+    var py = function (v) { return Y1 - v / AM * (Y1 - Y0); };
+    for (i = 0; i < B; i++) {
+      svg.appendChild(el("rect", { x: (X0 + i * w + 4).toFixed(1), y: py(0.1).toFixed(1), width: (w / 2 - 5).toFixed(1), height: (Y1 - py(0.1)).toFixed(1), fill: C_A, "fill-opacity": .55 }));
+      svg.appendChild(el("rect", { x: (X0 + i * w + w / 2 + 1).toFixed(1), y: py(a[i]).toFixed(1), width: (w / 2 - 5).toFixed(1), height: (Y1 - py(a[i])).toFixed(1), fill: C_B, "fill-opacity": .55 }));
+      svg.appendChild(el("text", { x: (X0 + i * w + w / 2).toFixed(1), y: Y1 + 16, "text-anchor": "middle", "font-size": 10, fill: C_T, opacity: .7 }, i + 1));
+    }
+    svg.appendChild(el("path", { d: "M" + X0 + " " + Y1 + " L" + X1 + " " + Y1, stroke: C_L }));
+    [["referencia", C_A], ["lote nuevo", C_B]].forEach(function (l, q) {
+      svg.appendChild(el("rect", { x: X0 + q * 120, y: 12, width: 12, height: 8, fill: l[1], "fill-opacity": .55 }));
+      svg.appendChild(el("text", { x: X0 + q * 120 + 17, y: 20, "font-size": 10.5, fill: C_T, opacity: .85 }, l[0]));
+    });
+    svg.appendChild(el("text", { x: X1, y: Y1 + 34, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "intervalo, por deciles de la referencia →"));
+    lec.innerHTML = "Cada intervalo tiene el 10 % de las filas de referencia. Con el lote desplazado <strong>" + d.toFixed(2) + "</strong> y escalado por <strong>" + s.toFixed(2) +
+      "</strong>, el índice de estabilidad vale <strong>" + psi.toFixed(4) + "</strong>. El índice no dice nada sobre la relación entre el atributo y la variable objetivo, que puede cambiar con el índice en cero.";
+  }
+  cd.addEventListener("input", dibujar);
+  cs.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Políticas de reentrenamiento
+
+::: {.definicion}
+**Definición 12.5 (políticas de reentrenamiento).** Con datos que llegan por meses, se consideran tres políticas:
+
+1. **modelo fijo**: se entrena una vez y no se actualiza;
+2. **ventana creciente**: cada mes se reentrena con todos los datos disponibles hasta el mes anterior;
+3. **ventana deslizante** de $w$ meses: cada mes se reentrena con los $w$ meses anteriores.
+:::
+
+::: {.proposicion}
+**Proposición 12.6 (elección de la ventana).** Si la relación es estable, la ventana creciente usa más datos y su error no es mayor que el de la deslizante. Si la relación cambia, la ventana creciente mezcla relaciones antiguas con la actual, y una ventana deslizante corta sigue mejor el cambio, a costa de estimar con menos filas.
+:::
+
+::: {.demostracion}
+*Demostración.* Con la relación estable, todos los meses son muestras de la misma distribución, y más filas reducen la varianza del ajuste. Con deriva del concepto, el modelo ajustado con todos los meses estima una relación media del periodo, desplazada respecto de la actual en proporción al peso de los meses antiguos. La celda simula 24 meses de 400 filas y mide el AUC medio de los meses 7 a 24. Con la relación estable, las tres políticas dan 0,8349, 0,8349 y 0,8347. Con deriva del concepto, el modelo fijo da 0,6213, la ventana creciente 0,6581 y la ventana de tres meses 0,7091. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def sigmoide(z):
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -30.0, 30.0)))
+
+def logistica(X, y, pasos=25, lam=1e-4):
+    Z = np.column_stack([np.ones(len(X)), X])
+    b = np.zeros(Z.shape[1])
+    for _ in range(pasos):
+        p = sigmoide(Z @ b)
+        H = Z.T @ (Z * (p * (1 - p))[:, None]) + lam * np.eye(len(b))
+        b = b + np.linalg.solve(H, Z.T @ (y - p) - lam * b)
+    return b
+
+def prob(b, X):
+    return sigmoide(np.column_stack([np.ones(len(X)), X]) @ b)
+
+def auc(y, s):
+    o = np.argsort(s, kind="stable")
+    r = np.empty(len(s)); r[o] = np.arange(1.0, len(s) + 1.0)
+    n1 = y.sum(); n0 = len(y) - n1
+    return (r[y == 1].sum() - n1 * (n1 + 1.0) / 2.0) / (n1 * n0)
+
+def psi(ref, nuevo, B=10):
+    """Indice de estabilidad de la poblacion con B intervalos por cuantiles de ref."""
+    cortes = np.quantile(ref, np.linspace(0, 1, B + 1)[1:-1])
+    e = np.bincount(np.searchsorted(cortes, ref), minlength=B) / len(ref)
+    a = np.bincount(np.searchsorted(cortes, nuevo), minlength=B) / len(nuevo)
+    e, a = np.maximum(e, 1e-6), np.maximum(a, 1e-6)
+    return float(np.sum((a - e) * np.log(a / e)))
+
+def mes(m, n, rng, tipo):
+    """Un mes de datos. 'covariables': cambia la distribucion de x1.
+    'concepto': cambia la relacion de x1 y x2 con y. 'estable': nada cambia."""
+    w = (m - 1) / 23.0
+    X = rng.standard_normal((n, 2))
+    if tipo == "covariables":
+        X[:, 0] += 1.2 * w
+        z = -1.0 + 1.5 * X[:, 0] - 0.8 * X[:, 1]
+    elif tipo == "estable":
+        z = -1.0 + 1.5 * X[:, 0] - 0.8 * X[:, 1]
+    else:
+        z = -1.0 + (1.5 - 1.4 * w) * X[:, 0] + (-0.8 + 1.8 * w) * X[:, 1]
+    return X, (rng.random(n) < sigmoide(z)).astype(float)
+
+print("datos       modelo fijo  ventana creciente  ventana de 3 meses   (AUC medio, meses 7 a 24)")
+for tipo in ("estable", "concepto"):
+    rng = np.random.default_rng(121)
+    datos = [mes(m, 400, rng, tipo) for m in range(1, 25)]
+    def junta(a, b):
+        return (np.vstack([d[0] for d in datos[a:b]]), np.concatenate([d[1] for d in datos[a:b]]))
+    fijo = logistica(*junta(0, 6))
+    r = {"fijo": [], "creciente": [], "ventana": []}
+    for m in range(7, 25):
+        X, y = datos[m - 1]
+        r["fijo"].append(auc(y, prob(fijo, X)))
+        r["creciente"].append(auc(y, prob(logistica(*junta(0, m - 1)), X)))   # hasta el mes anterior
+        r["ventana"].append(auc(y, prob(logistica(*junta(m - 4, m - 1)), X)))
+    print("%-10s %12.4f %18.4f %19.4f" % (tipo, np.mean(r["fijo"]), np.mean(r["creciente"]), np.mean(r["ventana"])))
+```
+
+La ventana óptima depende de la velocidad del cambio y del número de filas por mes, y se elige con la misma validación temporal de ML aplicado 04: se simula el reentrenamiento en el pasado con varias ventanas y se mide el error en el mes siguiente. Series 07 llama a esta simulación validación con origen móvil.
+
+## 4. Limitaciones
+
+- Las derivas de la celda son graduales y lineales. Un cambio brusco, como una política comercial nueva, se detecta con una prueba de cambio en la serie del error, no con una media de varios meses.
+- La vigilancia del rendimiento supone que las etiquetas llegan. En muchos problemas la decisión del modelo cambia qué etiquetas se observan: los préstamos rechazados no tienen resultado, y el modelo solo se evalúa en los aprobados.
+- `pickle` y `joblib` guardan objetos de Python con sus dependencias. Un servicio de predicción añade la validación de los datos de entrada, con las reglas de dominio de ML aplicado 02, antes de llamar al modelo.
+- El índice de estabilidad depende del número de intervalos y de cómo se tratan los intervalos vacíos. La celda y el visual sustituyen las proporciones nulas por $10^{-6}$.
+
+## Ejercicios
+
+### Ejercicio 1, Índice de estabilidad
+
+La celda fija las proporciones de referencia `e` y las proporciones de un lote nuevo `a` en cinco intervalos. Completar la línea de `psi` con el índice de la Definición 12.3. La celda lo imprime; debe dar `0.1354`.
+
+```{pyodide}
+#| exercise: ex_psi
+import numpy as np
+
+e = np.full(5, 0.2)
+a = np.array([0.10, 0.15, 0.20, 0.25, 0.30])
+
+psi = ______
+
+print(round(float(psi), 4))
+```
+
+::: {.hint exercise="ex_psi"}
+El índice suma sobre los intervalos el producto de `a - e` por `np.log(a / e)`.
+:::
+
+::: {.solution exercise="ex_psi"}
+```{pyodide}
+import numpy as np
+
+e = np.full(5, 0.2)
+a = np.array([0.10, 0.15, 0.20, 0.25, 0.30])
+
+psi = np.sum((a - e) * np.log(a / e))
+
+print(round(float(psi), 4))
+```
+
+Cada término es positivo o nulo: si $a_i>e_i$, los dos factores son positivos, y si $a_i<e_i$, los dos son negativos. El intervalo central, sin cambio, no aporta. Con los umbrales habituales, 0,1354 se leería como un cambio moderado.
+:::
+
+```{pyodide}
+#| exercise: ex_psi
+#| check: true
+if abs(float(psi) - 0.1354) < 5e-5:
+    feedback = {"correct": True, "message": "Correcto: el índice vale 0.1354."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba un índice de 0.1354."}
+feedback
+```
+
+### Ejercicio 2, Alarma de calibración
+
+La celda fija la media de las probabilidades predichas `pred` y la proporción real `real` de seis meses. Completar la línea de `ratio` con el cociente entre las dos para cada mes, y la de `alerta` con la lista de los meses, numerados desde 1, en que el cociente queda fuera del intervalo de 0,9 a 1,1. La celda imprime los cocientes y los meses con alerta; deben dar `[1.034, 1.033, 1.154, 1.185, 0.861, 1.179]` y `[3, 4, 5, 6]`.
+
+```{pyodide}
+#| exercise: ex_calibracion
+import numpy as np
+
+pred = np.array([0.30, 0.31, 0.30, 0.32, 0.31, 0.33])
+real = np.array([0.29, 0.30, 0.26, 0.27, 0.36, 0.28])
+
+ratio = ______
+alerta = ______
+
+print([round(float(r), 3) for r in ratio], list(alerta))
+```
+
+::: {.hint exercise="ex_calibracion"}
+`np.where(condicion)[0]` devuelve las posiciones, desde 0, en que se cumple la condición. Sumarle 1 las convierte en números de mes.
+:::
+
+::: {.solution exercise="ex_calibracion"}
+```{pyodide}
+import numpy as np
+
+pred = np.array([0.30, 0.31, 0.30, 0.32, 0.31, 0.33])
+real = np.array([0.29, 0.30, 0.26, 0.27, 0.36, 0.28])
+
+ratio = pred / real
+alerta = (np.where((ratio < 0.9) | (ratio > 1.1))[0] + 1).tolist()
+
+print([round(float(r), 3) for r in ratio], list(alerta))
+```
+
+La media predicha apenas cambia, entre 0,30 y 0,33, mientras la proporción real oscila. Desde el mes 3 el modelo deja de estar calibrado en los dos sentidos: sobreestima en los meses 3, 4 y 6 y subestima en el 5. Con 1000 filas al mes, parte de esa variación es ruido; la regla se afina con el intervalo de confianza de la proporción real de ML aplicado 11.
+:::
+
+```{pyodide}
+#| exercise: ex_calibracion
+#| check: true
+import numpy as np
+if np.allclose(np.asarray(ratio, float), pred / real) and [int(v) for v in alerta] == [3, 4, 5, 6]:
+    feedback = {"correct": True, "message": "Correcto: alerta en los meses 3, 4, 5 y 6."}
+else:
+    feedback = {"correct": False, "message": "Se esperaban los cocientes pred / real y la alerta en los meses [3, 4, 5, 6]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Aplicado 12**:
+
+1. Repetir la Sección 3 con ventanas de 1, 2, 3, 6 y 12 meses en el escenario de deriva del concepto y encontrar la ventana con mayor AUC medio; repetir con 100 filas por mes en lugar de 400 y comparar.
+2. Construir un escenario con deriva de las covariables en el que el modelo esté mal especificado, por ejemplo con un efecto cuadrático de $x_1$ que el modelo no incluye, y comprobar si entonces el rendimiento cae cuando la distribución de $x_1$ se desplaza.
+3. Escribir la función que un servicio de predicción ejecutaría antes de llamar al modelo: comprobar las columnas, los tipos y los dominios de una fila y devolver los problemas encontrados. Guardar en `50-Errores/` la lista de lo que se vigila y con qué frecuencia.
+
+## Del libro
+
+Ninguno de los libros verificados del sitio trata el uso del modelo después del ajuste. Las definiciones y los resultados de esta lección se demuestran o se miden en la página. El índice de estabilidad se define por su fórmula y los umbrales de 0,1 y 0,25 se presentan como convenciones de uso, sin atribuirlos a una fuente.
+
+## Para el Cerebro
+
+- Se guarda el pipeline completo con sus metadatos: columnas, datos, métrica, umbral y versiones.
+- `pickle` solo se carga con versiones compatibles y ejecuta código al cargar.
+- Deriva de las covariables: cambia $P(x)$; deriva del concepto: cambia $P(y\mid x)$.
+- Índice de estabilidad: $\sum(a_i-e_i)\ln(a_i/e_i)$, las dos divergencias de Kullback-Leibler.
+- Con deriva de las covariables, el índice llega a 1,0325 y el AUC se mantiene en 0,8535.
+- Con deriva del concepto, el índice queda por debajo de 0,012 y el AUC cae a 0,4202.
+- Vigilar solo distribuciones no detecta la deriva del concepto; hacen falta las etiquetas.
+- Relación estable: ventana creciente y deslizante dan lo mismo, 0,8349 y 0,8347.
+- Deriva del concepto: ventana de tres meses 0,7091, creciente 0,6581, fijo 0,6213.
+- La ventana se elige simulando el reentrenamiento en el pasado.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos. El guardado: predicciones idénticas tras `pickle`. La deriva, con 1000 filas por mes y un modelo entrenado con los meses 1 a 6: con deriva de las covariables, índices de 0,0305, 0,1728, 0,4856 y 1,0325 en los meses 7, 12, 18 y 24, AUC de 0,8329 a 0,8654 y medias predichas cercanas a las reales; con deriva del concepto, índices de 0,0031 a 0,0112 y AUC de 0,7912, 0,6660, 0,5856 y 0,4202. El reentrenamiento, con 400 filas por mes: 0,8349, 0,8349 y 0,8347 con la relación estable, y 0,6213, 0,6581 y 0,7091 con deriva del concepto. La regresión logística, el AUC y el índice de estabilidad están escritos con NumPy. Las Proposiciones 12.4 y 12.6 se argumentan y se miden.
+
+**Lo que se usa de otras lecciones sin repetir.** El pipeline, de ML aplicado 05. La partición temporal, de ML aplicado 04. El error por segmentos y su intervalo, de ML aplicado 11. La divergencia de Kullback-Leibler, de Machine Learning 30.
+
+**Lo que se enuncia sin demostrar.** Los umbrales del índice de estabilidad son convenciones. Las limitaciones de `pickle` y la existencia de formatos de intercambio como ONNX se toman de su documentación.
+
+**Lo que es mío, no del libro.** La contraposición de los dos tipos de deriva en la misma tabla, con el índice alto sin pérdida de rendimiento y el índice nulo con el rendimiento por debajo del azar. La comparación de las tres políticas de reentrenamiento con relación estable y cambiante. La alarma de calibración del Ejercicio 2. Y el visual del índice con los deciles de la referencia.
+:::
