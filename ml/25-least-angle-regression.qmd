@@ -466,7 +466,7 @@ Entre dos puntos de quiebre consecutivos los coeficientes son lineales en $\lamb
 <div class="viz-lasso25">
   <div class="controles">
     <label>Penalización λ <input id="ls-l" type="range" min="0" max="100" step="1" value="45"> <span id="ls-l-v">45</span></label>
-    <label>Correlación entre columnas <input id="ls-c" type="range" min="0" max="0.95" step="0.05" value="0.60"> <span id="ls-c-v">0.60</span></label>
+    <label>Correlación entre columnas <input id="ls-c" type="range" min="0" max="0.95" step="0.05" value="0.80"> <span id="ls-c-v">0.80</span></label>
     <label>Modificación lasso
       <select id="ls-m">
         <option value="si" selected>con ella</option>
@@ -474,7 +474,7 @@ Entre dos puntos de quiebre consecutivos los coeficientes son lineales en $\lamb
       </select>
     </label>
   </div>
-  <svg id="ls-svg" viewBox="0 0 660 250" role="img" aria-label="El camino de los coeficientes en función de la penalización, con la vertical del valor elegido y la marca de los puntos de quiebre."></svg>
+  <svg id="ls-svg" viewBox="0 0 660 256" role="img" aria-label="El camino de los coeficientes en función de la penalización, con la vertical del valor elegido y la marca de los puntos de quiebre."></svg>
   <p class="lectura" id="ls-lectura"></p>
 </div>
 <style>
@@ -492,8 +492,9 @@ Entre dos puntos de quiebre consecutivos los coeficientes son lineales en $\lamb
   var svg = document.getElementById("ls-svg"), lec = document.getElementById("ls-lectura");
   var cl = document.getElementById("ls-l"), cc = document.getElementById("ls-c"), cm = document.getElementById("ls-m");
   var el_ = document.getElementById("ls-l-v"), ec = document.getElementById("ls-c-v");
-  var X0 = 52, XW = 568, Y0 = 20, YH = 190, P = 5, N = 50;
+  var X0 = 52, XW = 568, Y0 = 34, YH = 190;
   var COL = ["#0F6E68", "#B4342E", "#8A6D1F", "#3B5BA5", "#7A3E9D"];
+  var NOM = ["x₁", "x₂", "x₃", "x₄", "x₅"];
 
   function el(t, at, txt) {
     var e = document.createElementNS("http://www.w3.org/2000/svg", t);
@@ -501,72 +502,126 @@ Entre dos puntos de quiebre consecutivos los coeficientes son lineales en $\lamb
     if (txt !== undefined) e.textContent = txt;
     return e;
   }
-  var sem = 0;
-  function u() { sem = (sem * 48271) % 2147483647; return sem / 2147483647; }
-  function nor() { var a = Math.max(u(), 1e-9), b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); }
+  function datos(rho,S){
+  var sem=S||4242; function u(){sem=(sem*48271)%2147483647;return sem/2147483647;}
+  function nor(){var a=Math.max(u(),1e-9),b=u();return Math.sqrt(-2*Math.log(a))*Math.cos(2*Math.PI*b);}
+  var P=5,N=50,X=[],y=[],i,j;
+  for(i=0;i<N;i++){var f=[];for(j=0;j<P;j++)f.push(nor());X.push(f);}
+  for(i=0;i<N;i++)X[i][2]=rho*X[i][1]+Math.sqrt(1-rho*rho)*X[i][2];
+  var b0=[2.0,-2.5,0,1.0,0];
+  for(i=0;i<N;i++){var s=0;for(j=0;j<P;j++)s+=b0[j]*X[i][j];y.push(s+nor());}
+  for(j=0;j<P;j++){var m=0;for(i=0;i<N;i++)m+=X[i][j];m/=N;var q=0;for(i=0;i<N;i++){X[i][j]-=m;q+=X[i][j]*X[i][j];}q=Math.sqrt(q);for(i=0;i<N;i++)X[i][j]/=q;}
+  var my=0;for(i=0;i<N;i++)my+=y[i];my/=N;for(i=0;i<N;i++)y[i]-=my;
+  return {X:X,y:y,P:P,N:N};
+}
+// camino por homotopía: devuelve [[lambda, beta], ...] desde lambda máximo hasta 0
+function camino(D, conLasso){
+  var X=D.X,y=D.y,P=D.P,N=D.N,i,j,k;
+  function corr(b){var c=[];for(j=0;j<P;j++){var s=0;for(i=0;i<N;i++){var f=0;for(k=0;k<P;k++)f+=X[i][k]*b[k];s+=X[i][j]*(y[i]-f);}c.push(s);}return c;}
+  function resolver(G,v){var n=v.length,M=G.map(function(f,r){return f.concat([v[r]]);}),r,cc,q;
+    for(cc=0;cc<n;cc++){var piv=cc;for(r=cc+1;r<n;r++)if(Math.abs(M[r][cc])>Math.abs(M[piv][cc]))piv=r;var t=M[cc];M[cc]=M[piv];M[piv]=t;
+      for(r=0;r<n;r++)if(r!==cc){var fa=M[r][cc]/M[cc][cc];for(q=cc;q<=n;q++)M[r][q]-=fa*M[cc][q];}}
+    return M.map(function(f,r){return f[n]/M[r][r];});}
+  var b=new Array(P).fill(0),c=corr(b),C=0,jm=0;
+  for(j=0;j<P;j++)if(Math.abs(c[j])>C){C=Math.abs(c[j]);jm=j;}
+  var A=[jm],prohibida=null,out=[[C,b.slice()]];
+  for(var paso=0;paso<4*P&&C>1e-10;paso++){
+    var s=A.map(function(a){return Math.sign(c[a]);});
+    var G=A.map(function(a,p){return A.map(function(bb,q){var t=0;for(i=0;i<N;i++)t+=X[i][a]*X[i][bb];return t*s[p]*s[q];});});
+    var g1=resolver(G,A.map(function(){return 1;}));
+    var AA=1/Math.sqrt(g1.reduce(function(t,v){return t+v;},0)),w=g1.map(function(v){return v*AA;});
+    var uu=[];for(i=0;i<N;i++){var t=0;A.forEach(function(a,p){t+=X[i][a]*s[p]*w[p];});uu.push(t);}
+    var gam=C/AA,entra=null,sale=null;
+    for(j=0;j<P;j++){if(A.indexOf(j)>=0||j===prohibida)continue;var aj=0;for(i=0;i<N;i++)aj+=X[i][j]*uu[i];
+      [(C-c[j])/(AA-aj),(C+c[j])/(AA+aj)].forEach(function(v){if(v>1e-12&&v<gam){gam=v;entra=j;}});}
+    if(conLasso){A.forEach(function(a,p){var d=s[p]*w[p],v=-b[a]/d;if(v>1e-12&&v<gam){gam=v;sale=a;entra=null;}});}
+    A.forEach(function(a,p){b[a]+=gam*s[p]*w[p];});
+    C-=gam*AA; if(C<1e-10)C=0;
+    if(sale!==null){b[sale]=0;A.splice(A.indexOf(sale),1);prohibida=sale;}
+    else if(entra!==null){A.push(entra);prohibida=null;}
+    out.push([C,b.slice()]); c=corr(b);
+    if(entra===null&&sale===null)break;
+  }
+  return out;
+}
+
+  // coeficientes en un lambda cualquiera: el camino es lineal entre quiebres
+  function en(c, l) {
+    for (var q = 1; q < c.length; q++) {
+      if (l >= c[q][0]) {
+        var t = (l - c[q][0]) / (c[q - 1][0] - c[q][0]);
+        return c[q][1].map(function (v, j) { return v + t * (c[q - 1][1][j] - v); });
+      }
+    }
+    return c[c.length - 1][1];
+  }
 
   function dibujar() {
     while (svg.firstChild) svg.removeChild(svg.firstChild);
-    var lam = +cl.value, rho = +cc.value, conLasso = cm.value === "si";
-    el_.textContent = lam; ec.textContent = rho.toFixed(2);
-    sem = 4242;
-    var X = [], i, j, k;
-    for (i = 0; i < N; i++) { var f = []; for (j = 0; j < P; j++) f.push(nor()); X.push(f); }
-    for (i = 0; i < N; i++) X[i][2] = rho * X[i][1] + Math.sqrt(1 - rho * rho) * X[i][2];
-    var b0 = [2.0, -2.5, 0, 1.0, 0], y = [];
-    for (i = 0; i < N; i++) { var s = 0; for (j = 0; j < P; j++) s += b0[j] * X[i][j]; y.push(s + nor()); }
-    for (j = 0; j < P; j++) {
-      var m = 0; for (i = 0; i < N; i++) m += X[i][j]; m /= N;
-      var q = 0; for (i = 0; i < N; i++) { X[i][j] -= m; q += X[i][j] * X[i][j]; }
-      q = Math.sqrt(q); for (i = 0; i < N; i++) X[i][j] /= q;
-    }
-    var my = 0; for (i = 0; i < N; i++) my += y[i]; my /= N;
-    for (i = 0; i < N; i++) y[i] -= my;
-
-    // lasso por descenso por coordenadas para cada lambda de la rejilla
-    function resuelve(l) {
-      // OJO: todas las variables de bucle son locales. Compartir la de fuera
-      // costo un bucle infinito que el gate de visuales cazó colgandose.
-      var b = new Array(P).fill(0), t, jj, ii, kk;
-      var pena = conLasso ? l : 0;                 // sin la modificacion: minimos cuadrados
-      for (t = 0; t < 400; t++) {
-        for (jj = 0; jj < P; jj++) {
-          var rho2 = 0;
-          for (ii = 0; ii < N; ii++) {
-            var f2 = 0;
-            for (kk = 0; kk < P; kk++) if (kk !== jj) f2 += b[kk] * X[ii][kk];
-            rho2 += X[ii][jj] * (y[ii] - f2);
-          }
-          b[jj] = Math.sign(rho2) * Math.max(Math.abs(rho2) - pena, 0);
-        }
-      }
-      return b;
-    }
-    var LMAX = 100, K = 40, caminos = [];
-    for (k = 0; k <= K; k++) caminos.push(resuelve(k / K * LMAX / 10));
+    var rho = +cc.value, conLasso = cm.value === "si";
+    ec.textContent = rho.toFixed(2);
+    var D = datos(rho, 61);
+    var cLasso = camino(D, true), cLar = camino(D, false);
+    var principal = conLasso ? cLasso : cLar;
+    var LMAX = cLasso[0][0], lam = +cl.value / 100 * LMAX, j, q;
+    el_.textContent = lam.toFixed(2);
+    var BMAX = 0;
+    [cLasso, cLar].forEach(function (c) { c.forEach(function (p) { p[1].forEach(function (v) { BMAX = Math.max(BMAX, Math.abs(v)); }); }); });
+    BMAX *= 1.08;
     var px = function (l) { return X0 + l / LMAX * XW; };
-    var py = function (v) { return Y0 + (3.2 - Math.max(-3.2, Math.min(3.2, v))) / 6.4 * YH; };
+    var py = function (v) { return Y0 + (BMAX - v) / (2 * BMAX) * YH; };
+
+    for (j = 0; j < 5; j++) {
+      svg.appendChild(el("rect", { x: X0 + j * 64, y: 6, width: 12, height: 3, fill: COL[j] }));
+      svg.appendChild(el("text", { x: X0 + j * 64 + 17, y: 12, "font-size": 10.5, fill: C_T, opacity: .8 }, NOM[j]));
+    }
     svg.appendChild(el("rect", { x: X0, y: Y0, width: XW, height: YH, fill: "none", stroke: C_L, "stroke-width": 1, opacity: .6 }));
     svg.appendChild(el("path", { d: "M" + X0 + " " + py(0).toFixed(1) + " L" + (X0 + XW) + " " + py(0).toFixed(1), stroke: C_L, "stroke-width": 1, "stroke-dasharray": "3 3" }));
-    var vivas = 0;
-    for (j = 0; j < P; j++) {
-      var dd = "";
-      for (k = 0; k <= K; k++) dd += (k ? " L" : "M") + px(k / K * LMAX).toFixed(1) + " " + py(caminos[k][j]).toFixed(1);
-      svg.appendChild(el("path", { d: dd, stroke: COL[j], "stroke-width": 2, fill: "none" }));
+
+    function trazar(c, ancho, raya, opac) {
+      for (var jj = 0; jj < 5; jj++) {
+        var dd = "";
+        c.forEach(function (p, k) { dd += (k ? " L" : "M") + px(p[0]).toFixed(1) + " " + py(p[1][jj]).toFixed(1); });
+        var at = { d: dd, stroke: COL[jj], "stroke-width": ancho, fill: "none", opacity: opac };
+        if (raya) at["stroke-dasharray"] = raya;
+        svg.appendChild(el("path", at));
+      }
     }
-    var idx = Math.round(lam / LMAX * K), aqui = caminos[idx];
-    for (j = 0; j < P; j++) {
+    if (!conLasso) trazar(cLasso, 1.4, "5 4", .6);
+    trazar(principal, 2, null, 1);
+    principal.forEach(function (p) {
+      svg.appendChild(el("path", { d: "M" + px(p[0]).toFixed(1) + " " + (Y0 + YH) + " L" + px(p[0]).toFixed(1) + " " + (Y0 + YH + 6),
+        stroke: C_T, "stroke-width": 1.2, opacity: .7 }));
+    });
+
+    var aqui = en(principal, lam), vivas = 0;
+    for (j = 0; j < 5; j++) {
       if (Math.abs(aqui[j]) > 1e-8) vivas++;
       svg.appendChild(el("circle", { cx: px(lam).toFixed(1), cy: py(aqui[j]).toFixed(1), r: 3.5, fill: COL[j] }));
     }
     svg.appendChild(el("path", { d: "M" + px(lam).toFixed(1) + " " + Y0 + " L" + px(lam).toFixed(1) + " " + (Y0 + YH), stroke: C_T, "stroke-width": 1, opacity: .45 }));
-    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 14, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "penalización creciente →"));
+    svg.appendChild(el("text", { x: X0 + XW, y: Y0 + YH + 20, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "penalización creciente →"));
 
-    lec.innerHTML = "Con λ = <strong>" + lam + "</strong> quedan <strong>" + vivas + "</strong> coeficientes distintos de cero de " + P + ". " +
-      (conLasso
-        ? "Cada camino es lineal a trozos y los quiebres coinciden con los pasos del algoritmo: entre dos quiebres el camino queda determinado por sus extremos."
-        : "Sin la modificación no hay penalización: todos los coeficientes conservan su valor de mínimos cuadrados y ninguno llega a cero.") +
-      (rho > 0.7 ? " Con las columnas muy correlacionadas, los dos coeficientes correspondientes se reparten el efecto y sus caminos se cruzan." : "");
+    // el lasso saca una variable cuando su coeficiente llega a cero
+    var sale = null;
+    for (q = 1; q < cLasso.length && sale === null; q++) {
+      for (j = 0; j < 5; j++) {
+        if (Math.abs(cLasso[q - 1][1][j]) > 1e-9 && Math.abs(cLasso[q][1][j]) < 1e-12) { sale = [j, cLasso[q][0]]; break; }
+      }
+    }
+
+    var txt = "Con λ = <strong>" + lam.toFixed(2) + "</strong> quedan <strong>" + vivas + "</strong> coeficientes distintos de cero de 5. " +
+      "Cada camino es lineal a trozos; las marcas bajo el eje son los <strong>" + (principal.length - 1) + "</strong> puntos de quiebre. ";
+    if (sale === null) {
+      txt += conLasso
+        ? "Con esta correlación ningún coeficiente vuelve a cero, y el camino del lasso coincide con el de LAR."
+        : "Con esta correlación ningún coeficiente vuelve a cero, y LAR a secas coincide con el lasso (línea discontinua).";
+    } else {
+      txt += conLasso
+        ? "En λ = " + sale[1].toFixed(2) + " el coeficiente de " + NOM[sale[0]] + " llega a cero y la modificación lo saca del conjunto activo."
+        : "En λ = " + sale[1].toFixed(2) + " el coeficiente de " + NOM[sale[0]] + " llega a cero. El lasso (línea discontinua) lo saca del conjunto activo; LAR lo mantiene y el coeficiente cambia de signo, de modo que los dos caminos difieren desde ese punto.";
+    }
+    lec.innerHTML = txt;
   }
   cl.addEventListener("input", dibujar);
   cc.addEventListener("input", dibujar);

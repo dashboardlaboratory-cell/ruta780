@@ -5289,6 +5289,24 @@ rara, pesos, submuestreo, sobremuestreo y SMOTE, umbral por costes y la
 corrección de las probabilidades tras remuestrear). Orden: ML 45, Atributos 13,
 ML 47, ML 44.
 
+### 3.103 Tres visuales de ML corregidos (27-09-2026)
+
+Pendientes de la fase 3 que seguían abiertos:
+
+- **ML 25.** La opción «sin ella (LAR a secas)» dejaba todos los coeficientes
+  en su valor de mínimos cuadrados, y LAR también traza un camino desde cero.
+  El visual calcula ahora los dos caminos por homotopía exacta (los puntos de
+  quiebre, no una rejilla de λ), dibuja LAR con el lasso discontinuo debajo y
+  dice en qué λ una variable llega a cero. Con la semilla 61, a partir de
+  correlación 0,65 el lasso saca a x₃ y LAR le cambia el signo. El camino del
+  lasso se comprobó contra descenso por coordenadas en cada quiebre
+  (diferencia máxima 1e-13). El dibujo anterior recortaba el eje en ±3,2 con
+  coeficientes de hasta 14: la escala sale ahora del propio camino.
+- **ML 15.** Se quitó la rama `rExt < 1.0`, inalcanzable con el control que
+  empieza en 1,2.
+- **ML 39.** El autovalor mayor empezaba en 2 y el autovalor fijo λ = 3 quedaba
+  fuera del área. El control empieza ahora en 4.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
