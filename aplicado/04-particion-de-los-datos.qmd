@@ -1,0 +1,473 @@
+---
+title: "Partición de los datos: estratificada, por grupos y temporal"
+subtitle: "ML aplicado · Lección 04"
+nivel: L3
+modulo: aplicado
+fase: F4
+prereqs: [aplicado/01-planteamiento-y-linea-base, atributos/02-el-proceso-y-la-fuga, ml/06-validacion-cruzada]
+siguientes: []
+libro: "FES §3.3 Data Splitting · §3.4 Resampling"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="aplicado/04-particion-de-los-datos"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F4]{.item}
+[**Libro** FES 3.3 · 3.4]{.item}
+[**Prereqs** [Planteamiento](01-planteamiento-y-linea-base.qmd) · [El proceso y la fuga](../atributos/02-el-proceso-y-la-fuga.qmd) · [Validación cruzada](../ml/06-validacion-cruzada.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Elegir la unidad y el orden de la partición a partir del planteamiento: estratificar por la clase, agrupar por la unidad y ordenar por el tiempo.
+2. Medir el efecto de estratificar con una clase rara. Con 52 positivos en 1000 filas y un 20 % de prueba, la partición al azar deja entre 2 y 18 positivos en prueba; la estratificada, siempre 10. La desviación típica del coste estimado baja de 82,4 a 73,0, y la del AUC apenas cambia, de 0,0576 a 0,0562.
+3. Medir la sobreestimación de una partición al azar cuando la relación cambia con el tiempo: 0,8124 de AUC estimado, frente a 0,7594 con partición temporal y 0,7338 en los meses siguientes.
+4. Calcular el error estándar de la diferencia de acierto entre dos modelos evaluados en las mismas filas, y el tamaño de prueba necesario para distinguirlos: con 200 filas, el modelo mejor no queda por delante en un 23,8 % de las particiones.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **ML aplicado 01**: la unidad, el momento de corte y la métrica, que determinan cómo se parte.
+- **Atributos 02**: la fuga por la unidad de partición, medida con clientes de seis filas.
+- **Machine Learning 6**: la validación cruzada y sus pliegues.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **ML aplicado 05**: los pipelines, que repiten el preprocesamiento en cada pliegue de la partición elegida aquí.
+- **ML aplicado 06**: el ajuste de hiperparámetros, que necesita una partición más para no sobreestimar.
+- **ML aplicado 12**: la deriva de los datos, que la partición temporal anticipa.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $N$ | ene mayúscula | Filas de la muestra completa |
+| $K$ | ka | Positivos en la muestra completa |
+| $n$ | ene | Filas del conjunto de prueba |
+| $b$ | be | Filas de prueba en las que solo acierta el modelo A |
+| $c$ | ce | Filas de prueba en las que solo acierta el modelo B |
+| $\hat d$ | de gorro | La diferencia de acierto estimada, B menos A |
+| $\operatorname{EE}$ | e e | El error estándar |
+| AUC | a u ce | El área bajo la curva ROC |
+:::
+
+## 1. Tipos de partición
+
+FES §3.3 establece que el conjunto de prueba se aparta al principio y no se usa hasta la evaluación final, y §3.4 describe los esquemas de remuestreo que se aplican al resto. Esta lección trata tres decisiones sobre cómo se hace esa partición.
+
+::: {.definicion}
+**Definición 4.1 (tipos de partición).**
+
+1. **Al azar**: cada fila se asigna a entrenamiento o a prueba con la misma probabilidad, sin mirar ninguna columna.
+2. **[Partición estratificada]{.g}**: se parte por separado dentro de cada clase de la variable objetivo, de modo que la proporción de cada clase en prueba es la misma que en la muestra.
+3. **Por grupos**: todas las filas de una misma unidad (un cliente, un paciente, un hogar) van al mismo conjunto.
+4. **[Partición temporal]{.g}**: las filas anteriores a una fecha forman el entrenamiento y las posteriores la prueba.
+:::
+
+La elección se deduce del planteamiento de ML aplicado 01. La partición reproduce la situación en que se usará el modelo: si los casos nuevos serán clientes que el modelo no ha visto, se parte por clientes; si serán meses futuros, por tiempo. La partición por grupos se midió en Atributos 02: partir por filas informaba de 0,7009 cuando el rendimiento con clientes nuevos era 0,5449.
+
+## 2. Estratificar con una clase rara
+
+::: {.proposicion}
+**Proposición 4.2 (positivos en prueba).** Si se eligen $n$ filas de prueba al azar entre $N$ filas con $K$ positivos, el número de positivos en prueba sigue una distribución hipergeométrica, con media $nK/N$ y desviación típica
+$$
+\sqrt{n\,\frac{K}{N}\Bigl(1-\frac{K}{N}\Bigr)\frac{N-n}{N-1}} .
+$$
+Con partición estratificada, el número es $\operatorname{round}(nK/N)$ en todas las particiones.
+:::
+
+::: {.demostracion}
+*Demostración.* Elegir $n$ filas sin reemplazo entre $N$, de las que $K$ son positivas, es la definición de la distribución hipergeométrica, cuya media y varianza son las indicadas. En la partición estratificada se eligen $\operatorname{round}(nK/N)$ positivos y el resto negativos, sin azar en el número. Con $N=1000$, $K=52$ y $n=200$, la media es 10,4 y la desviación típica 2,81. En 400 particiones al azar, el número de positivos en prueba va de 2 a 18. ∎
+:::
+
+La celda repite 400 veces la partición, ajusta una regresión logística con el entrenamiento y mide en prueba el AUC y el coste por cada 1000 filas con costes 1 y 10.
+
+```{pyodide}
+import numpy as np
+
+def sigmoide(z):
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -30.0, 30.0)))
+
+def logistica(X, y, pasos=25, lam=1e-4):
+    Z = np.column_stack([np.ones(len(X)), X])
+    b = np.zeros(Z.shape[1])
+    for _ in range(pasos):
+        p = sigmoide(Z @ b)
+        H = Z.T @ (Z * (p * (1.0 - p))[:, None]) + lam * np.eye(len(b))
+        b = b + np.linalg.solve(H, Z.T @ (y - p) - lam * b)
+    return b
+
+def puntua(b, X):
+    return np.column_stack([np.ones(len(X)), X]) @ b
+
+def auc(y, s):
+    o = np.argsort(s, kind="stable")
+    r = np.empty(len(s)); r[o] = np.arange(1.0, len(s) + 1.0)
+    n1 = y.sum(); n0 = len(y) - n1
+    return (r[y == 1].sum() - n1 * (n1 + 1.0) / 2.0) / (n1 * n0)
+
+# poblacion fija de 1000 filas con un 5 % de positivos
+rng = np.random.default_rng(40)
+n = 1000
+X = rng.standard_normal((n, 3))
+y = (rng.random(n) < sigmoide(-3.6 + 1.2 * X[:, 0] - 0.8 * X[:, 1])).astype(float)
+print("positivos: %d de %d" % (y.sum(), n))
+
+def particion(rng, estratificada, frac=0.2):
+    if not estratificada:
+        o = rng.permutation(n); k = int(frac * n)
+        return o[k:], o[:k]
+    te = []
+    for c in (0.0, 1.0):
+        idx = rng.permutation(np.where(y == c)[0])
+        te.extend(idx[:int(round(frac * len(idx)))])
+    te = np.array(te)
+    return np.setdiff1d(np.arange(n), te), te
+
+def coste(yv, p, c_fp=1.0, c_fn=10.0):
+    a = p > c_fp / (c_fp + c_fn)
+    return 1000.0 * (c_fp * np.sum(a & (yv == 0)) + c_fn * np.sum(~a & (yv == 1))) / len(yv)
+
+print("particion      positivos en prueba  desv. tipica del AUC  desv. tipica del coste")
+for est in (False, True):
+    r = np.random.default_rng(0); pos, aucs, cs = [], [], []
+    for _ in range(400):
+        tr, te = particion(r, est)
+        b = logistica(X[tr], y[tr])
+        p = sigmoide(puntua(b, X[te]))
+        pos.append(y[te].sum()); aucs.append(auc(y[te], p)); cs.append(coste(y[te], p))
+    print("%-14s %8d a %-8d %18.4f %23.1f" % ("estratificada" if est else "al azar",
+          min(pos), max(pos), np.std(aucs), np.std(cs)))
+```
+
+La estratificación elimina las particiones extremas, con 2 o 18 positivos, y reduce la desviación típica del coste de 82,4 a 73,0. La del AUC apenas cambia, de 0,0576 a 0,0562. El AUC se calcula comparando positivos con negativos, y con 10 positivos en prueba su variabilidad depende sobre todo de cuáles son esos 10, no de cuántos. El coste depende además de la proporción de positivos, que es la parte que la estratificación fija.
+
+La conclusión práctica es que estratificar conviene y no basta. Con pocos positivos, la estimación sigue siendo imprecisa, y la forma de reducirla es usar más positivos: validación cruzada con todos los pliegues, repetida con varias semillas, en lugar de un único conjunto de prueba.
+
+**Modo de falla.** Se aparta un 20 % de prueba al azar, se obtiene un AUC de 0,90 y se informa. Con 10 positivos en prueba, otra partición podría haber dado 0,80. El número de positivos del conjunto de prueba se informa junto a la métrica.
+
+## 3. Partición temporal
+
+::: {.proposicion}
+**Proposición 4.3 (partición al azar con relación cambiante).** Si la relación entre los atributos y la variable objetivo cambia con el tiempo, una partición al azar mezcla en entrenamiento y en prueba filas de todas las fechas, y estima el rendimiento sobre la distribución media del periodo. Una partición temporal entrena con el pasado y prueba con el periodo más reciente, y estima el rendimiento sobre una distribución más parecida a la del uso del modelo.
+:::
+
+::: {.demostracion}
+*Demostración.* En la partición al azar, cada fila de prueba tiene en entrenamiento filas de su mismo mes, y el modelo ajusta la relación media del periodo, que es la que se evalúa. En la partición temporal, la prueba contiene los meses más recientes, que el modelo no vio, y la diferencia con la relación media se refleja en el error. La celda simula 24 meses de 800 filas en los que el efecto de $x_1$ se debilita y el de $x_2$ se refuerza. Con los 18 primeros disponibles, la partición al azar estima 0,8124 de AUC y la temporal, que entrena con los meses 1 a 15 y prueba con los 16 a 18, estima 0,7594. El modelo entrenado con los 18 meses obtiene 0,7338 en los meses 19 a 24. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def sigmoide(z):
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -30.0, 30.0)))
+
+def logistica(X, y, pasos=25, lam=1e-4):
+    Z = np.column_stack([np.ones(len(X)), X])
+    b = np.zeros(Z.shape[1])
+    for _ in range(pasos):
+        p = sigmoide(Z @ b)
+        H = Z.T @ (Z * (p * (1.0 - p))[:, None]) + lam * np.eye(len(b))
+        b = b + np.linalg.solve(H, Z.T @ (y - p) - lam * b)
+    return b
+
+def puntua(b, X):
+    return np.column_stack([np.ones(len(X)), X]) @ b
+
+def auc(y, s):
+    o = np.argsort(s, kind="stable")
+    r = np.empty(len(s)); r[o] = np.arange(1.0, len(s) + 1.0)
+    n1 = y.sum(); n0 = len(y) - n1
+    return (r[y == 1].sum() - n1 * (n1 + 1.0) / 2.0) / (n1 * n0)
+
+# 24 meses; el efecto de x1 se debilita y el de x2 se refuerza con el tiempo
+rng = np.random.default_rng(41)
+mes = np.repeat(np.arange(1, 25), 800)
+X = rng.standard_normal((len(mes), 2))
+w = (mes - 1) / 23.0
+y = (rng.random(len(mes)) < sigmoide(-1.0 + (1.8 - 1.6 * w) * X[:, 0]
+                                     + (0.2 + 1.6 * w) * X[:, 1])).astype(float)
+hist = mes <= 18                         # los datos disponibles hoy
+
+# 1. particion al azar de los 18 meses
+o = np.random.default_rng(0).permutation(np.where(hist)[0])
+te, tr = o[:len(o) // 5], o[len(o) // 5:]
+a_azar = auc(y[te], puntua(logistica(X[tr], y[tr]), X[te]))
+# 2. particion temporal: entrenar con 1-15 y probar con 16-18
+tr2, te2 = mes <= 15, (mes >= 16) & hist
+a_temp = auc(y[te2], puntua(logistica(X[tr2], y[tr2]), X[te2]))
+# 3. lo que ocurre despues: modelo con los 18 meses, usado en los meses 19-24
+b = logistica(X[hist], y[hist]); fut = mes >= 19
+a_fut = auc(y[fut], puntua(b, X[fut]))
+print("AUC estimado con particion al azar : %.4f" % a_azar)
+print("AUC estimado con particion temporal: %.4f" % a_temp)
+print("AUC en los meses 19 a 24           : %.4f" % a_fut)
+print("AUC por mes futuro:", [round(float(auc(y[mes == m], puntua(b, X[mes == m]))), 3)
+                            for m in range(19, 25)])
+```
+
+La partición temporal no elimina el error de estimación: 0,7594 frente a 0,7338. El rendimiento baja en los meses siguientes, de 0,763 en el mes 20 a 0,698 en el 24, porque la relación sigue cambiando después del último dato. La partición temporal estima el rendimiento en el periodo inmediato; la vigilancia de la caída posterior es el tema de ML aplicado 12. Series de tiempo 07 trata el mismo problema para pronósticos, con el origen móvil.
+
+## 4. Tamaño del conjunto de prueba
+
+Un conjunto de prueba se usa a menudo para elegir entre dos modelos. La diferencia de acierto observada tiene un error de estimación que depende del número de filas y de cuántas filas clasifican distinto los dos modelos.
+
+::: {.proposicion}
+**Proposición 4.4 (error estándar de una diferencia emparejada).** Si dos modelos se evalúan en las mismas $n$ filas, y en $b$ de ellas solo acierta A y en $c$ solo acierta B, la diferencia de acierto es $\hat d=(c-b)/n$ y su error estándar es
+$$
+\operatorname{EE}(\hat d)=\sqrt{\frac{1}{n}\Bigl(\frac{b+c}{n}-\hat d^{\,2}\Bigr)} .
+$$
+:::
+
+::: {.demostracion}
+*Demostración.* Para cada fila, la diferencia entre el acierto de B y el de A vale $+1$ si solo acierta B, $-1$ si solo acierta A y 0 en otro caso. Su media es $\hat d$ y su media de cuadrados es $(b+c)/n$, de modo que su varianza es $(b+c)/n-\hat d^{\,2}$. La varianza de la media de $n$ filas independientes es esa cantidad dividida por $n$. Las filas en las que los dos modelos coinciden no aportan varianza, y por eso el error estándar emparejado es menor que el que trata los dos aciertos como independientes. En la celda, con aciertos de 0,80 y 0,82 y un 12 % de filas discordantes, el error estándar es 0,0245 con 200 filas, igual al simulado, frente a 0,0392 sin emparejar. ∎
+:::
+
+```{pyodide}
+import numpy as np
+# acierto por fila de dos modelos sobre la misma poblacion:
+# ambos aciertan, solo A, solo B, ninguno
+p = np.array([0.75, 0.05, 0.07, 0.13])
+print("acierto de A = %.2f, de B = %.2f" % (p[0] + p[1], p[0] + p[2]))
+rng = np.random.default_rng(42)
+print("filas de prueba  EE de la diferencia (formula)  (simulado)  EE sin emparejar  P(B gana)")
+for n in (200, 1000, 5000):
+    k = rng.multinomial(n, p, size=4000)
+    d = (k[:, 2] - k[:, 1]) / n                     # acierto de B menos acierto de A
+    b, c = p[1], p[2]
+    ee = np.sqrt((b + c - (c - b) ** 2) / n)
+    ee_ind = np.sqrt((0.8 * 0.2 + 0.82 * 0.18) / n)
+    print("%15d %30.4f %11.4f %17.4f %10.3f" % (n, ee, d.std(), ee_ind, np.mean(d > 0)))
+```
+
+Con 200 filas de prueba, el modelo con acierto 0,82 supera al de 0,80 en el 76,2 % de los conjuntos de prueba posibles: en el 23,8 % restante empata o queda por detrás, y no se elegiría. Con 1000 filas, el porcentaje baja al 3,6 %. Las diferencias de una o dos centésimas entre modelos solo se pueden decidir con miles de filas de prueba, o con validación cruzada sobre toda la muestra.
+
+El visual muestra la distribución de $\hat d$ según el tamaño de la prueba, la diferencia verdadera y la fracción de filas discordantes. El área a la izquierda de cero es la probabilidad de elegir el modelo peor.
+
+```{=html}
+<div class="viz-dif04">
+  <div class="controles">
+    <label>Filas de prueba <input id="d4-n" type="range" min="2" max="4" step="0.05" value="2.3"> <span id="d4-n-v">200</span></label>
+    <label>Diferencia verdadera <input id="d4-d" type="range" min="0" max="0.06" step="0.005" value="0.02"> <span id="d4-d-v">0.020</span></label>
+    <label>Filas discordantes <input id="d4-q" type="range" min="0.04" max="0.4" step="0.01" value="0.12"> <span id="d4-q-v">0.12</span></label>
+  </div>
+  <svg id="d4-svg" viewBox="0 0 660 260" role="img" aria-label="Distribución de la diferencia de acierto estimada entre dos modelos, con el área que lleva a elegir el modelo peor."></svg>
+  <p class="lectura" id="d4-lectura"></p>
+</div>
+<style>
+.viz-dif04 { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-dif04 .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-dif04 label { display: flex; align-items: center; gap: .4rem; }
+.viz-dif04 input[type=range] { width: 140px; padding: 0; }
+.viz-dif04 svg { width: 100%; height: auto; display: block; }
+.viz-dif04 .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("d4-svg"), lec = document.getElementById("d4-lectura");
+  var cn = document.getElementById("d4-n"), cd = document.getElementById("d4-d"), cq = document.getElementById("d4-q");
+  var en = document.getElementById("d4-n-v"), ed = document.getElementById("d4-d-v"), eq = document.getElementById("d4-q-v");
+  var X0 = 40, X1 = 620, Y0 = 30, Y1 = 206, DM = 0.12;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // funcion de distribucion normal (Abramowitz y Stegun 7.1.26)
+  function Phi(z) {
+    var t = 1 / (1 + 0.3275911 * Math.abs(z) / Math.SQRT2);
+    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-z * z / 2);
+    return z >= 0 ? 0.5 * (1 + y) : 0.5 * (1 - y);
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var n = Math.round(Math.pow(10, +cn.value)), d = +cd.value, q = Math.max(+cq.value, d + 0.005);
+    en.textContent = n; ed.textContent = d.toFixed(3); eq.textContent = q.toFixed(2);
+    var ee = Math.sqrt((q - d * d) / n);
+    var px = function (v) { return X0 + (v + DM) / (2 * DM) * (X1 - X0); };
+    var dens = function (v) { return Math.exp(-0.5 * Math.pow((v - d) / ee, 2)) / (ee * Math.sqrt(2 * Math.PI)); };
+    var pico = dens(d);
+    var py = function (h) { return Y1 - h / pico * (Y1 - Y0); };
+    var k, v, curva = "", izq = "M" + px(-DM) + " " + Y1;
+    for (k = 0; k <= 240; k++) {
+      v = -DM + 2 * DM * k / 240;
+      curva += (k ? " L" : "M") + px(v).toFixed(1) + " " + py(dens(v)).toFixed(1);
+      if (v <= 0) izq += " L" + px(v).toFixed(1) + " " + py(dens(v)).toFixed(1);
+    }
+    izq += " L" + px(0) + " " + Y1 + " Z";
+    svg.appendChild(el("path", { d: izq, fill: C_B, "fill-opacity": .35 }));
+    svg.appendChild(el("path", { d: curva, fill: "none", stroke: C_A, "stroke-width": 2 }));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + Y1 + " L" + X1 + " " + Y1, stroke: C_L }));
+    [-0.1, -0.05, 0, 0.05, 0.1].forEach(function (t) {
+      svg.appendChild(el("text", { x: px(t), y: Y1 + 16, "text-anchor": "middle", "font-size": 10, fill: C_T, opacity: .7 }, t.toFixed(2)));
+    });
+    svg.appendChild(el("path", { d: "M" + px(0) + " " + Y0 + " L" + px(0) + " " + Y1, stroke: C_T, "stroke-dasharray": "3 3", opacity: .6 }));
+    svg.appendChild(el("text", { x: px(0) - 6, y: Y0 - 8, "text-anchor": "end", "font-size": 10.5, fill: C_B }, "gana A"));
+    svg.appendChild(el("text", { x: px(0) + 6, y: Y0 - 8, "font-size": 10.5, fill: C_A }, "gana B"));
+    svg.appendChild(el("text", { x: X1, y: Y1 + 36, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "acierto de B menos acierto de A →"));
+    var mal = Phi(-d / ee);
+    lec.innerHTML = "Con <strong>" + n + "</strong> filas de prueba, una diferencia verdadera de <strong>" + d.toFixed(3) + "</strong> y un " + (100 * q).toFixed(0) +
+      " % de filas discordantes, el error estándar de la diferencia es <strong>" + ee.toFixed(4) + "</strong>. " +
+      (d > 0 ? "La probabilidad de que el conjunto de prueba elija el modelo peor, con la aproximación normal, es <strong>" + (100 * mal).toFixed(1) + " %</strong>." :
+       "Los dos modelos son igual de buenos, y cada uno gana en la mitad de los conjuntos de prueba.");
+  }
+  cn.addEventListener("input", dibujar);
+  cd.addEventListener("input", dibujar);
+  cq.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 5. Limitaciones
+
+- La lección usa un solo conjunto de prueba para medir cada efecto. En la práctica se combina con validación cruzada sobre el entrenamiento, que FES §3.4 describe con sus variantes; la partición elegida aquí se aplica también a los pliegues.
+- La partición temporal supone que el cambio es gradual. Un cambio brusco, como una regulación nueva, no se anticipa con ninguna partición del pasado.
+- El error estándar de la Proposición 4.4 supone filas independientes. Con grupos, las filas de un mismo cliente están correlacionadas y el error estándar real es mayor; se calcula remuestreando grupos.
+- La estratificación se trató para una variable objetivo binaria. Para una variable continua se estratifica por intervalos de sus cuantiles, con el mismo propósito.
+
+## Ejercicios
+
+### Ejercicio 1, Positivos en el conjunto de prueba
+
+La muestra tiene `N` filas con `K` positivos y se apartan `n` filas de prueba al azar. Completar la línea de `media` con el número esperado de positivos en prueba y la de `sd` con su desviación típica, según la Proposición 4.2. La celda imprime los dos valores; deben dar `10.4 2.8098`.
+
+```{pyodide}
+#| exercise: ex_hiper
+import numpy as np
+
+N, K, n = 1000, 52, 200
+
+media = ______
+sd = ______
+
+print(round(media, 4), round(float(sd), 4))
+```
+
+::: {.hint exercise="ex_hiper"}
+La media es $nK/N$. La desviación típica es la raíz de $n\,(K/N)(1-K/N)(N-n)/(N-1)$.
+:::
+
+::: {.solution exercise="ex_hiper"}
+```{pyodide}
+import numpy as np
+
+N, K, n = 1000, 52, 200
+
+media = n * K / N
+sd = np.sqrt(n * (K / N) * (1 - K / N) * (N - n) / (N - 1))
+
+print(round(media, 4), round(float(sd), 4))
+```
+
+Un intervalo de dos desviaciones típicas va de unos 5 a unos 16 positivos. El factor $(N-n)/(N-1)=0{,}8008$ corrige por muestrear sin reemplazo y reduce la desviación típica un 10,5 % respecto a la binomial.
+:::
+
+```{pyodide}
+#| exercise: ex_hiper
+#| check: true
+import numpy as np
+if abs(float(media) - 10.4) < 1e-9 and abs(float(sd) - 2.8098) < 5e-5:
+    feedback = {"correct": True, "message": "Correcto: media 10.4 y desviación típica 2.8098."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba una media de 10.4 y una desviación típica de 2.8098."}
+feedback
+```
+
+### Ejercicio 2, ¿Es real la mejora?
+
+Dos modelos se evalúan en las mismas `n` filas de prueba. En `b` filas solo acierta el modelo A y en `c` solo acierta el B. Completar la línea de `d` con la diferencia de acierto, B menos A, y la de `ee` con su error estándar según la Proposición 4.4. La celda imprime `d`, `ee` y su cociente; deben dar `0.03 0.01727 1.737`.
+
+```{pyodide}
+#| exercise: ex_emparejado
+import numpy as np
+
+n, b, c = 500, 30, 45
+
+d = ______
+ee = ______
+
+print(round(d, 4), round(float(ee), 5), round(float(d / ee), 3))
+```
+
+::: {.hint exercise="ex_emparejado"}
+$d=(c-b)/n$. Dentro de la raíz van $(b+c)/n$ menos $d^2$, y el resultado se divide por $n$.
+:::
+
+::: {.solution exercise="ex_emparejado"}
+```{pyodide}
+import numpy as np
+
+n, b, c = 500, 30, 45
+
+d = (c - b) / n
+ee = np.sqrt(((b + c) / n - d ** 2) / n)
+
+print(round(d, 4), round(float(ee), 5), round(float(d / ee), 3))
+```
+
+La diferencia es de tres puntos y su error estándar de 1,7 puntos: el cociente, 1,737, queda por debajo de 1,96, y con estas 500 filas la mejora no se distingue del azar al nivel habitual del 5 %.
+:::
+
+```{pyodide}
+#| exercise: ex_emparejado
+#| check: true
+import numpy as np
+if abs(float(d) - 0.03) < 1e-9 and abs(float(ee) - 0.01727) < 5e-6:
+    feedback = {"correct": True, "message": "Correcto: d = 0.03 con error estándar 0.01727."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba d = 0.03 y un error estándar de 0.01727."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Aplicado 4**:
+
+1. Repetir la Sección 2 con validación cruzada estratificada de 5 pliegues, repetida con 10 semillas, y comparar la desviación típica del AUC medio con la del conjunto de prueba único.
+2. Añadir a los datos de la Sección 3 un identificador de cliente con seis filas por cliente repartidas en meses distintos, y diseñar una partición que sea a la vez temporal y por grupos.
+3. Calcular cuántas filas de prueba hacen falta para que el modelo peor gane en menos del 5 % de los conjuntos, con aciertos de 0,80 y 0,81 y un 10 % de filas discordantes. Guardar en `50-Errores/` la regla para elegir el tamaño de la prueba.
+
+## Del libro
+
+FES §3.3, *Data Splitting*, recomienda apartar el conjunto de prueba antes de cualquier otra operación, sin volver a usarlo hasta la evaluación final, y trata la proporción entre entrenamiento y prueba y el muestreo estratificado por la variable objetivo. FES §3.4, *Resampling*, describe la validación cruzada en $V$ bloques con sus variantes, la validación cruzada de Monte Carlo, el bootstrap y el origen móvil para datos temporales, que son los esquemas con que se evalúa dentro del entrenamiento. Esta lección mide las consecuencias de tres de esas decisiones con datos cuyo proceso generador se conoce.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- La partición reproduce la situación de uso: clientes nuevos, por grupos; meses futuros, por tiempo.
+- Positivos en prueba al azar: hipergeométrica, con media $nK/N$.
+- Con 52 positivos en 1000 filas y 200 de prueba: entre 2 y 18 positivos al azar, siempre 10 estratificando.
+- Estratificar baja la desviación típica del coste de 82,4 a 73,0; la del AUC apenas cambia.
+- Con pocos positivos, la imprecisión se reduce con más positivos: validación cruzada repetida.
+- Con relación cambiante: 0,8124 al azar, 0,7594 temporal, 0,7338 en los meses siguientes.
+- La partición temporal estima el periodo inmediato; la caída posterior se vigila en producción.
+- Diferencia emparejada: $\operatorname{EE}=\sqrt{((b+c)/n-\hat d^{\,2})/n}$.
+- Las filas en que los dos modelos coinciden no aportan varianza.
+- Con 200 filas, el modelo de 0,82 no supera al de 0,80 en el 23,8 % de los conjuntos de prueba.
+- El número de positivos de la prueba se informa junto a la métrica.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos. La estratificación, con 1000 filas y 52 positivos: entre 2 y 18 positivos en 400 particiones al azar, 10 en todas las estratificadas; desviaciones típicas del AUC de 0,0576 y 0,0562 y del coste de 82,4 y 73,0. La partición temporal, con 24 meses de 800 filas: AUC de 0,8124 al azar, 0,7594 temporal y 0,7338 en los meses 19 a 24, con valores mensuales de 0,735 a 0,698. La diferencia emparejada, con aciertos de 0,80 y 0,82 y un 12 % de discordancia: errores estándar de 0,0245, 0,0109 y 0,0049 con 200, 1000 y 5000 filas, iguales a los simulados, frente a 0,0392, 0,0175 y 0,0078 sin emparejar, y probabilidades de que gane el mejor de 0,762, 0,964 y 1,000. La regresión logística y el AUC están escritos con NumPy. Las Proposiciones 4.2 y 4.4 se demuestran en la página; la 4.3 se argumenta y se mide.
+
+**Lo que viene de los libros.** La regla de apartar el conjunto de prueba antes de todo, la proporción entre conjuntos, el muestreo estratificado y el catálogo de esquemas de remuestreo, de FES §3.3 y §3.4.
+
+**Lo que se usa de otras lecciones sin repetir.** La fuga por la unidad de partición, de Atributos 02. La validación cruzada, de Machine Learning 6. El origen móvil para pronósticos, de Series de tiempo 07.
+
+**Lo que es mío, no del libro.** La medición separada del efecto de la estratificación sobre el AUC y sobre el coste, que muestra que estratificar fija la proporción pero no el número de positivos que hacen falta. El ejemplo de relación cambiante con las tres estimaciones y la serie mensual posterior. La Proposición 4.4 aplicada a elegir el tamaño de la prueba, y el visual que muestra la probabilidad de elegir el modelo peor.
+:::
