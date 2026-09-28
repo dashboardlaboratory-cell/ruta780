@@ -5347,6 +5347,30 @@ que `salidas.py` no las ejecute sin los datos. Se probó además en Pyodide
 Con pandas 3 las columnas de texto ya no son `object` y `.values` de un
 `DataFrame` es de solo lectura: usar `is_numeric_dtype` y `to_numpy(copy=True)`.
 
+**Módulo completo el 28-09-2026**: 13 lecciones y 4 casos. Decisiones que
+conviene recordar:
+
+- Las celdas no usan scikit-learn cuando sus cifras se afirman: en local hay
+  0.24, en el CI 1.9 y en Pyodide otra. El boosting de la 09, el bosque de
+  aislamiento y el LOF de la 13 y la validación anidada de la 06 están
+  escritos con NumPy. Donde se usa scikit-learn (lección 05, casos), se
+  comprobó que da lo mismo en las tres versiones.
+- Resultados que contradicen la intuición y se publicaron así: la búsqueda
+  aleatoria no siempre gana a la rejilla (depende de dónde caen los valores
+  de la rejilla); bajar la tasa de aprendizaje no mejoró la pérdida con parada
+  temprana; en un árbol, imputar una constante equivale a la rama propia de
+  los faltantes; la validación anidada es algo pesimista con 40
+  configuraciones.
+- Cada caso tiene una trampa comprobada en su bloque de verificación: caso 1,
+  el método por correlaciones conserva género y ciudad; caso 2, el salario
+  delata el resultado; caso 3, entrenar con clases equilibradas gana menos
+  que aprobar todo; caso 4, dos supermercados caen un 25 % en junio de 2024
+  y 30 días anómalos.
+- Las lecciones 08, 12 y 13 no tienen libro verificado: el campo `libro` es
+  «—» y el bloque Del libro lo dice.
+
+Siguiente: ML 44 (discriminante por mezclas y densidad de núcleo).
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
