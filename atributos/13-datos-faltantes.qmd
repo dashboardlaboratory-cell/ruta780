@@ -1,0 +1,661 @@
+---
+title: "Datos faltantes: indicadores, imputación e imputación múltiple"
+subtitle: "Feature Engineering · Lección 13"
+nivel: L3
+modulo: atributos
+fase: F2
+prereqs: [estadistica/15-datos-faltantes, aplicado/02-exploracion-y-calidad, atributos/02-el-proceso-y-la-fuga]
+siguientes: []
+libro: "FES, cap. 8 Handling Missing Data"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="atributos/13-datos-faltantes"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F2]{.item}
+[**Libro** FES 8]{.item}
+[**Prereqs** [Datos faltantes](../estadistica/15-datos-faltantes.qmd) · [Exploración y calidad](../aplicado/02-exploracion-y-calidad.qmd) · [El proceso y la fuga](02-el-proceso-y-la-fuga.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Añadir un indicador de faltante y medir cuándo aporta. Con la edad ausente al azar, el indicador no cambia el error de predicción del gasto (9,0160 frente a 9,0211); cuando la ausencia depende del gasto, lo baja de 9,3401 a 8,4673.
+2. Imputar la edad por la mediana, por regresión sobre los otros atributos y por vecinos, y medir el efecto sobre el modelo: la mediana reduce el coeficiente de la edad de 0,80 a 0,4602; la regresión lo deja en 0,8136.
+3. Medir la fuga de imputar con la variable objetivo antes de partir la muestra: el error validado en las filas imputadas es 5,6023, frente a 8,8904 con la imputación correcta, y en datos nuevos el modelo con fuga es peor.
+4. Aplicar la imputación múltiple con las reglas de Rubin para hacer inferencia: la cobertura del intervalo del 95 % es 0,940, frente a 0,257 con una imputación única por regresión.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Estadística 15**: los mecanismos MCAR, MAR y MNAR, el sesgo de los casos completos y la varianza tras imputar por la media.
+- **ML aplicado 02**: los valores centinela, que se convierten en faltantes antes de aplicar esta lección.
+- **Atributos 02**: la fuga de información por pasos ajustados fuera de la validación.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **ML aplicado 05**: los pipelines, que colocan la imputación dentro de cada pliegue.
+- **ML aplicado 09**: el gradient boosting, que trata los faltantes sin imputar.
+- **Atributos 16**: el pipeline completo de preprocesamiento.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $R_i$ | erre i | El indicador de respuesta: 1 si la edad de la fila $i$ se observa, 0 si falta |
+| $f$ | efe | La fracción de filas con la edad ausente |
+| $M$ | eme | El número de imputaciones |
+| $\hat q_m$ | q gorro eme | La estimación del coeficiente con el conjunto imputado $m$ |
+| $U_m$ | u eme | La varianza estimada de $\hat q_m$ |
+| $\bar q$ | q barra | La media de las $M$ estimaciones |
+| $\bar U$ | u barra | La varianza dentro de las imputaciones: la media de las $U_m$ |
+| $B$ | be | La varianza entre imputaciones: la varianza muestral de las $\hat q_m$ |
+| $T$ | te | La varianza total de Rubin |
+| RECM | erre e ce eme | La raíz del error cuadrático medio |
+:::
+
+## 1. El indicador de faltante
+
+La lección usa una tabla de clientes con edad, antigüedad, ingreso mensual y gasto mensual. El gasto es la variable objetivo. La edad falta en alrededor del 30 % de las filas; la antigüedad y el ingreso están completos y se correlacionan con la edad. Estadística 15 estudió los mecanismos de ausencia y su efecto sobre la estimación de una media. Aquí se estudia su efecto sobre un modelo de predicción.
+
+::: {.definicion}
+**Definición 13.1 ([indicador de faltante]{.g}).** El indicador de faltante de una columna es una columna nueva que vale 1 en las filas donde el valor falta y 0 en las demás. Se añade al modelo junto a la columna imputada.
+:::
+
+::: {.proposicion}
+**Proposición 13.2 (cuándo aporta el indicador).** Si la ausencia es independiente de todo (MCAR), el indicador es independiente de la variable objetivo dados los atributos, y no mejora la predicción. Si la probabilidad de ausencia depende de la variable objetivo, el indicador contiene información sobre ella y la predicción mejora al incluirlo, siempre que el mecanismo sea el mismo en los datos nuevos.
+:::
+
+::: {.demostracion}
+*Demostración.* Bajo MCAR, $R$ es independiente de $(x,y)$, y en particular $E[y\mid x,R]=E[y\mid x]$: el indicador no añade nada a la media condicional. Si $P(R=0\mid y)$ varía con $y$, por el teorema de Bayes la distribución de $y$ entre las filas con $R=0$ difiere de la de las filas con $R=1$, y $E[y\mid x,R]$ depende de $R$. En la celda, con ausencia MCAR el error de predicción es 9,0160 sin indicador y 9,0211 con él. Cuando la edad falta más a menudo en los clientes de gasto bajo, pasa de 9,3401 a 8,4673. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def clientes(n, rng, mecanismo):
+    """Edad, antiguedad y gasto; la edad falta en un 30 % de las filas."""
+    edad = rng.normal(41, 12, n)
+    antig = 0.25 * (edad - 41) + rng.normal(6, 3, n)          # anos de cliente
+    ingreso = 1500 + 30 * (edad - 41) + rng.normal(0, 300, n)   # mensual
+    gasto = 20 + 0.8 * edad + 1.5 * antig + rng.normal(0, 8, n)
+    if mecanismo == "MCAR":
+        falta = rng.random(n) < 0.30
+    else:                                                     # depende del gasto
+        z = (gasto - gasto.mean()) / gasto.std()
+        falta = rng.random(n) < 1 / (1 + np.exp(0.85 + 1.5 * z))
+    edad_obs = np.where(falta, np.nan, edad)
+    return edad_obs, np.column_stack([antig, ingreso]), gasto, edad
+
+def mco(X, y):
+    Z = np.column_stack([np.ones(len(y)), X])
+    return np.linalg.lstsq(Z, y, rcond=None)[0]
+
+def predice(b, X):
+    return np.column_stack([np.ones(len(X)), X]) @ b
+
+rng = np.random.default_rng(13)
+print("mecanismo  fraccion  RECM mediana  RECM mediana+indicador")
+for mec in ("MCAR", "gasto"):
+    e, o, g, _ = clientes(4000, rng, mec)
+    et, ot, gt, _ = clientes(20000, rng, mec)
+    med = np.nanmedian(e)
+    X = np.column_stack([np.where(np.isnan(e), med, e), o])
+    Xt = np.column_stack([np.where(np.isnan(et), med, et), ot])
+    r1 = np.sqrt(np.mean((gt - predice(mco(X, g), Xt)) ** 2))
+    X2 = np.column_stack([X, np.isnan(e)]); Xt2 = np.column_stack([Xt, np.isnan(et)])
+    r2 = np.sqrt(np.mean((gt - predice(mco(X2, g), Xt2)) ** 2))
+    print("%-9s %9.4f %13.4f %23.4f" % (mec, np.isnan(e).mean(), r1, r2))
+```
+
+FES §8.4 recomienda codificar la ausencia en las variables categóricas como una categoría más, que es la misma idea. El indicador tiene un riesgo: si el mecanismo de ausencia cambia, por ejemplo porque el formulario hace obligatoria la edad, el coeficiente del indicador deja de tener sentido y el modelo empeora sin que ninguna columna cambie de distribución.
+
+## 2. Métodos de imputación
+
+::: {.definicion}
+**Definición 13.3 (imputación).** Imputar es sustituir cada valor ausente por un valor calculado. Se comparan tres métodos:
+
+1. **mediana**: la mediana de los valores observados de la columna;
+2. **regresión**: la predicción de una regresión lineal de la columna sobre los atributos completos, ajustada con las filas donde se observa;
+3. **vecinos**: la media de la columna en las $k$ filas observadas más cercanas según los atributos completos estandarizados, con $k=10$.
+
+Los parámetros de cada método (la mediana, los coeficientes, las filas de referencia) se calculan con los datos de entrenamiento y se aplican sin cambios a los datos nuevos.
+:::
+
+::: {.proposicion}
+**Proposición 13.4 (la mediana atenúa el coeficiente).** Si una columna $x_1$ se correlaciona con otra columna $x_2$ del modelo y se imputa con una constante, en las filas imputadas $x_1$ deja de variar y $x_2$ asume la parte de la señal de $x_1$ que se correlaciona con ella. El coeficiente de $x_1$ se reduce y el de $x_2$ aumenta. Imputar por regresión sobre $x_2$ conserva la relación entre las dos columnas.
+:::
+
+::: {.demostracion}
+*Demostración.* En las filas imputadas con una constante, la variación de $y$ debida a $x_1$ no puede atribuirse a $x_1$, que es constante en ellas; la parte correlacionada con $x_2$ se atribuye a $x_2$, y el resto queda en el error. El coeficiente de $x_1$ se estima entonces con la variación en las filas observadas combinada con filas donde no aporta, y se sesga hacia cero. La imputación por regresión da a cada fila el valor esperado de $x_1$ dado $x_2$, de modo que la relación entre las dos columnas se conserva en promedio. En la celda, el coeficiente de la edad, 0,8015 sin faltantes, es 0,4602 con la mediana, 0,8136 con regresión y 0,7775 con vecinos. El error de predicción en prueba es 8,9539, 8,5058 y 8,5587, frente a 8,0031 sin faltantes. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def clientes(n, rng, mecanismo):
+    """Edad, antiguedad y gasto; la edad falta en un 30 % de las filas."""
+    edad = rng.normal(41, 12, n)
+    antig = 0.25 * (edad - 41) + rng.normal(6, 3, n)          # anos de cliente
+    ingreso = 1500 + 30 * (edad - 41) + rng.normal(0, 300, n)   # mensual
+    gasto = 20 + 0.8 * edad + 1.5 * antig + rng.normal(0, 8, n)
+    if mecanismo == "MCAR":
+        falta = rng.random(n) < 0.30
+    else:                                                     # depende del gasto
+        z = (gasto - gasto.mean()) / gasto.std()
+        falta = rng.random(n) < 1 / (1 + np.exp(0.85 + 1.5 * z))
+    edad_obs = np.where(falta, np.nan, edad)
+    return edad_obs, np.column_stack([antig, ingreso]), gasto, edad
+
+def mco(X, y):
+    Z = np.column_stack([np.ones(len(y)), X])
+    return np.linalg.lstsq(Z, y, rcond=None)[0]
+
+def predice(b, X):
+    return np.column_stack([np.ones(len(X)), X]) @ b
+
+
+def imputa_mediana(e, o, e_ref, o_ref):
+    return np.where(np.isnan(e), np.nanmedian(e_ref), e)
+
+def imputa_regresion(e, o, e_ref, o_ref):
+    v = ~np.isnan(e_ref)
+    b = mco(o_ref[v], e_ref[v])
+    return np.where(np.isnan(e), predice(b, o), e)
+
+def imputa_vecinos(e, o, e_ref, o_ref, k=10):
+    v = ~np.isnan(e_ref)
+    mu, sd = o_ref[v].mean(0), o_ref[v].std(0)
+    A = (o_ref[v] - mu) / sd; ea = e_ref[v]
+    out = e.copy()
+    for i in np.where(np.isnan(e))[0]:
+        d = (((o[i] - mu) / sd - A) ** 2).sum(1)
+        out[i] = ea[np.argpartition(d, k)[:k]].mean()
+    return out
+
+rng = np.random.default_rng(14)
+e, o, g, edad = clientes(4000, rng, "MCAR")
+et, ot, gt, edadt = clientes(20000, rng, "MCAR")
+print("metodo       error de imputacion  coef. de edad  RECM en prueba")
+for nombre, imp in (("mediana", imputa_mediana), ("regresion", imputa_regresion),
+                    ("vecinos", imputa_vecinos)):
+    ei = imp(e, o, e, o); eti = imp(et, ot, e, o)
+    f = np.isnan(et)
+    err = np.sqrt(np.mean((eti[f] - edadt[f]) ** 2))
+    b = mco(np.column_stack([ei, o]), g)
+    r = np.sqrt(np.mean((gt - predice(b, np.column_stack([eti, ot]))) ** 2))
+    print("%-12s %19.4f %14.4f %15.4f" % (nombre, err, b[1], r))
+b = mco(np.column_stack([edad, o]), g)
+r = np.sqrt(np.mean((gt - predice(b, np.column_stack([edadt, ot]))) ** 2))
+print("%-12s %19s %14.4f %15.4f" % ("sin faltantes", "-", b[1], r))
+```
+
+El error de imputación de la mediana, 12,0334, es la desviación típica de la edad: no usa información de la fila. La regresión lo reduce a 6,4891 con dos atributos correlacionados. Con estos datos la relación es lineal y la regresión supera a los vecinos; con relaciones no lineales entre las columnas, los vecinos o un árbol, que FES §8.5 prefiere por su coste, pueden superarla.
+
+**Modo de falla.** Se imputa por la media y se interpreta el coeficiente de la edad para concluir que la edad influye poco en el gasto. El coeficiente estaba atenuado por la imputación, y la antigüedad había absorbido parte del efecto de la edad.
+
+El visual muestra el gasto frente a la edad, con las filas imputadas en otro color. Los controles cambian la fracción de faltantes, el mecanismo y el método.
+
+```{=html}
+<div class="viz-imputa13">
+  <div class="controles">
+    <label>Fracción ausente <input id="i13-f" type="range" min="0" max="0.6" step="0.05" value="0.3"> <span id="i13-f-v">0.30</span></label>
+    <label>Mecanismo
+      <select id="i13-m">
+        <option value="mcar" selected>al azar (MCAR)</option>
+        <option value="y">más en gasto bajo</option>
+      </select>
+    </label>
+    <label>Imputación
+      <select id="i13-i">
+        <option value="med" selected>mediana</option>
+        <option value="reg">regresión sobre el ingreso</option>
+      </select>
+    </label>
+  </div>
+  <svg id="i13-svg" viewBox="0 0 660 300" role="img" aria-label="Gasto frente a edad con las edades imputadas destacadas y las rectas ajustadas con y sin faltantes."></svg>
+  <p class="lectura" id="i13-lectura"></p>
+</div>
+<style>
+.viz-imputa13 { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-imputa13 .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-imputa13 label { display: flex; align-items: center; gap: .4rem; }
+.viz-imputa13 input[type=range] { width: 140px; padding: 0; }
+.viz-imputa13 select { font-size: .85rem; padding: .1rem .25rem; }
+.viz-imputa13 svg { width: 100%; height: auto; display: block; }
+.viz-imputa13 .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("i13-svg"), lec = document.getElementById("i13-lectura");
+  var cf = document.getElementById("i13-f"), cm = document.getElementById("i13-m"), ci = document.getElementById("i13-i");
+  var ef = document.getElementById("i13-f-v");
+  var X0 = 52, X1 = 628, Y0 = 40, Y1 = 250, N = 300;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var sem = 113;
+  function u() { sem = (sem * 48271) % 2147483647; return sem / 2147483647; }
+  function nor() { var a = Math.max(u(), 1e-9), b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); }
+  var ED = [], ING = [], GA = [], UU = [], i;
+  for (i = 0; i < N; i++) {
+    var e = 41 + 12 * nor();
+    ED.push(e); ING.push(1500 + 30 * (e - 41) + 300 * nor());
+    GA.push(20 + 0.8 * e + 1.5 * (0.25 * (e - 41) + 6 + 3 * nor()) + 8 * nor());
+    UU.push(u());
+  }
+  var gm = 0, gs = 0;
+  GA.forEach(function (g) { gm += g / N; });
+  GA.forEach(function (g) { gs += (g - gm) * (g - gm) / N; });
+  gs = Math.sqrt(gs);
+  function recta(x, y) {
+    var n = x.length, mx = 0, my = 0, sxy = 0, sxx = 0, j;
+    for (j = 0; j < n; j++) { mx += x[j] / n; my += y[j] / n; }
+    for (j = 0; j < n; j++) { sxy += (x[j] - mx) * (y[j] - my); sxx += (x[j] - mx) * (x[j] - mx); }
+    var b = sxx > 0 ? sxy / sxx : 0;
+    return [my - b * mx, b, sxx / n];
+  }
+  function mediana(v) {
+    var s = v.slice().sort(function (p, q) { return p - q; }), m = s.length;
+    return m % 2 ? s[(m - 1) / 2] : (s[m / 2 - 1] + s[m / 2]) / 2;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var f = +cf.value, mec = cm.value, met = ci.value, j;
+    ef.textContent = f.toFixed(2);
+    // la probabilidad de ausencia se calibra para que la fraccion media sea f
+    var falta = [], c = 0;
+    if (mec === "y" && f > 0) {
+      var lo = -20, hi = 20, s, k;
+      for (var it = 0; it < 50; it++) {
+        c = (lo + hi) / 2; s = 0;
+        for (k = 0; k < N; k++) s += 1 / (1 + Math.exp(-c + 1.5 * (GA[k] - gm) / gs));
+        if (s / N < f) lo = c; else hi = c;
+      }
+    }
+    for (j = 0; j < N; j++) {
+      var p = (mec === "y" && f > 0) ? 1 / (1 + Math.exp(-c + 1.5 * (GA[j] - gm) / gs)) : f;
+      falta.push(UU[j] < p);
+    }
+    var obsE = [], obsI = [];
+    for (j = 0; j < N; j++) if (!falta[j]) { obsE.push(ED[j]); obsI.push(ING[j]); }
+    var med = obsE.length ? mediana(obsE) : 41, ri = recta(obsI, obsE);
+    var EI = ED.map(function (e, q) { return falta[q] ? (met === "med" ? med : ri[0] + ri[1] * ING[q]) : e; });
+    var bT = recta(ED, GA), bI = recta(EI, GA);
+    var px = function (v) { return X0 + (v - 5) / 75 * (X1 - X0); };
+    var py = function (v) { return Y1 - (v - 20) / 110 * (Y1 - Y0); };
+    svg.appendChild(el("path", { d: "M" + X0 + " " + Y1 + " L" + X1 + " " + Y1, stroke: C_L, "stroke-width": 1 }));
+    [10, 20, 30, 40, 50, 60, 70].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y1 + 16, "text-anchor": "middle", "font-size": 10, fill: C_T, opacity: .7 }, v));
+    });
+    svg.appendChild(el("text", { x: X1, y: Y1 + 34, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "edad →"));
+    for (j = 0; j < N; j++) {
+      if (EI[j] < 5 || EI[j] > 80) continue;
+      svg.appendChild(el("circle", { cx: px(EI[j]).toFixed(1), cy: py(Math.max(20, Math.min(130, GA[j]))).toFixed(1), r: 2.8,
+        fill: falta[j] ? C_B : C_A, "fill-opacity": falta[j] ? .8 : .4 }));
+    }
+    function linea(b, col, raya) {
+      var at = { d: "M" + px(5) + " " + py(b[0] + 5 * b[1]).toFixed(1) + " L" + px(80) + " " + py(b[0] + 80 * b[1]).toFixed(1), stroke: col, "stroke-width": 2.2 };
+      if (raya) at["stroke-dasharray"] = raya;
+      svg.appendChild(el("path", at));
+    }
+    linea(bT, C_T, "4 3");
+    linea(bI, C_G, null);
+    [["recta sin faltantes", C_T], ["recta con imputación", C_G], ["edad imputada", C_B]].forEach(function (l, q) {
+      svg.appendChild(el("rect", { x: X0 + q * 170, y: 10, width: 12, height: 3, fill: l[1] }));
+      svg.appendChild(el("text", { x: X0 + q * 170 + 17, y: 15, "font-size": 10.5, fill: C_T, opacity: .85 }, l[0]));
+    });
+    var nf = 0; falta.forEach(function (v) { if (v) nf++; });
+    lec.innerHTML = "Faltan <strong>" + nf + "</strong> edades de 300. La pendiente del gasto sobre la edad es <strong>" + bT[1].toFixed(3) +
+      "</strong> sin faltantes y <strong>" + bI[1].toFixed(3) + "</strong> con la edad imputada por " + (met === "med" ? "la mediana (" + med.toFixed(1) + ")" : "regresión sobre el ingreso") +
+      ". La varianza de la edad pasa de <strong>" + bT[2].toFixed(1) + "</strong> a <strong>" + bI[2].toFixed(1) + "</strong>" +
+      (met === "med" ? ": la imputación por una constante la reduce, como en la Proposición 15.9 de Estadística 15." : ".");
+  }
+  cf.addEventListener("input", dibujar);
+  cm.addEventListener("change", dibujar);
+  ci.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. La fuga al imputar
+
+Un modelo de imputación es un paso del proceso y está sujeto a las reglas de Atributos 02: se ajusta con los datos de entrenamiento de cada pliegue. FES §8.5 lo indica para los modelos predictivos. Hay además un error específico de la imputación: usar la variable objetivo como atributo del modelo de imputación.
+
+::: {.proposicion}
+**Proposición 13.5 (imputar con la variable objetivo).** Si la edad ausente se imputa con un modelo que usa el gasto, y la imputación se hace antes de partir la muestra, la edad imputada de las filas de prueba contiene información de su propio gasto. El error validado en esas filas subestima el error con datos nuevos, en los que el gasto no se conoce al predecir.
+:::
+
+::: {.demostracion}
+*Demostración.* La edad imputada es una función lineal del gasto de la fila, y el modelo de gasto la usa como atributo: el valor que se quiere predecir entra en el atributo. En la celda, con 5000 filas y 1000 de prueba, la imputación correcta, ajustada en entrenamiento y sin el gasto, valida 8,2534 y rinde 8,3627 en datos nuevos. La imputación con el gasto valida 7,4190 y rinde 8,4475, porque en producción la edad se imputa sin el gasto. En las 301 filas de prueba con la edad imputada, el error validado es 5,6023 con la fuga y 8,8904 sin ella. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def clientes(n, rng, mecanismo):
+    """Edad, antiguedad y gasto; la edad falta en un 30 % de las filas."""
+    edad = rng.normal(41, 12, n)
+    antig = 0.25 * (edad - 41) + rng.normal(6, 3, n)          # anos de cliente
+    ingreso = 1500 + 30 * (edad - 41) + rng.normal(0, 300, n)   # mensual
+    gasto = 20 + 0.8 * edad + 1.5 * antig + rng.normal(0, 8, n)
+    if mecanismo == "MCAR":
+        falta = rng.random(n) < 0.30
+    else:                                                     # depende del gasto
+        z = (gasto - gasto.mean()) / gasto.std()
+        falta = rng.random(n) < 1 / (1 + np.exp(0.85 + 1.5 * z))
+    edad_obs = np.where(falta, np.nan, edad)
+    return edad_obs, np.column_stack([antig, ingreso]), gasto, edad
+
+def mco(X, y):
+    Z = np.column_stack([np.ones(len(y)), X])
+    return np.linalg.lstsq(Z, y, rcond=None)[0]
+
+def predice(b, X):
+    return np.column_stack([np.ones(len(X)), X]) @ b
+
+
+def imputa(e, Z, e_ref, Z_ref):
+    v = ~np.isnan(e_ref)
+    b = mco(Z_ref[v], e_ref[v])
+    return np.where(np.isnan(e), predice(b, Z), e)
+
+rng = np.random.default_rng(15)
+e, o, g, _ = clientes(5000, rng, "MCAR")
+tr, te = np.arange(5000) < 4000, np.arange(5000) >= 4000
+en, on, gn, _ = clientes(20000, rng, "MCAR")          # datos nuevos, gasto desconocido
+
+def recm(y, p):
+    return np.sqrt(np.mean((y - p) ** 2))
+
+# 1. correcto: imputar con los atributos, ajustado solo en entrenamiento
+ei = imputa(e, o, e[tr], o[tr])
+b = mco(np.column_stack([ei, o])[tr], g[tr])
+val1 = recm(g[te], predice(b, np.column_stack([ei, o])[te]))
+real1 = recm(gn, predice(b, np.column_stack([imputa(en, on, e[tr], o[tr]), on])))
+
+# 2. fuga: imputar la edad usando tambien el gasto, antes de partir
+Zg = np.column_stack([o, g])
+ei2 = imputa(e, Zg, e, Zg)
+b2 = mco(np.column_stack([ei2, o])[tr], g[tr])
+val2 = recm(g[te], predice(b2, np.column_stack([ei2, o])[te]))
+# en produccion el gasto no se conoce: la edad se imputa con los atributos
+real2 = recm(gn, predice(b2, np.column_stack([imputa(en, on, e, o), on])))
+
+print("imputacion                        RECM validada  RECM en datos nuevos")
+print("con los atributos, en el pliegue  %13.4f %21.4f" % (val1, real1))
+print("con el gasto, antes de partir     %13.4f %21.4f" % (val2, real2))
+f = np.isnan(e[te])
+print("filas de prueba con edad imputada: %d de %d" % (f.sum(), te.sum()))
+print("RECM validada solo en esas filas : %.4f frente a %.4f" % (
+    recm(g[te][f], predice(b2, np.column_stack([ei2, o])[te][f])),
+    recm(g[te][f], predice(b, np.column_stack([ei, o])[te][f]))))
+print("RECM validada en las demas filas : %.4f frente a %.4f" % (
+    recm(g[te][~f], predice(b2, np.column_stack([ei2, o])[te][~f])),
+    recm(g[te][~f], predice(b, np.column_stack([ei, o])[te][~f]))))
+```
+
+La diferencia en el total de la prueba, 7,4190 frente a 8,2534, se concentra en el 30 % de filas imputadas: en las 699 filas con la edad observada los errores son 8,0764 y 7,9634. Una comparación que solo mire el error global puede atribuirla a un modelo mejor.
+
+## 4. Imputación múltiple y reglas de Rubin
+
+Para predecir, una imputación ajustada dentro de la validación basta, y FES §8.5 considera la imputación múltiple de relevancia limitada en ese caso. Para hacer inferencia sobre un coeficiente, una imputación única trata los valores imputados como observados y subestima la incertidumbre.
+
+::: {.definicion}
+**Definición 13.6 ([imputación múltiple]{.g}).** Se generan $M$ conjuntos completos. En cada uno, los parámetros del modelo de imputación se obtienen de una muestra bootstrap de las filas observadas, y a cada valor imputado se le suma un residuo tomado al azar. Con cada conjunto se estima el coeficiente $\hat q_m$ y su varianza $U_m$.
+:::
+
+::: {.proposicion}
+**Proposición 13.7 (reglas de Rubin).** La estimación combinada es $\bar q=\frac1M\sum_m\hat q_m$ y su varianza es
+$$
+T=\bar U+\Bigl(1+\frac1M\Bigr)B,\qquad \bar U=\frac1M\sum_m U_m,\qquad B=\frac{1}{M-1}\sum_m(\hat q_m-\bar q)^2 .
+$$
+$\bar U$ es la varianza que habría con los datos completos; $B$ mide la incertidumbre añadida por los faltantes, y el factor $1+1/M$ corrige por usar un número finito de imputaciones.
+:::
+
+::: {.demostracion}
+*Demostración.* Se enuncia la regla y se comprueba su cobertura. En 300 simulaciones de 300 filas con un 30 % de edades ausentes al azar, el intervalo $\bar q\pm1{,}96\sqrt T$ con $M=20$ contiene el coeficiente verdadero, 0,8, en el 94,0 % de los casos. La imputación única por regresión, con el mismo modelo de imputación y sin azar, estima de media 1,0127 y su intervalo cubre el 25,7 %. Los casos completos, válidos bajo MCAR, cubren el 94,7 % con un error estándar medio de 0,0863, mayor que el 0,0808 de la imputación múltiple. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def clientes(n, rng, mecanismo):
+    """Edad, antiguedad y gasto; la edad falta en un 30 % de las filas."""
+    edad = rng.normal(41, 12, n)
+    antig = 0.25 * (edad - 41) + rng.normal(6, 3, n)          # anos de cliente
+    ingreso = 1500 + 30 * (edad - 41) + rng.normal(0, 300, n)   # mensual
+    gasto = 20 + 0.8 * edad + 1.5 * antig + rng.normal(0, 8, n)
+    if mecanismo == "MCAR":
+        falta = rng.random(n) < 0.30
+    else:                                                     # depende del gasto
+        z = (gasto - gasto.mean()) / gasto.std()
+        falta = rng.random(n) < 1 / (1 + np.exp(0.85 + 1.5 * z))
+    edad_obs = np.where(falta, np.nan, edad)
+    return edad_obs, np.column_stack([antig, ingreso]), gasto, edad
+
+def mco(X, y):
+    Z = np.column_stack([np.ones(len(y)), X])
+    return np.linalg.lstsq(Z, y, rcond=None)[0]
+
+def predice(b, X):
+    return np.column_stack([np.ones(len(X)), X]) @ b
+
+
+def ajuste(X, y):
+    """Coeficientes y errores estandar de minimos cuadrados."""
+    Z = np.column_stack([np.ones(len(y)), X])
+    b = np.linalg.solve(Z.T @ Z, Z.T @ y)
+    s2 = np.sum((y - Z @ b) ** 2) / (len(y) - Z.shape[1])
+    return b, np.sqrt(s2 * np.diag(np.linalg.inv(Z.T @ Z)))
+
+def estima(e, o, g, rng, M):
+    """Coeficiente de la edad y su error estandar. M=0: casos completos.
+    M=1 sin azar: imputacion unica por regresion. M>1: imputacion multiple."""
+    v = ~np.isnan(e)
+    if M == 0:
+        b, s = ajuste(np.column_stack([e[v], o[v]]), g[v]); return b[1], s[1]
+    Z = np.column_stack([o, g])                 # el modelo de imputacion usa y
+    if M == 1:
+        bi, _ = ajuste(Z[v], e[v])
+        ei = np.where(v, e, predice(bi, Z))
+        b, s = ajuste(np.column_stack([ei, o]), g); return b[1], s[1]
+    q, u = [], []
+    idx = np.where(v)[0]
+    for _ in range(M):
+        boot = rng.choice(idx, len(idx))        # incertidumbre del modelo de imputacion
+        bi, _ = ajuste(Z[boot], e[boot])
+        res = e[boot] - predice(bi, Z[boot])
+        ei = np.where(v, e, predice(bi, Z) + rng.choice(res, len(e)))
+        b, s = ajuste(np.column_stack([ei, o]), g)
+        q.append(b[1]); u.append(s[1] ** 2)
+    q, u = np.array(q), np.array(u)
+    T = u.mean() + (1 + 1 / M) * q.var(ddof=1)  # reglas de Rubin
+    return q.mean(), np.sqrt(T)
+
+rng = np.random.default_rng(16)
+R, n = 300, 300
+res = {0: [], 1: [], 20: []}
+for _ in range(R):
+    e, o, g, _ = clientes(n, rng, "MCAR")
+    for M in res:
+        res[M].append(estima(e, o, g, rng, M))
+print("metodo                   media del coef.  EE medio  cobertura del IC 95 %")
+for M, nombre in ((0, "casos completos"), (1, "imputacion unica"), (20, "imputacion multiple")):
+    a = np.array(res[M])
+    cub = np.mean(np.abs(a[:, 0] - 0.8) <= 1.96 * a[:, 1])
+    print("%-24s %15.4f %9.4f %12.3f" % (nombre, a[:, 0].mean(), a[:, 1].mean(), cub))
+print("desviacion tipica real de la estimacion multiple: %.4f" % np.array(res[20])[:, 0].std())
+```
+
+El modelo de imputación de esta sección usa el gasto, y la Sección 3 lo prohibía. Las dos reglas son compatibles: en inferencia, la variable objetivo se conoce en todas las filas y el modelo de imputación debe incluirla, porque si no la relación entre la edad y el gasto se atenúa en las filas imputadas. En predicción, la variable objetivo no se conoce al usar el modelo y no puede entrar en la imputación.
+
+La imputación única sobreestima el coeficiente, 1,0127 frente a 0,8: sus valores imputados están sobre la recta de la edad en función del gasto, sin la dispersión de los valores reales, y la relación con el gasto parece más fuerte de lo que es. El residuo aleatorio de la imputación múltiple restituye esa dispersión.
+
+## 5. Limitaciones
+
+- Solo falta una columna. Con varias columnas incompletas, la imputación se hace por ecuaciones encadenadas: cada columna se imputa con un modelo sobre las demás, en ciclos, hasta que los valores se estabilizan.
+- Los mecanismos de ausencia se fijaron en la simulación. En datos reales no se puede distinguir MAR de MNAR con los datos observados (Estadística 15, Proposición 15.11), y el indicador de la Sección 1 es a la vez una ayuda y un riesgo.
+- FES §8.2 describe modelos que manejan los faltantes sin imputar: los árboles con divisiones sustitutas y los que reparten la fila entre las ramas. El gradient boosting por histogramas de scikit-learn envía los faltantes a la rama que más reduce la pérdida; se trata en ML aplicado 09.
+- La imputación múltiple usa una aproximación por bootstrap a la distribución de los parámetros del modelo de imputación. La versión bayesiana, que extrae los parámetros de su distribución posterior, da resultados similares y no se implementa.
+
+## Ejercicios
+
+### Ejercicio 1, Indicador e imputación por la mediana
+
+La celda fija un vector `edad` de diez valores, tres de ellos ausentes. Completar la línea de `indicador` con un vector de enteros que valga 1 donde la edad falta, y la de `imputada` con la edad en la que los ausentes se sustituyen por la mediana de los observados. La celda imprime los dos vectores; deben dar `[0, 1, 0, 0, 1, 0, 0, 1, 0, 0]` y la edad con 39,0 en las tres posiciones ausentes.
+
+```{pyodide}
+#| exercise: ex_indicador
+import numpy as np
+
+edad = np.array([34.0, np.nan, 51, 28, np.nan, 45, 39, np.nan, 62, 30])
+
+indicador = ______
+imputada = ______
+
+print(np.asarray(indicador).tolist(), np.asarray(imputada).tolist())
+```
+
+::: {.hint exercise="ex_indicador"}
+`np.isnan(edad)` da un vector booleano, que `.astype(int)` convierte en ceros y unos. `np.nanmedian` calcula la mediana ignorando los ausentes, y `np.where` elige entre dos valores según una condición.
+:::
+
+::: {.solution exercise="ex_indicador"}
+```{pyodide}
+import numpy as np
+
+edad = np.array([34.0, np.nan, 51, 28, np.nan, 45, 39, np.nan, 62, 30])
+
+indicador = np.isnan(edad).astype(int)
+imputada = np.where(np.isnan(edad), np.nanmedian(edad), edad)
+
+print(np.asarray(indicador).tolist(), np.asarray(imputada).tolist())
+```
+
+Los siete valores observados ordenados son 28, 30, 34, 39, 45, 51 y 62, y la mediana es 39. El indicador conserva la información de qué filas se imputaron, que la columna imputada ya no contiene.
+:::
+
+```{pyodide}
+#| exercise: ex_indicador
+#| check: true
+import numpy as np
+if (np.asarray(indicador).astype(int).tolist() == [0, 1, 0, 0, 1, 0, 0, 1, 0, 0]
+        and np.allclose(np.asarray(imputada, float), [34, 39, 51, 28, 39, 45, 39, 39, 62, 30])):
+    feedback = {"correct": True, "message": "Correcto: tres ausentes, imputados con la mediana 39."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba el indicador [0, 1, 0, 0, 1, 0, 0, 1, 0, 0] y 39.0 en las tres posiciones ausentes."}
+feedback
+```
+
+### Ejercicio 2, Combinar cinco imputaciones
+
+La celda fija las estimaciones `q` del coeficiente de la edad en cinco conjuntos imputados y sus varianzas `u`. Completar las líneas de `W`, la varianza dentro de las imputaciones, `B`, la varianza entre imputaciones, y `T`, la varianza total de la Proposición 13.7. La celda imprime la estimación combinada, `W`, `B` y el error estándar $\sqrt T$; deben dar `0.801 0.00604 0.000907 0.0844`.
+
+```{pyodide}
+#| exercise: ex_rubin
+import numpy as np
+
+q = np.array([0.812, 0.779, 0.845, 0.801, 0.768])
+u = np.array([0.0061, 0.0058, 0.0064, 0.0060, 0.0059])
+M = len(q)
+
+W = ______
+B = ______
+T = ______
+
+print(round(float(np.mean(q)), 4), round(float(W), 6),
+      round(float(B), 6), round(float(np.sqrt(T)), 4))
+```
+
+::: {.hint exercise="ex_rubin"}
+`W` es la media de `u`. `B` es la varianza muestral de `q`, con divisor $M-1$: `np.var(q, ddof=1)`. `T` suma `W` y `B` multiplicada por $1+1/M$.
+:::
+
+::: {.solution exercise="ex_rubin"}
+```{pyodide}
+import numpy as np
+
+q = np.array([0.812, 0.779, 0.845, 0.801, 0.768])
+u = np.array([0.0061, 0.0058, 0.0064, 0.0060, 0.0059])
+M = len(q)
+
+W = np.mean(u)
+B = np.var(q, ddof=1)
+T = W + (1 + 1 / M) * B
+
+print(round(float(np.mean(q)), 4), round(float(W), 6),
+      round(float(B), 6), round(float(np.sqrt(T)), 4))
+```
+
+La varianza entre imputaciones es el 15 % de la varianza dentro de ellas. Una imputación única daría un error estándar de $\sqrt{0{,}0061}=0{,}078$ con el primer conjunto; las reglas de Rubin lo elevan a 0,0844.
+:::
+
+```{pyodide}
+#| exercise: ex_rubin
+#| check: true
+import numpy as np
+if (abs(float(W) - 0.00604) < 1e-7 and abs(float(B) - np.var(q, ddof=1)) < 1e-9
+        and abs(float(np.sqrt(T)) - 0.0844) < 5e-5):
+    feedback = {"correct": True, "message": "Correcto: W = 0.00604, B = 0.000907 y error estándar 0.0844."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba W = 0.00604, B = 0.000907 (con ddof=1) y √T = 0.0844."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Atributos 13**:
+
+1. Repetir la Sección 2 con una relación no lineal entre la edad y el ingreso, por ejemplo cuadrática, y comprobar si los vecinos superan a la regresión como método de imputación.
+2. Hacer faltar también el ingreso en un 20 % de las filas e implementar la imputación por ecuaciones encadenadas, midiendo cuántos ciclos hacen falta para que los valores imputados cambien menos de 0,01.
+3. Repetir la simulación de cobertura de la Sección 4 con ausencia que depende del gasto, y comprobar qué métodos conservan la cobertura del 95 %. Guardar en `50-Errores/` la regla sobre cuándo usar la variable objetivo en la imputación.
+
+## Del libro
+
+El capítulo 8 de FES, *Handling Missing Data*, organiza el tema en seis partes. La §8.1, *Understanding the Nature and Severity of Missing Information*, propone visualizaciones para ver el patrón de ausencia. La §8.2, *Models that are Resistant to Missing Values*, describe los árboles con divisiones sustitutas, los que reparten la fila con pesos fraccionarios y el Bayes ingenuo. La §8.3, *Deletion of Data*, recomienda eliminar antes predictores que filas. La §8.4, *Encoding Missingness*, trata la ausencia como una categoría en las variables discretas. La §8.5, *Imputation Methods*, presenta la imputación por vecinos, por árboles y por modelos lineales, indica que la imputación se hace dentro del remuestreo y considera la imputación múltiple de relevancia limitada para los modelos predictivos. La §8.6, *Special Cases*, trata los datos censurados y los temporales.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- Indicador de faltante: una columna que vale 1 donde el valor falta.
+- Bajo MCAR el indicador no aporta: 9,0160 sin él, 9,0211 con él.
+- Si la ausencia depende de la variable objetivo, el indicador la predice: de 9,3401 a 8,4673.
+- El indicador supone que el mecanismo de ausencia no cambia en los datos nuevos.
+- Imputar por una constante atenúa el coeficiente: la edad pasa de 0,80 a 0,4602 con la mediana.
+- La imputación por regresión conserva la relación entre columnas: coeficiente 0,8136.
+- Los parámetros de la imputación se ajustan en entrenamiento, dentro de cada pliegue.
+- Imputar con la variable objetivo antes de partir: 5,6023 validado en las filas imputadas frente a 8,8904.
+- Para predecir, la variable objetivo no entra en la imputación; para inferir, sí.
+- Rubin: $T=\bar U+(1+1/M)B$.
+- Cobertura del 95 %: 0,940 con imputación múltiple, 0,257 con imputación única por regresión.
+- La imputación única con la variable objetivo sobreestima el coeficiente: 1,0127 frente a 0,8.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos, sobre clientes simulados con edad, antigüedad, ingreso y gasto. El indicador: errores de 9,0160 y 9,0211 bajo MCAR con un 30,00 % de ausencia, y de 9,3401 y 8,4673 con ausencia dependiente del gasto y un 34,55 %. Los métodos: error de imputación de 12,0334, 6,4891 y 6,8437; coeficiente de la edad de 0,4602, 0,8136 y 0,7775 frente a 0,8015 sin faltantes; error de predicción de 8,9539, 8,5058 y 8,5587 frente a 8,0031. La fuga: 8,2534 validado y 8,3627 real sin fuga; 7,4190 y 8,4475 con ella; 5,6023 frente a 8,8904 en las 301 filas imputadas. La cobertura en 300 simulaciones: 0,947, 0,257 y 0,940, con coeficientes medios de 0,7970, 1,0127 y 0,8015, errores estándar medios de 0,0863, 0,0766 y 0,0808, y una desviación típica real de 0,0857 de la estimación múltiple. Los tres métodos de imputación, la imputación múltiple y la regresión están escritos con NumPy. Las Proposiciones 13.2, 13.4 y 13.5 se argumentan y se miden.
+
+**Lo que viene de los libros.** La organización del tema, los modelos resistentes a los faltantes, la codificación de la ausencia como categoría, los métodos de imputación por vecinos, árboles y modelos lineales, la regla de imputar dentro del remuestreo y la relevancia limitada de la imputación múltiple para predecir, de FES cap. 8.
+
+**Lo que se usa de otras lecciones sin repetir.** Los mecanismos MCAR, MAR y MNAR, la reducción de la varianza al imputar por la media (Proposición 15.9) y la no identificabilidad bajo MNAR (Proposición 15.11), de Estadística 15. La fuga por pasos fuera de la validación, de Atributos 02.
+
+**Lo que se enuncia sin demostrar.** Las reglas de Rubin se enuncian y se comprueba su cobertura por simulación, sin derivarlas. La imputación por ecuaciones encadenadas se describe sin implementarla.
+
+**Lo que es mío, no del libro.** El ejemplo de la edad ausente con dos mecanismos y la medición del indicador en los dos. La Proposición 13.4 sobre la atenuación del coeficiente por la imputación constante y la absorción del efecto por la columna correlacionada. La Proposición 13.5, con la medición del error en las filas imputadas. La contraposición entre inferencia y predicción sobre el uso de la variable objetivo en la imputación, y la explicación del sesgo de la imputación única por la falta de dispersión. Y el visual, que muestra la franja de edades imputadas por la mediana y la varianza que se pierde.
+:::

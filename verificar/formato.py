@@ -194,6 +194,7 @@ MIGRADAS = {
     "atributos/08-categoricas-ficticias.qmd",
     "atributos/09-codificacion-supervisada.qmd",
     "atributos/10-niveles-nuevos-orden-y-arboles.qmd",
+    "atributos/13-datos-faltantes.qmd",
     "aplicado/01-planteamiento-y-linea-base.qmd",
     "aplicado/02-exploracion-y-calidad.qmd",
     "aplicado/03-atipicos.qmd",
