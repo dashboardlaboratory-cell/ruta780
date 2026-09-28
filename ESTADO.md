@@ -5377,6 +5377,29 @@ queda completo.
 Pendientes del plan: Feature Engineering 11, 12, 14, 15 y 16; el caso final de
 Series y el de Causal que propuso el formato de casos.
 
+### 3.105 Casos integradores C5 a C12 (28-09-2026)
+
+Luis trajo un caso práctico de selección de personal (financiamiento de
+teléfonos: flujos, VPN, período de recuperación, límite de crédito) y pidió
+casos de ese nivel. Su licencia prohíbe distribuirlo: C5 se inspira en su
+estructura con datos y texto propios. Luis aclaró el mismo día que los datos
+públicos con licencia libre sí van al repo (regla 26).
+
+| Caso | Datos | Trampa comprobada |
+|---|---|---|
+| C5 financiamiento | sintético | AUC 0,967 en las filas del ajuste frente a 0,62 validado |
+| C6 cobranza de tarjetas | UCI Taiwán, CC BY 4.0 | códigos fuera de la descripción; umbral 0,5 frente a pérdida esperada |
+| C7 retención | sintético | elegir por riesgo evita 413 abandonos; por efecto, 780 |
+| C8 depósitos | UCI Bank Marketing, CC BY 4.0 | `duration` y `campaign` posteriores; AUC temporal 0,69 frente a 0,79 |
+| C9 precios | sintético | pendiente histórica +1,10 por confusión con la demanda |
+| C10 clientes | UCI Online Retail II, CC BY 4.0, agregado por factura | cancelaciones, sin cliente, líneas repetidas |
+| C11 perecederos | sintético | ventas censuradas: el cuantil de las ventas gana menos que no cambiar |
+| C12 fraude | sintético | no revisadas tratadas como legítimas: 10 200 frente a 47 608 |
+
+Los CSV están en `aplicado/datos/` y se declaran en `resources` y
+`pyodide.resources` de cada página; `casos.py` ejecuta desde la carpeta de la
+página. Probado en Pyodide con servidor http local.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
