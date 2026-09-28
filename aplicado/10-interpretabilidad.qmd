@@ -1,0 +1,481 @@
+---
+title: "Interpretabilidad: permutación, dependencia parcial y SHAP"
+subtitle: "ML aplicado · Lección 10"
+nivel: L3
+modulo: aplicado
+fase: F4
+prereqs: [aplicado/09-boosting-en-la-practica, aplicado/07-metricas-de-evaluacion, causal/01-resultados-potenciales]
+siguientes: []
+libro: "ESL §10.13 Interpretation"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="aplicado/10-interpretabilidad"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F4]{.item}
+[**Libro** ESL 10.13]{.item}
+[**Prereqs** [Boosting en la práctica](09-boosting-en-la-practica.qmd) · [Métricas de evaluación](07-metricas-de-evaluacion.qmd) · [Resultados potenciales](../causal/01-resultados-potenciales.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Calcular la importancia por permutación y explicar qué mide: la dependencia del modelo respecto de una columna, no la del fenómeno. Dos modelos con pérdidas de 0,5724 y 0,5756 atribuyen el escalón a $x_4$ o a $x_5$, dos columnas con correlación 0,95.
+2. Calcular la dependencia parcial y las curvas ICE, y reconocer cuándo la media oculta una interacción: la dependencia parcial de $x_2$ es plana, con valores entre 0,1691 y 0,1711, mientras las pendientes de sus curvas ICE van de −2,639 a 2,658.
+3. Calcular los valores de Shapley exactos por enumeración de subconjuntos, comprobar que en un modelo lineal valen $\beta_j(x_j-\bar x_j)$ y que suman la diferencia entre la predicción y su media.
+4. Distinguir una explicación del modelo de una afirmación causal sobre los datos.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **ML aplicado 09**: el gradient boosting, un modelo cuyas predicciones no se leen en sus parámetros.
+- **ML aplicado 07**: la pérdida logarítmica, con la que se mide la importancia.
+- **Causal 01**: los resultados potenciales, que separan predecir de intervenir.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **ML aplicado 11**: el análisis de errores, que usa estas herramientas por segmentos.
+- **Caso 3**: el riesgo de impago, en el que hay que explicar un rechazo a un cliente.
+- **Causal 16**: los metalearners, que estiman efectos heterogéneos en lugar de describir un modelo.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $f$ | efe | El modelo que se interpreta, en escala logit |
+| $L$ | ele | La pérdida del modelo en unos datos |
+| $I_j$ | i jota | La importancia por permutación de la columna $j$ |
+| $\bar f_j(v)$ | efe barra jota de ve | La dependencia parcial de $f$ respecto de $x_j$ en el valor $v$ |
+| $S$ | ese | Un subconjunto de columnas |
+| $v(S)$ | ve de ese | La predicción media con las columnas de $S$ fijadas en los valores de la fila |
+| $\phi_j$ | fi jota | El valor de Shapley de la columna $j$ para una fila |
+| $p$ | pe | El número de columnas |
+:::
+
+## 1. Importancia por permutación
+
+La lección interpreta una función conocida, $f(x)=1{,}2\sin(1{,}5x_1)+0{,}8x_2x_3+0{,}6\,[x_4>0{,}5]$, en escala logit, en lugar de un modelo ajustado. Así el resultado de cada método se compara con la verdad sin mezclarlo con el error de ajuste. Los métodos se aplican igual a cualquier modelo que produzca predicciones.
+
+::: {.definicion}
+**Definición 10.1 ([importancia por permutación]{.g}).** La importancia por permutación de la columna $j$ es el aumento de la pérdida del modelo cuando los valores de esa columna se permutan al azar entre las filas:
+$$
+I_j=L\bigl(y,f(X^{(j)})\bigr)-L\bigl(y,f(X)\bigr),
+$$
+donde $X^{(j)}$ es $X$ con la columna $j$ permutada. La permutación rompe la relación de la columna con $y$ y con las demás columnas, y conserva su distribución.
+:::
+
+::: {.proposicion}
+**Proposición 10.2 (la importancia describe el modelo).** Si el modelo no usa la columna $j$, $I_j=0$ aunque la columna esté relacionada con $y$. Si dos columnas tienen casi la misma información, dos modelos igual de buenos pueden repartir su efecto de formas distintas, y sus importancias difieren.
+:::
+
+::: {.demostracion}
+*Demostración.* Si $f$ no depende de $x_j$, $f(X^{(j)})=f(X)$ y la pérdida no cambia. La celda genera $x_5$ con correlación 0,95 con $x_4$ y compara dos modelos: el primero usa el escalón en $x_4$ y el segundo en $x_5$. Sus pérdidas son 0,5724 y 0,5756. La importancia de $x_4$ es 0,0167 en el primero y 0 en el segundo; la de $x_5$, 0 en el primero y 0,0107 en el segundo. ∎
+:::
+
+```{pyodide}
+import numpy as np
+from itertools import combinations
+from math import factorial
+
+def sigmoide(z):
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -30.0, 30.0)))
+
+def modelo(X):
+    """La funcion que se interpreta, en escala logit: un efecto no lineal en x1,
+    un producto x2 x3, un escalon en x4 y ningun efecto de x5."""
+    return (1.2 * np.sin(1.5 * X[:, 0]) + 0.8 * X[:, 1] * X[:, 2]
+            + 0.6 * (X[:, 3] > 0.5) + 0.0 * X[:, 4])
+
+def perdida(y, z):
+    p = np.clip(sigmoide(z), 1e-12, 1 - 1e-12)
+    return -np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))
+
+rng = np.random.default_rng(100)
+n = 20000
+X = rng.standard_normal((n, 5))
+X[:, 4] = 0.95 * X[:, 3] + np.sqrt(1 - 0.95 ** 2) * rng.standard_normal(n)   # x5 copia a x4
+y = (rng.random(n) < sigmoide(modelo(X))).astype(float)
+def otro(X):
+    """Un segundo modelo que usa x5 en lugar de x4."""
+    return (1.2 * np.sin(1.5 * X[:, 0]) + 0.8 * X[:, 1] * X[:, 2] + 0.6 * (X[:, 4] > 0.5))
+
+print("modelo que usa x4: perdida %.4f;  modelo que usa x5: perdida %.4f"
+      % (perdida(y, modelo(X)), perdida(y, otro(X))))
+print("columna  importancia en el primero  en el segundo")
+for j in range(5):
+    Xp = X.copy(); Xp[:, j] = np.random.default_rng(j).permutation(Xp[:, j])
+    print("   x%d %22.4f %13.4f" % (j + 1, perdida(y, modelo(Xp)) - perdida(y, modelo(X)),
+                                   perdida(y, otro(Xp)) - perdida(y, otro(X))))
+print("correlacion entre x4 y x5: %.4f" % np.corrcoef(X[:, 3], X[:, 4])[0, 1])
+```
+
+Un modelo ajustado con $x_4$ y $x_5$ puede usar cualquiera de las dos, o repartir el efecto entre ambas, según detalles del ajuste. Una importancia baja no indica que la columna no se relacione con $y$: puede indicar que otra columna del modelo contiene la misma información. Para medir cuánto aporta una columna al modelo que se puede construir, se reajusta el modelo sin ella y se compara la pérdida de validación.
+
+**Modo de falla.** Se muestra al comité la lista de importancias del modelo como «los factores que explican el abandono». Al reentrenar el mes siguiente, la columna más importante pasa al quinto puesto porque otra columna correlacionada ocupa su lugar, y la lista pierde credibilidad.
+
+## 2. Dependencia parcial y curvas ICE
+
+::: {.definicion}
+**Definición 10.3 ([dependencia parcial]{.g} y curvas ICE).** La dependencia parcial de $f$ respecto de $x_j$ es la predicción media cuando $x_j$ se fija en el valor $v$ en todas las filas:
+$$
+\bar f_j(v)=\frac1n\sum_{i=1}^nf(v,\,x_{i,-j}) .
+$$
+La curva ICE de la fila $i$ es la función $v\mapsto f(v,\,x_{i,-j})$, y la dependencia parcial es la media de las curvas ICE.
+:::
+
+::: {.proposicion}
+**Proposición 10.4 (la media oculta las interacciones).** Si $f$ contiene el término $x_jx_k$ y $x_k$ tiene media cero, la dependencia parcial de $x_j$ no incluye ese término, y las curvas ICE tienen pendientes proporcionales a $x_k$, positivas y negativas.
+:::
+
+::: {.demostracion}
+*Demostración.* Al fijar $x_j=v$, el término vale $vx_{i,k}$ en la fila $i$, y su media es $v\bar x_k\approx0$. En la curva ICE de la fila $i$, el mismo término aporta una pendiente $x_{i,k}$ multiplicada por su coeficiente. En la celda, la dependencia parcial de $x_2$ va de 0,1711 a 0,1691 entre $-2$ y $2$, y las pendientes de las curvas ICE van de −2,639 a 2,658, con correlación 1 con $x_3$. La dependencia parcial de $x_1$ reproduce la forma del seno, de −0,9942 a 1,3998. ∎
+:::
+
+```{pyodide}
+import numpy as np
+from itertools import combinations
+from math import factorial
+
+def sigmoide(z):
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -30.0, 30.0)))
+
+def modelo(X):
+    """La funcion que se interpreta, en escala logit: un efecto no lineal en x1,
+    un producto x2 x3, un escalon en x4 y ningun efecto de x5."""
+    return (1.2 * np.sin(1.5 * X[:, 0]) + 0.8 * X[:, 1] * X[:, 2]
+            + 0.6 * (X[:, 3] > 0.5) + 0.0 * X[:, 4])
+
+def perdida(y, z):
+    p = np.clip(sigmoide(z), 1e-12, 1 - 1e-12)
+    return -np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))
+
+rng = np.random.default_rng(101)
+X = rng.standard_normal((2000, 5))
+malla = np.linspace(-2, 2, 9)
+pd1, pd2, pend = [], [], []
+for v in malla:
+    A = X.copy(); A[:, 0] = v; pd1.append(modelo(A).mean())
+    A = X.copy(); A[:, 1] = v; pd2.append(modelo(A).mean())
+# pendiente de cada curva ICE de x2 entre -2 y 2
+A = X.copy(); A[:, 1] = 2.0; B = X.copy(); B[:, 1] = -2.0
+pend = (modelo(A) - modelo(B)) / 4.0
+print("x      dependencia parcial de x1   de x2")
+for v, a, b in zip(malla, pd1, pd2):
+    print("%5.1f %20.4f %13.4f" % (v, a, b))
+print("pendientes de las curvas ICE de x2: min %.3f, media %.3f, max %.3f"
+      % (pend.min(), round(float(pend.mean()), 3) + 0.0, pend.max()))
+print("correlacion de la pendiente con x3: %.4f" % np.corrcoef(pend, X[:, 2])[0, 1])
+```
+
+La dependencia parcial plana de $x_2$ no significa que $x_2$ no influya: el modelo usa $x_2$ con fuerza, en sentidos opuestos según $x_3$. Las curvas ICE lo muestran, y la importancia por permutación de la Sección 1 también, con 0,1013. ESL §10.13 presenta la dependencia parcial y advierte que describe bien $f$ cuando las interacciones de la variable elegida con las demás son débiles.
+
+El visual dibuja las curvas ICE de $x_2$ para 40 filas, coloreadas por el signo de $x_3$, y la dependencia parcial. El control fija el coeficiente de la interacción.
+
+```{=html}
+<div class="viz-ice10">
+  <div class="controles">
+    <label>Coeficiente de x₂x₃ <input id="i10-c" type="range" min="0" max="1.5" step="0.05" value="0.8"> <span id="i10-c-v">0.80</span></label>
+    <label>Efecto propio de x₂ <input id="i10-b" type="range" min="-0.5" max="0.5" step="0.05" value="0"> <span id="i10-b-v">0.00</span></label>
+  </div>
+  <svg id="i10-svg" viewBox="0 0 660 280" role="img" aria-label="Curvas ICE de x2 coloreadas por el signo de x3 y la dependencia parcial como su media."></svg>
+  <p class="lectura" id="i10-lectura"></p>
+</div>
+<style>
+.viz-ice10 { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-ice10 .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-ice10 label { display: flex; align-items: center; gap: .4rem; }
+.viz-ice10 input[type=range] { width: 150px; padding: 0; }
+.viz-ice10 svg { width: 100%; height: auto; display: block; }
+.viz-ice10 .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("i10-svg"), lec = document.getElementById("i10-lectura");
+  var cc = document.getElementById("i10-c"), cb = document.getElementById("i10-b");
+  var ec = document.getElementById("i10-c-v"), eb = document.getElementById("i10-b-v");
+  var X0 = 56, X1 = 620, Y0 = 30, Y1 = 230, N = 40;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var sem = 1010, X3 = [], R = [], i;
+  function u() { sem = (sem * 48271) % 2147483647; return sem / 2147483647; }
+  function nor() { var a = Math.max(u(), 1e-9), b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); }
+  for (i = 0; i < N; i++) { X3.push(nor()); R.push(0.6 * nor()); }   // R: el resto de la prediccion de la fila
+  var m3 = 0; X3.forEach(function (v) { m3 += v / N; });
+  for (i = 0; i < N; i++) X3[i] -= m3;                                // media exactamente cero
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var c = +cc.value, b = +cb.value;
+    ec.textContent = c.toFixed(2); eb.textContent = b.toFixed(2);
+    var px = function (v) { return X0 + (v + 2) / 4 * (X1 - X0); };
+    var py = function (z) { return Y1 - (Math.max(-5, Math.min(5, z)) + 5) / 10 * (Y1 - Y0); };
+    svg.appendChild(el("rect", { x: X0, y: Y0, width: X1 - X0, height: Y1 - Y0, fill: "none", stroke: C_L }));
+    [-2, -1, 0, 1, 2].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y1 + 16, "text-anchor": "middle", "font-size": 10, fill: C_T, opacity: .7 }, v));
+    });
+    svg.appendChild(el("text", { x: X1, y: Y1 + 34, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "valor fijado de x₂ →"));
+    var pmin = 1e9, pmax = -1e9;
+    for (i = 0; i < N; i++) {
+      var pend = b + c * X3[i];
+      pmin = Math.min(pmin, pend); pmax = Math.max(pmax, pend);
+      svg.appendChild(el("path", { d: "M" + px(-2) + " " + py(R[i] - 2 * pend).toFixed(1) + " L" + px(2) + " " + py(R[i] + 2 * pend).toFixed(1),
+        stroke: X3[i] > 0 ? C_A : C_B, "stroke-width": 1.2, opacity: .55 }));
+    }
+    var mr = 0; R.forEach(function (v) { mr += v / N; });
+    svg.appendChild(el("path", { d: "M" + px(-2) + " " + py(mr - 2 * b).toFixed(1) + " L" + px(2) + " " + py(mr + 2 * b).toFixed(1), stroke: C_T, "stroke-width": 3.2 }));
+    [["x₃ > 0", C_A], ["x₃ < 0", C_B], ["dependencia parcial", C_T]].forEach(function (l, q) {
+      svg.appendChild(el("rect", { x: X0 + q * 130, y: 10, width: 12, height: 3, fill: l[1] }));
+      svg.appendChild(el("text", { x: X0 + q * 130 + 17, y: 15, "font-size": 10.5, fill: C_T, opacity: .85 }, l[0]));
+    });
+    lec.innerHTML = "La dependencia parcial tiene pendiente <strong>" + b.toFixed(2) + "</strong>, el efecto propio de x₂. Las 40 curvas ICE tienen pendientes entre <strong>" + pmin.toFixed(2) +
+      "</strong> y <strong>" + pmax.toFixed(2) + "</strong>: el término " + c.toFixed(2) + "·x₂x₃ suma a cada una " + c.toFixed(2) + " veces el x₃ de su fila, y como x₃ tiene media cero, esas pendientes se cancelan en la media.";
+  }
+  cc.addEventListener("input", dibujar);
+  cb.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Valores de Shapley
+
+Las dos secciones anteriores describen el modelo en su conjunto. Para explicar una predicción concreta, como el rechazo de una solicitud, se reparte la diferencia entre esa predicción y la predicción media entre las columnas.
+
+::: {.definicion}
+**Definición 10.5 ([valor de Shapley]{.g}).** Para una fila $x$ y un subconjunto $S$ de columnas, $v(S)$ es la predicción media cuando las columnas de $S$ toman los valores de $x$ y las demás los de unas filas de fondo. El valor de Shapley de la columna $j$ es
+$$
+\phi_j=\sum_{S\subseteq\{1,\dots,p\}\setminus\{j\}}\frac{|S|!\,(p-|S|-1)!}{p!}\bigl(v(S\cup\{j\})-v(S)\bigr),
+$$
+la media del aporte de $j$ sobre todos los órdenes en que se pueden añadir las columnas.
+:::
+
+::: {.proposicion}
+**Proposición 10.6 (eficiencia y caso lineal).** Los valores de Shapley suman $v(\{1,\dots,p\})-v(\varnothing)=f(x)-\overline{f}$, la diferencia entre la predicción de la fila y la predicción media en el fondo. Si $f(x)=\sum_j\beta_jx_j$, entonces $\phi_j=\beta_j(x_j-\bar x_j)$, con $\bar x_j$ la media del fondo.
+:::
+
+::: {.demostracion}
+*Demostración.* Para cada orden de las $p$ columnas, los aportes sucesivos suman $v(\text{todas})-v(\varnothing)$; los pesos de la definición son la proporción de órdenes en que $S$ precede a $j$, y la suma sobre $j$ de la media sobre los órdenes conserva esa suma. En el caso lineal, $v(S)=\sum_{k\in S}\beta_kx_k+\sum_{k\notin S}\beta_k\bar x_k$, y $v(S\cup\{j\})-v(S)=\beta_j(x_j-\bar x_j)$ para todo $S$, de modo que $\phi_j$ es ese valor. La celda enumera los $2^4$ subconjuntos para cada una de las cinco columnas con 500 filas de fondo: en el modelo lineal coincide con la fórmula, y en la función con interacción los valores suman 0,3945, igual a $f(x)$ menos la media. ∎
+:::
+
+```{pyodide}
+import numpy as np
+from itertools import combinations
+from math import factorial
+
+def sigmoide(z):
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -30.0, 30.0)))
+
+def modelo(X):
+    """La funcion que se interpreta, en escala logit: un efecto no lineal en x1,
+    un producto x2 x3, un escalon en x4 y ningun efecto de x5."""
+    return (1.2 * np.sin(1.5 * X[:, 0]) + 0.8 * X[:, 1] * X[:, 2]
+            + 0.6 * (X[:, 3] > 0.5) + 0.0 * X[:, 4])
+
+def perdida(y, z):
+    p = np.clip(sigmoide(z), 1e-12, 1 - 1e-12)
+    return -np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))
+
+
+def shapley(f, x, fondo):
+    """Valores de Shapley exactos de la fila x, con las columnas ausentes
+    tomadas de las filas de fondo (valor esperado intervencional)."""
+    p = len(x)
+    def v(S):
+        A = fondo.copy()
+        A[:, list(S)] = x[list(S)]
+        return f(A).mean()
+    phi = np.zeros(p)
+    for j in range(p):
+        resto = [k for k in range(p) if k != j]
+        for r in range(p):
+            for S in combinations(resto, r):
+                peso = factorial(r) * factorial(p - r - 1) / factorial(p)
+                phi[j] += peso * (v(S + (j,)) - v(S))
+    return phi
+
+rng = np.random.default_rng(102)
+fondo = rng.standard_normal((500, 5))
+x = np.array([1.0, 1.5, -1.0, 0.8, -0.3])
+
+# 1. modelo lineal: la formula cerrada
+beta = np.array([0.7, -0.4, 0.0, 1.1, 0.3])
+lineal = lambda A: A @ beta
+phi = shapley(lineal, x, fondo)
+print("lineal, Shapley          :", np.round(phi, 4) + 0.0)
+print("lineal, b_j (x_j - media):", np.round(beta * (x - fondo.mean(0)), 4) + 0.0)
+# 2. el modelo con interaccion: eficiencia
+phi = shapley(modelo, x, fondo)
+print("modelo, Shapley          :", np.round(phi, 4) + 0.0)
+print("suma de los valores      : %.4f" % phi.sum())
+print("f(x) - media de f        : %.4f" % (modelo(x[None, :])[0] - modelo(fondo).mean()))
+```
+
+En la fila elegida, $x_2=1{,}5$ y $x_3=-1$, y el término $0{,}8x_2x_3$ vale −1,2. Los valores de Shapley lo reparten casi a partes iguales entre las dos columnas: −0,6113 y −0,5646. Es la regla de Shapley para una interacción: no hay una forma única de atribuirla a una sola columna, y el reparto simétrico es el que satisface las propiedades del método. La columna $x_5$, que el modelo no usa, recibe 0.
+
+La enumeración exacta tiene coste $2^p$ y solo es viable con pocas columnas. La biblioteca `shap` usa aproximaciones por muestreo y un algoritmo exacto para árboles, TreeSHAP, cuyo coste es polinómico. Las dos calculan la cantidad de la Definición 10.5.
+
+## 4. Explicar el modelo y explicar el fenómeno
+
+Las tres herramientas describen $f$: qué pasaría con la predicción si se cambiara una entrada del modelo. No describen qué pasaría con $y$ si se cambiara la variable en el mundo. Si el modelo usa $x_5$ porque se correlaciona con $x_4$, que es la causa, una intervención sobre $x_5$ no cambia $y$, aunque la importancia, la dependencia parcial y los valores de Shapley de $x_5$ sean grandes en ese modelo. La distinción es la de Causal 01 entre predecir y actuar.
+
+## 5. Limitaciones
+
+- La dependencia parcial y los valores de Shapley con fondo intervencional evalúan el modelo en combinaciones que pueden no existir. Con $x_4$ y $x_5$ correlacionadas, fijar $x_4$ alto con $x_5$ bajo produce filas fuera de la distribución de entrenamiento, donde el modelo no tiene datos.
+- La importancia por permutación depende de la permutación. Con pocas filas, se repite varias veces y se informa de la media y la dispersión.
+- Los valores de Shapley dependen de las filas de fondo. Con otro fondo, los valores cambian, y la suma pasa a ser la diferencia con la predicción media de ese fondo.
+- ESL §10.13 define además la importancia relativa a partir de las mejoras de cada corte en los árboles. Esa medida está sesgada hacia las columnas con muchos valores distintos, que ofrecen más cortes posibles, y no se trata aquí.
+
+## Ejercicios
+
+### Ejercicio 1, Importancia por permutación a mano
+
+La celda fija cinco filas `x` de dos columnas, sus respuestas `y`, un modelo `f` que suma las dos columnas y un orden `orden` de las filas. Completar la línea de `Xp` con una copia de `x` en la que la primera columna se reordena según `orden`, y la de `importancia` con el aumento del error cuadrático medio de `f` al pasar de `x` a `Xp`. La celda imprime la importancia; debe dar `6.0`.
+
+```{pyodide}
+#| exercise: ex_permuta
+import numpy as np
+
+x = np.array([[1.0, 2.0], [2.0, 1.0], [3.0, 4.0],
+              [4.0, 3.0], [5.0, 6.0]])
+y = np.array([3.0, 3.0, 7.0, 7.0, 11.0])
+f = lambda A: A[:, 0] + A[:, 1]
+orden = np.array([4, 2, 0, 3, 1])
+
+Xp = ______
+importancia = ______
+
+print(round(float(importancia), 4))
+```
+
+::: {.hint exercise="ex_permuta"}
+Hacer una copia con `x.copy()` y asignar a su columna 0 los valores `x[orden, 0]`. El error cuadrático medio es `np.mean((y - f(A)) ** 2)`.
+:::
+
+::: {.solution exercise="ex_permuta"}
+```{pyodide}
+import numpy as np
+
+x = np.array([[1.0, 2.0], [2.0, 1.0], [3.0, 4.0],
+              [4.0, 3.0], [5.0, 6.0]])
+y = np.array([3.0, 3.0, 7.0, 7.0, 11.0])
+f = lambda A: A[:, 0] + A[:, 1]
+orden = np.array([4, 2, 0, 3, 1])
+
+Xp = x.copy()
+Xp[:, 0] = x[orden, 0]
+importancia = (np.mean((y - f(Xp)) ** 2)
+               - np.mean((y - f(x)) ** 2))
+
+print(round(float(importancia), 4))
+```
+
+El modelo no comete error con los datos originales, de modo que la importancia es el error cuadrático medio tras permutar. La fila 4, que conserva su valor, no aporta error.
+:::
+
+```{pyodide}
+#| exercise: ex_permuta
+#| check: true
+import numpy as np
+_Xp = np.asarray(Xp, float)
+if abs(float(importancia) - 6.0) < 1e-9 and _Xp[:, 0].tolist() == [5.0, 3.0, 1.0, 4.0, 2.0]:
+    feedback = {"correct": True, "message": "Correcto: la importancia de la primera columna es 6.0."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba la primera columna reordenada como [5, 3, 1, 4, 2] y una importancia de 6.0."}
+feedback
+```
+
+### Ejercicio 2, Shapley con dos columnas
+
+Para una fila y dos columnas, la celda fija la predicción media sin ninguna columna fijada, `v0`, con solo la primera, `v1`, con solo la segunda, `v2`, y con las dos, `v12`. Completar las líneas de `phi1` y `phi2` con los valores de Shapley de la Definición 10.5. La celda imprime los dos y su suma; deben dar `0.9 0.5 1.4`.
+
+```{pyodide}
+#| exercise: ex_shapley
+v0, v1, v2, v12 = 0.2, 0.9, 0.5, 1.6
+
+phi1 = ______
+phi2 = ______
+
+print(round(phi1, 4), round(phi2, 4), round(phi1 + phi2, 4))
+```
+
+::: {.hint exercise="ex_shapley"}
+Con dos columnas hay dos órdenes. Para la primera: su aporte cuando entra antes, `v1 - v0`, y cuando entra después, `v12 - v2`, cada uno con peso un medio.
+:::
+
+::: {.solution exercise="ex_shapley"}
+```{pyodide}
+v0, v1, v2, v12 = 0.2, 0.9, 0.5, 1.6
+
+phi1 = 0.5 * ((v1 - v0) + (v12 - v2))
+phi2 = 0.5 * ((v2 - v0) + (v12 - v1))
+
+print(round(phi1, 4), round(phi2, 4), round(phi1 + phi2, 4))
+```
+
+La suma, 1,4, es $v_{12}-v_0$, como exige la Proposición 10.6. La primera columna aporta 0,7 si entra primero y 1,1 si entra después: la diferencia de 0,4 es una interacción, y Shapley la reparte por mitades.
+:::
+
+```{pyodide}
+#| exercise: ex_shapley
+#| check: true
+if abs(float(phi1) - 0.9) < 1e-9 and abs(float(phi2) - 0.5) < 1e-9:
+    feedback = {"correct": True, "message": "Correcto: 0.9 y 0.5, que suman v12 − v0."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba phi1 = 0.9 y phi2 = 0.5."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Aplicado 10**:
+
+1. Ajustar el boosting de ML aplicado 09 con $x_4$ y $x_5$ correlacionadas y medir la importancia por permutación de cada una en cinco ajustes con semillas distintas.
+2. Calcular la dependencia parcial de $x_4$ cuando $x_5=0{,}95x_4+$ ruido y contar cuántas de las filas evaluadas quedan fuera del rango observado de la pareja $(x_4,x_5)$.
+3. Implementar la aproximación de Shapley por muestreo de órdenes y medir cuántos órdenes hacen falta para acercarse a los valores exactos a $10^{-2}$. Guardar en `50-Errores/` la diferencia entre explicar el modelo y explicar el fenómeno.
+
+## Del libro
+
+ESL §10.13, *Interpretation*, trata la interpretación de los modelos de boosting con árboles. Define la importancia relativa de cada variable a partir de las mejoras que aportan sus cortes, y presenta los gráficos de dependencia parcial como la media de la función sobre las demás variables, con la advertencia de que resumen bien la función cuando la variable elegida interactúa poco con las demás. Esta lección usa la importancia por permutación en lugar de la de los cortes, añade las curvas ICE y los valores de Shapley, y comprueba cada herramienta con una función conocida.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- Importancia por permutación: aumento de la pérdida al permutar una columna.
+- La importancia describe el modelo: una columna que el modelo no usa tiene importancia 0.
+- Dos modelos casi igual de buenos, 0,5724 y 0,5756, atribuyen el escalón a $x_4$ o a $x_5$.
+- Dependencia parcial: la media de las curvas ICE.
+- Con una interacción $x_2x_3$ y $x_3$ de media cero, la dependencia parcial de $x_2$ es plana.
+- Las curvas ICE de $x_2$ tienen pendientes de −2,639 a 2,658.
+- Shapley: aporte medio de una columna sobre todos los órdenes de entrada.
+- Eficiencia: los valores de Shapley suman $f(x)$ menos la predicción media.
+- En un modelo lineal, $\phi_j=\beta_j(x_j-\bar x_j)$.
+- Una interacción se reparte por mitades: −0,6113 y −0,5646.
+- Explicar el modelo no es explicar el fenómeno: una columna correlacionada con la causa puede ser importante y no causal.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos, con la función $f(x)=1{,}2\sin(1{,}5x_1)+0{,}8x_2x_3+0{,}6[x_4>0{,}5]$. La importancia, con 20 000 filas y $x_5$ con correlación 0,9499 con $x_4$: pérdidas de 0,5724 y 0,5756; importancias de 0,1497, 0,1013, 0,1070, 0,0167 y 0 en el primer modelo y de 0,1496, 0,1013, 0,1069, 0 y 0,0107 en el segundo. La dependencia parcial, con 2000 filas: de −0,9942 a 1,3998 para $x_1$ y de 0,1691 a 0,1711 para $x_2$; pendientes ICE de −2,639 a 2,658, con correlación 1 con $x_3$. Shapley, con 500 filas de fondo: coincidencia con $\beta_j(x_j-\bar x_j)$ en el modelo lineal, y valores de 1,1348, −0,6113, −0,5646, 0,4356 y 0 con suma 0,3945 en la función con interacción. Las Proposiciones 10.2, 10.4 y 10.6 se demuestran en la página.
+
+**Lo que viene de los libros.** La importancia relativa basada en los cortes y la dependencia parcial con su advertencia sobre las interacciones, de ESL §10.13.
+
+**Lo que se usa de otras lecciones sin repetir.** La pérdida logarítmica, de ML aplicado 07. La distinción entre predecir e intervenir, de Causal 01.
+
+**Lo que se enuncia sin demostrar.** Que TreeSHAP calcula los valores exactos en árboles con coste polinómico se toma de la documentación de la biblioteca `shap`, sin implementarlo.
+
+**Lo que es mío, no del libro.** El uso de una función conocida para comprobar cada método contra la verdad. Los dos modelos igual de buenos con importancias intercambiadas. La medición de la dependencia parcial plana frente a las pendientes ICE. La enumeración exacta de Shapley con la comprobación del caso lineal y de la eficiencia. Y el visual de las curvas ICE con la interacción como control.
+:::
