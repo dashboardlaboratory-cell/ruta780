@@ -1,0 +1,414 @@
+---
+title: "Caso 5. Financiamiento de teléfonos a plazos"
+subtitle: "ML aplicado · Caso integrador 5"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="aplicado/caso-5-financiamiento"}
+[**Caso** 5]{.item}
+[**Fase** F4]{.item}
+[**Usa** ML aplicado 01 a 13 · Estadística 11 · Machine Learning 17]{.item}
+:::
+
+Este caso reúne programación, estadística, aprendizaje automático y finanzas. Corresponde a un bloque de trabajo de unas seis horas. La situación y los datos son inventados; la estructura se inspira en los casos prácticos que usan los equipos de analítica en sus procesos de selección.
+
+## Situación
+
+Una operadora de telefonía móvil vende teléfonos financiados a 24 meses a sus clientes de plan pospago. La venta subvenciona parte del teléfono: la cuota mensual cubre solo una fracción de su valor, y el resto se recupera con el margen del plan. Si el cliente deja de pagar, la operadora pierde la cuota y el margen de los meses restantes.
+
+La nueva directora financiera observó que la cartera tarda unos 14 meses en recuperar lo invertido y fijó un máximo de 12 meses para seguir financiando. Pide un límite de crédito por cliente: la operadora solo financiará un teléfono si su valor no supera el límite del cliente. El límite se calculará con la información disponible al solicitar el financiamiento.
+
+El equipo de riesgo ya presentó un modelo de árboles potenciados con un AUC de 0,97 y propone usar sus predicciones directamente. La directora quiere una segunda opinión.
+
+## Los datos
+
+La página carga al abrirse dos tablas. `cartera` tiene los 8000 clientes financiados en 2023, con el mes de su impago si lo hubo. `solicitantes` tiene los 8000 clientes que solicitaron financiamiento en 2024, con la misma información salvo el resultado, que se conocerá al cerrar la cohorte.
+
+| Columna | Descripción |
+|---|---|
+| `cliente` | Número del cliente |
+| `cohorte` | Año de la solicitud |
+| `antiguedad_meses` | Meses como cliente de pospago |
+| `dias_pago_medio` | Días de retraso medios al pagar la factura en los seis meses anteriores |
+| `desv_dias_pago` | Desviación típica de esos días de retraso |
+| `pago_digital_pct` | Porcentaje de pagos hechos por canales digitales |
+| `recarga_prepago_media` | Recarga media cuando la línea era de prepago, en dólares |
+| `canal` | Canal de venta: `presencial`, `digital` o `puerta a puerta` |
+| `gama` | Gama del teléfono: `baja`, `media` o `alta` |
+| `renovacion` | 1 si el cliente ya terminó sin impagos un financiamiento anterior |
+| `margen_mensual` | Margen bruto mensual del plan, en dólares |
+| `valor_financiado` | Valor del teléfono que la operadora adelanta, en dólares |
+| `cuota_mensual` | Cuota mensual del teléfono, en dólares |
+| `mes_impago` | Mes, de 1 a 24, en que el cliente dejó de pagar; vacío si pagó los 24 meses. Solo en `cartera` |
+
+Los números de la operadora son estos. El flujo de un cliente es la salida del valor financiado en el mes 0 y, en cada mes en que sigue pagando, la entrada de su margen más su cuota. Desde el mes del impago no hay entradas. Los flujos se descuentan al 1 % mensual. El período de recuperación es el primer mes en que el flujo descontado acumulado de la cartera deja de ser negativo.
+
+```{pyodide}
+#| include: false
+# Genera los datos del caso. Va oculta: el mecanismo es lo que el caso pide descubrir.
+import numpy as np
+import pandas as pd
+
+def genera_financiamiento(semilla=2410):
+    """Dos cohortes de clientes que financiaron un telefono a 24 meses.
+    La de 2023 trae el mes de impago; la de 2024 tambien, pero el caso solo
+    la usa para el contraste final."""
+    rng = np.random.default_rng(semilla)
+    def cohorte(n, anio, desplaza):
+        antig = np.minimum(rng.gamma(2.0, 9.0, n), 120).round()
+        dias = np.clip(rng.normal(12, 5, n), 0, 40).round(1)
+        desv = np.clip(rng.gamma(2.0, 2.2, n), 0, 25).round(1)
+        digital = np.clip(rng.beta(2, 3, n) * 100, 0, 100).round(1)
+        recarga = np.exp(rng.normal(np.log(9), 0.6, n)).round(2)
+        canal = rng.choice(["presencial", "digital", "puerta a puerta"], n, p=[0.5, 0.3, 0.2])
+        gama = rng.choice(["baja", "media", "alta"], n, p=[0.35, 0.45, 0.20])
+        renov = (rng.random(n) < 0.25).astype(int)
+        margen = np.exp(rng.normal(np.log(30), 0.35, n)).round(2)
+        valor = np.where(gama == "alta", 900, np.where(gama == "media", 480, 250)) * np.exp(rng.normal(0, 0.12, n))
+        subsidio = rng.choice([0.3, 0.5, 0.7], n)
+        cuota = (valor * (1 - subsidio) / 24).round(2)
+        z = (-4.4 + 0.07 * (dias - 12) + 0.10 * (desv - 4.4) - 0.012 * (digital - 40)
+             - 0.015 * (np.minimum(antig, 48) - 18) - 0.6 * renov
+             + np.where(canal == "puerta a puerta", 0.55, np.where(canal == "digital", -0.1, 0.0))
+             + 0.35 * (gama == "alta") + desplaza)
+        riesgo = 1 / (1 + np.exp(-z))                           # impago mensual
+        u = rng.random(n)
+        mes = np.ceil(np.log(1 - u) / np.log(1 - riesgo))        # mes del impago (geometrico)
+        mes = np.where(mes <= 24, mes, np.nan)
+        return pd.DataFrame({"cohorte": anio, "antiguedad_meses": antig, "dias_pago_medio": dias,
+                             "desv_dias_pago": desv, "pago_digital_pct": digital,
+                             "recarga_prepago_media": recarga, "canal": canal, "gama": gama,
+                             "renovacion": renov, "margen_mensual": margen,
+                             "valor_financiado": valor.round(2), "cuota_mensual": cuota,
+                             "mes_impago": mes})
+    t = pd.concat([cohorte(8000, 2023, 0.0), cohorte(8000, 2024, 0.15)], ignore_index=True)
+    t.insert(0, "cliente", np.arange(100001, 100001 + len(t)))
+    return t
+
+
+_todo = genera_financiamiento()
+cartera = _todo[_todo["cohorte"] == 2023].reset_index(drop=True)
+solicitantes = _todo[_todo["cohorte"] == 2024].drop(columns="mes_impago").reset_index(drop=True)
+del _todo
+```
+
+```{pyodide}
+print(cartera.shape, solicitantes.shape)
+print(cartera.head(6).to_string())
+```
+
+## Preguntas
+
+Las preguntas 1 a 3 tienen comprobación automática. La 4 y la 5 se evalúan con la rúbrica.
+
+```{pyodide}
+#| exercise: [c5_kpis, c5_auc, c5_limite]
+#| setup: true
+import numpy as np
+import pandas as pd
+
+def genera_financiamiento(semilla=2410):
+    """Dos cohortes de clientes que financiaron un telefono a 24 meses.
+    La de 2023 trae el mes de impago; la de 2024 tambien, pero el caso solo
+    la usa para el contraste final."""
+    rng = np.random.default_rng(semilla)
+    def cohorte(n, anio, desplaza):
+        antig = np.minimum(rng.gamma(2.0, 9.0, n), 120).round()
+        dias = np.clip(rng.normal(12, 5, n), 0, 40).round(1)
+        desv = np.clip(rng.gamma(2.0, 2.2, n), 0, 25).round(1)
+        digital = np.clip(rng.beta(2, 3, n) * 100, 0, 100).round(1)
+        recarga = np.exp(rng.normal(np.log(9), 0.6, n)).round(2)
+        canal = rng.choice(["presencial", "digital", "puerta a puerta"], n, p=[0.5, 0.3, 0.2])
+        gama = rng.choice(["baja", "media", "alta"], n, p=[0.35, 0.45, 0.20])
+        renov = (rng.random(n) < 0.25).astype(int)
+        margen = np.exp(rng.normal(np.log(30), 0.35, n)).round(2)
+        valor = np.where(gama == "alta", 900, np.where(gama == "media", 480, 250)) * np.exp(rng.normal(0, 0.12, n))
+        subsidio = rng.choice([0.3, 0.5, 0.7], n)
+        cuota = (valor * (1 - subsidio) / 24).round(2)
+        z = (-4.4 + 0.07 * (dias - 12) + 0.10 * (desv - 4.4) - 0.012 * (digital - 40)
+             - 0.015 * (np.minimum(antig, 48) - 18) - 0.6 * renov
+             + np.where(canal == "puerta a puerta", 0.55, np.where(canal == "digital", -0.1, 0.0))
+             + 0.35 * (gama == "alta") + desplaza)
+        riesgo = 1 / (1 + np.exp(-z))                           # impago mensual
+        u = rng.random(n)
+        mes = np.ceil(np.log(1 - u) / np.log(1 - riesgo))        # mes del impago (geometrico)
+        mes = np.where(mes <= 24, mes, np.nan)
+        return pd.DataFrame({"cohorte": anio, "antiguedad_meses": antig, "dias_pago_medio": dias,
+                             "desv_dias_pago": desv, "pago_digital_pct": digital,
+                             "recarga_prepago_media": recarga, "canal": canal, "gama": gama,
+                             "renovacion": renov, "margen_mensual": margen,
+                             "valor_financiado": valor.round(2), "cuota_mensual": cuota,
+                             "mes_impago": mes})
+    t = pd.concat([cohorte(8000, 2023, 0.0), cohorte(8000, 2024, 0.15)], ignore_index=True)
+    t.insert(0, "cliente", np.arange(100001, 100001 + len(t)))
+    return t
+
+
+_todo = genera_financiamiento()
+cartera = _todo[_todo["cohorte"] == 2023].reset_index(drop=True)
+solicitantes = _todo[_todo["cohorte"] == 2024].drop(columns="mes_impago").reset_index(drop=True)
+del _todo
+```
+
+### Pregunta 1, Indicadores de la cartera de 2023
+
+Asignar a `kpis` un diccionario con seis claves: `total_financiado`, la suma de los valores financiados; `clientes`, el número de clientes; `cuota_media`; `supervivencia_24`, la proporción de clientes que pagaron los 24 meses; `vpn`, el valor presente neto de la cartera; y `payback`, su período de recuperación en meses.
+
+```{pyodide}
+#| exercise: c5_kpis
+kpis = ______
+
+for k, v in kpis.items():
+    print(k, v)
+```
+
+::: {.solution exercise="c5_kpis"}
+```python
+import numpy as np
+
+def flujo_cartera(d, tasa=0.01):
+    """Flujo mensual de la cartera, del mes 0 al 24."""
+    meses = np.arange(1, 25)
+    mi = d["mes_impago"].to_numpy()
+    activo = np.isnan(mi)[:, None] | (meses[None, :] < mi[:, None])
+    entra = (d["margen_mensual"] + d["cuota_mensual"]).to_numpy()[:, None] * activo
+    return np.concatenate([[-d["valor_financiado"].sum()], entra.sum(0)])
+
+f = flujo_cartera(cartera)
+desc = f / 1.01 ** np.arange(25)
+kpis = {
+    "total_financiado": round(float(cartera["valor_financiado"].sum()), 2),
+    "clientes": len(cartera),
+    "cuota_media": round(float(cartera["cuota_mensual"].mean()), 4),
+    "supervivencia_24": round(float(cartera["mes_impago"].isna().mean()), 4),
+    "vpn": round(float(desc.sum()), 2),
+    "payback": int(np.argmax(np.cumsum(desc) >= 0)),
+}
+
+for k, v in kpis.items():
+    print(k, v)
+```
+:::
+
+```{pyodide}
+#| exercise: c5_kpis
+#| check: true
+def _flujos(t, tasa=0.01):
+    """Flujo de cada mes: salida del valor financiado en el mes 0 y, mientras el
+    cliente no ha incumplido, margen del plan mas cuota."""
+    meses = np.arange(1, 25)
+    activo = (np.isnan(t["mes_impago"].to_numpy())[:, None]
+              | (meses[None, :] < t["mes_impago"].to_numpy()[:, None]))
+    entrada = (t["margen_mensual"].to_numpy() + t["cuota_mensual"].to_numpy())[:, None] * activo
+    total = np.concatenate([[-t["valor_financiado"].sum()], entrada.sum(0)])
+    vpn = float(np.sum(total / (1 + tasa) ** np.arange(25)))
+    desc = np.cumsum(total / (1 + tasa) ** np.arange(25))
+    payback = int(np.argmax(desc >= 0)) if (desc >= 0).any() else None
+    return vpn, payback, activo[:, -1].mean()
+try:
+    _v, _pb, _s = _flujos(cartera)
+    _esp = {"total_financiado": float(cartera["valor_financiado"].sum()), "clientes": 8000,
+            "cuota_media": float(cartera["cuota_mensual"].mean()), "supervivencia_24": float(_s),
+            "vpn": _v, "payback": _pb}
+    _mal = [k for k, v in _esp.items()
+            if k not in kpis or abs(float(kpis[k]) - v) > max(1e-3 * abs(v), 5e-4)]
+    _ok = not _mal
+    _m = ("Correcto: VPN %.0f y recuperación en el mes %d." % (_v, _pb)) if _ok else \
+         "No coinciden: " + ", ".join(_mal) + ". El flujo del mes 0 es la salida del valor financiado."
+except Exception as _e:
+    _ok, _m = False, str(_e)
+feedback = {"correct": _ok, "message": _m}
+feedback
+```
+
+### Pregunta 2, El AUC del equipo de riesgo
+
+El modelo del equipo de riesgo tiene 150 árboles potenciados de profundidad 6 con tasa de aprendizaje 0,1, predice el impago en los 12 primeros meses con las seis columnas numéricas del cliente, y su AUC de 0,97 se calculó con las mismas filas con que se ajustó. Reproducir ese modelo con la cartera de 2023 y asignar a `auc_informado` el AUC calculado como lo hizo el equipo, y a `auc_honesto` una estimación del AUC que tendrá con clientes que no vio.
+
+```{pyodide}
+#| exercise: c5_auc
+auc_informado = ______
+auc_honesto = ______
+
+print(round(auc_informado, 3), round(auc_honesto, 3))
+```
+
+::: {.solution exercise="c5_auc"}
+```python
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.model_selection import cross_val_predict, StratifiedKFold
+from sklearn.metrics import roc_auc_score
+
+cols = ["antiguedad_meses", "dias_pago_medio", "desv_dias_pago",
+        "pago_digital_pct", "recarga_prepago_media", "renovacion"]
+X = cartera[cols]
+y = cartera["mes_impago"].le(12).astype(int)
+def modelo():
+    return GradientBoostingClassifier(n_estimators=150, max_depth=6,
+                                      learning_rate=0.1, random_state=0)
+
+auc_informado = roc_auc_score(y, modelo().fit(X, y).predict_proba(X)[:, 1])
+cv = StratifiedKFold(5, shuffle=True, random_state=0)
+p = cross_val_predict(modelo(), X, y, cv=cv, method="predict_proba")[:, 1]
+auc_honesto = roc_auc_score(y, p)
+
+print(round(auc_informado, 3), round(auc_honesto, 3))
+```
+:::
+
+```{pyodide}
+#| exercise: c5_auc
+#| check: true
+try:
+    _a, _b = float(auc_informado), float(auc_honesto)
+    _ok = _a > 0.93 and 0.56 <= _b <= 0.70
+    _m = ("Correcto: %.3f medido con las filas del ajuste frente a %.3f con filas que el modelo no vio." % (_a, _b)) if _ok else \
+         "Se esperaba un AUC informado por encima de 0.93 y una estimación con filas no vistas entre 0.56 y 0.70; se obtuvo %.3f y %.3f." % (_a, _b)
+except Exception as _e:
+    _ok, _m = False, str(_e)
+feedback = {"correct": _ok, "message": _m}
+feedback
+```
+
+### Pregunta 3, El límite de crédito
+
+Escribir la función `limite(entreno, solicitudes)`, que recibe la cartera con resultados y una tabla de solicitudes con las columnas de `solicitantes`, y devuelve un límite de crédito en dólares por solicitud. La operadora financiará una solicitud si su `valor_financiado` no supera el límite.
+
+La comprobación aplica la función con `cartera` a las solicitudes de 2024 y calcula, con sus resultados reales, el VPN y el período de recuperación de las solicitudes financiadas. Exige una recuperación en 12 meses o menos y un VPN de al menos 2 100 000 dólares; financiar todas las solicitudes da 2 018 575 dólares con recuperación en 14 meses.
+
+```{pyodide}
+#| exercise: c5_limite
+def limite(entreno, solicitudes):
+    ______
+
+lim = limite(cartera, solicitantes)
+print(len(lim), round(float((solicitantes["valor_financiado"] <= lim).mean()), 3))
+```
+
+::: {.solution exercise="c5_limite"}
+```python
+import numpy as np
+from sklearn.linear_model import LogisticRegression
+
+NUM = ["antiguedad_meses", "dias_pago_medio", "desv_dias_pago",
+       "pago_digital_pct", "recarga_prepago_media", "renovacion"]
+
+def atributos(d):
+    Z = d[NUM].astype(float).copy()
+    Z["puerta"] = (d["canal"] == "puerta a puerta").astype(float)
+    Z["digital"] = (d["canal"] == "digital").astype(float)
+    Z["alta"] = (d["gama"] == "alta").astype(float)
+    return Z
+
+def limite(entreno, solicitudes, grupos=5, meses_limite=24, tasa=0.01):
+    """Puntaje de impago, grupos de riesgo por quintiles del puntaje, y límite
+    igual al flujo esperado descontado del cliente con la supervivencia de su
+    grupo."""
+    A, B = atributos(entreno), atributos(solicitudes)
+    mu, sd = A.mean(), A.std()
+    y = entreno["mes_impago"].le(12).astype(int)
+    m = LogisticRegression(max_iter=2000).fit((A - mu) / sd, y)
+    s_e = m.predict_proba((A - mu) / sd)[:, 1]
+    s_s = m.predict_proba((B - mu) / sd)[:, 1]
+    cortes = np.quantile(s_e, np.linspace(0, 1, grupos + 1)[1:-1])
+    g_e, g_s = np.searchsorted(cortes, s_e), np.searchsorted(cortes, s_s)
+    meses = np.arange(1, 25)
+    mi = entreno["mes_impago"].to_numpy()
+    superv = np.array([[np.mean(~(mi[g_e == g] <= t)) for t in meses] for g in range(grupos)])
+    cuota = np.array([entreno["cuota_mensual"].to_numpy()[g_e == g].mean() for g in range(grupos)])
+    flujo = (solicitudes["margen_mensual"].to_numpy() + cuota[g_s])[:, None] * superv[g_s]
+    desc = flujo[:, :meses_limite] / (1 + tasa) ** meses[:meses_limite]
+    return desc.sum(axis=1)
+
+lim = limite(cartera, solicitantes)
+print(len(lim), round(float((solicitantes["valor_financiado"] <= lim).mean()), 3))
+```
+:::
+
+```{pyodide}
+#| exercise: c5_limite
+#| check: true
+import numpy as _np
+def _flujos(t, tasa=0.01):
+    """Flujo de cada mes: salida del valor financiado en el mes 0 y, mientras el
+    cliente no ha incumplido, margen del plan mas cuota."""
+    meses = np.arange(1, 25)
+    activo = (np.isnan(t["mes_impago"].to_numpy())[:, None]
+              | (meses[None, :] < t["mes_impago"].to_numpy()[:, None]))
+    entrada = (t["margen_mensual"].to_numpy() + t["cuota_mensual"].to_numpy())[:, None] * activo
+    total = np.concatenate([[-t["valor_financiado"].sum()], entrada.sum(0)])
+    vpn = float(np.sum(total / (1 + tasa) ** np.arange(25)))
+    desc = np.cumsum(total / (1 + tasa) ** np.arange(25))
+    payback = int(np.argmax(desc >= 0)) if (desc >= 0).any() else None
+    return vpn, payback, activo[:, -1].mean()
+try:
+    _t = genera_financiamiento()
+    _real = _t[_t["cohorte"] == 2024].reset_index(drop=True)
+    _lim = _np.asarray(limite(cartera.copy(), solicitantes.copy()), float)
+    _acc = _real["valor_financiado"].to_numpy() <= _lim
+    _v, _pb, _ = _flujos(_real[_acc])
+    _ok = len(_lim) == len(_real) and _pb is not None and _pb <= 12 and _v >= 2_100_000
+    _m = "se financia el %.1f %% de las solicitudes; VPN %.0f y recuperación en el mes %s." % (100 * _acc.mean(), _v, _pb)
+except Exception as _e:
+    _ok, _m = False, "error al ejecutar: %s" % _e
+feedback = {"correct": _ok, "message": ("Correcto: " if _ok else "Todavía no: ") + _m}
+feedback
+```
+
+### Pregunta 4, Perfiles aprobados y rechazados
+
+Con el límite de la pregunta 3, comparar las solicitudes de 2024 que se financian con las que se rechazan: su riesgo medio, su gama de teléfono, su canal y su margen. Explicar por qué una regla más simple, como no financiar teléfonos de gama alta, también reduce el período de recuperación, y qué pierde frente al límite.
+
+```{pyodide}
+# perfiles de las solicitudes financiadas y rechazadas
+```
+
+### Pregunta 5, Informe para la directora financiera
+
+Redactar un informe de entre 300 y 450 palabras que responda a la propuesta del equipo de riesgo, presente el límite de crédito con su VPN y su período de recuperación frente a financiar a todos, y justifique las tres decisiones de diseño: los meses del indicador de impago con que se entrena el modelo, las variables elegidas y los meses de flujo que suma el límite.
+
+Para la entrevista con la directora, no para el informe: el caso supone que el margen del plan solo existe si se financia el teléfono. Si el cliente pudiera contratar el plan sin teléfono, con una tasa de abandono mayor, ¿cómo se calcularía el valor diferencial de 1000 clientes con teléfono financiado frente a 1000 sin teléfono?
+
+## Rúbrica
+
+| Criterio | Completo | Incompleto |
+|---|---|---|
+| Preguntas 1 a 3 | La comprobación automática marca las tres como correctas. | Alguna no se cumple. |
+| El AUC del equipo | Explica que 0,97 se midió con las filas del ajuste, da la estimación con filas no vistas y explica por qué un límite calculado con ese AUC sería demasiado optimista. | Acepta el AUC, o lo critica sin medir la diferencia. |
+| Límite de crédito | El límite se construye con el flujo esperado de cada cliente según su grupo de riesgo, descontado. Se justifica el número de meses sumados con su efecto en el VPN y en la recuperación. | El límite es un umbral de puntaje sin relación con el flujo, o los meses se eligen sin mostrar su efecto. |
+| Perfiles | Compara aprobados y rechazados con cifras y explica el papel de la gama del teléfono en la recuperación. | Describe los grupos sin cifras o sin relacionarlos con la decisión. |
+| Informe | Tiene entre 300 y 450 palabras, usa las cifras de las preguntas y no usa términos técnicos sin explicarlos. | Falta alguna de las tres partes. |
+
+<!-- verificacion
+import numpy as np
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.model_selection import cross_val_predict, StratifiedKFold
+from sklearn.metrics import roc_auc_score
+def _flujos(t, tasa=0.01):
+    """Flujo de cada mes: salida del valor financiado en el mes 0 y, mientras el
+    cliente no ha incumplido, margen del plan mas cuota."""
+    meses = np.arange(1, 25)
+    activo = (np.isnan(t["mes_impago"].to_numpy())[:, None]
+              | (meses[None, :] < t["mes_impago"].to_numpy()[:, None]))
+    entrada = (t["margen_mensual"].to_numpy() + t["cuota_mensual"].to_numpy())[:, None] * activo
+    total = np.concatenate([[-t["valor_financiado"].sum()], entrada.sum(0)])
+    vpn = float(np.sum(total / (1 + tasa) ** np.arange(25)))
+    desc = np.cumsum(total / (1 + tasa) ** np.arange(25))
+    payback = int(np.argmax(desc >= 0)) if (desc >= 0).any() else None
+    return vpn, payback, activo[:, -1].mean()
+t = genera_financiamiento()
+c23, c24 = t[t["cohorte"] == 2023], t[t["cohorte"] == 2024]
+cols = ["antiguedad_meses", "dias_pago_medio", "desv_dias_pago", "pago_digital_pct", "recarga_prepago_media", "renovacion"]
+y = c23["mes_impago"].le(12).astype(int)
+m = GradientBoostingClassifier(n_estimators=150, max_depth=6, learning_rate=0.1, random_state=0)
+a_in = roc_auc_score(y, m.fit(c23[cols], y).predict_proba(c23[cols])[:, 1])
+p = cross_val_predict(m, c23[cols], y, cv=StratifiedKFold(5, shuffle=True, random_state=0), method="predict_proba")[:, 1]
+a_cv = roc_auc_score(y, p)
+assert a_in - a_cv > 0.25
+v_all, pb_all, _ = _flujos(c24)
+assert pb_all > 12
+v_sa, pb_sa, _ = _flujos(c23[c23["gama"] != "alta"])
+assert pb_sa <= 12
+print("AUC con las filas del ajuste %.3f frente a %.3f validado; financiar todo 2024: VPN %.0f, recuperación %d; 2023 sin gama alta: recuperación %d"
+      % (a_in, a_cv, v_all, pb_all, pb_sa))
+-->

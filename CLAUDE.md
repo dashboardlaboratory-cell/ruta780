@@ -169,8 +169,10 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
     recomendación se evalúa con una rúbrica publicada en el mismo caso.
     **El generador nunca es visible** (Luis, 28-09-2026): va en una celda
     `#| include: false`, que corre al cargar la página, y el caso describe la
-    base en texto. Sin CSV en el repo. `casos.py` falla si una celda visible
-    trae `def genera…`.
+    base en texto. `casos.py` falla si una celda visible trae `def genera…`.
+    Los conjuntos de datos públicos con licencia libre (por ejemplo, los de
+    UCI con CC BY 4.0) sí se suben al repo, citando la fuente y la licencia.
+    Nunca datos de la universidad de Luis ni de empresas.
 
 15. **Cero contexto de su empresa.** Nada de CBTL, café, Multiplaza ni datos
     reales de su trabajo. Desde el 27-09-2026 (pedido de Luis) sí se admiten los
