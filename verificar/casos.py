@@ -12,6 +12,7 @@ Para cada página `aplicado/caso-N-*.qmd`:
               y todas sus aserciones se cumplen: la respuesta correcta sale de los
               datos y la trampa está donde el caso dice
   herramienta el enunciado de las preguntas no prescribe herramientas
+  oculto      ninguna celda visible contiene el generador de los datos
 
 Uso:
     python3 verificar/casos.py              # todos
@@ -55,6 +56,12 @@ def revisar(p):
     c, _, err = ejecuta(datos)
     if c != 0:
         return [("setup", "la celda de datos revienta: " + err.strip().split("\n")[-1])]
+
+    # El mecanismo que genera los datos es lo que el caso pide descubrir: ninguna
+    # celda visible puede traerlo. Va en una celda con «#| include: false».
+    for c in re.findall(r"```\{pyodide\}\n(.*?)```", t, re.S):
+        if not c.startswith("#|") and re.search(r"^def genera", c, re.M):
+            h.append(("oculto", "una celda visible contiene el generador de los datos"))
 
     preguntas = t.split("## Preguntas", 1)[-1].split("## Rúbrica", 1)[0]
     for m in HERRAMIENTA.finditer(re.sub(r"```.*?```", "", preguntas, flags=re.S)):

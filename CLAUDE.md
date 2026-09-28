@@ -167,6 +167,10 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
     comprueba que la respuesta correcta sale de los datos y que la trampa está
     donde el caso dice. Las partes numéricas se corrigen solas; la
     recomendación se evalúa con una rúbrica publicada en el mismo caso.
+    **El generador nunca es visible** (Luis, 28-09-2026): va en una celda
+    `#| include: false`, que corre al cargar la página, y el caso describe la
+    base en texto. Sin CSV en el repo. `casos.py` falla si una celda visible
+    trae `def genera…`.
 
 15. **Cero contexto de su empresa.** Nada de CBTL, café, Multiplaza ni datos
     reales de su trabajo. Desde el 27-09-2026 (pedido de Luis) sí se admiten los
