@@ -41,6 +41,7 @@ MODULOS = {
     "Series": ("Series",),
     "Causal": ("Causal",),
     "Atributos": ("Atributos",),
+    "Aplicado": ("Aplicado",),
 }
 
 REF = re.compile(

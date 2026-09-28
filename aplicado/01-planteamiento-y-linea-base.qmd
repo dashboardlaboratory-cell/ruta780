@@ -1,0 +1,561 @@
+---
+title: "Planteamiento: variable objetivo, métrica y línea base"
+subtitle: "ML aplicado · Lección 01"
+nivel: L2
+modulo: aplicado
+fase: F4
+prereqs: [ml/03-regresion-logistica, estadistica/16-calibracion, atributos/02-el-proceso-y-la-fuga]
+siguientes: []
+libro: "FES §3.2 Measuring Performance"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="aplicado/01-planteamiento-y-linea-base"}
+[[L2]{.nivel .nivel-L2} **Derivación**]{.item}
+[**Fase** F4]{.item}
+[**Libro** FES 3.2]{.item}
+[**Prereqs** [Regresión logística](../ml/03-regresion-logistica.qmd) · [Calibración](../estadistica/16-calibracion.qmd) · [El proceso y la fuga](../atributos/02-el-proceso-y-la-fuga.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Escribir un problema de predicción con sus cinco elementos: unidad, momento de corte, horizonte, variable objetivo y atributos disponibles en el corte.
+2. Medir el efecto del horizonte sobre la variable objetivo. Con la misma población, definir el abandono a 30 días da una prevalencia de 0,2512 y un AUC de 0,7897; a 90 días, 0,4918 y 0,8164, con la misma ordenación de los clientes.
+3. Derivar el umbral de decisión que minimiza el coste esperado, $t^{*}=c_{FP}/(c_{FP}+c_{FN})$, y medir su efecto. Con costes 1 y 5, el umbral 0,5 da el mayor acierto, 0,7956, y un coste de 819,6 por cada 1000 clientes; el umbral 1/6 da un acierto de 0,6168 y un coste de 536,8.
+4. Construir dos líneas base, la mejor política sin atributos y una regla con una sola variable, y expresar el valor del modelo como el ahorro frente a ellas: 215,5 por cada 1000 clientes frente a la primera, del que la regla ya obtiene el 66,5 %.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 3**: la regresión logística, que aquí produce las probabilidades.
+- **Estadística 16**: la calibración; el umbral de la Sección 2 supone probabilidades calibradas.
+- **Atributos 02**: el proceso de modelado y la fuga de información, que empieza con la definición de la variable objetivo.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **ML aplicado 04**: la partición de los datos, que depende de la unidad y del momento de corte definidos aquí.
+- **ML aplicado 07**: las métricas de evaluación, que amplían la matriz de costes de esta lección.
+- **ML aplicado 08**: las clases desbalanceadas, donde el umbral de costes sustituye al remuestreo.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $t_0$ | te cero | El momento de corte: la predicción se hace con la información disponible en $t_0$ |
+| $h$ | hache | El horizonte: la variable objetivo se mide en el intervalo $(t_0,\,t_0+h]$ |
+| $\lambda_i$ | lambda i | La tasa de abandono del cliente $i$, en abandonos por día |
+| $T_i$ | te i | El día en que abandona el cliente $i$, contado desde $t_0$ |
+| $\pi$ | pi | La prevalencia: la proporción de positivos |
+| $p$ | pe | La probabilidad de positivo que asigna el modelo a una unidad |
+| $t$ | te | El umbral de decisión: se actúa cuando $p>t$ |
+| $c_{FP}$ | ce efe pe | El coste de actuar sobre una unidad negativa |
+| $c_{FN}$ | ce efe ene | El coste de no actuar sobre una unidad positiva |
+| $t^{*}$ | te estrella | El umbral que minimiza el coste esperado |
+| AUC | a u ce | El área bajo la curva ROC |
+:::
+
+## 1. El problema de predicción
+
+Consideremos una empresa de suscripción que ofrece un descuento a los clientes que probablemente cancelarán. Antes de ajustar un modelo hay que fijar qué se predice, para quién y con qué información.
+
+::: {.definicion}
+**Definición 1.1 (problema de predicción).** Un problema de predicción supervisada queda fijado por cinco elementos:
+
+1. la **unidad**: la entidad sobre la que se decide (un cliente, una transacción, un producto en una semana);
+2. el **momento de corte** $t_0$: el instante en que se hace la predicción;
+3. el [horizonte de predicción]{.g} $h$: el intervalo $(t_0,\,t_0+h]$ en que se mide el resultado;
+4. la **variable objetivo**: el resultado medido en ese intervalo;
+5. los **atributos**: la información sobre la unidad disponible en $t_0$.
+:::
+
+Un atributo calculado con información posterior a $t_0$ no estará disponible cuando el modelo se use. Es la fuga temporal que Atributos 02 dejó pendiente, y queda excluida por la definición antes de escribir código.
+
+El horizonte forma parte de la definición del objetivo. Con horizontes distintos se obtienen objetivos distintos a partir de los mismos clientes.
+
+::: {.proposicion}
+**Proposición 1.2 (horizonte y ordenación).** Si cada cliente abandona con tasa constante $\lambda_i$, de modo que $T_i$ es exponencial, entonces $P(T_i\le h)=1-e^{-\lambda_i h}$. Para cualquier $h>0$ esta probabilidad es creciente en $\lambda_i$: la ordenación de los clientes por riesgo no depende del horizonte. La prevalencia sí depende de él, y también el AUC de una misma puntuación.
+:::
+
+::: {.demostracion}
+*Demostración.* La función de distribución de una exponencial de tasa $\lambda$ es $1-e^{-\lambda h}$, y su derivada respecto de $\lambda$ vale $h e^{-\lambda h}>0$. Por tanto, ordenar por $\lambda_i$ equivale a ordenar por $P(T_i\le h)$ para cualquier $h$. La prevalencia es la media de $1-e^{-\lambda_i h}$ sobre la población, que crece con $h$. El AUC compara las puntuaciones de positivos y negativos, y el conjunto de positivos cambia con $h$: los positivos a 30 días lo son también a 90, pero no a la inversa. La celda simula 20 000 clientes y usa la propia tasa como puntuación. Con $h=30$ la prevalencia teórica es 0,2504 y la medida 0,2512, con AUC 0,7897. Con $h=90$ son 0,4932 y 0,4918, con AUC 0,8164. Ningún positivo a 30 días deja de serlo a 90, y 4811 clientes son positivos solo a 90. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def auc(y, s):
+    o = np.argsort(s, kind="stable")
+    r = np.empty(len(s)); r[o] = np.arange(1.0, len(s) + 1.0)
+    n1 = y.sum(); n0 = len(y) - n1
+    return (r[y == 1].sum() - n1 * (n1 + 1.0) / 2.0) / (n1 * n0)
+
+# Clientes con una tasa de abandono constante en el tiempo
+rng = np.random.default_rng(11)
+n = 20000
+x = rng.standard_normal((n, 2))
+tasa = np.exp(-5.0 + 0.9 * x[:, 0] - 0.6 * x[:, 1])   # abandonos por dia
+T = rng.exponential(1.0 / tasa)                        # dia del abandono
+
+print("horizonte  prevalencia teorica  medida   AUC de la tasa")
+for h in (30, 90):
+    y = (T <= h).astype(float)
+    teorica = np.mean(1.0 - np.exp(-tasa * h))
+    print("%5d dias %14.4f %13.4f %10.4f" % (h, teorica, y.mean(), auc(y, tasa)))
+y30 = T <= 30; y90 = T <= 90
+print("positivos a 30 dias que no lo son a 90:", int(np.sum(y30 & ~y90)))
+print("positivos a 90 dias que no lo son a 30:", int(np.sum(y90 & ~y30)))
+```
+
+La puntuación es la misma en las dos filas y el AUC difiere en 0,0267. Dos modelos evaluados con horizontes distintos no se pueden comparar por su AUC, aunque ordenen a los clientes de la misma manera. El horizonte se elige según la decisión: si el descuento tarda tres semanas en aplicarse, un objetivo a 30 días deja solo una semana para retener al cliente.
+
+## 2. La métrica a partir de la decisión
+
+FES §3.2 presenta las métricas habituales para regresión y clasificación, y advierte que muchas preguntas de una aplicación no encajan en ninguna de ellas. En una decisión binaria, la métrica que corresponde a la pregunta se obtiene de los costes de cada tipo de error.
+
+::: {.definicion}
+**Definición 1.3 ([matriz de costes]{.g}).** Para una decisión binaria (actuar o no actuar sobre una unidad), la matriz de costes asigna $c_{FP}$ a actuar sobre una unidad negativa y $c_{FN}$ a no actuar sobre una positiva. Los aciertos tienen coste cero; si tienen un beneficio, se descuenta de los costes de error correspondientes.
+:::
+
+En el ejemplo, $c_{FP}$ es el descuento concedido a un cliente que no pensaba cancelar y $c_{FN}$ el margen perdido por un cliente que cancela sin haber recibido la oferta. Con $c_{FP}=1$ y $c_{FN}=5$, perder un cliente cuesta cinco veces lo que cuesta un descuento innecesario.
+
+::: {.proposicion}
+**Proposición 1.4 ([umbral de decisión]{.g} de costes).** Si $p$ es la probabilidad calibrada de que una unidad sea positiva, el coste esperado de actuar es $(1-p)\,c_{FP}$ y el de no actuar es $p\,c_{FN}$. Actuar tiene menor coste esperado si y solo si
+$$
+p>t^{*}=\frac{c_{FP}}{c_{FP}+c_{FN}}.
+$$
+:::
+
+::: {.demostracion}
+*Demostración.* Al actuar, se incurre en $c_{FP}$ con probabilidad $1-p$; al no actuar, en $c_{FN}$ con probabilidad $p$. La desigualdad $(1-p)\,c_{FP}<p\,c_{FN}$ equivale a $c_{FP}<p\,(c_{FP}+c_{FN})$, que es $p>t^{*}$. Con $c_{FP}=1$ y $c_{FN}=5$ se obtiene $t^{*}=1/6$. La celda ajusta una regresión logística con 10 000 clientes y la evalúa con los otros 10 000. En una rejilla de 99 umbrales, el de menor coste es 0,18, con 534,4 por cada 1000 clientes, junto al valor teórico 0,1667. ∎
+:::
+
+::: {.proposicion}
+**Proposición 1.5 (el acierto como caso particular).** Maximizar el acierto equivale a minimizar el coste con $c_{FP}=c_{FN}$, y su umbral es $t^{*}=1/2$.
+:::
+
+::: {.demostracion}
+*Demostración.* Con $c_{FP}=c_{FN}=c$, el coste total es $c$ por el número de errores, y minimizarlo equivale a maximizar el número de aciertos. La Proposición 1.4 da entonces $t^{*}=c/(2c)=1/2$. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def sigmoide(z):
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -30.0, 30.0)))
+
+def logistica(X, y, pasos=25):
+    Z = np.column_stack([np.ones(len(X)), X])
+    b = np.zeros(Z.shape[1])
+    for _ in range(pasos):
+        p = sigmoide(Z @ b)
+        H = Z.T @ (Z * (p * (1.0 - p))[:, None])
+        b = b + np.linalg.solve(H, Z.T @ (y - p))
+    return b
+
+rng = np.random.default_rng(11)
+n = 20000
+x = rng.standard_normal((n, 2))
+tasa = np.exp(-5.0 + 0.9 * x[:, 0] - 0.6 * x[:, 1])
+T = rng.exponential(1.0 / tasa)
+y = (T <= 30).astype(float)
+tr, te = np.arange(n) < n // 2, np.arange(n) >= n // 2
+
+b = logistica(x[tr], y[tr])
+p = sigmoide(np.column_stack([np.ones(te.sum()), x[te]]) @ b)
+yt = y[te]
+c_fp, c_fn = 1.0, 5.0
+
+def coste(accion):
+    fp = np.sum(accion & (yt == 0)); fn = np.sum(~accion & (yt == 1))
+    return 1000.0 * (c_fp * fp + c_fn * fn) / len(yt)
+
+def acierto(accion):
+    return np.mean(accion == (yt == 1))
+
+t_opt = c_fp / (c_fp + c_fn)
+print("umbral de costes c_FP/(c_FP+c_FN) = %.4f" % t_opt)
+print()
+print("politica              acierto  coste por 1000 clientes")
+filas = [("nadie", np.zeros(len(yt), bool)),
+         ("todos", np.ones(len(yt), bool)),
+         ("modelo, umbral 0.5", p > 0.5),
+         ("modelo, umbral 1/6", p > t_opt)]
+for nombre, a in filas:
+    print("%-20s %8.4f %12.1f" % (nombre, acierto(a), coste(a)))
+print()
+ts = np.linspace(0.01, 0.99, 99)
+cs = np.array([coste(p > t) for t in ts])
+print("umbral con menor coste en la rejilla: %.2f (coste %.1f)" % (ts[cs.argmin()], cs.min()))
+```
+
+La tabla ordena las cuatro políticas de forma distinta según la métrica. Por acierto, la mejor es el modelo con umbral 0,5, con 0,7956. Por coste, esa misma política, con 819,6, es peor que dar el descuento a todos los clientes, con 752,3. El modelo con umbral 1/6 tiene el menor coste, 536,8, y el menor acierto de las tres políticas no triviales, 0,6168.
+
+**Modo de falla.** Se entrena un clasificador, se informa de su acierto y se usa con el umbral 0,5 que aplica por defecto `predict`. Con costes asimétricos, esa política puede costar más que una regla sin modelo. El umbral forma parte de la decisión y se fija con los costes antes de evaluar.
+
+El visual calcula el coste esperado por cada 1000 clientes en función del umbral, con probabilidades calibradas por construcción. Los controles fijan la razón $c_{FN}/c_{FP}$ y la prevalencia.
+
+```{=html}
+<div class="viz-umbral01">
+  <div class="controles">
+    <label><span>Razón c<sub>FN</sub>/c<sub>FP</sub></span> <input id="u1-r" type="range" min="1" max="20" step="0.5" value="5"> <span id="u1-r-v">5.0</span></label>
+    <label>Prevalencia π <input id="u1-p" type="range" min="0.05" max="0.5" step="0.01" value="0.25"> <span id="u1-p-v">0.25</span></label>
+  </div>
+  <svg id="u1-svg" viewBox="0 0 660 300" role="img" aria-label="Coste esperado por cada 1000 unidades en función del umbral de decisión, con las políticas de actuar sobre todos y sobre nadie, y los umbrales de costes y de 0,5 marcados."></svg>
+  <p class="lectura" id="u1-lectura"></p>
+</div>
+<style>
+.viz-umbral01 { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-umbral01 .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-umbral01 label { display: flex; align-items: center; gap: .4rem; }
+.viz-umbral01 input[type=range] { width: 160px; padding: 0; }
+.viz-umbral01 svg { width: 100%; height: auto; display: block; }
+.viz-umbral01 .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E", C_G = "#8A6D1F";
+  var svg = document.getElementById("u1-svg"), lec = document.getElementById("u1-lectura");
+  var cr = document.getElementById("u1-r"), cp = document.getElementById("u1-p");
+  var er = document.getElementById("u1-r-v"), ep = document.getElementById("u1-p-v");
+  var X0 = 64, X1 = 628, Y0 = 34, Y1 = 236, N = 600;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // puntuaciones fijas: un atributo normal por unidad
+  var sem = 7, Z = [];
+  function u() { sem = (sem * 48271) % 2147483647; return sem / 2147483647; }
+  for (var i = 0; i < N; i++) {
+    var a = Math.max(u(), 1e-9), b = u();
+    Z.push(Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b));
+  }
+  function sig(z) { return 1 / (1 + Math.exp(-z)); }
+  // probabilidades calibradas con la prevalencia pedida: se ajusta el intercepto
+  function probs(pi) {
+    var lo = -12, hi = 12, m, k, s;
+    for (var it = 0; it < 60; it++) {
+      m = (lo + hi) / 2; s = 0;
+      for (k = 0; k < N; k++) s += sig(m + 1.6 * Z[k]);
+      if (s / N < pi) lo = m; else hi = m;
+    }
+    return Z.map(function (z) { return sig(m + 1.6 * z); });
+  }
+  function coste(P, t, r) {
+    var s = 0;
+    for (var k = 0; k < N; k++) s += P[k] > t ? (1 - P[k]) : P[k] * r;
+    return 1000 * s / N;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var r = +cr.value, pi = +cp.value;
+    er.textContent = r.toFixed(1); ep.textContent = pi.toFixed(2);
+    var P = probs(pi);
+    var nadie = 1000 * pi * r, todos = 1000 * (1 - pi);
+    var YM = Math.max(nadie, todos) * 1.08;
+    var px = function (t) { return X0 + t * (X1 - X0); };
+    var py = function (c) { return Y1 - c / YM * (Y1 - Y0); };
+
+    [0, 0.25, 0.5, 0.75, 1].forEach(function (t) {
+      svg.appendChild(el("text", { x: px(t), y: Y1 + 16, "text-anchor": "middle", "font-size": 10, fill: C_T, opacity: .7 }, t.toFixed(2)));
+    });
+    svg.appendChild(el("text", { x: X1, y: Y1 + 48, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "umbral t →"));
+    svg.appendChild(el("text", { x: X0, y: Y1 + 48, "font-size": 10.5, fill: C_T, opacity: .7 }, "eje vertical: coste por 1000"));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + Y1 + " L" + X1 + " " + Y1, stroke: C_L, "stroke-width": 1 }));
+    svg.appendChild(el("text", { x: X0 - 6, y: Y1 + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, "0"));
+
+    // las dos politicas sin modelo
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(todos).toFixed(1) + " L" + X1 + " " + py(todos).toFixed(1), stroke: C_G, "stroke-width": 1.4, "stroke-dasharray": "6 4" }));
+    svg.appendChild(el("text", { x: X0 + 4, y: py(todos) - 5, "font-size": 10.5, fill: C_G }, "todos: " + todos.toFixed(0)));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(nadie).toFixed(1) + " L" + X1 + " " + py(nadie).toFixed(1), stroke: C_B, "stroke-width": 1.4, "stroke-dasharray": "2 3" }));
+    svg.appendChild(el("text", { x: X1 - 4, y: py(nadie) - 5, "text-anchor": "end", "font-size": 10.5, fill: C_B }, "nadie: " + nadie.toFixed(0)));
+
+    var d = "", k, t, best = 1e18, tb = 0;
+    for (k = 0; k <= 200; k++) {
+      t = k / 200;
+      var c = coste(P, t, r);
+      if (c < best) { best = c; tb = t; }
+      d += (k ? " L" : "M") + px(t).toFixed(1) + " " + py(c).toFixed(1);
+    }
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_A, "stroke-width": 2.2 }));
+
+    var ts = 1 / (1 + r), cs = coste(P, ts, r), c5 = coste(P, 0.5, r);
+    svg.appendChild(el("circle", { cx: px(ts).toFixed(1), cy: py(cs).toFixed(1), r: 5, fill: C_A }));
+    svg.appendChild(el("text", { x: px(ts), y: Y0 - 14, "text-anchor": "middle", "font-size": 10.5, fill: C_A }, "t* = " + ts.toFixed(3)));
+    svg.appendChild(el("path", { d: "M" + px(ts).toFixed(1) + " " + (Y0 - 10) + " L" + px(ts).toFixed(1) + " " + Y1, stroke: C_A, "stroke-width": 1, opacity: .5 }));
+    svg.appendChild(el("circle", { cx: px(0.5).toFixed(1), cy: py(c5).toFixed(1), r: 5, fill: "none", stroke: C_T, "stroke-width": 1.6 }));
+    svg.appendChild(el("text", { x: px(0.5), y: Y1 + 32, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .8 }, "t = 0.5"));
+
+    var trivial = Math.min(nadie, todos);
+    lec.innerHTML = "Con c<sub>FN</sub>/c<sub>FP</sub> = <strong>" + r.toFixed(1) + "</strong> y π = <strong>" + pi.toFixed(2) +
+      "</strong>, el umbral de costes es t* = 1/(1 + " + r.toFixed(1) + ") = <strong>" + ts.toFixed(3) + "</strong> y el coste en ese umbral es <strong>" + cs.toFixed(1) +
+      "</strong> por cada 1000 unidades. Con t = 0.5 el coste es <strong>" + c5.toFixed(1) + "</strong>. La mejor política sin modelo cuesta <strong>" + trivial.toFixed(1) +
+      "</strong> (" + (todos < nadie ? "actuar sobre todas" : "no actuar sobre ninguna") + "), de modo que el modelo con t* ahorra <strong>" + (trivial - cs).toFixed(1) + "</strong>" +
+      (c5 > trivial ? ", y con t = 0.5 cuesta más que la política sin modelo." : ".") +
+      " El mínimo de la curva está en t = " + tb.toFixed(3) + ".";
+  }
+  cr.addEventListener("input", dibujar);
+  cp.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Líneas base
+
+El coste de 536,8 no indica por sí solo si el modelo aporta valor. Hace falta compararlo con lo que se obtiene sin modelo, o con un modelo mínimo.
+
+::: {.definicion}
+**Definición 1.6 ([línea base]{.g}).** Una línea base es una política de referencia que se evalúa con la misma métrica y los mismos datos de prueba que el modelo. Se usan dos:
+
+1. la **política trivial**: la mejor decisión que no usa atributos. En clasificación, actuar sobre todas las unidades o sobre ninguna; en regresión, predecir la media del entrenamiento;
+2. una **regla simple**: una regla con una sola variable y un corte, elegidos en el entrenamiento.
+:::
+
+::: {.proposicion}
+**Proposición 1.7 (coste de la política trivial).** Con prevalencia $\pi$, el coste esperado por unidad de no actuar es $\pi\,c_{FN}$ y el de actuar sobre todas es $(1-\pi)\,c_{FP}$. La política trivial cuesta $\min\{\pi\,c_{FN},\,(1-\pi)\,c_{FP}\}$, y conviene actuar sobre todas cuando $\pi>t^{*}$.
+:::
+
+::: {.demostracion}
+*Demostración.* Sin atributos, todas las unidades reciben la misma probabilidad, $\pi$, y la Proposición 1.4 aplicada a $p=\pi$ da la regla. Al no actuar se pierden los positivos, una fracción $\pi$, y al actuar sobre todas se paga por los negativos, una fracción $1-\pi$. En el ejemplo, $\pi=0{,}2547$ en entrenamiento es mayor que $t^{*}=1/6$, y la política trivial es actuar sobre todos. Su coste en prueba es 752,3 por cada 1000 clientes. ∎
+:::
+
+En regresión, la misma comparación define el coeficiente de determinación. Si $\mathrm{ECM}_0$ es el error cuadrático medio de predecir la media, $R^2=1-\mathrm{ECM}/\mathrm{ECM}_0$ es la fracción del error de la línea base trivial que el modelo elimina. FES §3.2 señala que $R^2$ mide correlación y no concordancia; escrito así, se lee como un ahorro frente a la media.
+
+::: {.proposicion}
+**Proposición 1.8 (valor del modelo).** El valor de un modelo para una decisión es la diferencia entre el coste de la línea base y el del modelo, medidos con los mismos datos de prueba. En el ejemplo, el modelo con umbral 1/6 ahorra 215,5 por cada 1000 clientes frente a la política trivial, un 28,6 % de su coste. La regla $x_1>-0{,}205$, con el corte elegido en entrenamiento, cuesta 609,1 y obtiene el 66,5 % de ese ahorro.
+:::
+
+::: {.demostracion}
+*Demostración.* La celda elige la política trivial y el corte de la regla con la mitad de entrenamiento, ajusta la logística con la misma mitad y evalúa las tres políticas con la mitad de prueba. El ahorro es $752{,}3-536{,}8=215{,}5$, y la fracción que obtiene la regla es $(752{,}3-609{,}1)/215{,}5=0{,}665$. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def sigmoide(z):
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -30.0, 30.0)))
+
+def logistica(X, y, pasos=25):
+    Z = np.column_stack([np.ones(len(X)), X])
+    b = np.zeros(Z.shape[1])
+    for _ in range(pasos):
+        p = sigmoide(Z @ b)
+        H = Z.T @ (Z * (p * (1.0 - p))[:, None])
+        b = b + np.linalg.solve(H, Z.T @ (y - p))
+    return b
+
+rng = np.random.default_rng(11)
+n = 20000
+x = rng.standard_normal((n, 2))
+tasa = np.exp(-5.0 + 0.9 * x[:, 0] - 0.6 * x[:, 1])
+T = rng.exponential(1.0 / tasa)
+y = (T <= 30).astype(float)
+tr, te = np.arange(n) < n // 2, np.arange(n) >= n // 2
+c_fp, c_fn = 1.0, 5.0
+
+def coste(accion, yv):
+    fp = np.sum(accion & (yv == 0)); fn = np.sum(~accion & (yv == 1))
+    return 1000.0 * (c_fp * fp + c_fn * fn) / len(yv)
+
+# Linea base 1: la mejor politica sin atributos, elegida en entrenamiento
+pi = y[tr].mean()
+base = "todos" if (1 - pi) * c_fp < pi * c_fn else "nadie"
+accion_base = np.full(te.sum(), base == "todos")
+print("prevalencia en entrenamiento %.4f -> mejor politica trivial: %s" % (pi, base))
+
+# Linea base 2: una regla con una sola variable, corte elegido en entrenamiento
+cortes = np.quantile(x[tr, 0], np.linspace(0.01, 0.99, 99))
+c_tr = [coste(x[tr, 0] > c, y[tr]) for c in cortes]
+corte = cortes[int(np.argmin(c_tr))]
+
+b = logistica(x[tr], y[tr])
+p = sigmoide(np.column_stack([np.ones(te.sum()), x[te]]) @ b)
+t_opt = c_fp / (c_fp + c_fn)
+
+yt = y[te]
+cb = coste(accion_base, yt)
+cr = coste(x[te, 0] > corte, yt)
+cm = coste(p > t_opt, yt)
+print("coste por 1000 en prueba")
+print("  politica trivial           %7.1f" % cb)
+print("  regla x1 > %.3f          %7.1f" % (corte, cr))
+print("  modelo con umbral 1/6      %7.1f" % cm)
+print("ahorro del modelo sobre la trivial : %.1f (%.1f %%)" % (cb - cm, 100 * (cb - cm) / cb))
+print("parte del ahorro que ya da la regla: %.1f %%" % (100 * (cb - cr) / (cb - cm)))
+```
+
+La regla de una variable obtiene dos tercios del ahorro del modelo. El tercio restante es lo que aporta la segunda variable y el ajuste conjunto. Si un modelo con cientos de atributos mejorara la regla en un punto porcentual, el coste de mantenerlo podría superar ese beneficio. Esa comparación solo es posible si la regla simple se evalúa junto al modelo.
+
+**Modo de falla.** Se informa de un acierto de 0,80 sin mencionar que no actuar sobre nadie da 0,7523 en los mismos datos. Sin la línea base, un acierto alto sobre una clase minoritaria no indica nada. La Lección 08 trata el caso extremo, con prevalencias del 1 %.
+
+## 4. Limitaciones
+
+- Los costes se suponen conocidos y fijos. En la práctica se estiman con incertidumbre, y conviene comprobar cómo cambia la política al variar la razón $c_{FN}/c_{FP}$; el visual de la Sección 2 hace esa comprobación para un modelo calibrado.
+- El umbral de la Proposición 1.4 exige probabilidades calibradas. Los datos de la lección siguen un modelo de tasas y la logística los aproxima; el mínimo de la rejilla, 0,18, queda cerca de 1/6. Un bosque o un modelo entrenado con clases remuestreadas no dan probabilidades calibradas, y su umbral se elige por validación o tras recalibrar (Estadística 16).
+- Se trata una decisión binaria con costes por unidad. Las decisiones con presupuesto (contactar a 500 clientes) ordenan por probabilidad y cortan por cantidad, y entonces solo importa la ordenación.
+- La proposición 1.2 supone tasas constantes en el tiempo. Si el efecto de un atributo cambia con el tiempo transcurrido, la ordenación también depende del horizonte.
+
+## Ejercicios
+
+### Ejercicio 1, Umbral y coste de la política trivial
+
+La celda fija cuatro pares de costes en `c_fp` y `c_fn` y una prevalencia `pi` de 0,25. Completar la línea de `umbral` con el umbral de la Proposición 1.4 para cada par, y la de `coste_trivial` con el coste por cada 1000 unidades de la mejor política sin atributos, según la Proposición 1.7. La celda imprime las dos listas; deben dar `[0.5, 0.1667, 0.4, 0.9091]` y `[250.0, 750.0, 750.0, 250.0]`.
+
+```{pyodide}
+#| exercise: ex_umbral
+import numpy as np
+
+c_fp = np.array([1.0, 1.0, 2.0, 10.0])
+c_fn = np.array([1.0, 5.0, 3.0, 1.0])
+pi = 0.25
+
+umbral = ______
+coste_trivial = ______
+
+print([round(float(u), 4) for u in umbral])
+print([round(float(c), 1) for c in coste_trivial])
+```
+
+::: {.hint exercise="ex_umbral"}
+El umbral es `c_fp / (c_fp + c_fn)`. Para el coste trivial, `np.minimum` compara elemento a elemento el coste de no actuar, $\pi c_{FN}$, con el de actuar sobre todas, $(1-\pi)c_{FP}$.
+:::
+
+::: {.solution exercise="ex_umbral"}
+```{pyodide}
+import numpy as np
+
+c_fp = np.array([1.0, 1.0, 2.0, 10.0])
+c_fn = np.array([1.0, 5.0, 3.0, 1.0])
+pi = 0.25
+
+umbral = c_fp / (c_fp + c_fn)
+coste_trivial = 1000.0 * np.minimum(pi * c_fn, (1.0 - pi) * c_fp)
+
+print([round(float(u), 4) for u in umbral])
+print([round(float(c), 1) for c in coste_trivial])
+```
+
+Solo en el segundo par el umbral, 0,1667, es menor que la prevalencia 0,25, y la mejor política sin atributos es actuar sobre todas, con coste $0{,}75\cdot 1$ por unidad. En los otros tres el umbral supera 0,25 y la política trivial es no actuar, con coste $0{,}25\,c_{FN}$. En el tercero los dos costes de error son parecidos y aun así conviene no actuar, porque solo una unidad de cada cuatro es positiva.
+:::
+
+```{pyodide}
+#| exercise: ex_umbral
+#| check: true
+import numpy as np
+if (np.allclose(np.asarray(umbral, float), [0.5, 1 / 6, 0.4, 10 / 11], atol=1e-4)
+        and np.allclose(np.asarray(coste_trivial, float), [250.0, 750.0, 750.0, 250.0], atol=0.05)):
+    feedback = {"correct": True, "message": "Correcto: el umbral sale de los costes y la política trivial del mínimo de los dos costes."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [0.5, 0.1667, 0.4, 0.9091] y [250.0, 750.0, 750.0, 250.0]."}
+feedback
+```
+
+### Ejercicio 2, Coste de una política con umbral
+
+La celda fija las probabilidades `p` de doce unidades, sus etiquetas `y` y los costes $c_{FP}=1$ y $c_{FN}=4$. Completar la línea de `accion`, un vector booleano que vale `True` para las unidades sobre las que se actúa con el umbral de costes, y la de `coste_1000`, el coste por cada 1000 unidades de esa política. La celda imprime el número de unidades sobre las que se actúa y el coste; deben dar 8 y 333.3.
+
+```{pyodide}
+#| exercise: ex_politica
+import numpy as np
+
+rng = np.random.default_rng(3)
+p = rng.random(12).round(2)
+y = (rng.random(12) < p).astype(int)
+c_fp, c_fn = 1.0, 4.0
+umbral = c_fp / (c_fp + c_fn)
+
+accion = ______
+coste_1000 = ______
+
+print(int(np.sum(accion)), round(float(coste_1000), 1))
+```
+
+::: {.hint exercise="ex_politica"}
+Se actúa cuando `p > umbral`. Los falsos positivos son las unidades con acción y `y == 0`; los falsos negativos, las que no tienen acción y tienen `y == 1`. El coste total se divide por `len(y)` y se multiplica por 1000.
+:::
+
+::: {.solution exercise="ex_politica"}
+```{pyodide}
+import numpy as np
+
+rng = np.random.default_rng(3)
+p = rng.random(12).round(2)
+y = (rng.random(12) < p).astype(int)
+c_fp, c_fn = 1.0, 4.0
+umbral = c_fp / (c_fp + c_fn)
+
+accion = p > umbral
+coste_1000 = 1000.0 * (c_fp * np.sum(accion & (y == 0))
+                       + c_fn * np.sum(~accion & (y == 1))) / len(y)
+
+print(int(np.sum(accion)), round(float(coste_1000), 1))
+```
+
+Con umbral 0,2 se actúa sobre ocho unidades: las cuatro positivas y cuatro negativas, con un coste de 4 por cada 12 unidades, 333,3 por cada 1000. Con umbral 0,5 se actuaría sobre cuatro unidades, se dejaría sin acción una positiva y el coste subiría a 416,7.
+:::
+
+```{pyodide}
+#| exercise: ex_politica
+#| check: true
+import numpy as np
+_a = np.asarray(accion, bool)
+_esperado = 1000.0 * (1.0 * np.sum(_a & (y == 0)) + 4.0 * np.sum(~_a & (y == 1))) / len(y)
+if int(_a.sum()) == 8 and abs(float(coste_1000) - 1000.0 * 4.0 / 12.0) < 0.05 and abs(float(coste_1000) - _esperado) < 0.05:
+    feedback = {"correct": True, "message": "Correcto: ocho acciones y 333.3 por cada 1000 unidades."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba actuar sobre 8 unidades con un coste de 333.3 por cada 1000."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Aplicado 1**:
+
+1. Repetir la Sección 2 con tasas de abandono que cambian con el tiempo, de modo que el efecto de $x_2$ solo actúe después del día 30, y comprobar si la ordenación de los clientes por riesgo deja de coincidir entre los horizontes de 30 y 90 días.
+2. Sustituir la logística por un bosque aleatorio, medir el coste con el umbral $t^{*}$ y con el umbral de menor coste elegido por validación cruzada, y explicar la diferencia con la calibración.
+3. Plantear, con los cinco elementos de la Definición 1.1, un problema de predicción de un ámbito elegido libremente, con su matriz de costes, su política trivial y una regla simple. Guardar el planteamiento en `50-Errores/` junto con la fuga temporal que sería más fácil cometer.
+
+## Del libro
+
+FES §3.2, *Measuring Performance*, recorre las métricas de regresión (raíz del error cuadrático medio, $R^2$ y el coeficiente de correlación de concordancia) y de clasificación (acierto, kappa, sensibilidad, especificidad, verosimilitud binomial, entropía, curvas ROC y de precisión y exhaustividad), con un ejemplo de clasificación de perfiles en el que el acierto engaña por el desbalance de las clases. Señala que muchas preguntas de una aplicación son específicas de su contexto y no encajan en esas métricas, con el ejemplo de la rentabilidad de un préstamo. Esta lección parte de esa observación y construye la métrica a partir de los costes de la decisión.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- Un problema de predicción: unidad, momento de corte, horizonte, variable objetivo y atributos disponibles en el corte.
+- Un atributo con información posterior al corte es fuga temporal.
+- Con tasa constante, la ordenación por riesgo no depende del horizonte; la prevalencia y el AUC sí.
+- Abandono a 30 días: prevalencia 0,2512 y AUC 0,7897. A 90 días: 0,4918 y 0,8164, con la misma puntuación.
+- Umbral de costes: $t^{*}=c_{FP}/(c_{FP}+c_{FN})$, con probabilidades calibradas.
+- El acierto corresponde a costes iguales y umbral 1/2.
+- Con costes 1 y 5: umbral 0,5, acierto 0,7956 y coste 819,6; umbral 1/6, acierto 0,6168 y coste 536,8.
+- Actuar sobre todos cuesta 752,3: el umbral 0,5 es peor que no usar el modelo.
+- Política trivial: $\min\{\pi c_{FN},(1-\pi)c_{FP}\}$; se actúa sobre todas cuando $\pi>t^{*}$.
+- Valor del modelo: ahorro frente a la línea base con los mismos datos de prueba, 215,5 por cada 1000.
+- Una regla con una variable obtiene el 66,5 % de ese ahorro.
+- $R^2$ es el ahorro relativo de error cuadrático frente a predecir la media.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos, con 20 000 clientes simulados con tasa de abandono $\lambda_i=\exp(-5+0{,}9x_1-0{,}6x_2)$. Las prevalencias teóricas y medidas (0,2504 y 0,2512 a 30 días; 0,4932 y 0,4918 a 90), los AUC de la tasa (0,7897 y 0,8164), los 0 positivos a 30 días que no lo son a 90 y los 4811 que solo lo son a 90. La tabla de políticas con costes 1 y 5: acierto y coste de no actuar (0,7523 y 1238,5), de actuar sobre todos (0,2477 y 752,3), del modelo con umbral 0,5 (0,7956 y 819,6) y con umbral 1/6 (0,6168 y 536,8), y el mínimo de la rejilla, 0,18 con 534,4. Las líneas base: prevalencia de entrenamiento 0,2547, regla $x_1>-0{,}205$ con coste 609,1, ahorro del modelo de 215,5 (28,6 %) y fracción de la regla de 66,5 %. La regresión logística está escrita con Newton-Raphson y el AUC con el estadístico de rangos. Las Proposiciones 1.2, 1.4, 1.5 y 1.7 se demuestran en pocas líneas.
+
+**Lo que viene de los libros.** El catálogo de métricas y la observación de que las preguntas de una aplicación no encajan en las métricas habituales, de FES §3.2. La crítica de $R^2$ como medida de correlación y no de concordancia, de la misma sección.
+
+**Lo que se usa de otras lecciones sin repetir.** La regresión logística y su ajuste, de Machine Learning 3. La calibración y su comprobación, de Estadística 16. La fuga de información y el proceso de modelado, de Atributos 02.
+
+**Lo que es mío, no del libro.** La Definición 1.1 con cinco elementos, como lista de comprobación antes de modelar. La Proposición 1.2, que separa el efecto del horizonte sobre la ordenación del efecto sobre la prevalencia y el AUC. El ejemplo de retención con costes 1 y 5, construido para que la política con mayor acierto cueste más que la política trivial. La regla de una variable como segunda línea base y la medida de la fracción del ahorro que obtiene. Y el visual, que muestra la curva de coste frente al umbral con las dos políticas sin modelo, y permite comprobar que el mínimo está en $t^{*}$ para cualquier razón de costes y prevalencia.
+:::
