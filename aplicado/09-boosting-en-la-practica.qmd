@@ -1,0 +1,770 @@
+---
+title: "Gradient boosting en la práctica"
+subtitle: "ML aplicado · Lección 09"
+nivel: L3
+modulo: aplicado
+fase: F4
+prereqs: [ml/32-boosting-descenso-funcional, aplicado/06-ajuste-de-hiperparametros, atributos/13-datos-faltantes]
+siguientes: []
+libro: "ESL §10.11 Right-Sized Trees for Boosting · §10.12 Regularization"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="aplicado/09-boosting-en-la-practica"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F4]{.item}
+[**Libro** ESL 10.11 · 10.12]{.item}
+[**Prereqs** [Boosting como descenso funcional](../ml/32-boosting-descenso-funcional.qmd) · [Ajuste de hiperparámetros](06-ajuste-de-hiperparametros.qmd) · [Datos faltantes](../atributos/13-datos-faltantes.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Implementar el gradient boosting por histogramas que usan las bibliotecas actuales: discretización por cuantiles, árboles de Newton con la suma de gradientes y hessianos por intervalo, y una rama aprendida para los faltantes.
+2. Medir la relación entre la tasa de aprendizaje y el número de árboles. Con $\eta=0{,}3$, $0{,}1$ y $0{,}03$, el mejor árbol es el 39, el 98 y el 352, y la pérdida en prueba en ese punto es 0,5150, 0,5170 y 0,5172; sin parada temprana, con 400 árboles y $\eta=0{,}3$, sube a 0,6059.
+3. Relacionar la profundidad de los árboles con el orden de las interacciones: con árboles de un corte el modelo es aditivo y su pérdida es 0,5438; con dos niveles capta el producto $x_2x_3$ y baja a 0,5135.
+4. Comparar la rama propia para los faltantes con la imputación: 0,4991 frente a 0,5001 con la mediana y 0,4982 con la mediana y un indicador.
+5. Traducir estos hiperparámetros a scikit-learn, XGBoost, LightGBM y CatBoost.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Machine Learning 32**: el boosting como descenso por gradiente en el espacio de funciones.
+- **ML aplicado 06**: la elección de hiperparámetros por validación, que aquí se hace con parada temprana.
+- **Atributos 13**: los faltantes informativos y el indicador de faltante.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **ML aplicado 10**: la interpretabilidad, que se aplica a modelos como el de esta lección.
+- **Caso 3**: el riesgo de impago, con un boosting sobre datos con faltantes.
+- **Series 08**: el boosting para pronósticos, con atributos de calendario.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $F_m(x)$ | efe eme | La predicción, en escala logit, tras $m$ árboles |
+| $\eta$ | eta | La tasa de aprendizaje: el factor por el que se multiplica cada árbol |
+| $g_i$ | ge i | El gradiente de la pérdida de la fila $i$: $p_i-y_i$ |
+| $h_i$ | hache i | La segunda derivada de la pérdida de la fila $i$: $p_i(1-p_i)$ |
+| $G$, $H$ | ge mayúscula, hache mayúscula | Las sumas de $g_i$ y $h_i$ en un nodo |
+| $\lambda$ | lambda | La penalización de los valores de las hojas |
+| $B$ | be | El número de intervalos de la discretización |
+| $J$ | jota | La profundidad de los árboles |
+:::
+
+## 1. Boosting por histogramas
+
+Machine Learning 32 derivó el boosting como descenso por gradiente: cada árbol se ajusta a los gradientes de la pérdida y se suma a la predicción multiplicado por $\eta$. Las implementaciones actuales (el `HistGradientBoostingClassifier` de scikit-learn, XGBoost con `tree_method="hist"`, LightGBM y CatBoost) añaden dos cambios que la celda reproduce.
+
+::: {.definicion}
+**Definición 9.1 ([boosting por histogramas]{.g}).** Antes de ajustar, cada columna se discretiza en $B$ intervalos por sus cuantiles y los faltantes van a un intervalo aparte. Para cada nodo y cada columna se suman $g_i$ y $h_i$ por intervalo, y los cortes posibles son los $B-1$ límites entre intervalos, con los faltantes enviados a la izquierda o a la derecha. Cada hoja toma el valor de Newton $-G/(H+\lambda)$.
+:::
+
+::: {.proposicion}
+**Proposición 9.2 (ganancia de un corte).** Con la aproximación de segundo orden de la pérdida, la reducción que produce dividir un nodo con sumas $(G,H)$ en dos hijos con $(G_L,H_L)$ y $(G_R,H_R)$ es
+$$
+\frac12\Bigl(\frac{G_L^2}{H_L+\lambda}+\frac{G_R^2}{H_R+\lambda}-\frac{G^2}{H+\lambda}\Bigr).
+$$
+:::
+
+::: {.demostracion}
+*Demostración.* En un nodo con valor constante $w$, la pérdida aproximada es $\sum_i\bigl(g_iw+\tfrac12h_iw^2\bigr)+\tfrac12\lambda w^2=Gw+\tfrac12(H+\lambda)w^2$. Su mínimo está en $w=-G/(H+\lambda)$ y vale $-\tfrac12G^2/(H+\lambda)$. La reducción al dividir es la diferencia entre el mínimo del nodo y la suma de los mínimos de los hijos. Con los histogramas, $G_L$ y $H_L$ para todos los cortes de una columna son sumas acumuladas de $B$ números, en lugar de un recorrido por las filas ordenadas. ∎
+:::
+
+## 2. Tasa de aprendizaje y número de árboles
+
+La celda ajusta el boosting con 3000 filas y árboles de profundidad 3, mide la pérdida logarítmica en 1500 filas de validación tras cada árbol, y evalúa en 20 000 filas de prueba. La función que genera los datos tiene un término no lineal en $x_1$, un producto $x_2x_3$, un escalón en $x_4$ y un término cuadrático en $x_5$.
+
+```{pyodide}
+import numpy as np
+
+def sigmoide(z):
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -30.0, 30.0)))
+
+class Discretizador:
+    """Cada columna a enteros 0..B-1 por cuantiles; el faltante va al valor B."""
+    def fit(self, X, B=64):
+        self.B = B
+        q = np.linspace(0, 1, B + 1)[1:-1]
+        self.cortes = [np.unique(np.nanquantile(X[:, j], q)) for j in range(X.shape[1])]
+        return self
+    def transform(self, X):
+        Z = np.empty(X.shape, dtype=np.int64)
+        for j, c in enumerate(self.cortes):
+            Z[:, j] = np.searchsorted(c, X[:, j], side="right")
+            Z[np.isnan(X[:, j]), j] = self.B
+        return Z
+
+def arbol(Z, g, h, B, prof, lam=1.0, min_h=5.0):
+    """Arbol de Newton sobre histogramas. Cada nodo: (col, corte, faltante_izq, hijos) u hoja."""
+    nodos = []
+    def crece(idx, d):
+        G, H = g[idx].sum(), h[idx].sum()
+        yo = len(nodos); nodos.append(None)
+        mejor = (0.0, None)
+        if d < prof:
+            for j in range(Z.shape[1]):
+                zg = np.bincount(Z[idx, j], weights=g[idx], minlength=B + 1)
+                zh = np.bincount(Z[idx, j], weights=h[idx], minlength=B + 1)
+                gm, hm = zg[B], zh[B]
+                cg, ch = np.cumsum(zg[:B])[:-1], np.cumsum(zh[:B])[:-1]
+                for falt_izq in (False, True):
+                    GL = cg + (gm if falt_izq else 0.0); HL = ch + (hm if falt_izq else 0.0)
+                    GR, HR = G - GL, H - HL
+                    ok = (HL >= min_h) & (HR >= min_h)
+                    if not ok.any():
+                        continue
+                    gan = np.where(ok, GL ** 2 / (HL + lam) + GR ** 2 / (HR + lam) - G ** 2 / (H + lam), -1.0)
+                    s = int(np.argmax(gan))
+                    if gan[s] > mejor[0] + 1e-12:
+                        mejor = (gan[s], (j, s, falt_izq))
+        if mejor[1] is None:
+            nodos[yo] = ("hoja", -G / (H + lam))
+            return yo
+        j, s, fi = mejor[1]
+        va_izq = (Z[idx, j] <= s) & (Z[idx, j] < B) | ((Z[idx, j] == B) & fi)
+        i_izq = crece(idx[va_izq], d + 1)
+        i_der = crece(idx[~va_izq], d + 1)
+        nodos[yo] = ("corte", j, s, fi, i_izq, i_der, mejor[0])
+        return yo
+    crece(np.arange(len(g)), 0)
+    return nodos
+
+def predice_arbol(nodos, Z, B):
+    out = np.empty(len(Z))
+    pila = [(0, np.arange(len(Z)))]
+    while pila:
+        k, idx = pila.pop()
+        n = nodos[k]
+        if n[0] == "hoja":
+            out[idx] = n[1]; continue
+        _, j, s, fi, a, b, _ = n
+        izq = (Z[idx, j] <= s) & (Z[idx, j] < B) | ((Z[idx, j] == B) & fi)
+        pila.append((a, idx[izq])); pila.append((b, idx[~izq]))
+    return out
+
+def boosting(Z, y, Zv, yv, arboles, eta, prof, B=64):
+    """Boosting logistico. Devuelve la perdida de validacion tras cada arbol y los arboles."""
+    f0 = np.log(y.mean() / (1 - y.mean()))
+    F, Fv = np.full(len(y), f0), np.full(len(yv), f0)
+    curva, lista = [], []
+    for _ in range(arboles):
+        p = sigmoide(F)
+        t = arbol(Z, p - y, p * (1 - p), B, prof)
+        F += eta * predice_arbol(t, Z, B); Fv += eta * predice_arbol(t, Zv, B)
+        pv = np.clip(sigmoide(Fv), 1e-12, 1 - 1e-12)
+        curva.append(-np.mean(yv * np.log(pv) + (1 - yv) * np.log(1 - pv)))
+        lista.append(t)
+    return np.array(curva), lista, f0
+
+
+def datos(n, rng):
+    X = rng.standard_normal((n, 6))
+    z = (-0.8 + 1.2 * np.sin(1.5 * X[:, 0]) + 0.8 * X[:, 1] * X[:, 2] + 0.6 * (X[:, 3] > 0.5)
+         - 0.5 * X[:, 4] ** 2)
+    y = (rng.random(n) < sigmoide(z)).astype(float)
+    return X, y
+
+rng = np.random.default_rng(90)
+X, y = datos(3000, rng); Xv, yv = datos(1500, rng); Xt, yt = datos(20000, rng)
+d = Discretizador().fit(X); Z, Zv, Zt = d.transform(X), d.transform(Xv), d.transform(Xt)
+
+def perdida(y, F):
+    p = np.clip(sigmoide(F), 1e-12, 1 - 1e-12)
+    return -np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))
+
+print("eta   mejor arbol  perdida validacion  perdida prueba (en el mejor)  (tras 400)")
+for eta in (0.3, 0.1, 0.03):
+    curva, arboles, f0 = boosting(Z, y, Zv, yv, 400, eta, 3)
+    m = int(curva.argmin()) + 1
+    F = np.full(len(yt), f0); pt = []
+    for t in arboles:
+        F = F + eta * predice_arbol(t, Zt, 64); pt.append(perdida(yt, F))
+    print("%.2f %11d %19.4f %29.4f %11.4f" % (eta, m, curva[m - 1], pt[m - 1], pt[-1]))
+z = (-0.8 + 1.2 * np.sin(1.5 * Xt[:, 0]) + 0.8 * Xt[:, 1] * Xt[:, 2] + 0.6 * (Xt[:, 3] > 0.5) - 0.5 * Xt[:, 4] ** 2)
+print("perdida con la probabilidad verdadera: %.4f" % perdida(yt, z))
+```
+
+::: {.proposicion}
+**Proposición 9.3 (tasa de aprendizaje y parada temprana).** Una tasa de aprendizaje menor necesita más árboles para alcanzar la misma pérdida, y la pérdida de validación en función del número de árboles tiene un mínimo tras el cual sube. La parada temprana conserva el número de árboles del mínimo de validación.
+:::
+
+::: {.demostracion}
+*Demostración.* Cada árbol mueve la predicción una fracción $\eta$ del paso de Newton, de modo que el número de árboles para recorrer una distancia es del orden de $1/\eta$: el mejor árbol es el 39 con $\eta=0{,}3$, el 98 con $0{,}1$ y el 352 con $0{,}03$. Los árboles posteriores ajustan el ruido de las filas de entrenamiento. Con $\eta=0{,}3$, la pérdida de prueba pasa de 0,5150 en el árbol 39 a 0,6059 en el 400. Con $\eta=0{,}03$, el árbol 400 está cerca del mínimo y la pérdida apenas cambia, 0,5173 frente a 0,5172. ∎
+:::
+
+Con parada temprana, las tres tasas dan pérdidas de prueba entre 0,5150 y 0,5172, frente a 0,4924 de la probabilidad verdadera. En estos datos, bajar la tasa multiplica el número de árboles por nueve sin mejorar la pérdida. ESL §10.12 describe la reducción de $\eta$ como una forma de regularización que suele mejorar el error; aquí la mejora es menor que el ruido de la validación. La tasa se elige por el coste de cómputo aceptable, y el número de árboles por parada temprana.
+
+**Modo de falla.** Se fija un número alto de árboles con una tasa de 0,3 y sin conjunto de validación. El modelo sigue ajustando el ruido después del mejor árbol: en la celda, tras 400 árboles, la pérdida en datos nuevos es un 18 % mayor que en el árbol 39.
+
+El visual ajusta boosting con pérdida cuadrática a 200 puntos de una función de una variable y muestra el error de entrenamiento y de validación tras cada árbol.
+
+```{=html}
+<div class="viz-boost09">
+  <div class="controles">
+    <label>Tasa de aprendizaje η <input id="b9-e" type="range" min="0.02" max="0.8" step="0.02" value="0.3"> <span id="b9-e-v">0.30</span></label>
+    <label>Profundidad <input id="b9-p" type="range" min="1" max="4" step="1" value="2"> <span id="b9-p-v">2</span></label>
+  </div>
+  <svg id="b9-svg" viewBox="0 0 660 270" role="img" aria-label="Error cuadrático de entrenamiento y de validación en función del número de árboles, con el mínimo de validación marcado."></svg>
+  <p class="lectura" id="b9-lectura"></p>
+</div>
+<style>
+.viz-boost09 { border: 1px solid var(--r-linea, #ddd); border-radius: 10px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-boost09 .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-boost09 label { display: flex; align-items: center; gap: .4rem; }
+.viz-boost09 input[type=range] { width: 160px; padding: 0; }
+.viz-boost09 svg { width: 100%; height: auto; display: block; }
+.viz-boost09 .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("b9-svg"), lec = document.getElementById("b9-lectura");
+  var ce = document.getElementById("b9-e"), cp = document.getElementById("b9-p");
+  var ee = document.getElementById("b9-e-v"), ep = document.getElementById("b9-p-v");
+  var X0 = 56, X1 = 620, Y0 = 30, Y1 = 220, M = 200, N = 200, NB = 40;
+
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  var sem = 909;
+  function u() { sem = (sem * 48271) % 2147483647; return sem / 2147483647; }
+  function nor() { var a = Math.max(u(), 1e-9), b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); }
+  function f(x) { return Math.sin(3 * x) + 0.5 * x; }
+  var XT = [], YT = [], XV = [], YV = [], i;
+  for (i = 0; i < N; i++) { XT.push(4 * u() - 2); YT.push(f(XT[i]) + 0.5 * nor()); }
+  for (i = 0; i < N; i++) { XV.push(4 * u() - 2); YV.push(f(XV[i]) + 0.5 * nor()); }
+  // discretizacion en NB intervalos iguales de [-2, 2]
+  function bin(x) { return Math.max(0, Math.min(NB - 1, Math.floor((x + 2) / 4 * NB))); }
+  var BT = XT.map(bin), BV = XV.map(bin);
+
+  // arbol de regresion sobre los intervalos: devuelve el valor de cada intervalo
+  function arbol(r, prof) {
+    var val = new Array(NB).fill(0);
+    function crece(lo, hi, d) {
+      var s = 0, n = 0, j;
+      var sb = new Array(NB).fill(0), nb = new Array(NB).fill(0);
+      for (j = 0; j < N; j++) if (BT[j] >= lo && BT[j] <= hi) { s += r[j]; n++; sb[BT[j]] += r[j]; nb[BT[j]]++; }
+      var mejor = -1, g = 0;
+      if (d < prof && n >= 10) {
+        var sl = 0, nl = 0;
+        for (var c = lo; c < hi; c++) {
+          sl += sb[c]; nl += nb[c];
+          var nr = n - nl;
+          if (nl < 5 || nr < 5) continue;
+          var ga = sl * sl / nl + (s - sl) * (s - sl) / nr - s * s / n;
+          if (ga > g) { g = ga; mejor = c; }
+        }
+      }
+      if (mejor < 0) { for (j = lo; j <= hi; j++) val[j] = n ? s / n : 0; return; }
+      crece(lo, mejor, d + 1); crece(mejor + 1, hi, d + 1);
+    }
+    crece(0, NB - 1, 0);
+    return val;
+  }
+
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var eta = +ce.value, prof = +cp.value;
+    ee.textContent = eta.toFixed(2); ep.textContent = prof;
+    var FT = new Array(N).fill(0), FV = new Array(N).fill(0), et = [], ev = [], m, j;
+    var media = 0; for (j = 0; j < N; j++) media += YT[j] / N;
+    for (j = 0; j < N; j++) { FT[j] = media; FV[j] = media; }
+    for (m = 0; m < M; m++) {
+      var r = YT.map(function (y, q) { return y - FT[q]; });
+      var v = arbol(r, prof);
+      var st = 0, sv = 0;
+      for (j = 0; j < N; j++) { FT[j] += eta * v[BT[j]]; FV[j] += eta * v[BV[j]]; st += Math.pow(YT[j] - FT[j], 2); sv += Math.pow(YV[j] - FV[j], 2); }
+      et.push(st / N); ev.push(sv / N);
+    }
+    var best = 0; for (m = 1; m < M; m++) if (ev[m] < ev[best]) best = m;
+    var YM = Math.max(ev[0], et[0]) * 1.05, YB = 0.15;
+    var px = function (k) { return X0 + k / (M - 1) * (X1 - X0); };
+    var py = function (e) { return Y1 - (Math.min(e, YM) - YB) / (YM - YB) * (Y1 - Y0); };
+    svg.appendChild(el("path", { d: "M" + X0 + " " + Y1 + " L" + X1 + " " + Y1, stroke: C_L }));
+    [0, 50, 100, 150, 200].forEach(function (k) {
+      svg.appendChild(el("text", { x: px(Math.min(k, M - 1)), y: Y1 + 16, "text-anchor": "middle", "font-size": 10, fill: C_T, opacity: .7 }, k));
+    });
+    svg.appendChild(el("text", { x: X1, y: Y1 + 34, "text-anchor": "end", "font-size": 10.5, fill: C_T, opacity: .7 }, "número de árboles →"));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(0.25) + " L" + X1 + " " + py(0.25), stroke: C_L, "stroke-dasharray": "3 3" }));
+    svg.appendChild(el("text", { x: X1 - 4, y: Y1 - 6, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, "línea discontinua: varianza del ruido, 0.25"));
+    function linea(serie, col) {
+      var d = "";
+      serie.forEach(function (e, k) { d += (k ? " L" : "M") + px(k).toFixed(1) + " " + py(e).toFixed(1); });
+      svg.appendChild(el("path", { d: d, fill: "none", stroke: col, "stroke-width": 2 }));
+    }
+    linea(et, C_A); linea(ev, C_B);
+    svg.appendChild(el("circle", { cx: px(best).toFixed(1), cy: py(ev[best]).toFixed(1), r: 5, fill: C_B }));
+    [["entrenamiento", C_A], ["validación", C_B]].forEach(function (l, q) {
+      svg.appendChild(el("rect", { x: X1 - 230 + q * 120, y: 10, width: 12, height: 3, fill: l[1] }));
+      svg.appendChild(el("text", { x: X1 - 213 + q * 120, y: 15, "font-size": 10.5, fill: C_T, opacity: .85 }, l[0]));
+    });
+    lec.innerHTML = "Con η = <strong>" + eta.toFixed(2) + "</strong> y árboles de profundidad <strong>" + prof + "</strong>, el error de validación es mínimo en el árbol <strong>" + (best + 1) +
+      "</strong>, con <strong>" + ev[best].toFixed(4) + "</strong>; tras 200 árboles vale <strong>" + ev[M - 1].toFixed(4) + "</strong> y el de entrenamiento <strong>" + et[M - 1].toFixed(4) +
+      "</strong>. La varianza del ruido, 0.25, es el menor error esperado de un modelo en datos nuevos.";
+  }
+  ce.addEventListener("input", dibujar);
+  cp.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Profundidad e interacciones
+
+::: {.proposicion}
+**Proposición 9.4 (profundidad y orden de las interacciones).** Un árbol de profundidad $J$ divide por a lo sumo $J$ variables en cada camino, y la suma de árboles de profundidad $J$ es una suma de funciones de a lo sumo $J$ variables. Con $J=1$ el modelo es aditivo, $F(x)=\sum_jf_j(x_j)$, y no puede representar un producto $x_2x_3$.
+:::
+
+::: {.demostracion}
+*Demostración.* Cada hoja de un árbol de profundidad $J$ es la intersección de a lo sumo $J$ condiciones, cada una sobre una variable, y el árbol es la suma de sus hojas multiplicadas por sus indicadores. Con $J=1$, cada árbol es una función de una sola variable, y la suma de funciones de una variable es aditiva. Un producto $x_2x_3$ no es aditivo: su segunda derivada cruzada vale 1, y la de cualquier función aditiva vale 0. En la celda, con parada temprana, la pérdida de prueba es 0,5438 con $J=1$, 0,5135 con $J=2$, 0,5170 con $J=3$ y 0,5189 con $J=5$. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def sigmoide(z):
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -30.0, 30.0)))
+
+class Discretizador:
+    """Cada columna a enteros 0..B-1 por cuantiles; el faltante va al valor B."""
+    def fit(self, X, B=64):
+        self.B = B
+        q = np.linspace(0, 1, B + 1)[1:-1]
+        self.cortes = [np.unique(np.nanquantile(X[:, j], q)) for j in range(X.shape[1])]
+        return self
+    def transform(self, X):
+        Z = np.empty(X.shape, dtype=np.int64)
+        for j, c in enumerate(self.cortes):
+            Z[:, j] = np.searchsorted(c, X[:, j], side="right")
+            Z[np.isnan(X[:, j]), j] = self.B
+        return Z
+
+def arbol(Z, g, h, B, prof, lam=1.0, min_h=5.0):
+    """Arbol de Newton sobre histogramas. Cada nodo: (col, corte, faltante_izq, hijos) u hoja."""
+    nodos = []
+    def crece(idx, d):
+        G, H = g[idx].sum(), h[idx].sum()
+        yo = len(nodos); nodos.append(None)
+        mejor = (0.0, None)
+        if d < prof:
+            for j in range(Z.shape[1]):
+                zg = np.bincount(Z[idx, j], weights=g[idx], minlength=B + 1)
+                zh = np.bincount(Z[idx, j], weights=h[idx], minlength=B + 1)
+                gm, hm = zg[B], zh[B]
+                cg, ch = np.cumsum(zg[:B])[:-1], np.cumsum(zh[:B])[:-1]
+                for falt_izq in (False, True):
+                    GL = cg + (gm if falt_izq else 0.0); HL = ch + (hm if falt_izq else 0.0)
+                    GR, HR = G - GL, H - HL
+                    ok = (HL >= min_h) & (HR >= min_h)
+                    if not ok.any():
+                        continue
+                    gan = np.where(ok, GL ** 2 / (HL + lam) + GR ** 2 / (HR + lam) - G ** 2 / (H + lam), -1.0)
+                    s = int(np.argmax(gan))
+                    if gan[s] > mejor[0] + 1e-12:
+                        mejor = (gan[s], (j, s, falt_izq))
+        if mejor[1] is None:
+            nodos[yo] = ("hoja", -G / (H + lam))
+            return yo
+        j, s, fi = mejor[1]
+        va_izq = (Z[idx, j] <= s) & (Z[idx, j] < B) | ((Z[idx, j] == B) & fi)
+        i_izq = crece(idx[va_izq], d + 1)
+        i_der = crece(idx[~va_izq], d + 1)
+        nodos[yo] = ("corte", j, s, fi, i_izq, i_der, mejor[0])
+        return yo
+    crece(np.arange(len(g)), 0)
+    return nodos
+
+def predice_arbol(nodos, Z, B):
+    out = np.empty(len(Z))
+    pila = [(0, np.arange(len(Z)))]
+    while pila:
+        k, idx = pila.pop()
+        n = nodos[k]
+        if n[0] == "hoja":
+            out[idx] = n[1]; continue
+        _, j, s, fi, a, b, _ = n
+        izq = (Z[idx, j] <= s) & (Z[idx, j] < B) | ((Z[idx, j] == B) & fi)
+        pila.append((a, idx[izq])); pila.append((b, idx[~izq]))
+    return out
+
+def boosting(Z, y, Zv, yv, arboles, eta, prof, B=64):
+    """Boosting logistico. Devuelve la perdida de validacion tras cada arbol y los arboles."""
+    f0 = np.log(y.mean() / (1 - y.mean()))
+    F, Fv = np.full(len(y), f0), np.full(len(yv), f0)
+    curva, lista = [], []
+    for _ in range(arboles):
+        p = sigmoide(F)
+        t = arbol(Z, p - y, p * (1 - p), B, prof)
+        F += eta * predice_arbol(t, Z, B); Fv += eta * predice_arbol(t, Zv, B)
+        pv = np.clip(sigmoide(Fv), 1e-12, 1 - 1e-12)
+        curva.append(-np.mean(yv * np.log(pv) + (1 - yv) * np.log(1 - pv)))
+        lista.append(t)
+    return np.array(curva), lista, f0
+
+
+def datos(n, rng):
+    X = rng.standard_normal((n, 6))
+    z = (-0.8 + 1.2 * np.sin(1.5 * X[:, 0]) + 0.8 * X[:, 1] * X[:, 2] + 0.6 * (X[:, 3] > 0.5)
+         - 0.5 * X[:, 4] ** 2)
+    y = (rng.random(n) < sigmoide(z)).astype(float)
+    return X, y
+
+rng = np.random.default_rng(90)
+X, y = datos(3000, rng); Xv, yv = datos(1500, rng); Xt, yt = datos(20000, rng)
+d = Discretizador().fit(X); Z, Zv, Zt = d.transform(X), d.transform(Xv), d.transform(Xt)
+
+def perdida(y, F):
+    p = np.clip(sigmoide(F), 1e-12, 1 - 1e-12)
+    return -np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))
+
+print("profundidad  mejor arbol  perdida prueba")
+for prof in (1, 2, 3, 5):
+    curva, arboles, f0 = boosting(Z, y, Zv, yv, 300, 0.1, prof)
+    m = int(curva.argmin()) + 1
+    F = np.full(len(yt), f0)
+    for t in arboles[:m]:
+        F = F + 0.1 * predice_arbol(t, Zt, 64)
+    print("%11d %12d %15.4f" % (prof, m, perdida(yt, F)))
+```
+
+La mayor mejora se produce al pasar de uno a dos niveles, porque la interacción de los datos es de orden dos. Más profundidad no mejora y el mejor árbol llega antes, porque cada árbol ajusta más. ESL §10.11 recomienda profundidades entre 4 y 8 como punto de partida; la profundidad se trata como un hiperparámetro más, elegido por validación.
+
+## 4. Faltantes en el boosting
+
+La celda hace faltar $x_1$ en un 35 % de las filas con $y=1$ y en un 10 % de las filas con $y=0$, de modo que la ausencia es informativa, como en Atributos 13.
+
+```{pyodide}
+import numpy as np
+
+def sigmoide(z):
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -30.0, 30.0)))
+
+class Discretizador:
+    """Cada columna a enteros 0..B-1 por cuantiles; el faltante va al valor B."""
+    def fit(self, X, B=64):
+        self.B = B
+        q = np.linspace(0, 1, B + 1)[1:-1]
+        self.cortes = [np.unique(np.nanquantile(X[:, j], q)) for j in range(X.shape[1])]
+        return self
+    def transform(self, X):
+        Z = np.empty(X.shape, dtype=np.int64)
+        for j, c in enumerate(self.cortes):
+            Z[:, j] = np.searchsorted(c, X[:, j], side="right")
+            Z[np.isnan(X[:, j]), j] = self.B
+        return Z
+
+def arbol(Z, g, h, B, prof, lam=1.0, min_h=5.0):
+    """Arbol de Newton sobre histogramas. Cada nodo: (col, corte, faltante_izq, hijos) u hoja."""
+    nodos = []
+    def crece(idx, d):
+        G, H = g[idx].sum(), h[idx].sum()
+        yo = len(nodos); nodos.append(None)
+        mejor = (0.0, None)
+        if d < prof:
+            for j in range(Z.shape[1]):
+                zg = np.bincount(Z[idx, j], weights=g[idx], minlength=B + 1)
+                zh = np.bincount(Z[idx, j], weights=h[idx], minlength=B + 1)
+                gm, hm = zg[B], zh[B]
+                cg, ch = np.cumsum(zg[:B])[:-1], np.cumsum(zh[:B])[:-1]
+                for falt_izq in (False, True):
+                    GL = cg + (gm if falt_izq else 0.0); HL = ch + (hm if falt_izq else 0.0)
+                    GR, HR = G - GL, H - HL
+                    ok = (HL >= min_h) & (HR >= min_h)
+                    if not ok.any():
+                        continue
+                    gan = np.where(ok, GL ** 2 / (HL + lam) + GR ** 2 / (HR + lam) - G ** 2 / (H + lam), -1.0)
+                    s = int(np.argmax(gan))
+                    if gan[s] > mejor[0] + 1e-12:
+                        mejor = (gan[s], (j, s, falt_izq))
+        if mejor[1] is None:
+            nodos[yo] = ("hoja", -G / (H + lam))
+            return yo
+        j, s, fi = mejor[1]
+        va_izq = (Z[idx, j] <= s) & (Z[idx, j] < B) | ((Z[idx, j] == B) & fi)
+        i_izq = crece(idx[va_izq], d + 1)
+        i_der = crece(idx[~va_izq], d + 1)
+        nodos[yo] = ("corte", j, s, fi, i_izq, i_der, mejor[0])
+        return yo
+    crece(np.arange(len(g)), 0)
+    return nodos
+
+def predice_arbol(nodos, Z, B):
+    out = np.empty(len(Z))
+    pila = [(0, np.arange(len(Z)))]
+    while pila:
+        k, idx = pila.pop()
+        n = nodos[k]
+        if n[0] == "hoja":
+            out[idx] = n[1]; continue
+        _, j, s, fi, a, b, _ = n
+        izq = (Z[idx, j] <= s) & (Z[idx, j] < B) | ((Z[idx, j] == B) & fi)
+        pila.append((a, idx[izq])); pila.append((b, idx[~izq]))
+    return out
+
+def boosting(Z, y, Zv, yv, arboles, eta, prof, B=64):
+    """Boosting logistico. Devuelve la perdida de validacion tras cada arbol y los arboles."""
+    f0 = np.log(y.mean() / (1 - y.mean()))
+    F, Fv = np.full(len(y), f0), np.full(len(yv), f0)
+    curva, lista = [], []
+    for _ in range(arboles):
+        p = sigmoide(F)
+        t = arbol(Z, p - y, p * (1 - p), B, prof)
+        F += eta * predice_arbol(t, Z, B); Fv += eta * predice_arbol(t, Zv, B)
+        pv = np.clip(sigmoide(Fv), 1e-12, 1 - 1e-12)
+        curva.append(-np.mean(yv * np.log(pv) + (1 - yv) * np.log(1 - pv)))
+        lista.append(t)
+    return np.array(curva), lista, f0
+
+
+def datos(n, rng):
+    X = rng.standard_normal((n, 6))
+    z = (-0.8 + 1.2 * np.sin(1.5 * X[:, 0]) + 0.8 * X[:, 1] * X[:, 2] + 0.6 * (X[:, 3] > 0.5)
+         - 0.5 * X[:, 4] ** 2)
+    y = (rng.random(n) < sigmoide(z)).astype(float)
+    return X, y
+
+
+def con_faltantes(X, y, rng):
+    """La primera columna falta mas a menudo cuando y = 1."""
+    X = X.copy()
+    X[rng.random(len(y)) < np.where(y == 1, 0.35, 0.10), 0] = np.nan
+    return X
+
+rng = np.random.default_rng(91)
+X, y = datos(3000, rng); Xv, yv = datos(1500, rng); Xt, yt = datos(20000, rng)
+X, Xv, Xt = con_faltantes(X, y, rng), con_faltantes(Xv, yv, rng), con_faltantes(Xt, yt, rng)
+
+def perdida(y, F):
+    p = np.clip(sigmoide(F), 1e-12, 1 - 1e-12)
+    return -np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))
+
+def evalua(A, Av, At):
+    d = Discretizador().fit(A)
+    Z, Zv, Zt = d.transform(A), d.transform(Av), d.transform(At)
+    curva, arboles, f0 = boosting(Z, y, Zv, yv, 300, 0.1, 3)
+    m = int(curva.argmin()) + 1
+    F = np.full(len(yt), f0)
+    for t in arboles[:m]:
+        F = F + 0.1 * predice_arbol(t, Zt, 64)
+    return perdida(yt, F)
+
+med = np.nanmedian(X[:, 0])
+imp = lambda A: np.column_stack([np.where(np.isnan(A[:, 0]), med, A[:, 0]), A[:, 1:]])
+ind = lambda A: np.column_stack([imp(A), np.isnan(A[:, 0])])
+print("fraccion con x1 ausente: %.4f" % np.mean(np.isnan(X[:, 0])))
+print("tratamiento del faltante      perdida prueba")
+print("rama propia en cada corte     %.4f" % evalua(X, Xv, Xt))
+print("imputar la mediana            %.4f" % evalua(imp(X), imp(Xv), imp(Xt)))
+print("mediana e indicador           %.4f" % evalua(ind(X), ind(Xv), ind(Xt)))
+```
+
+Las tres formas de tratar los faltantes dan pérdidas entre 0,4982 y 0,5001. La rama propia envía los faltantes al lado que más reduce la pérdida en cada corte. La imputación por la mediana también funciona, a diferencia de lo que ocurría con la regresión de Atributos 13: todas las filas imputadas caen en el mismo intervalo, y un corte a cada lado de ese intervalo las aísla. El modelo lineal no podía aislar el valor imputado; el árbol sí.
+
+## 5. Las cuatro bibliotecas
+
+Los hiperparámetros de la celda tienen el mismo significado en las bibliotecas habituales. Los nombres cambian:
+
+| Concepto | scikit-learn | XGBoost | LightGBM | CatBoost |
+|---|---|---|---|---|
+| Tasa de aprendizaje $\eta$ | `learning_rate` | `learning_rate` | `learning_rate` | `learning_rate` |
+| Número máximo de árboles | `max_iter` | `n_estimators` | `n_estimators` | `iterations` |
+| Profundidad $J$ | `max_depth` | `max_depth` | `max_depth`, `num_leaves` | `depth` |
+| Penalización $\lambda$ | `l2_regularization` | `reg_lambda` | `reg_lambda` | `l2_leaf_reg` |
+| Intervalos $B$ | `max_bins` | `max_bin` | `max_bin` | `border_count` |
+
+XGBoost, LightGBM y CatBoost no están disponibles en el navegador. El código siguiente se ejecuta en una instalación local, con `pip install xgboost lightgbm catboost`, y ajusta el mismo modelo con parada temprana en las cuatro:
+
+```python
+from sklearn.ensemble import HistGradientBoostingClassifier
+import xgboost as xgb
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+
+hgb = HistGradientBoostingClassifier(learning_rate=0.1, max_depth=3, max_iter=400,
+                                     early_stopping=True, validation_fraction=0.2,
+                                     n_iter_no_change=20)
+hgb.fit(X, y)
+
+xg = xgb.XGBClassifier(learning_rate=0.1, max_depth=3, n_estimators=400,
+                       tree_method="hist", early_stopping_rounds=20)
+xg.fit(X, y, eval_set=[(Xv, yv)], verbose=False)
+
+lg = lgb.LGBMClassifier(learning_rate=0.1, max_depth=3, num_leaves=8, n_estimators=400)
+lg.fit(X, y, eval_set=[(Xv, yv)], callbacks=[lgb.early_stopping(20, verbose=False)])
+
+cb = CatBoostClassifier(learning_rate=0.1, depth=3, iterations=400,
+                        early_stopping_rounds=20, verbose=False)
+cb.fit(X, y, eval_set=(Xv, yv))
+```
+
+Las diferencias entre ellas están en detalles que no cambian el mecanismo: LightGBM crece los árboles hoja a hoja y limita el número de hojas en lugar de la profundidad; CatBoost usa árboles simétricos, con el mismo corte en todos los nodos de un nivel, y codifica las categóricas por el objetivo con un orden aleatorio que evita la fuga de Atributos 02.
+
+## 6. Limitaciones
+
+- La implementación de la celda usa árboles de profundidad fija y una sola penalización. Las bibliotecas añaden un mínimo de filas por hoja, submuestreo de filas y de columnas en cada árbol, y otras penalizaciones.
+- La parada temprana usa un conjunto de validación que no entra en el ajuste. Con pocos datos, su ruido hace variar el mejor árbol; los resultados de la Sección 2 diferían en la tercera cifra decimal.
+- La lección no trata las variables categóricas nativas. scikit-learn y LightGBM ordenan los niveles por su gradiente en cada nodo, el mismo recurso de Atributos 10 para los árboles.
+- Las probabilidades del boosting con parada temprana suelen estar razonablemente calibradas con pérdida logarítmica, pero no hay garantía: se comprueban con Estadística 16 antes de usarlas como probabilidades.
+
+## Ejercicios
+
+### Ejercicio 1, Valor de una hoja y ganancia de un corte
+
+La celda fija los gradientes `g` y las segundas derivadas `h` de seis filas de un nodo, la penalización `lam` y un corte `izq` que envía tres filas a la izquierda. Completar la línea de `valor` con el valor de Newton de la hoja si el nodo no se divide, y la de `ganancia` con la expresión entre paréntesis de la Proposición 9.2, sin el factor $\tfrac12$. La celda imprime los dos; deben dar `0.5556 2.6816`.
+
+```{pyodide}
+#| exercise: ex_newton
+import numpy as np
+
+g = np.array([0.4, -0.7, 0.2, -0.9, -0.5, 0.3])
+h = np.array([0.24, 0.21, 0.16, 0.09, 0.25, 0.21])
+lam = 1.0
+izq = np.array([True, False, True, False, False, True])
+
+G, H = g.sum(), h.sum()
+GL, HL = g[izq].sum(), h[izq].sum()
+GR, HR = G - GL, H - HL
+
+valor = ______
+ganancia = ______
+
+print(round(float(valor), 4), round(float(ganancia), 4))
+```
+
+::: {.hint exercise="ex_newton"}
+El valor de la hoja es $-G/(H+\lambda)$. La ganancia suma $G_L^2/(H_L+\lambda)$ y $G_R^2/(H_R+\lambda)$ y resta $G^2/(H+\lambda)$.
+:::
+
+::: {.solution exercise="ex_newton"}
+```{pyodide}
+import numpy as np
+
+g = np.array([0.4, -0.7, 0.2, -0.9, -0.5, 0.3])
+h = np.array([0.24, 0.21, 0.16, 0.09, 0.25, 0.21])
+lam = 1.0
+izq = np.array([True, False, True, False, False, True])
+
+G, H = g.sum(), h.sum()
+GL, HL = g[izq].sum(), h[izq].sum()
+GR, HR = G - GL, H - HL
+
+valor = -G / (H + lam)
+ganancia = (GL ** 2 / (HL + lam) + GR ** 2 / (HR + lam)
+            - G ** 2 / (H + lam))
+
+print(round(float(valor), 4), round(float(ganancia), 4))
+```
+
+El corte separa las tres filas con gradiente positivo, que el modelo sobreestima, de las tres con gradiente negativo, que subestima. Cada hijo recibe un valor de signo contrario, y la ganancia es grande porque dentro de cada hijo los gradientes tienen el mismo signo.
+:::
+
+```{pyodide}
+#| exercise: ex_newton
+#| check: true
+if abs(float(valor) - 0.5556) < 5e-5 and abs(float(ganancia) - 2.6816) < 5e-5:
+    feedback = {"correct": True, "message": "Correcto: la hoja vale 0.5556 y el corte gana 2.6816."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba un valor de 0.5556 y una ganancia de 2.6816."}
+feedback
+```
+
+### Ejercicio 2, Discretizar con faltantes
+
+La celda fija una columna `x` con dos faltantes. Completar la línea de `cortes` con los cuantiles 0,25, 0,5 y 0,75 de los valores observados, y la de `z` con el intervalo de cada fila: un entero de 0 a 3 según los cortes, con los valores iguales a un corte en el intervalo de la derecha, y 4 para los faltantes. La celda imprime los cortes y los intervalos; deben dar `[1.9, 3.75, 6.075]` y `[1, 4, 0, 3, 1, 4, 2, 0, 3, 2]`.
+
+```{pyodide}
+#| exercise: ex_intervalos
+import numpy as np
+
+x = np.array([3.1, np.nan, 0.4, 7.8, 2.2, np.nan, 5.5, 1.0, 9.3, 4.4])
+
+cortes = ______
+z = ______
+
+print([round(float(c), 3) for c in cortes], np.asarray(z).tolist())
+```
+
+::: {.hint exercise="ex_intervalos"}
+`np.nanquantile` calcula cuantiles ignorando los faltantes. `np.searchsorted(cortes, x, side="right")` da el número de cortes menores o iguales que cada valor. `np.where` sustituye el resultado de los faltantes por 4.
+:::
+
+::: {.solution exercise="ex_intervalos"}
+```{pyodide}
+import numpy as np
+
+x = np.array([3.1, np.nan, 0.4, 7.8, 2.2, np.nan, 5.5, 1.0, 9.3, 4.4])
+
+cortes = np.nanquantile(x, [0.25, 0.5, 0.75])
+z = np.where(np.isnan(x), 4, np.searchsorted(cortes, x, side="right"))
+
+print([round(float(c), 3) for c in cortes], np.asarray(z).tolist())
+```
+
+Cada intervalo observado recibe dos de las ocho filas, porque los cortes son los cuartiles. Con la columna en cinco enteros, un corte se busca entre tres límites, con los faltantes a un lado o al otro, en lugar de entre las ocho filas ordenadas; con 64 o 256 intervalos y millones de filas, esa reducción es lo que hace rápido el boosting por histogramas.
+:::
+
+```{pyodide}
+#| exercise: ex_intervalos
+#| check: true
+import numpy as np
+if (np.allclose(np.asarray(cortes, float), [1.9, 3.75, 6.075])
+        and np.asarray(z).tolist() == [1, 4, 0, 3, 1, 4, 2, 0, 3, 2]):
+    feedback = {"correct": True, "message": "Correcto: cuatro intervalos de dos filas y los faltantes en el 4."}
+else:
+    feedback = {"correct": False, "message": "Se esperaban los cortes [1.9, 3.75, 6.075] y los intervalos [1, 4, 0, 3, 1, 4, 2, 0, 3, 2]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F3-retos.ipynb`, sección **Aplicado 9**:
+
+1. Añadir al boosting de la celda el submuestreo de filas, con un 50 % de las filas en cada árbol, y medir su efecto sobre la pérdida de prueba y sobre el mejor número de árboles.
+2. Comparar la implementación de la celda con `HistGradientBoostingClassifier` de scikit-learn con los mismos hiperparámetros, y explicar las diferencias que queden.
+3. Construir unos datos con una interacción de orden tres, $x_1x_2x_3$, y medir la pérdida con profundidades 1, 2, 3 y 4. Guardar en `50-Errores/` la regla para elegir la profundidad.
+
+## Del libro
+
+ESL §10.11, *Right-Sized Trees for Boosting*, relaciona el tamaño de los árboles con el orden de las interacciones que el modelo puede representar y muestra que los árboles de un corte producen un modelo aditivo. ESL §10.12, *Regularization*, trata el número de árboles y la contracción por la tasa de aprendizaje como formas de regularización, y el submuestreo como una tercera. Esta lección implementa la versión por histogramas y con aproximación de segundo orden, que es la de las bibliotecas actuales, y mide el efecto de cada hiperparámetro.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- Boosting por histogramas: columnas discretizadas por cuantiles, sumas de $g$ y $h$ por intervalo, cortes entre intervalos.
+- Valor de Newton de una hoja: $-G/(H+\lambda)$.
+- Ganancia: $\tfrac12\bigl(G_L^2/(H_L+\lambda)+G_R^2/(H_R+\lambda)-G^2/(H+\lambda)\bigr)$.
+- Los faltantes van a su propio intervalo y a la rama que más reduce la pérdida.
+- Tasa menor, más árboles: mejor árbol 39, 98 y 352 con $\eta=0{,}3$, $0{,}1$ y $0{,}03$.
+- Sin parada temprana, $\eta=0{,}3$ y 400 árboles: la pérdida sube de 0,5150 a 0,6059.
+- Con parada temprana, las tres tasas dan pérdidas entre 0,5150 y 0,5172.
+- Profundidad $J$: interacciones de orden $J$; con un corte, modelo aditivo.
+- Pérdida 0,5438 con $J=1$ y 0,5135 con $J=2$ cuando hay un producto de dos variables.
+- En un árbol, imputar una constante equivale casi a la rama propia: el intervalo imputado se aísla con un corte.
+- Mismos conceptos, nombres distintos: `n_estimators`, `max_iter`, `iterations`.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos, con un boosting logístico por histogramas escrito con NumPy, 3000 filas de entrenamiento, 1500 de validación y 20 000 de prueba. Tasa de aprendizaje: mejores árboles 39, 98 y 352, pérdidas de validación 0,5226, 0,5204 y 0,5217, de prueba 0,5150, 0,5170 y 0,5172 en el mejor árbol y 0,6059, 0,5326 y 0,5173 tras 400; pérdida con la probabilidad verdadera 0,4924. Profundidad: 0,5438, 0,5135, 0,5170 y 0,5189 con profundidades 1, 2, 3 y 5, en los árboles 284, 216, 98 y 79. Faltantes, con un 20,10 % de $x_1$ ausente: 0,4991 con rama propia, 0,5001 con la mediana y 0,4982 con mediana e indicador. Las Proposiciones 9.2 y 9.4 se demuestran en la página.
+
+**Lo que viene de los libros.** La relación entre el tamaño de los árboles y el orden de las interacciones, el modelo aditivo de los árboles de un corte, y la tasa de aprendizaje, el número de árboles y el submuestreo como regularización, de ESL §10.11 y §10.12.
+
+**Lo que se usa de otras lecciones sin repetir.** El boosting como descenso funcional, de Machine Learning 32. La parada temprana como elección de un hiperparámetro por validación, de ML aplicado 06. Los faltantes informativos, de Atributos 13. La ordenación de niveles por el objetivo en los árboles, de Atributos 10.
+
+**Lo que se enuncia sin demostrar.** Las diferencias internas entre las cuatro bibliotecas (crecimiento hoja a hoja, árboles simétricos, codificación ordenada de CatBoost) se describen a partir de su documentación, sin implementarlas. El código de XGBoost, LightGBM y CatBoost no se ejecuta en la página.
+
+**Lo que es mío, no del libro.** La implementación compacta por histogramas con la rama de faltantes. La medición de las tres tasas con y sin parada temprana, y la conclusión de que en estos datos la tasa menor no mejora la pérdida. La explicación de por qué la imputación por una constante funciona en un árbol y no en la regresión. La tabla de equivalencias entre bibliotecas. Y el visual del error de entrenamiento y de validación con pérdida cuadrática.
+:::

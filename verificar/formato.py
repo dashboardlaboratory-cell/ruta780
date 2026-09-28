@@ -198,6 +198,7 @@ MIGRADAS = {
     "aplicado/01-planteamiento-y-linea-base.qmd",
     "aplicado/02-exploracion-y-calidad.qmd",
     "aplicado/03-atipicos.qmd",
+    "aplicado/09-boosting-en-la-practica.qmd",
     "aplicado/04-particion-de-los-datos.qmd",
     "aplicado/05-pipelines.qmd",
     "aplicado/06-ajuste-de-hiperparametros.qmd",
