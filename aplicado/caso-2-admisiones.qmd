@@ -1,0 +1,367 @@
+---
+title: "Caso 2. Comité de admisiones de un programa de posgrado"
+subtitle: "ML aplicado · Caso 2 · después de la Lección 08"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="aplicado/caso-2-admisiones"}
+[**Caso** 2]{.item}
+[**Fase** F4]{.item}
+[**Usa** ML aplicado 01 a 08 · Atributos 02]{.item}
+:::
+
+Este caso se resuelve con lo visto hasta la Lección 08 del módulo. Corresponde a un bloque de trabajo de unas cuatro horas. La situación y los datos son inventados.
+
+## Situación
+
+Un programa de maestría en administración de dos años recibe cada año unas 400 solicitudes y tiene 150 plazas. Su prestigio depende sobre todo de la proporción de egresados que consiguen empleo por medio del programa de colocación en los seis meses siguientes a graduarse. Admitir a un alumno que no consigue colocarse daña esa cifra; rechazar a uno que la habría conseguido pierde un buen alumno y su matrícula.
+
+La directora del programa quiere sustituir la revisión manual de expedientes por un criterio basado en datos, y pide al comité una propuesta con los datos de las tres últimas cohortes. Un miembro del comité ya presentó un modelo que acierta en todos los alumnos de la cohorte 2023 y propone usarlo este año. La directora quiere una segunda opinión antes de la reunión.
+
+## Los datos
+
+La celda genera dos tablas. `historico` tiene los 900 alumnos que ingresaron en 2021, 2022 y 2023, con su resultado. `solicitantes` tiene las 400 solicitudes de 2024.
+
+| Columna | Descripción |
+|---|---|
+| `id` | Número del alumno o del solicitante |
+| `cohorte` | Año de ingreso |
+| `nota_secundaria`, `nota_bachillerato`, `nota_grado` | Nota media en cada nivel de estudios, de 0 a 100 |
+| `tipo_grado` | Área del título de grado: `comercio`, `ingenieria`, `ciencias` o `artes` |
+| `experiencia_anios` | Años de experiencia laboral antes de ingresar |
+| `examen_percentil` | Percentil en el examen de admisión |
+| `entrevista` | Puntuación de la entrevista de admisión, de 1 a 10 |
+| `nota_final_programa` | Nota media obtenida en el programa |
+| `especializacion` | Especialización elegida en el segundo año: `finanzas` o `marketing` |
+| `salario` | Salario mensual del primer empleo obtenido por el programa de colocación, vacío si no lo hubo |
+| `colocado` | 1 si el alumno consiguió empleo por el programa de colocación, 0 si no |
+
+```{pyodide}
+import numpy as np
+import pandas as pd
+
+def genera_admisiones(semilla=483):
+    """Tres cohortes de alumnos (2021 a 2023) y los solicitantes de 2024."""
+    rng = np.random.default_rng(semilla)
+    filas = []
+    for cohorte, n in ((2021, 300), (2022, 300), (2023, 300), (2024, 400)):
+        a = rng.standard_normal(n)                    # capacidad, no observada
+        e = rng.standard_normal(n)                    # esfuerzo durante el programa, no observado
+        tipo = rng.choice(["comercio", "ingenieria", "ciencias", "artes"], n, p=[0.4, 0.3, 0.2, 0.1])
+        exper = np.minimum(rng.poisson(1.6, n), 8)
+        t = pd.DataFrame({
+            "cohorte": cohorte,
+            "nota_secundaria": np.clip(72 + 8 * a + rng.normal(0, 6, n), 45, 100).round(1),
+            "nota_bachillerato": np.clip(70 + 7 * a + rng.normal(0, 7, n), 45, 100).round(1),
+            "nota_grado": np.clip(66 + 6 * a + rng.normal(0, 7, n), 45, 100).round(1),
+            "tipo_grado": tipo,
+            "experiencia_anios": exper,
+            "examen_percentil": np.clip(100 / (1 + np.exp(-(0.9 * a + rng.normal(0, 0.7, n)))), 1, 99).round(),
+            "entrevista": np.clip(np.round(5.5 + 1.1 * a + rng.normal(0, 1.4, n)), 1, 10).astype(int),
+        })
+        z = (1.25 + 0.9 * a + 1.3 * e + 0.22 * np.minimum(exper, 4)
+             + np.where(np.isin(tipo, ["comercio", "ingenieria"]), 0.35, 0.0)
+             - 0.35 * (cohorte >= 2023))
+        p = 1 / (1 + np.exp(-z))
+        col = (rng.random(n) < p).astype(int)
+        t["nota_final_programa"] = np.clip(68 + 4 * a + 6 * e + rng.normal(0, 3, n), 40, 100).round(1)
+        t["especializacion"] = np.where(e + rng.normal(0, 0.8, n) > 0.3, "finanzas", "marketing")
+        t["salario"] = np.where(col == 1, np.exp(rng.normal(np.log(2600) + 0.1 * a, 0.2, n)).round(-1), np.nan)
+        t["colocado"] = col
+        t["_p"] = p
+        filas.append(t)
+    t = pd.concat(filas, ignore_index=True)
+    t.insert(0, "id", np.arange(1, len(t) + 1))
+    hist = t[t["cohorte"] <= 2023].reset_index(drop=True)
+    sol = t[t["cohorte"] == 2024].reset_index(drop=True)
+    sol = sol.drop(columns=["nota_final_programa", "especializacion", "salario", "colocado"])
+    return hist, sol
+
+
+historico, solicitantes = genera_admisiones()
+historico = historico.drop(columns="_p")
+solicitantes = solicitantes.drop(columns="_p")
+print(historico.shape, solicitantes.shape)
+print(historico.head(6).to_string())
+```
+
+## Preguntas
+
+Las preguntas 1 a 3 tienen comprobación automática. La 4 se evalúa con la rúbrica.
+
+```{pyodide}
+#| exercise: [c2_columnas, c2_modelo, c2_fuga]
+#| setup: true
+import numpy as np
+import pandas as pd
+
+def genera_admisiones(semilla=483):
+    """Tres cohortes de alumnos (2021 a 2023) y los solicitantes de 2024."""
+    rng = np.random.default_rng(semilla)
+    filas = []
+    for cohorte, n in ((2021, 300), (2022, 300), (2023, 300), (2024, 400)):
+        a = rng.standard_normal(n)                    # capacidad, no observada
+        e = rng.standard_normal(n)                    # esfuerzo durante el programa, no observado
+        tipo = rng.choice(["comercio", "ingenieria", "ciencias", "artes"], n, p=[0.4, 0.3, 0.2, 0.1])
+        exper = np.minimum(rng.poisson(1.6, n), 8)
+        t = pd.DataFrame({
+            "cohorte": cohorte,
+            "nota_secundaria": np.clip(72 + 8 * a + rng.normal(0, 6, n), 45, 100).round(1),
+            "nota_bachillerato": np.clip(70 + 7 * a + rng.normal(0, 7, n), 45, 100).round(1),
+            "nota_grado": np.clip(66 + 6 * a + rng.normal(0, 7, n), 45, 100).round(1),
+            "tipo_grado": tipo,
+            "experiencia_anios": exper,
+            "examen_percentil": np.clip(100 / (1 + np.exp(-(0.9 * a + rng.normal(0, 0.7, n)))), 1, 99).round(),
+            "entrevista": np.clip(np.round(5.5 + 1.1 * a + rng.normal(0, 1.4, n)), 1, 10).astype(int),
+        })
+        z = (1.25 + 0.9 * a + 1.3 * e + 0.22 * np.minimum(exper, 4)
+             + np.where(np.isin(tipo, ["comercio", "ingenieria"]), 0.35, 0.0)
+             - 0.35 * (cohorte >= 2023))
+        p = 1 / (1 + np.exp(-z))
+        col = (rng.random(n) < p).astype(int)
+        t["nota_final_programa"] = np.clip(68 + 4 * a + 6 * e + rng.normal(0, 3, n), 40, 100).round(1)
+        t["especializacion"] = np.where(e + rng.normal(0, 0.8, n) > 0.3, "finanzas", "marketing")
+        t["salario"] = np.where(col == 1, np.exp(rng.normal(np.log(2600) + 0.1 * a, 0.2, n)).round(-1), np.nan)
+        t["colocado"] = col
+        t["_p"] = p
+        filas.append(t)
+    t = pd.concat(filas, ignore_index=True)
+    t.insert(0, "id", np.arange(1, len(t) + 1))
+    hist = t[t["cohorte"] <= 2023].reset_index(drop=True)
+    sol = t[t["cohorte"] == 2024].reset_index(drop=True)
+    sol = sol.drop(columns=["nota_final_programa", "especializacion", "salario", "colocado"])
+    return hist, sol
+
+
+historico, solicitantes = genera_admisiones()
+historico = historico.drop(columns="_p")
+solicitantes = solicitantes.drop(columns="_p")
+```
+
+
+### Pregunta 1, Qué información hay al decidir
+
+Asignar a `columnas_decision` la lista de columnas de `historico` que pueden usarse para decidir una admisión. La celda imprime la lista.
+
+```{pyodide}
+#| exercise: c2_columnas
+columnas_decision = ______
+
+print(sorted(columnas_decision))
+```
+
+::: {.solution exercise="c2_columnas"}
+```python
+# nota final, especializacion y salario se conocen despues de admitir;
+# colocado es la variable objetivo; id no describe al solicitante.
+columnas_decision = ["nota_secundaria", "nota_bachillerato", "nota_grado",
+                     "tipo_grado", "experiencia_anios", "examen_percentil",
+                     "entrevista"]
+
+print(sorted(columnas_decision))
+```
+:::
+
+```{pyodide}
+#| exercise: c2_columnas
+#| check: true
+_necesarias = {"nota_secundaria", "nota_bachillerato", "nota_grado", "tipo_grado",
+               "experiencia_anios", "examen_percentil", "entrevista"}
+_prohibidas = {"nota_final_programa", "especializacion", "salario", "colocado", "id"}
+try:
+    _c = set(columnas_decision)
+    _falta = _necesarias - _c
+    _sobra = _c & _prohibidas
+    _ok = not _falta and not _sobra and _c <= _necesarias | {"cohorte"}
+    if _ok:
+        _m = "Correcto: siete columnas conocidas al decidir."
+    elif _sobra:
+        _m = "Incluye columnas que no se conocen al decidir o que no describen al solicitante: " + ", ".join(sorted(_sobra))
+    else:
+        _m = "Faltan columnas conocidas al decidir: " + ", ".join(sorted(_falta))
+except Exception as _e:
+    _ok, _m = False, str(_e)
+feedback = {"correct": _ok, "message": _m}
+feedback
+```
+
+### Pregunta 2, Un modelo y dos políticas
+
+Escribir la función `ajusta_y_predice(entreno, prueba)`, que recibe dos tablas con las columnas de `solicitantes` y, la primera, también `colocado`, y devuelve para cada fila de `prueba` la probabilidad de que el alumno consiga colocarse. La función solo puede usar la información disponible al decidir.
+
+Con los costes que fijó la directora, admitir a un alumno que no se coloca cuesta 3 y rechazar a uno que se habría colocado cuesta 1. Asignar a `umbral` la probabilidad de colocación por encima de la cual conviene admitir.
+
+El programa tiene 150 plazas para 2024. Asignar a `admitidos` la lista de los `id` de los 150 solicitantes de `solicitantes` que se proponen para admisión.
+
+```{pyodide}
+#| exercise: c2_modelo
+def ajusta_y_predice(entreno, prueba):
+    ______
+
+umbral = ______
+admitidos = ______
+
+print(len(admitidos), umbral)
+```
+
+::: {.solution exercise="c2_modelo"}
+```python
+import numpy as np
+import pandas as pd
+from sklearn.linear_model import LogisticRegression
+
+COLS = ["nota_secundaria", "nota_bachillerato", "nota_grado",
+        "experiencia_anios", "examen_percentil", "entrevista", "tipo_grado"]
+
+def matriz(t, ref):
+    """Ficticias y estandarizacion con los parametros de ref."""
+    Z = pd.get_dummies(t[COLS], columns=["tipo_grado"], dtype=float)
+    R = pd.get_dummies(ref[COLS], columns=["tipo_grado"], dtype=float)
+    Z = Z.reindex(columns=R.columns, fill_value=0.0)
+    return ((Z - R.mean()) / R.std()).to_numpy(float)
+
+def ajusta_y_predice(entreno, prueba):
+    m = LogisticRegression(max_iter=2000)
+    m.fit(matriz(entreno, entreno), entreno["colocado"])
+    return m.predict_proba(matriz(prueba, entreno))[:, 1]
+
+# admitir si 3 (1 - p) < 1 p, es decir, p > 3 / 4
+umbral = 3 / (3 + 1)
+
+p = ajusta_y_predice(historico, solicitantes)
+admitidos = solicitantes["id"].to_numpy()[np.argsort(-p)[:150]].tolist()
+
+print(len(admitidos), umbral)
+```
+:::
+
+```{pyodide}
+#| exercise: c2_modelo
+#| check: true
+import numpy as _np
+def _auc(y, s):
+    o = _np.argsort(s, kind="stable"); r = _np.empty(len(s)); r[o] = _np.arange(1.0, len(s) + 1.0)
+    n1 = y.sum(); n0 = len(y) - n1
+    return (r[y == 1].sum() - n1 * (n1 + 1.0) / 2.0) / (n1 * n0)
+_ok, _msg = True, []
+try:
+    _tr = historico[historico["cohorte"] <= 2022]
+    _te = historico[historico["cohorte"] == 2023]
+    _cols = list(solicitantes.columns)
+    _p = _np.asarray(ajusta_y_predice(_tr[_cols + ["colocado"]], _te[_cols]), float)
+    _y = _te["colocado"].to_numpy()
+    _a = _auc(_y, _p)
+    if not (len(_p) == len(_te) and _np.all((_p >= 0) & (_p <= 1))):
+        _ok = False; _msg.append("la función debe devolver una probabilidad por fila de prueba")
+    elif not (0.63 <= _a <= 0.76):
+        _ok = False; _msg.append("entrenando con 2021 y 2022, el AUC en 2023 es %.4f, fuera del rango esperado" % _a)
+    else:
+        _msg.append("AUC en 2023 entrenando con 2021 y 2022: %.4f" % _a)
+    if abs(float(umbral) - 0.75) > 1e-9:
+        _ok = False; _msg.append("el umbral no corresponde a los costes 3 y 1")
+    else:
+        _adm = _p > umbral
+        _c = 100 * (3 * _np.sum(_adm & (_y == 0)) + _np.sum(~_adm & (_y == 1))) / len(_y)
+        _msg.append("coste por cada 100 solicitudes en 2023: %.2f, frente a %.2f admitiendo a todos" % (_c, 100 * 3 * _np.mean(_y == 0)))
+    _h, _s = genera_admisiones()
+    _ids = list(admitidos)
+    if len(_ids) != 150 or len(set(_ids)) != 150 or not set(_ids) <= set(_s["id"]):
+        _ok = False; _msg.append("admitidos debe tener 150 id distintos de solicitantes")
+    else:
+        _esp = float(_s.set_index("id").loc[_ids, "_p"].sum())
+        _msg.append("colocaciones esperadas de los 150 admitidos: %.1f, frente a %.1f eligiendo al azar" % (_esp, 150 * _s["_p"].mean()))
+        if _esp < 122:
+            _ok = False; _msg.append("la selección no mejora lo bastante la elección al azar")
+except Exception as _e:
+    _ok = False; _msg.append("error al ejecutar: %s" % _e)
+feedback = {"correct": _ok, "message": ("Correcto. " if _ok else "Todavía no. ") + " · ".join(_msg)}
+feedback
+```
+
+### Pregunta 3, El modelo que acierta en todos
+
+El modelo que se presentó al comité usa todas las columnas de `historico`. Asignar a `auc_todas` el AUC en la cohorte 2023 de un modelo entrenado con las cohortes 2021 y 2022 que use todas las columnas salvo `id` y `colocado`, y a `columna_decisiva` el nombre de la columna que, por sí sola, permite acertar en todas las filas.
+
+```{pyodide}
+#| exercise: c2_fuga
+auc_todas = ______
+columna_decisiva = ______
+
+print(round(auc_todas, 4), columna_decisiva)
+```
+
+::: {.solution exercise="c2_fuga"}
+```python
+import numpy as np
+import pandas as pd
+from sklearn.linear_model import LogisticRegression
+
+def auc(y, s):
+    o = np.argsort(s, kind="stable")
+    r = np.empty(len(s)); r[o] = np.arange(1.0, len(s) + 1.0)
+    n1 = y.sum(); n0 = len(y) - n1
+    return (r[y == 1].sum() - n1 * (n1 + 1.0) / 2.0) / (n1 * n0)
+
+t = historico.drop(columns=["id"]).copy()
+t["tiene_salario"] = t["salario"].notna().astype(float)
+t["salario"] = t["salario"].fillna(0.0)
+Z = pd.get_dummies(t.drop(columns="colocado"),
+                   columns=["tipo_grado", "especializacion"], dtype=float)
+tr, te = t["cohorte"] <= 2022, t["cohorte"] == 2023
+Z = ((Z - Z[tr].mean()) / Z[tr].std()).fillna(0.0).to_numpy(float)
+m = LogisticRegression(max_iter=5000).fit(Z[tr], t.loc[tr, "colocado"])
+auc_todas = float(auc(t.loc[te, "colocado"].to_numpy(), m.predict_proba(Z[te])[:, 1]))
+# el salario solo existe si hubo colocacion
+columna_decisiva = "salario"
+
+print(round(auc_todas, 4), columna_decisiva)
+```
+:::
+
+```{pyodide}
+#| exercise: c2_fuga
+#| check: true
+try:
+    _ok = float(auc_todas) > 0.95 and str(columna_decisiva) == "salario"
+    _m = ("Correcto: el salario solo existe para los colocados, y con él el AUC es %.4f." % float(auc_todas)) if _ok else \
+         "Se esperaba un AUC mayor que 0.95 con todas las columnas y la columna que por sí sola separa las dos clases."
+except Exception as _e:
+    _ok, _m = False, str(_e)
+feedback = {"correct": _ok, "message": _m}
+feedback
+```
+
+### Pregunta 4, Informe para la directora
+
+Redactar un informe de entre 250 y 400 palabras para la directora del programa. El informe responde a la propuesta del modelo que acierta en todos, propone el criterio de admisión para 2024 y dice qué datos convendría registrar desde este año. Debe explicar además, con cifras, qué ocurrió con la proporción de colocados entre las cohortes 2021 y 2023, y qué consecuencia tiene para las probabilidades del modelo.
+
+## Rúbrica
+
+| Criterio | Completo | Incompleto |
+|---|---|---|
+| Preguntas 1 a 3 | La comprobación automática marca las tres como correctas. | Alguna no se cumple. |
+| La propuesta del comité | Explica que el modelo propuesto usa información posterior a la admisión (la nota final, la especialización y el salario), que el salario identifica el resultado, y que en 2024 esas columnas no existen. Da el AUC realista con la información de admisión. | Dice que el modelo es malo sin explicar por qué, o critica el acierto como métrica sin mencionar las columnas posteriores. |
+| Criterio de admisión | Distingue entre la regla por umbral, que admite a quien supera 0,75 de probabilidad, y la regla por cupo, que admite a los 150 mejores. Explica cuál aplica este año y qué pasa si los 150 mejores no superan el umbral. | Presenta un solo criterio sin relacionarlo con el cupo o con los costes. |
+| Cambio entre cohortes | Da la proporción de colocados de cada cohorte, señala la caída entre 2021 y 2023 y explica que un modelo entrenado con las cohortes anteriores sobreestima la probabilidad de colocación de las siguientes. | No lo menciona, o lo menciona sin cifras. |
+| Datos a registrar | Propone registrar a los solicitantes rechazados y su trayectoria, o explica que el histórico solo contiene admitidos y que el modelo no ha visto a los rechazados. | No propone nada sobre los datos. |
+
+<!-- verificacion
+import numpy as np
+h, s = genera_admisiones()
+# 1. el salario identifica el resultado en todas las filas
+assert (h["salario"].isna() == (h["colocado"] == 0)).all()
+# 2. la proporcion de colocados cae entre 2021 y 2023
+tasas = h.groupby("cohorte")["colocado"].mean()
+assert tasas[2021] - tasas[2023] > 0.05
+# 3. la nota final anade informacion posterior a la admision
+def auc(y, sc):
+    o = np.argsort(sc, kind="stable"); r = np.empty(len(sc)); r[o] = np.arange(1.0, len(sc) + 1.0)
+    n1 = y.sum(); n0 = len(y) - n1
+    return (r[y == 1].sum() - n1 * (n1 + 1.0) / 2.0) / (n1 * n0)
+te = h["cohorte"] == 2023
+a_final = auc(h.loc[te, "colocado"].to_numpy(), h.loc[te, "nota_final_programa"].to_numpy())
+a_grado = auc(h.loc[te, "colocado"].to_numpy(), h.loc[te, "nota_grado"].to_numpy())
+assert a_final > a_grado + 0.08
+print("colocados por cohorte %s; AUC de la nota final %.4f frente a %.4f de la nota de grado"
+      % ({k: round(float(v), 3) for k, v in tasas.items()}, a_final, a_grado))
+-->
