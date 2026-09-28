@@ -199,6 +199,7 @@ MIGRADAS = {
     "aplicado/02-exploracion-y-calidad.qmd",
     "aplicado/03-atipicos.qmd",
     "aplicado/12-modelo-en-produccion.qmd",
+    "aplicado/13-deteccion-de-anomalias.qmd",
     "aplicado/09-boosting-en-la-practica.qmd",
     "aplicado/10-interpretabilidad.qmd",
     "aplicado/11-analisis-de-errores.qmd",
