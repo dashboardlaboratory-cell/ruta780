@@ -2,6 +2,9 @@
 title: "Caso 7. Campaña de retención con presupuesto"
 subtitle: "ML aplicado · Caso integrador 7"
 engine: markdown
+resources:
+  - datos/retencion_experimento.csv
+  - datos/retencion_nuevos.csv
 ---
 
 ::: {.meta-leccion data-leccion="aplicado/caso-7-retencion"}
@@ -10,7 +13,7 @@ engine: markdown
 [**Usa** ML aplicado 01 a 13 · Causal 01 y 16]{.item}
 :::
 
-Este caso reúne un experimento, un modelo y una decisión con presupuesto. Corresponde a un bloque de trabajo de unas cuatro horas. La situación y los datos son inventados.
+Este caso reúne un experimento, un modelo y una decisión con presupuesto. Se resuelve fuera de la página, en el entorno de trabajo que se prefiera, y corresponde a un bloque de unas cuatro horas. La situación y los datos son inventados.
 
 ## Situación
 
@@ -20,7 +23,10 @@ Este trimestre el presupuesto alcanza para 3000 ofertas entre 20 000 clientes. C
 
 ## Los datos
 
-La página carga al abrirse dos tablas. `experimento` tiene los 20 000 clientes del año pasado, con la oferta recibida y el resultado. `nuevos` tiene los 20 000 clientes de este trimestre, sin oferta ni resultado.
+Dos archivos, con una fila por cliente:
+
+- [`retencion_experimento.csv`](datos/retencion_experimento.csv): los 20 000 clientes del año pasado, con la oferta recibida y el resultado.
+- [`retencion_nuevos.csv`](datos/retencion_nuevos.csv): los 20 000 clientes de este trimestre, sin oferta ni resultado.
 
 | Columna | Descripción |
 |---|---|
@@ -31,234 +37,87 @@ La página carga al abrirse dos tablas. `experimento` tiene los 20 000 clientes 
 | `contrato` | `mensual` o `anual` |
 | `reclamos_90d` | Reclamos en los últimos 90 días |
 | `oferta_competencia` | 1 si el cliente recibió una oferta de la competencia, según la encuesta de satisfacción |
-| `oferta` | 1 si recibió la oferta de retención. Solo en `experimento` |
-| `abandono` | 1 si abandonó en los 90 días siguientes. Solo en `experimento` |
-
-```{pyodide}
-#| include: false
-# Genera los datos del caso. Va oculta: el mecanismo es lo que el caso pide descubrir.
-import numpy as np
-import pandas as pd
-
-def genera_retencion(semilla=707):
-    """Un experimento con la oferta asignada al azar y un grupo nuevo de clientes."""
-    rng = np.random.default_rng(semilla)
-    def grupo(n, experimento):
-        antig = np.minimum(rng.gamma(2.0, 14.0, n), 120).round()
-        cargo = np.exp(rng.normal(np.log(45), 0.35, n)).round(2)
-        uso = np.clip(rng.gamma(2.0, 1.5, n), 0.05, 20).round(2)
-        contrato = rng.choice(["mensual", "anual"], n, p=[0.6, 0.4])
-        reclamos = rng.poisson(0.5, n)
-        competencia = (rng.random(n) < 0.3).astype(int)
-        base = (-1.8 + 0.9 * (contrato == "mensual") - 0.012 * (antig - 28) + 0.7 * reclamos
-                + 0.015 * (cargo - 45) - 0.12 * (uso - 3) + 0.4 * competencia)
-        # efecto de la oferta en escala logit: ayuda a quien es sensible al precio y
-        # tiene alternativa; perjudica a los antiguos que casi no usan el servicio
-        # y no cambia nada en quien ya reclamó dos veces o más
-        atento = reclamos < 2
-        efecto = ((-1.0 * (contrato == "mensual") * (cargo > 45) - 0.7 * competencia) * atento
-                  + 0.9 * ((antig > 36) & (uso < 2.0)))
-        p0 = 1 / (1 + np.exp(-base)); p1 = 1 / (1 + np.exp(-(base + efecto)))
-        t = pd.DataFrame({"antiguedad_meses": antig, "cargo_mensual": cargo, "uso_gb_dia": uso,
-                          "contrato": contrato, "reclamos_90d": reclamos, "oferta_competencia": competencia})
-        if experimento:
-            ofe = (rng.random(n) < 0.5).astype(int)
-            t["oferta"] = ofe
-            t["abandono"] = (rng.random(n) < np.where(ofe == 1, p1, p0)).astype(int)
-        t["_p0"], t["_p1"] = p0, p1
-        return t
-    exp = grupo(20000, True); nuevos = grupo(20000, False)
-    exp.insert(0, "cliente", np.arange(1, 20001)); nuevos.insert(0, "cliente", np.arange(20001, 40001))
-    return exp, nuevos
-
-
-experimento, nuevos = genera_retencion()
-experimento = experimento.drop(columns=["_p0", "_p1"])
-nuevos = nuevos.drop(columns=["_p0", "_p1"])
-```
-
-```{pyodide}
-print(experimento.shape, nuevos.shape)
-print(experimento.head(6).to_string())
-```
+| `oferta` | 1 si recibió la oferta de retención. Solo en el experimento |
+| `abandono` | 1 si abandonó en los 90 días siguientes. Solo en el experimento |
 
 ## Preguntas
 
-Las preguntas 1 y 2 tienen comprobación automática. La 3 y la 4 se evalúan con la rúbrica.
+1. Estimar cuánto redujo la oferta la proporción de abandono en el experimento, con su intervalo de confianza del 95 %.
+2. Evaluar la propuesta de marketing. Comparar los 3000 clientes de mayor riesgo con el resto en contrato, reclamos, antigüedad y uso, y estimar con el experimento el efecto de la oferta en cada grupo que resulte relevante, con intervalos.
+3. Elegir los 3000 clientes de `retencion_nuevos.csv` que deben recibir la oferta y estimar cuántos abandonos evita esa elección y qué ganancia deja, frente a la propuesta de marketing.
+4. Decir cuántos clientes convendría incluir si no hubiera límite de presupuesto, con los costes dados.
 
-```{pyodide}
-#| exercise: [c7_efecto, c7_eleccion]
-#| setup: true
-import numpy as np
-import pandas as pd
+## Entregables
 
-def genera_retencion(semilla=707):
-    """Un experimento con la oferta asignada al azar y un grupo nuevo de clientes."""
-    rng = np.random.default_rng(semilla)
-    def grupo(n, experimento):
-        antig = np.minimum(rng.gamma(2.0, 14.0, n), 120).round()
-        cargo = np.exp(rng.normal(np.log(45), 0.35, n)).round(2)
-        uso = np.clip(rng.gamma(2.0, 1.5, n), 0.05, 20).round(2)
-        contrato = rng.choice(["mensual", "anual"], n, p=[0.6, 0.4])
-        reclamos = rng.poisson(0.5, n)
-        competencia = (rng.random(n) < 0.3).astype(int)
-        base = (-1.8 + 0.9 * (contrato == "mensual") - 0.012 * (antig - 28) + 0.7 * reclamos
-                + 0.015 * (cargo - 45) - 0.12 * (uso - 3) + 0.4 * competencia)
-        # efecto de la oferta en escala logit: ayuda a quien es sensible al precio y
-        # tiene alternativa; perjudica a los antiguos que casi no usan el servicio
-        # y no cambia nada en quien ya reclamó dos veces o más
-        atento = reclamos < 2
-        efecto = ((-1.0 * (contrato == "mensual") * (cargo > 45) - 0.7 * competencia) * atento
-                  + 0.9 * ((antig > 36) & (uso < 2.0)))
-        p0 = 1 / (1 + np.exp(-base)); p1 = 1 / (1 + np.exp(-(base + efecto)))
-        t = pd.DataFrame({"antiguedad_meses": antig, "cargo_mensual": cargo, "uso_gb_dia": uso,
-                          "contrato": contrato, "reclamos_90d": reclamos, "oferta_competencia": competencia})
-        if experimento:
-            ofe = (rng.random(n) < 0.5).astype(int)
-            t["oferta"] = ofe
-            t["abandono"] = (rng.random(n) < np.where(ofe == 1, p1, p0)).astype(int)
-        t["_p0"], t["_p1"] = p0, p1
-        return t
-    exp = grupo(20000, True); nuevos = grupo(20000, False)
-    exp.insert(0, "cliente", np.arange(1, 20001)); nuevos.insert(0, "cliente", np.arange(20001, 40001))
-    return exp, nuevos
-
-
-experimento, nuevos = genera_retencion()
-experimento = experimento.drop(columns=["_p0", "_p1"])
-nuevos = nuevos.drop(columns=["_p0", "_p1"])
-```
-
-### Pregunta 1, El efecto medio de la oferta
-
-Asignar a `efecto` la reducción de la proporción de abandono que produjo la oferta en el experimento, y a `ic` una tupla con los extremos de su intervalo de confianza del 95 %.
-
-```{pyodide}
-#| exercise: c7_efecto
-efecto = ______
-ic = ______
-
-print(round(efecto, 4), round(ic[0], 4), round(ic[1], 4))
-```
-
-::: {.solution exercise="c7_efecto"}
-```python
-import numpy as np
-
-c = experimento.loc[experimento["oferta"] == 0, "abandono"]
-t = experimento.loc[experimento["oferta"] == 1, "abandono"]
-efecto = float(c.mean() - t.mean())
-ee = np.sqrt(c.mean() * (1 - c.mean()) / len(c) + t.mean() * (1 - t.mean()) / len(t))
-ic = (efecto - 1.96 * ee, efecto + 1.96 * ee)
-
-print(round(efecto, 4), round(ic[0], 4), round(ic[1], 4))
-```
-:::
-
-```{pyodide}
-#| exercise: c7_efecto
-#| check: true
-try:
-    _ok = abs(float(efecto) - 0.0687) < 5e-4 and abs(float(ic[0]) - 0.0560) < 1e-3 and abs(float(ic[1]) - 0.0814) < 1e-3
-    _m = ("Correcto: la oferta reduce el abandono 6.87 puntos, con intervalo de 5.60 a 8.14." if _ok else
-          "Se esperaba una reducción de 0.0687 con intervalo de 0.0560 a 0.0814.")
-except Exception as _e:
-    _ok, _m = False, str(_e)
-feedback = {"correct": _ok, "message": _m}
-feedback
-```
-
-### Pregunta 2, A quién enviar las 3000 ofertas
-
-Escribir la función `elegir(experimento, nuevos, cupo)`, que devuelve la lista de los `cliente` de `nuevos` que reciben la oferta; la lista tiene `cupo` clientes distintos. La comprobación la llama con un cupo de 3000 y calcula, con el comportamiento de los clientes que la página conoce, cuántos abandonos evitan las ofertas elegidas. Exige al menos 700.
-
-```{pyodide}
-#| exercise: c7_eleccion
-def elegir(experimento, nuevos, cupo):
-    ______
-
-elegidos = elegir(experimento, nuevos, 3000)
-print(len(elegidos), len(set(elegidos)))
-```
-
-::: {.solution exercise="c7_eleccion"}
-```python
-import numpy as np
-from sklearn.ensemble import GradientBoostingClassifier
-
-def atributos(d):
-    Z = d[["antiguedad_meses", "cargo_mensual", "uso_gb_dia",
-           "reclamos_90d", "oferta_competencia"]].copy()
-    Z["mensual"] = (d["contrato"] == "mensual").astype(int)
-    return Z
-
-def elegir(experimento, nuevos, cupo):
-    """Un modelo por brazo del experimento; la diferencia de sus probabilidades
-    estima cuánto reduce la oferta el abandono de cada cliente."""
-    modelos = {}
-    for o in (0, 1):
-        g = experimento[experimento["oferta"] == o]
-        modelos[o] = GradientBoostingClassifier(random_state=0).fit(atributos(g), g["abandono"])
-    X = atributos(nuevos)
-    efecto = modelos[0].predict_proba(X)[:, 1] - modelos[1].predict_proba(X)[:, 1]
-    return nuevos["cliente"].to_numpy()[np.argsort(-efecto)[:cupo]].tolist()
-
-elegidos = elegir(experimento, nuevos, 3000)
-print(len(elegidos), len(set(elegidos)))
-```
-:::
-
-```{pyodide}
-#| exercise: c7_eleccion
-#| check: true
-import numpy as _np
-try:
-    _, _n = genera_retencion()
-    _tau = (_n["_p0"] - _n["_p1"]).to_numpy()
-    _ids = list(elegir(experimento.copy(), nuevos.copy(), 3000))
-    _pos = _n.set_index("cliente").index.get_indexer(_ids)
-    _ok_forma = len(_ids) == 3000 and len(set(_ids)) == 3000 and (_pos >= 0).all()
-    _evitados = float(_tau[_pos].sum()) if _ok_forma else 0.0
-    _riesgo = float(_tau[_np.argsort(-_n["_p0"].to_numpy())[:3000]].sum())
-    _ok = _ok_forma and _evitados >= 700
-    _m = ("%.0f abandonos evitados, ganancia %.0f dólares; elegir por riesgo evitaría %.0f." %
-          (_evitados, 180 * _evitados - 12 * 3000, _riesgo)) if _ok_forma else "elegir debe devolver 3000 clientes distintos de nuevos."
-except Exception as _e:
-    _ok, _m = False, "error al ejecutar: %s" % _e
-feedback = {"correct": _ok, "message": ("Correcto: " if _ok else "Todavía no: ") + _m}
-feedback
-```
-
-### Pregunta 3, La propuesta de marketing
-
-Comparar los clientes que elige la función de la pregunta 2 con los 3000 de mayor riesgo: su riesgo medio, su contrato, sus reclamos, su antigüedad y su uso. Usar el experimento para mostrar en qué grupos la oferta no cambia el abandono y en cuáles lo aumenta, con intervalos de confianza. Decir cuántos clientes convendría incluir si no hubiera límite de presupuesto.
-
-```{pyodide}
-# comparación de los dos criterios con el experimento
-```
-
-### Pregunta 4, Informe para marketing
-
-Redactar un informe de entre 250 y 400 palabras que explique por qué el riesgo de abandono no es el criterio adecuado, a quién enviar las ofertas, qué ganancia se espera frente a la propuesta y qué experimento convendría repetir para confirmar los grupos en que la oferta perjudica.
+- `ofertas.csv`, con una columna `cliente` y los 3000 clientes elegidos.
+- Un informe para marketing de entre 250 y 400 palabras que explique por qué el riesgo de abandono no es el criterio adecuado, a quién enviar las ofertas, qué ganancia se espera frente a la propuesta y qué experimento convendría repetir para confirmar los grupos en que la oferta perjudica.
+- El cuaderno o los scripts del análisis, ejecutables de principio a fin.
 
 ## Rúbrica
 
 | Criterio | Completo | Incompleto |
 |---|---|---|
-| Preguntas 1 y 2 | La comprobación automática marca las dos como correctas. | Alguna no se cumple. |
+| Efecto medio | La estimación y el intervalo coinciden con la nota de enseñanza al segundo decimal en puntos porcentuales. | Falta el intervalo o compara grupos que no salen del sorteo. |
 | Riesgo y efecto | Distingue la probabilidad de abandonar del cambio que produce la oferta, y lo muestra con cifras del experimento. | Trata el riesgo como si midiera el efecto de la oferta. |
 | Grupos | Identifica un grupo en que la oferta no cambia el abandono y otro en que lo aumenta, con intervalos, y propone una explicación de negocio para cada uno. | Solo habla de la media o no da intervalos. |
+| Elección | La lista se construye con el efecto estimado de la oferta en cada cliente, y la estimación de abandonos evitados se valida en una parte del experimento que no se usó para ajustar. | La lista ordena por riesgo, o la estimación se calcula con los mismos datos del ajuste. |
 | Presupuesto | Calcula cuántas ofertas tienen ganancia esperada positiva con los costes dados. | No relaciona el número de ofertas con el coste y el valor. |
-| Informe | Tiene entre 250 y 400 palabras y usa cifras de las preguntas. | Falta alguna de las partes. |
+| Informe | Tiene entre 250 y 400 palabras y usa cifras del análisis. | Falta alguna de las partes. |
+
+::: {.callout-note collapse="true" title="Nota de enseñanza (abrir después de entregar)"}
+**Efecto medio.** La proporción de abandono baja 6,87 puntos con la oferta, con intervalo del 95 % de 5,60 a 8,14 puntos. El experimento asignó la oferta al azar, así que basta la diferencia de proporciones entre los dos grupos.
+
+**El mecanismo.** La oferta no actúa igual en todos los clientes. En los clientes con contrato mensual, cargo mayor de 45 dólares y menos de dos reclamos, el abandono baja 21,6 puntos (intervalo de 19,2 a 24,0). En los clientes con dos reclamos o más la diferencia es de −3,0 puntos, con intervalo de −7,5 a 1,5, que incluye el cero. En los clientes con más de 36 meses y menos de 2 GB diarios la oferta aumenta el abandono: la diferencia es de −7,6 puntos, con intervalo de −11,8 a −3,5. Al 7,4 % de los clientes nuevos la oferta los perjudica.
+
+**La trampa.** El riesgo alto se concentra en los clientes con reclamos, donde la oferta no cambia nada: el 42 % de los 3000 clientes de mayor riesgo tiene dos reclamos o más. Con el mecanismo que generó los datos, las 3000 ofertas por riesgo evitan 413 abandonos, y la mejor elección posible evita 832.
+
+**Referencia.** Un modelo de abandono por cada grupo del experimento, con la diferencia de sus probabilidades como efecto estimado, evita más de 700 abandonos con las mismas 3000 ofertas. Una oferta tiene ganancia esperada positiva cuando reduce la probabilidad de abandono en más de 12/180, unos 6,7 puntos; con el mecanismo real, 8217 clientes nuevos cumplen esa condición.
+
+**Errores frecuentes.** Ordenar por el riesgo del modelo de marketing; estimar los efectos por grupo sin intervalos; validar la elección con los mismos datos con que se ajustaron los modelos; olvidar que la oferta puede aumentar el abandono.
+:::
 
 <!-- verificacion
 import numpy as np
-e, n = genera_retencion()
+import pandas as pd
+import caso_7
+
+e = pd.read_csv("datos/retencion_experimento.csv")
+n = caso_7.genera()["retencion_nuevos"]
 tau = (n["_p0"] - n["_p1"]).to_numpy()
-riesgo = tau[np.argsort(-n["_p0"].to_numpy())[:3000]].sum()
-mejor = np.sort(tau)[::-1][:3000].sum()
+
+def dif(g):
+    c = g.loc[g.oferta == 0, "abandono"]
+    t = g.loc[g.oferta == 1, "abandono"]
+    d = c.mean() - t.mean()
+    ee = np.sqrt(c.var(ddof=0) / len(c) + t.var(ddof=0) / len(t))
+    return 100 * d, 100 * (d - 1.96 * ee), 100 * (d + 1.96 * ee)
+
+print("efecto medio %.2f %.2f %.2f" % dif(e))
+mensual = (e.contrato == "mensual") & (e.cargo_mensual > 45) & (e.reclamos_90d < 2)
+print("mensual caro %.1f %.1f %.1f" % dif(e[mensual]))
+r = dif(e[e.reclamos_90d >= 2])
+assert r[1] < 0 < r[2]
+print("reclamos %.1f %.1f %.1f" % r)
+r = dif(e[(e.antiguedad_meses > 36) & (e.uso_gb_dia < 2)])
+assert r[2] < 0
+print("antiguos %.1f %.1f %.1f" % r)
+print("perjudica %.1f" % (100 * (tau < 0).mean()))
+rie = np.argsort(-n["_p0"].to_numpy())[:3000]
+print("reclamos en riesgo %.0f" % (100 * (n["reclamos_90d"].to_numpy()[rie] >= 2).mean()))
+riesgo, mejor = tau[rie].sum(), np.sort(tau)[::-1][:3000].sum()
 assert riesgo < 0.6 * mejor
-assert (tau < 0).mean() > 0.05
-print("abandonos evitados: por riesgo %.0f, máximo posible %.0f; clientes a los que la oferta perjudica %.1f %%"
-      % (riesgo, mejor, 100 * (tau < 0).mean()))
+print("evitados %.0f %.0f" % (riesgo, mejor))
+
+from sklearn.ensemble import GradientBoostingClassifier
+def atr(d):
+    z = d[["antiguedad_meses", "cargo_mensual", "uso_gb_dia",
+           "reclamos_90d", "oferta_competencia"]].copy()
+    z["mensual"] = (d.contrato == "mensual").astype(int)
+    return z
+m = {o: GradientBoostingClassifier(random_state=0).fit(atr(e[e.oferta == o]), e[e.oferta == o].abandono)
+     for o in (0, 1)}
+est = m[0].predict_proba(atr(n))[:, 1] - m[1].predict_proba(atr(n))[:, 1]
+assert tau[np.argsort(-est)[:3000]].sum() > 700
+print("referencia 700 umbral 12/180 %.1f" % (100 * 12 / 180))
+print("positivos %d" % (tau > 12 / 180).sum())
 -->

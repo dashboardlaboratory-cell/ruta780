@@ -167,9 +167,17 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
     comprueba que la respuesta correcta sale de los datos y que la trampa está
     donde el caso dice. Las partes numéricas se corrigen solas; la
     recomendación se evalúa con una rúbrica publicada en el mismo caso.
-    **El generador nunca es visible** (Luis, 28-09-2026): va en una celda
-    `#| include: false`, que corre al cargar la página, y el caso describe la
-    base en texto. `casos.py` falla si una celda visible trae `def genera…`.
+    **Los casos se resuelven fuera de la página, a criterio, como en la
+    universidad** (Luis, 28-09-2026). La página no trae celdas ni comprobación
+    automática: situación, datos para descargar con su diccionario, preguntas,
+    entregables (archivos, informe y cuaderno), rúbrica y una nota de
+    enseñanza plegada con los resultados de referencia, el mecanismo y la
+    trampa. El generador vive en `aplicado/generadores/caso_N.py`; la verdad
+    oculta va en columnas con prefijo `_`, que `generar.py` no escribe. Los CSV
+    sintéticos no se guardan en el repo: se generan antes del render (local y
+    CI). `casos.py` comprueba el formato, que no haya celdas, que cada CSV
+    enlazado exista y se publique sin columnas ocultas, que las aserciones de
+    la verificación se cumplan y que cada cifra de la nota salga en ella.
     Los conjuntos de datos públicos con licencia libre (por ejemplo, los de
     UCI con CC BY 4.0) sí se suben al repo, citando la fuente y la licencia.
     Nunca datos de la universidad de Luis ni de empresas.

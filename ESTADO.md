@@ -5400,6 +5400,22 @@ Los CSV están en `aplicado/datos/` y se declaran en `resources` y
 `pyodide.resources` de cada página; `casos.py` ejecuta desde la carpeta de la
 página. Probado en Pyodide con servidor http local.
 
+### 3.106 Los casos se resuelven fuera de la página (28-09-2026)
+
+Luis: un caso de ese calibre se trabaja afuera, a criterio, como en la
+universidad. Pyodide no da para una EDA larga (un hilo, memoria limitada, sin
+XGBoost ni LightGBM, celdas pequeñas), y la comprobación celda a celda
+convertía el caso en un ejercicio guiado. Los doce casos pasaron a este
+formato: situación, datos para descargar, preguntas numeradas, entregables
+(archivos, informe, cuaderno), rúbrica y una nota de enseñanza plegada con los
+resultados de referencia. El piloto es C7.
+
+Los generadores están en `aplicado/generadores/caso_N.py`; `generar.py`
+escribe los CSV en `aplicado/datos/` sin las columnas `_` (la verdad oculta).
+Esos CSV están en `.gitignore`: **antes de `quarto render` o `quarto preview`
+en local hay que correr `python3 aplicado/generadores/generar.py`** (lo hace
+también `casos.py`, y el CI tiene un paso propio antes del render).
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

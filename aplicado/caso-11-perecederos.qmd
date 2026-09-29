@@ -2,6 +2,9 @@
 title: "Caso 11. Pedidos de un producto perecedero"
 subtitle: "ML aplicado · Caso integrador 11"
 engine: markdown
+resources:
+  - datos/panaderia_historia.csv
+  - datos/panaderia_futuro.csv
 ---
 
 ::: {.meta-leccion data-leccion="aplicado/caso-11-perecederos"}
@@ -10,7 +13,7 @@ engine: markdown
 [**Usa** Estadística 03 y 08 · Series de tiempo 01 a 07 · ML aplicado 01]{.item}
 :::
 
-Este caso une un pronóstico con una decisión de cantidad. Corresponde a un bloque de trabajo de unas cuatro horas. La situación y los datos son inventados.
+Este caso une un pronóstico con una decisión de cantidad. Se resuelve fuera de la página, en el entorno de trabajo que se prefiera, y corresponde a un bloque de unas cuatro horas. La situación y los datos son inventados.
 
 ## Situación
 
@@ -20,234 +23,102 @@ El encargado de operaciones observa que el pan se agota a menudo antes del cierr
 
 ## Los datos
 
-La página carga al abrirse dos tablas. `historia` tiene una fila por punto y día entre el 1 de enero de 2024 y el 31 de octubre de 2025, con lo horneado y lo vendido. `futuro` tiene las filas de noviembre y diciembre de 2025, para las que hay que decidir cuánto hornear.
+Dos archivos:
+
+- [`panaderia_historia.csv`](datos/panaderia_historia.csv): una fila por punto y día entre el 1 de enero de 2024 y el 31 de octubre de 2025, con lo horneado y lo vendido.
+- [`panaderia_futuro.csv`](datos/panaderia_futuro.csv): las filas de noviembre y diciembre de 2025, para las que hay que decidir cuánto hornear.
 
 | Columna | Descripción |
 |---|---|
 | `fecha` | Día |
 | `punto` | Punto de venta, de 1 a 5 |
-| `horneado` | Unidades horneadas ese día. Solo en `historia` |
-| `ventas` | Unidades vendidas ese día. Solo en `historia` |
-
-```{pyodide}
-#| include: false
-# Genera los datos del caso. Va oculta: el mecanismo es lo que el caso pide descubrir.
-import numpy as np
-import pandas as pd
-
-def genera_panaderia(semilla=1111):
-    """Demanda diaria de un pan de masa madre en cinco puntos de venta.
-    Las ventas registradas son el mínimo entre la demanda y lo que se horneó."""
-    rng = np.random.default_rng(semilla)
-    fechas = pd.date_range("2024-01-01", "2025-12-31", freq="D")
-    semana = np.array([0.85, 0.80, 0.85, 0.95, 1.15, 1.45, 1.20])
-    filas = []
-    for pv in range(1, 6):
-        nivel = rng.uniform(40, 110)
-        tend = rng.uniform(-0.05, 0.15)
-        t = np.arange(len(fechas)) / 365
-        mu = nivel * (1 + tend) ** t * semana[fechas.dayofweek] * (1 + 0.08 * np.cos(2 * np.pi * (fechas.dayofyear - 20) / 365))
-        k = 8.0                                            # dispersion de la binomial negativa
-        demanda = rng.negative_binomial(k, k / (k + mu))
-        # la política anterior horneaba la media de las ventas de las cuatro semanas previas
-        # del mismo día de la semana, y al principio el nivel medio
-        horneado = np.zeros(len(fechas), int); ventas = np.zeros(len(fechas), int)
-        for i in range(len(fechas)):
-            prev = [ventas[j] for j in (i - 7, i - 14, i - 21, i - 28) if j >= 0]
-            horneado[i] = int(round(1.15 * np.mean(prev))) if len(prev) == 4 else int(round(mu[i]))
-            ventas[i] = min(demanda[i], horneado[i])
-        filas.append(pd.DataFrame({"fecha": fechas, "punto": pv, "horneado": horneado,
-                                   "ventas": ventas, "_demanda": demanda, "_mu": mu}))
-    return pd.concat(filas, ignore_index=True)
-
-
-_d = genera_panaderia()
-historia = _d[_d["fecha"] < "2025-11-01"].drop(columns=["_demanda", "_mu"]).reset_index(drop=True)
-futuro = _d[_d["fecha"] >= "2025-11-01"][["fecha", "punto"]].reset_index(drop=True)
-del _d
-```
-
-```{pyodide}
-print(historia.shape, futuro.shape)
-print(historia.head(8).to_string())
-```
+| `horneado` | Unidades horneadas ese día. Solo en la historia |
+| `ventas` | Unidades vendidas ese día. Solo en la historia |
 
 ## Preguntas
 
-Las preguntas 1 y 2 tienen comprobación automática. La 3 y la 4 se evalúan con la rúbrica.
+1. Calcular la proporción de días en que se vendió todo lo horneado, y la probabilidad de no agotarse que maximiza la ganancia esperada de un día con el precio y el coste del pan.
+2. Explicar con los datos por qué las ventas de cada punto no muestran la falta de producto: comparar la distribución de las ventas en los días agotados y en los días en que sobró pan, y estimar cuánta demanda se perdió en 2025.
+3. Decidir cuántas unidades hornear en cada fila de `panaderia_futuro.csv`.
+4. Calcular qué pasaría con la ganancia si se horneara el cuantil de las ventas registradas que corresponde a la pregunta 1, sin corregir los días agotados, y explicar por qué rinde menos que la política actual.
 
-```{pyodide}
-#| exercise: [c11_agotado, c11_pedidos]
-#| setup: true
-import numpy as np
-import pandas as pd
+## Entregables
 
-def genera_panaderia(semilla=1111):
-    """Demanda diaria de un pan de masa madre en cinco puntos de venta.
-    Las ventas registradas son el mínimo entre la demanda y lo que se horneó."""
-    rng = np.random.default_rng(semilla)
-    fechas = pd.date_range("2024-01-01", "2025-12-31", freq="D")
-    semana = np.array([0.85, 0.80, 0.85, 0.95, 1.15, 1.45, 1.20])
-    filas = []
-    for pv in range(1, 6):
-        nivel = rng.uniform(40, 110)
-        tend = rng.uniform(-0.05, 0.15)
-        t = np.arange(len(fechas)) / 365
-        mu = nivel * (1 + tend) ** t * semana[fechas.dayofweek] * (1 + 0.08 * np.cos(2 * np.pi * (fechas.dayofyear - 20) / 365))
-        k = 8.0                                            # dispersion de la binomial negativa
-        demanda = rng.negative_binomial(k, k / (k + mu))
-        # la política anterior horneaba la media de las ventas de las cuatro semanas previas
-        # del mismo día de la semana, y al principio el nivel medio
-        horneado = np.zeros(len(fechas), int); ventas = np.zeros(len(fechas), int)
-        for i in range(len(fechas)):
-            prev = [ventas[j] for j in (i - 7, i - 14, i - 21, i - 28) if j >= 0]
-            horneado[i] = int(round(1.15 * np.mean(prev))) if len(prev) == 4 else int(round(mu[i]))
-            ventas[i] = min(demanda[i], horneado[i])
-        filas.append(pd.DataFrame({"fecha": fechas, "punto": pv, "horneado": horneado,
-                                   "ventas": ventas, "_demanda": demanda, "_mu": mu}))
-    return pd.concat(filas, ignore_index=True)
-
-
-_d = genera_panaderia()
-historia = _d[_d["fecha"] < "2025-11-01"].drop(columns=["_demanda", "_mu"]).reset_index(drop=True)
-futuro = _d[_d["fecha"] >= "2025-11-01"][["fecha", "punto"]].reset_index(drop=True)
-del _d
-```
-
-### Pregunta 1, Días agotados y la proporción que conviene cubrir
-
-Asignar a `proporcion_agotada` la proporción de filas de `historia` en que se vendió todo lo horneado, y a `fractil` la probabilidad de no agotarse que maximiza la ganancia esperada de un día, con el precio y el coste del pan.
-
-```{pyodide}
-#| exercise: c11_agotado
-proporcion_agotada = ______
-fractil = ______
-
-print(round(proporcion_agotada, 4), round(fractil, 4))
-```
-
-::: {.solution exercise="c11_agotado"}
-```python
-proporcion_agotada = float((historia["ventas"] >= historia["horneado"]).mean())
-# hornear una unidad más gana 4 - 1.5 si se vende y pierde 1.5 si sobra:
-# conviene mientras P(demanda > q) (4 - 1.5) > P(demanda <= q) 1.5
-fractil = (4 - 1.5) / 4
-
-print(round(proporcion_agotada, 4), round(fractil, 4))
-```
-:::
-
-```{pyodide}
-#| exercise: c11_agotado
-#| check: true
-try:
-    _ok = abs(float(proporcion_agotada) - 0.5334) < 5e-4 and abs(float(fractil) - 0.625) < 1e-9
-    _m = ("Correcto: el pan se agotó en el 53.34 % de los días, y conviene cubrir la demanda con probabilidad 0.625." if _ok
-          else "Se esperaba una proporción de 0.5334 y un fractil de 0.625.")
-except Exception as _e:
-    _ok, _m = False, str(_e)
-feedback = {"correct": _ok, "message": _m}
-feedback
-```
-
-### Pregunta 2, Cuánto hornear
-
-Escribir la función `pedidos(historia, futuro)`, que devuelve para cada fila de `futuro` el número de unidades que conviene hornear. La comprobación calcula la ganancia de noviembre y diciembre con la demanda real de esos días, que incluye a los clientes que no encontraron pan: 4 dólares por unidad vendida menos 1,50 por unidad horneada. Exige al menos 53 500 dólares; la política actual da 51 799.
-
-```{pyodide}
-#| exercise: c11_pedidos
-def pedidos(historia, futuro):
-    ______
-
-q = pedidos(historia, futuro)
-print(len(q), round(float(sum(q))))
-```
-
-::: {.solution exercise="c11_pedidos"}
-```python
-import numpy as np
-from scipy.stats import nbinom
-from scipy.optimize import minimize_scalar
-
-def pedidos(historia, futuro, semanas=12, k=8.0, fractil=0.625):
-    """Estima la demanda media de cada punto y día de la semana con las últimas
-    semanas, tratando las ventas de los días agotados como un mínimo de la
-    demanda, y hornea el cuantil del fractil de una binomial negativa."""
-    out = np.zeros(len(futuro))
-    ult = historia["fecha"].max()
-    grupos = futuro.groupby([futuro["punto"], futuro["fecha"].dt.dayofweek]).groups
-    for (pv, dia), filas in grupos.items():
-        h = historia[(historia["punto"] == pv)
-                     & (historia["fecha"].dt.dayofweek == dia)
-                     & (historia["fecha"] > ult - pd.Timedelta(weeks=semanas))]
-        v, q = h["ventas"].to_numpy(), h["horneado"].to_numpy()
-        agotado = v >= q
-        def menos_log_ver(log_mu):
-            pr = k / (k + np.exp(log_mu))
-            return -(nbinom.logpmf(v[~agotado], k, pr).sum()
-                     + nbinom.logsf(v[agotado] - 1, k, pr).sum())
-        mu = np.exp(minimize_scalar(menos_log_ver, bounds=(0, 7), method="bounded").x)
-        out[futuro.index.get_indexer(filas)] = nbinom.ppf(fractil, k, k / (k + mu))
-    return out
-
-q = pedidos(historia, futuro)
-print(len(q), round(float(sum(q))))
-```
-:::
-
-```{pyodide}
-#| exercise: c11_pedidos
-#| check: true
-import numpy as _np
-try:
-    _d = genera_panaderia()
-    _dem = _d[_d["fecha"] >= "2025-11-01"]["_demanda"].to_numpy()
-    _q = _np.asarray(pedidos(historia.copy(), futuro.copy()), float)
-    _g = float(_np.sum(4 * _np.minimum(_q, _dem) - 1.5 * _q))
-    _ok = len(_q) == len(_dem) and _g >= 53500
-    _m = "ganancia %.0f dólares; la política actual da 51799." % _g
-except Exception as _e:
-    _ok, _m = False, "error al ejecutar: %s" % _e
-feedback = {"correct": _ok, "message": ("Correcto: " if _ok else "Todavía no: ") + _m}
-feedback
-```
-
-### Pregunta 3, Por qué las ventas parecen estables
-
-Explicar con los datos por qué las ventas de cada punto no muestran la falta de producto: comparar la distribución de las ventas en los días agotados y en los días en que sobró pan, y estimar cuánta demanda se perdió en 2025. Calcular la ganancia de hornear el cuantil 0,625 de las ventas registradas sin corregir los días agotados, y explicar por qué es menor que la de la política actual.
-
-```{pyodide}
-# ventas censuradas
-```
-
-### Pregunta 4, Informe para operaciones
-
-Redactar un informe de entre 250 y 400 palabras con el criterio de horneado, la ganancia esperada frente a la política actual, el nivel de servicio que implica y el pan que se espera descartar, y una recomendación sobre qué registrar desde ahora para medir la demanda de los días agotados.
+- `horneado.csv`, con las columnas `fecha`, `punto` y `unidades`, una fila por cada fila del archivo del futuro.
+- Un informe para operaciones de entre 250 y 400 palabras con el criterio de horneado, la ganancia esperada frente a la política actual, el nivel de servicio que implica y el pan que se espera descartar, y una recomendación sobre qué registrar desde ahora para medir la demanda de los días agotados.
+- El cuaderno o los scripts del análisis, ejecutables de principio a fin.
 
 ## Rúbrica
 
 | Criterio | Completo | Incompleto |
 |---|---|---|
-| Preguntas 1 y 2 | La comprobación automática marca las dos como correctas. | Alguna no se cumple. |
+| Días agotados y fractil | La proporción de días agotados coincide con la nota de enseñanza y el fractil se deriva del precio y el coste. | Hornea la media o un margen fijo sin justificación. |
 | Ventas censuradas | Explica que en un día agotado las ventas son un mínimo de la demanda, y que pronosticar con ellas y hornear según el pronóstico lleva a hornear cada vez menos. | Trata las ventas como la demanda. |
-| Fractil | Deriva 0,625 del precio y el coste y lo usa para elegir la cantidad, no la media del pronóstico. | Hornea la media o un margen fijo sin justificación. |
+| Cantidad | La estimación de la demanda trata los días agotados como censurados y la cantidad es el cuantil del fractil, no la media del pronóstico. | Usa las ventas registradas como demanda. |
 | Registro | Propone registrar la hora de agotamiento o los clientes que no encontraron pan. | No propone cómo medir la demanda. |
-| Informe | Tiene entre 250 y 400 palabras y usa cifras de las preguntas. | Falta alguna de las partes. |
+| Informe | Tiene entre 250 y 400 palabras y usa cifras del análisis. | Falta alguna de las partes. |
+
+::: {.callout-note collapse="true" title="Nota de enseñanza (abrir después de entregar)"}
+**Días agotados.** El pan se agotó en el 53,34 % de las filas de la historia. Hornear una unidad más gana 2,50 dólares si se vende y pierde 1,50 si sobra, así que conviene mientras la probabilidad de venderla supere 1,50/4. La probabilidad de no agotarse que maximiza la ganancia es 0,625.
+
+**El mecanismo.** En un día agotado, la venta registrada es el mínimo entre la demanda y lo horneado. La política actual hornea según las ventas de semanas anteriores, que ya están recortadas por lo horneado, y por eso las ventas parecen estables aunque falte pan. Las ventas registradas son el 80,9 % de la demanda de la historia; en 2025 se perdieron 24 861 unidades de una demanda de 134 692.
+
+**Referencia.** Una binomial negativa por punto y día de la semana, ajustada por máxima verosimilitud con las últimas doce semanas y con los días agotados como observaciones censuradas, y horneando su cuantil 0,625, da una ganancia de 54 432 dólares en noviembre y diciembre, con 3669 unidades descartadas. La política actual da 51 799, y hornear conociendo la demanda media de cada día daría 56 170.
+
+**La trampa.** Hornear el cuantil 0,625 de las ventas registradas de las últimas doce semanas, sin corregir los días agotados, da 48 755 dólares: menos que la política actual. El cuantil se calcula sobre una distribución recortada por lo horneado, que queda por debajo de la demanda en más de la mitad de los días.
+
+**Errores frecuentes.** Pronosticar con las ventas como si fueran la demanda; hornear el pronóstico medio en lugar del cuantil; ignorar el día de la semana; medir el acierto con el error del pronóstico de ventas en lugar de la ganancia.
+:::
 
 <!-- verificacion
 import numpy as np
-d = genera_panaderia()
-h = d[d["fecha"] < "2025-11-01"]
-assert (h["ventas"] >= h["horneado"]).mean() > 0.4
-assert h["ventas"].sum() < 0.85 * h["_demanda"].sum()
-f = d[d["fecha"] >= "2025-11-01"].reset_index(drop=True)
-g = lambda q: float(np.sum(4 * np.minimum(q, f["_demanda"].to_numpy()) - 1.5 * q))
+import pandas as pd
+from scipy.stats import nbinom
+from scipy.optimize import minimize_scalar
+import caso_11
+
+historia = pd.read_csv("datos/panaderia_historia.csv", parse_dates=["fecha"])
+futuro = pd.read_csv("datos/panaderia_futuro.csv", parse_dates=["fecha"])
+v = caso_11.genera()
+h, f = v["panaderia_historia"], v["panaderia_futuro"]
+dem = f["_demanda"].to_numpy()
+gan = lambda q: float(np.sum(4 * np.minimum(q, dem) - 1.5 * q))
+
+agotado = (historia["ventas"] >= historia["horneado"]).mean()
+assert agotado > 0.4
+print("agotado %.2f fractil %.3f margen 2.50 1.50/4" % (100 * agotado, (4 - 1.5) / 4))
+proporcion = h["ventas"].sum() / h["_demanda"].sum()
+assert proporcion < 0.85
+h25 = h[h["fecha"] >= "2025-01-01"]
+print("ventas %.1f perdida 2025 %d de %d" % (100 * proporcion, (h25["_demanda"] - h25["ventas"]).sum(),
+                                            h25["_demanda"].sum()))
+
+def pedidos(historia, futuro, semanas=12, k=8.0, fractil=0.625):
+    out = np.zeros(len(futuro))
+    ult = historia["fecha"].max()
+    grupos = futuro.groupby([futuro["punto"], futuro["fecha"].dt.dayofweek]).groups
+    for (pv, dia), filas in grupos.items():
+        x = historia[(historia["punto"] == pv) & (historia["fecha"].dt.dayofweek == dia)
+                     & (historia["fecha"] > ult - pd.Timedelta(weeks=semanas))]
+        vv, qq = x["ventas"].to_numpy(), x["horneado"].to_numpy()
+        a = vv >= qq
+        def nl(lm):
+            pr = k / (k + np.exp(lm))
+            return -(nbinom.logpmf(vv[~a], k, pr).sum() + nbinom.logsf(vv[a] - 1, k, pr).sum())
+        mu = np.exp(minimize_scalar(nl, bounds=(0, 7), method="bounded").x)
+        out[futuro.index.get_indexer(filas)] = nbinom.ppf(fractil, k, k / (k + mu))
+    return out
+
+q = pedidos(historia, futuro)
+actual = gan(f["_horneado"].to_numpy())
 ing = []
-for _, r in f.iterrows():
-    x = h[(h["punto"] == r["punto"]) & (h["fecha"].dt.dayofweek == r["fecha"].dayofweek)].tail(12)
+for _, r in futuro.iterrows():
+    x = historia[(historia["punto"] == r["punto"])
+                 & (historia["fecha"].dt.dayofweek == r["fecha"].dayofweek)].tail(12)
     ing.append(np.quantile(x["ventas"], 0.625))
-actual = g(f["horneado"].to_numpy())
-assert g(np.array(ing)) < actual
-print("ventas registradas: %.1f %% de la demanda; ganancia de la política actual %.0f y del cuantil de las ventas %.0f"
-      % (100 * h["ventas"].sum() / h["_demanda"].sum(), actual, g(np.array(ing))))
+ingenuo = gan(np.array(ing))
+oraculo = gan(nbinom.ppf(0.625, 8, 8 / (8 + f["_mu"].to_numpy())))
+assert oraculo > gan(q) > actual > ingenuo
+print("referencia %.0f descarte %d actual %.0f oraculo %.0f ingenuo %.0f"
+      % (gan(q), np.maximum(q - dem, 0).sum(), actual, oraculo, ingenuo))
 -->

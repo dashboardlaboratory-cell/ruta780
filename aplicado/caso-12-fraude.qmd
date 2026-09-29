@@ -2,6 +2,9 @@
 title: "Caso 12. Fraude con capacidad de revisión limitada"
 subtitle: "ML aplicado · Caso integrador 12"
 engine: markdown
+resources:
+  - datos/fraude_historia.csv
+  - datos/fraude_nuevas.csv
 ---
 
 ::: {.meta-leccion data-leccion="aplicado/caso-12-fraude"}
@@ -10,7 +13,7 @@ engine: markdown
 [**Usa** ML aplicado 01, 07, 08 y 13 · Estadística 15]{.item}
 :::
 
-Este caso trata una decisión con etiquetas incompletas y un cupo diario. Corresponde a un bloque de trabajo de unas cuatro horas. La situación y los datos son inventados.
+Este caso trata una decisión con etiquetas incompletas y un cupo diario. Se resuelve fuera de la página, en el entorno de trabajo que se prefiera, y corresponde a un bloque de unas cuatro horas. La situación y los datos son inventados.
 
 ## Situación
 
@@ -20,7 +23,10 @@ Hasta ahora el equipo revisaba todas las transacciones de más de 500 dólares, 
 
 ## Los datos
 
-La página carga al abrirse dos tablas. `historia` tiene las transacciones de los días 1 a 60, con la revisión y su resultado. `nuevas` tiene las de los días 61 a 70, sobre las que hay que decidir.
+Dos archivos:
+
+- [`fraude_historia.csv`](datos/fraude_historia.csv): las transacciones de los días 1 a 60, con la revisión y su resultado.
+- [`fraude_nuevas.csv`](datos/fraude_nuevas.csv): las de los días 61 a 70, sobre las que hay que decidir.
 
 | Columna | Descripción |
 |---|---|
@@ -32,262 +38,89 @@ La página carga al abrirse dos tablas. `historia` tiene las transacciones de lo
 | `pais_distinto` | 1 si el comercio está en un país distinto del de la tarjeta |
 | `dispositivo_nuevo` | 1 si la compra se hizo desde un dispositivo no visto antes con esa tarjeta |
 | `compras_hora` | Compras con la misma tarjeta en la hora anterior |
-| `auditoria` | 1 si la transacción entró en la auditoría al azar. Solo en `historia` |
-| `revisada` | 1 si se revisó. Solo en `historia` |
-| `fraude` | 1 fraude, 0 legítima; vacío si no se revisó. Solo en `historia` |
-
-```{pyodide}
-#| include: false
-# Genera los datos del caso. Va oculta: el mecanismo es lo que el caso pide descubrir.
-import numpy as np
-import pandas as pd
-
-def genera_transacciones(semilla=1212):
-    """70 días de transacciones con tarjeta. Solo se conoce si una transacción era
-    fraude cuando se revisó: la regla anterior revisaba montos altos, más una
-    auditoría al azar del 0,3 %."""
-    rng = np.random.default_rng(semilla)
-    n_dia = 6000
-    filas = []
-    for dia in range(70):
-        n = n_dia
-        monto = np.exp(rng.normal(np.log(45), 1.0, n)).round(2)
-        hora = rng.integers(0, 24, n)
-        rubro = rng.choice(["supermercado", "restaurante", "electronica", "viajes", "digital"], n, p=[0.35, 0.25, 0.12, 0.08, 0.20])
-        pais_distinto = (rng.random(n) < 0.05).astype(int)
-        dispositivo_nuevo = (rng.random(n) < 0.08).astype(int)
-        compras_hora = rng.poisson(0.6, n)
-        # dos tipos de fraude: montos altos con dispositivo nuevo o país distinto,
-        # y pruebas de tarjeta: montos pequeños, de noche, muchas compras seguidas
-        z1 = -7.2 + 0.9 * np.log(monto / 45) + 1.8 * dispositivo_nuevo + 1.5 * pais_distinto + 0.6 * (rubro == "electronica")
-        z2 = -7.0 + 1.1 * compras_hora + 1.4 * ((hora <= 5)) + 1.2 * (monto < 15) + 0.8 * (rubro == "digital")
-        p = 1 / (1 + np.exp(-z1)) + 1 / (1 + np.exp(-z2))
-        fraude = (rng.random(n) < np.clip(p, 0, 1)).astype(int)
-        monto = np.where((fraude == 1) & (1 / (1 + np.exp(-z2)) > 1 / (1 + np.exp(-z1))),
-                         np.minimum(monto, rng.uniform(1, 14, n)).round(2), monto)
-        filas.append(pd.DataFrame({"dia": dia + 1, "monto": monto, "hora": hora, "rubro": rubro,
-                                   "pais_distinto": pais_distinto, "dispositivo_nuevo": dispositivo_nuevo,
-                                   "compras_hora": compras_hora, "_fraude": fraude}))
-    t = pd.concat(filas, ignore_index=True)
-    t.insert(0, "transaccion", np.arange(1, len(t) + 1))
-    auditoria = rng.random(len(t)) < 0.003
-    t["auditoria"] = auditoria.astype(int)
-    t["revisada"] = ((t["monto"] > 500) | auditoria).astype(int)
-    t["fraude"] = np.where(t["revisada"] == 1, t["_fraude"], np.nan)
-    return t
-
-
-_t = genera_transacciones()
-historia = _t[_t["dia"] <= 60].drop(columns="_fraude").reset_index(drop=True)
-nuevas = _t[_t["dia"] > 60].drop(columns=["_fraude", "auditoria", "revisada", "fraude"]).reset_index(drop=True)
-del _t
-```
-
-```{pyodide}
-print(historia.shape, nuevas.shape)
-print(historia.head(6).to_string())
-```
+| `auditoria` | 1 si la transacción entró en la auditoría al azar. Solo en la historia |
+| `revisada` | 1 si se revisó. Solo en la historia |
+| `fraude` | 1 fraude, 0 legítima; vacío si no se revisó. Solo en la historia |
 
 ## Preguntas
 
-Las preguntas 1 y 2 tienen comprobación automática. La 3 y la 4 se evalúan con la rúbrica.
+1. Describir qué dicen las etiquetas disponibles: la proporción de fraudes entre las transacciones revisadas de más de 500 dólares y entre las auditadas al azar, y el monto de los fraudes que encontró la auditoría.
+2. Elegir qué transacciones de `fraude_nuevas.csv` revisar, con no más de 200 por día, y estimar el valor neto de la elección: por cada fraude revisado, su monto más 200 dólares; menos 3 dólares por revisión.
+3. Evaluar la propuesta del responsable de datos: reproducir el modelo que toma las transacciones no revisadas como legítimas, explicar su resultado con la composición de los fraudes de la auditoría y compararlo con revisar cada día los 200 montos más altos, con la regla anterior y con un detector de anomalías sin etiquetas de ML aplicado 13.
+4. Decidir qué hacer con la auditoría al azar: mantenerla, ampliarla o eliminarla, y cuánto cuesta en revisiones.
 
-```{pyodide}
-#| exercise: [c12_etiquetas, c12_seleccion]
-#| setup: true
-import numpy as np
-import pandas as pd
+## Entregables
 
-def genera_transacciones(semilla=1212):
-    """70 días de transacciones con tarjeta. Solo se conoce si una transacción era
-    fraude cuando se revisó: la regla anterior revisaba montos altos, más una
-    auditoría al azar del 0,3 %."""
-    rng = np.random.default_rng(semilla)
-    n_dia = 6000
-    filas = []
-    for dia in range(70):
-        n = n_dia
-        monto = np.exp(rng.normal(np.log(45), 1.0, n)).round(2)
-        hora = rng.integers(0, 24, n)
-        rubro = rng.choice(["supermercado", "restaurante", "electronica", "viajes", "digital"], n, p=[0.35, 0.25, 0.12, 0.08, 0.20])
-        pais_distinto = (rng.random(n) < 0.05).astype(int)
-        dispositivo_nuevo = (rng.random(n) < 0.08).astype(int)
-        compras_hora = rng.poisson(0.6, n)
-        # dos tipos de fraude: montos altos con dispositivo nuevo o país distinto,
-        # y pruebas de tarjeta: montos pequeños, de noche, muchas compras seguidas
-        z1 = -7.2 + 0.9 * np.log(monto / 45) + 1.8 * dispositivo_nuevo + 1.5 * pais_distinto + 0.6 * (rubro == "electronica")
-        z2 = -7.0 + 1.1 * compras_hora + 1.4 * ((hora <= 5)) + 1.2 * (monto < 15) + 0.8 * (rubro == "digital")
-        p = 1 / (1 + np.exp(-z1)) + 1 / (1 + np.exp(-z2))
-        fraude = (rng.random(n) < np.clip(p, 0, 1)).astype(int)
-        monto = np.where((fraude == 1) & (1 / (1 + np.exp(-z2)) > 1 / (1 + np.exp(-z1))),
-                         np.minimum(monto, rng.uniform(1, 14, n)).round(2), monto)
-        filas.append(pd.DataFrame({"dia": dia + 1, "monto": monto, "hora": hora, "rubro": rubro,
-                                   "pais_distinto": pais_distinto, "dispositivo_nuevo": dispositivo_nuevo,
-                                   "compras_hora": compras_hora, "_fraude": fraude}))
-    t = pd.concat(filas, ignore_index=True)
-    t.insert(0, "transaccion", np.arange(1, len(t) + 1))
-    auditoria = rng.random(len(t)) < 0.003
-    t["auditoria"] = auditoria.astype(int)
-    t["revisada"] = ((t["monto"] > 500) | auditoria).astype(int)
-    t["fraude"] = np.where(t["revisada"] == 1, t["_fraude"], np.nan)
-    return t
-
-
-_t = genera_transacciones()
-historia = _t[_t["dia"] <= 60].drop(columns="_fraude").reset_index(drop=True)
-nuevas = _t[_t["dia"] > 60].drop(columns=["_fraude", "auditoria", "revisada", "fraude"]).reset_index(drop=True)
-del _t
-```
-
-### Pregunta 1, Qué dicen las etiquetas que hay
-
-Asignar a `tasa_montos_altos` la proporción de fraudes entre las transacciones revisadas de más de 500 dólares, a `tasa_auditoria` la proporción entre las auditadas al azar, y a `pequenos_auditoria` la proporción de los fraudes auditados cuyo monto es menor que 15 dólares.
-
-```{pyodide}
-#| exercise: c12_etiquetas
-tasa_montos_altos = ______
-tasa_auditoria = ______
-pequenos_auditoria = ______
-
-print(round(tasa_montos_altos, 4), round(tasa_auditoria, 4),
-      round(pequenos_auditoria, 4))
-```
-
-::: {.solution exercise="c12_etiquetas"}
-```python
-altas = historia[(historia["monto"] > 500) & (historia["revisada"] == 1)]
-aud = historia[historia["auditoria"] == 1]
-tasa_montos_altos = float(altas["fraude"].mean())
-tasa_auditoria = float(aud["fraude"].mean())
-pequenos_auditoria = float((aud.loc[aud["fraude"] == 1, "monto"] < 15).mean())
-
-print(round(tasa_montos_altos, 4), round(tasa_auditoria, 4),
-      round(pequenos_auditoria, 4))
-```
-:::
-
-```{pyodide}
-#| exercise: c12_etiquetas
-#| check: true
-try:
-    _ok = (abs(float(tasa_montos_altos) - 0.0148) < 5e-4 and abs(float(tasa_auditoria) - 0.0171) < 5e-4
-           and abs(float(pequenos_auditoria) - 0.8421) < 5e-4)
-    _m = ("Correcto: la proporción de fraude es parecida, 1.48 % y 1.71 %, pero el 84 % de los fraudes auditados son de menos de 15 dólares, que la regla anterior nunca revisaba."
-          if _ok else "Se esperaban 0.0148, 0.0171 y 0.8421.")
-except Exception as _e:
-    _ok, _m = False, str(_e)
-feedback = {"correct": _ok, "message": _m}
-feedback
-```
-
-### Pregunta 2, Qué revisar cada día
-
-Escribir la función `seleccionar(historia, nuevas)`, que devuelve la lista de las `transaccion` de `nuevas` que se revisan, con no más de 200 por día. La comprobación calcula el valor neto de los diez días con los fraudes reales: por cada fraude revisado, su monto más 200 dólares; menos 3 dólares por revisión. Exige al menos 40 000 dólares.
-
-```{pyodide}
-#| exercise: c12_seleccion
-def seleccionar(historia, nuevas):
-    ______
-
-sel = seleccionar(historia, nuevas)
-print(len(sel), "revisiones")
-```
-
-::: {.solution exercise="c12_seleccion"}
-```python
-import numpy as np
-from sklearn.ensemble import GradientBoostingClassifier
-
-RUBROS = ["supermercado", "restaurante", "electronica", "viajes", "digital"]
-
-def atributos(d):
-    Z = d[["monto", "hora", "pais_distinto", "dispositivo_nuevo", "compras_hora"]].copy()
-    for r in RUBROS:
-        Z[r] = (d["rubro"] == r).astype(int)
-    return Z
-
-def seleccionar(historia, nuevas, cupo=200):
-    """Entrena solo con las transacciones revisadas, que son las que tienen
-    etiqueta, y ordena por valor esperado: probabilidad por (monto + 200)."""
-    rev = historia[historia["revisada"] == 1]
-    m = GradientBoostingClassifier(random_state=0)
-    m.fit(atributos(rev), rev["fraude"].astype(int))
-    valor = m.predict_proba(atributos(nuevas))[:, 1] * (nuevas["monto"].to_numpy() + 200)
-    elegidas = []
-    for _, g in nuevas.assign(valor=valor).groupby("dia"):
-        elegidas += g.nlargest(cupo, "valor")["transaccion"].tolist()
-    return elegidas
-
-sel = seleccionar(historia, nuevas)
-print(len(sel), "revisiones")
-```
-:::
-
-```{pyodide}
-#| exercise: c12_seleccion
-#| check: true
-import numpy as _np
-try:
-    _t = genera_transacciones()
-    _n = _t[_t["dia"] > 60].set_index("transaccion")
-    _ids = list(seleccionar(historia.copy(), nuevas.copy()))
-    _s = _n.loc[_ids]
-    _dias_ok = int(_s.groupby("dia").size().max()) <= 200 if len(_s) else True
-    _v = float((_s["_fraude"] * (_s["monto"] + 200)).sum() - 3 * len(_s))
-    _ok = len(set(_ids)) == len(_ids) and _dias_ok and _v >= 40000
-    _m = "%d revisiones, %d fraudes detectados, valor neto %.0f dólares." % (len(_s), int(_s["_fraude"].sum()), _v)
-    if not _dias_ok:
-        _m += " Algún día pasa de 200 revisiones."
-except Exception as _e:
-    _ok, _m = False, "error al ejecutar: %s" % _e
-feedback = {"correct": _ok, "message": ("Correcto: " if _ok else "Todavía no: ") + _m}
-feedback
-```
-
-### Pregunta 3, La propuesta del responsable de datos
-
-Reproducir el modelo que toma las transacciones no revisadas como legítimas y calcular su valor neto con la comprobación de la pregunta 2 hecha a mano. Explicar por qué es tan bajo, con la composición de los fraudes de la auditoría. Comparar también con revisar cada día los 200 montos más altos, y con un detector de anomalías sin etiquetas de ML aplicado 13.
-
-```{pyodide}
-# propuesta del responsable de datos y alternativas
-```
-
-### Pregunta 4, Informe para el director de riesgos
-
-Redactar un informe de entre 250 y 400 palabras con el criterio de revisión, el valor esperado frente a la regla anterior y a la propuesta, y una recomendación sobre la auditoría al azar: si conviene mantenerla, ampliarla o eliminarla, y qué cuesta en revisiones.
+- `revisiones.csv`, con una columna `transaccion` y las transacciones elegidas.
+- Un informe para el director de riesgos de entre 250 y 400 palabras con el criterio de revisión, el valor esperado frente a la regla anterior y a la propuesta, y la recomendación sobre la auditoría al azar.
+- El cuaderno o los scripts del análisis, ejecutables de principio a fin.
 
 ## Rúbrica
 
 | Criterio | Completo | Incompleto |
 |---|---|---|
-| Preguntas 1 y 2 | La comprobación automática marca las dos como correctas. | Alguna no se cumple. |
+| Etiquetas | Las proporciones coinciden con la nota de enseñanza y se interpreta el tamaño de la muestra auditada. | Compara las tasas sin mirar el monto de los fraudes. |
 | Etiquetas incompletas | Explica que una transacción no revisada no es una transacción legítima, y muestra con cifras cómo tratarla así borra el fraude pequeño. | Trata las no revisadas como legítimas, o no lo discute. |
-| Valor de revisar | Ordena por valor esperado, combinando probabilidad y monto más el bloqueo, y no solo por probabilidad o por monto. | Usa un solo criterio sin justificarlo. |
+| Valor de revisar | Ordena por valor esperado, combinando probabilidad y monto más el bloqueo, y no solo por probabilidad o por monto; respeta el cupo diario. | Usa un solo criterio sin justificarlo. |
 | Auditoría | Relaciona la auditoría al azar con la posibilidad de aprender el fraude que la regla no veía, y cuantifica su coste. | Propone eliminarla sin considerar qué etiquetas se perderían. |
-| Informe | Tiene entre 250 y 400 palabras y usa cifras de las preguntas. | Falta alguna de las partes. |
+| Informe | Tiene entre 250 y 400 palabras y usa cifras del análisis. | Falta alguna de las partes. |
+
+::: {.callout-note collapse="true" title="Nota de enseñanza (abrir después de entregar)"}
+**Etiquetas.** Entre las 2829 transacciones de más de 500 dólares, el 1,48 % son fraude; entre las 1112 auditadas al azar, el 1,71 %. Las dos proporciones se parecen, pero de los 19 fraudes auditados el 84,2 % son de menos de 15 dólares, un tipo de transacción que la regla anterior nunca revisaba. La auditoría es la única muestra sin sesgo del fraude.
+
+**El mecanismo.** Hay dos tipos de fraude. Uno usa montos altos con un dispositivo nuevo o desde otro país. El otro son pruebas de tarjeta: montos pequeños, de madrugada, con muchas compras seguidas y en comercios digitales. En la historia, el 0,99 % de las transacciones son fraude y el 84,3 % de los fraudes son de menos de 15 dólares.
+
+**La trampa.** El modelo que toma las no revisadas como legítimas aprende que el fraude pequeño no existe, porque casi ninguno fue revisado, y en los diez días nuevos su valor neto es de menos de 15 000 dólares. Revisar los 200 montos más altos de cada día da 6176 dólares, con 18 fraudes detectados. La regla anterior, aplicada a los días nuevos, revisa 45,1 transacciones diarias y da 2788 dólares, con 4 fraudes.
+
+**Referencia.** Un modelo entrenado solo con las transacciones revisadas, que son las que tienen etiqueta, y ordenado por la probabilidad multiplicada por el monto más 200 dólares, supera los 40 000 dólares de valor neto en los diez días, de 595 fraudes que ocurrieron.
+
+**Errores frecuentes.** Tomar las transacciones no revisadas como legítimas; ordenar solo por probabilidad o solo por monto; pasar del cupo de 200 revisiones diarias; eliminar la auditoría, que es lo que permite ver el fraude pequeño.
+:::
 
 <!-- verificacion
 import numpy as np
+import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier
-t = genera_transacciones()
-h, n = t[t["dia"] <= 60], t[t["dia"] > 60].reset_index(drop=True)
+import caso_12
+
+h = pd.read_csv("datos/fraude_historia.csv")
+v = caso_12.genera()
+H, n = v["fraude_historia"], v["fraude_nuevas"]
+altas = h[(h["monto"] > 500) & (h["revisada"] == 1)]
+aud = h[h["auditoria"] == 1]
+pequenos = (aud.loc[aud["fraude"] == 1, "monto"] < 15).mean()
+assert pequenos > 0.7
+print("etiquetas %d %.2f %d %.2f fraudes auditados %d pequenos %.1f"
+      % (len(altas), 100 * altas["fraude"].mean(), len(aud), 100 * aud["fraude"].mean(),
+         aud["fraude"].sum(), 100 * pequenos))
+print("real %.2f pequenos %.1f" % (100 * H["_fraude"].mean(),
+                                   100 * (H.loc[H["_fraude"] == 1, "monto"] < 15).mean()))
+
 R = ["supermercado", "restaurante", "electronica", "viajes", "digital"]
 def X(d):
-    Z = d[["monto", "hora", "pais_distinto", "dispositivo_nuevo", "compras_hora"]].copy()
+    z = d[["monto", "hora", "pais_distinto", "dispositivo_nuevo", "compras_hora"]].copy()
     for r in R:
-        Z[r] = (d["rubro"] == r).astype(int)
-    return Z
-def valor(score):
+        z[r] = (d["rubro"] == r).astype(int)
+    return z
+def valor(s):
+    return float((s["_fraude"] * (s["monto"] + 200)).sum() - 3 * len(s)), int(s["_fraude"].sum())
+def cupo(score):
     idx = []
     for _, g in n.assign(s=score).groupby("dia"):
         idx += list(g.nlargest(200, "s").index)
-    s = n.loc[idx]
-    return float((s["_fraude"] * (s["monto"] + 200)).sum() - 3 * len(s))
-p0 = GradientBoostingClassifier(random_state=0).fit(X(h), h["fraude"].fillna(0).astype(int)).predict_proba(X(n))[:, 1]
+    return valor(n.loc[idx])
+
+p0 = GradientBoostingClassifier(random_state=0).fit(X(h), h["fraude"].fillna(0).astype(int))
 rv = h[h["revisada"] == 1]
-p1 = GradientBoostingClassifier(random_state=0).fit(X(rv), rv["fraude"].astype(int)).predict_proba(X(n))[:, 1]
+p1 = GradientBoostingClassifier(random_state=0).fit(X(rv), rv["fraude"].astype(int))
 m = n["monto"].to_numpy() + 200
-a, b, c = valor(p0 * m), valor(p1 * m), valor(n["monto"].to_numpy())
-assert b > 3 * a and b > 3 * c
-print("valor neto: no revisadas como legítimas %.0f, solo revisadas %.0f, montos altos %.0f" % (a, b, c))
+propuesta = cupo(p0.predict_proba(X(n))[:, 1] * m)[0]
+referencia = cupo(p1.predict_proba(X(n))[:, 1] * m)[0]
+montos = cupo(n["monto"].to_numpy())
+anterior = n[n["monto"] > 500]
+assert propuesta < 15000 < 40000 < referencia
+print("umbrales 15000 40000")
+print("montos altos %.0f %d" % montos)
+print("regla anterior %.1f diarias %.0f %d" % ((len(anterior) / 10,) + valor(anterior)))
+print("fraudes nuevos %d" % n["_fraude"].sum())
 -->

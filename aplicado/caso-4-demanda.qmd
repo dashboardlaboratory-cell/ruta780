@@ -2,6 +2,8 @@
 title: "Caso 4. Pronóstico de demanda en una cadena de supermercados"
 subtitle: "ML aplicado · Caso 4 · después de la Lección 13"
 engine: markdown
+resources:
+  - datos/demanda_ventas.csv
 ---
 
 ::: {.meta-leccion data-leccion="aplicado/caso-4-demanda"}
@@ -10,7 +12,7 @@ engine: markdown
 [**Usa** ML aplicado 01 a 13 · Series de tiempo 01 a 11]{.item}
 :::
 
-Este caso se resuelve con lo visto en todo el módulo y en Series de tiempo. Corresponde a un bloque de trabajo de unas cuatro horas. La situación y los datos son inventados.
+Este caso se resuelve con lo visto en todo el módulo y en Series de tiempo. Se trabaja fuera de la página, en el entorno que se prefiera, y corresponde a un bloque de unas cuatro horas. La situación y los datos son inventados.
 
 ## Situación
 
@@ -20,359 +22,140 @@ La cadena registra las ventas diarias de cada supermercado y el calendario de pr
 
 ## Los datos
 
-La página carga al abrirse la tabla `ventas`, con una fila por supermercado y día entre el 1 de enero de 2022 y el 31 de diciembre de 2024, y la lista `FERIADOS` con los días de cierre.
+Un archivo, [`demanda_ventas.csv`](datos/demanda_ventas.csv), con una fila por supermercado y día entre el 1 de enero de 2022 y el 31 de diciembre de 2024. Los días de cierre son el 1 de enero y el 25 de diciembre de cada año, y en ellos las ventas son cero.
 
 | Columna | Descripción |
 |---|---|
-| `fecha` | Día |
+| `fecha` | Día, en formato año-mes-día |
 | `supermercado` | Número del supermercado, de 1 a 8 |
 | `promocion` | 1 si la categoría estuvo en promoción ese día, 0 si no |
 | `ventas` | Unidades vendidas |
 
-```{pyodide}
-#| include: false
-# Genera los datos del caso. Va oculta: el mecanismo es lo que el caso pide descubrir.
-import numpy as np
-import pandas as pd
-
-def genera_ventas(semilla=780):
-    """Ventas diarias de una categoria en ocho supermercados, 2022 a 2024."""
-    rng = np.random.default_rng(semilla)
-    fechas = pd.date_range("2022-01-01", "2024-12-31", freq="D")
-    n = len(fechas)
-    dia = fechas.dayofweek.to_numpy()
-    doy = fechas.dayofyear.to_numpy()
-    t = np.arange(n) / 365.0
-    semana = np.array([0.92, 0.88, 0.90, 0.95, 1.08, 1.25, 1.02])
-    anual = 1 + 0.12 * np.cos(2 * np.pi * (doy - 350) / 365.25)
-    feriados = pd.to_datetime(["2022-12-25", "2023-12-25", "2024-12-25",
-                               "2022-01-01", "2023-01-01", "2024-01-01"])
-    cerrado = np.isin(fechas, feriados)
-    filas = []
-    competidor = {3, 6}                               # abre un competidor cerca de estos dos
-    inicio = fechas.get_loc(pd.Timestamp("2024-06-01"))
-    for s in range(1, 9):
-        nivel = rng.uniform(800, 2200)
-        crec = rng.uniform(0.00, 0.06)
-        promo = rng.random(n) < 0.08
-        efecto = np.where(promo, 1.35, 1.0)
-        caida = np.ones(n)
-        if s in competidor:
-            caida[inicio:] = 0.75
-        mu = nivel * (1 + crec) ** t * semana[dia] * anual * efecto * caida
-        v = np.round(mu * np.exp(rng.normal(0, 0.08, n)))
-        v[cerrado] = 0
-        filas.append(pd.DataFrame({"fecha": fechas, "supermercado": s, "promocion": promo.astype(int),
-                                   "ventas": v}))
-    d = pd.concat(filas, ignore_index=True)
-    # dias con el sistema caido (ventas en cero) y cargas duplicadas (ventas dobles)
-    idx = rng.choice(len(d), 30, replace=False)
-    malos = []
-    for k, i in enumerate(idx):
-        if d.at[i, "ventas"] == 0:
-            continue
-        d.at[i, "ventas"] = 0 if k % 2 == 0 else 2 * d.at[i, "ventas"]
-        malos.append(i)
-    return d, sorted(malos), competidor
-
-
-ventas, _, _ = genera_ventas()
-FERIADOS = pd.to_datetime(["2022-01-01", "2022-12-25", "2023-01-01", "2023-12-25",
-                           "2024-01-01", "2024-12-25"])
-```
-
-```{pyodide}
-print(ventas.shape)
-print(ventas.head(10).to_string())
-```
-
 ## Preguntas
 
-Las preguntas 1 a 3 tienen comprobación automática. La 4 se evalúa con la rúbrica.
+1. Identificar las filas que corresponden a días con el sistema caído o con la carga duplicada, y explicar el criterio.
+2. Determinar qué supermercados tuvieron una baja persistente de las ventas en 2024, más allá de la estacionalidad, desde cuándo y de qué tamaño.
+3. Construir un pronóstico de las ventas de cada supermercado para los 28 días siguientes a una fecha de origen, que use solo la historia anterior al origen y el calendario de promociones.
+4. Evaluar el pronóstico con tres orígenes, el 1 de septiembre, el 1 de octubre y el 1 de noviembre de 2024, con el error porcentual absoluto ponderado (la suma de los errores absolutos dividida por la suma de las ventas), sin contar los feriados ni los días anómalos. Compararlo con el método actual en los mismos orígenes, en el conjunto de los supermercados y en los de la pregunta 2.
 
-```{pyodide}
-#| exercise: [c4_anomalos, c4_afectados, c4_pronostico]
-#| setup: true
-import numpy as np
-import pandas as pd
+## Entregables
 
-def genera_ventas(semilla=780):
-    """Ventas diarias de una categoria en ocho supermercados, 2022 a 2024."""
-    rng = np.random.default_rng(semilla)
-    fechas = pd.date_range("2022-01-01", "2024-12-31", freq="D")
-    n = len(fechas)
-    dia = fechas.dayofweek.to_numpy()
-    doy = fechas.dayofyear.to_numpy()
-    t = np.arange(n) / 365.0
-    semana = np.array([0.92, 0.88, 0.90, 0.95, 1.08, 1.25, 1.02])
-    anual = 1 + 0.12 * np.cos(2 * np.pi * (doy - 350) / 365.25)
-    feriados = pd.to_datetime(["2022-12-25", "2023-12-25", "2024-12-25",
-                               "2022-01-01", "2023-01-01", "2024-01-01"])
-    cerrado = np.isin(fechas, feriados)
-    filas = []
-    competidor = {3, 6}                               # abre un competidor cerca de estos dos
-    inicio = fechas.get_loc(pd.Timestamp("2024-06-01"))
-    for s in range(1, 9):
-        nivel = rng.uniform(800, 2200)
-        crec = rng.uniform(0.00, 0.06)
-        promo = rng.random(n) < 0.08
-        efecto = np.where(promo, 1.35, 1.0)
-        caida = np.ones(n)
-        if s in competidor:
-            caida[inicio:] = 0.75
-        mu = nivel * (1 + crec) ** t * semana[dia] * anual * efecto * caida
-        v = np.round(mu * np.exp(rng.normal(0, 0.08, n)))
-        v[cerrado] = 0
-        filas.append(pd.DataFrame({"fecha": fechas, "supermercado": s, "promocion": promo.astype(int),
-                                   "ventas": v}))
-    d = pd.concat(filas, ignore_index=True)
-    # dias con el sistema caido (ventas en cero) y cargas duplicadas (ventas dobles)
-    idx = rng.choice(len(d), 30, replace=False)
-    malos = []
-    for k, i in enumerate(idx):
-        if d.at[i, "ventas"] == 0:
-            continue
-        d.at[i, "ventas"] = 0 if k % 2 == 0 else 2 * d.at[i, "ventas"]
-        malos.append(i)
-    return d, sorted(malos), competidor
-
-
-ventas, _, _ = genera_ventas()
-FERIADOS = pd.to_datetime(["2022-01-01", "2022-12-25", "2023-01-01", "2023-12-25",
-                           "2024-01-01", "2024-12-25"])
-```
-
-
-### Pregunta 1, Días anómalos
-
-Asignar a `anomalos` la lista de los índices de `ventas` de las filas que corresponden a días con el sistema caído o con la carga duplicada. La comprobación exige encontrar al menos 28 de las filas afectadas con no más de 5 filas marcadas por error.
-
-```{pyodide}
-#| exercise: c4_anomalos
-anomalos = ______
-
-print(len(anomalos))
-```
-
-::: {.solution exercise="c4_anomalos"}
-```python
-import numpy as np
-
-def marca_anomalos(d):
-    """Ceros fuera de los feriados, y ventas por encima de 1.6 veces la
-    mediana del mismo dia de la semana en las tres semanas anteriores y
-    siguientes, descontado el efecto de la promocion."""
-    out = []
-    for s, g in d.groupby("supermercado"):
-        g = g.sort_values("fecha")
-        v = g["ventas"].to_numpy().astype(float)
-        base = v / np.where(g["promocion"].to_numpy() == 1, 1.35, 1.0)
-        fer = g["fecha"].isin(FERIADOS).to_numpy()
-        for i in range(len(g)):
-            if fer[i]:
-                continue
-            if v[i] == 0:
-                out.append(g.index[i]); continue
-            vec = [base[j] for j in range(i - 21, i + 22, 7)
-                   if 0 <= j < len(g) and j != i and not fer[j] and v[j] > 0]
-            if base[i] > 1.6 * np.median(vec):
-                out.append(g.index[i])
-    return sorted(out)
-
-anomalos = marca_anomalos(ventas)
-
-print(len(anomalos))
-```
-:::
-
-```{pyodide}
-#| exercise: c4_anomalos
-#| check: true
-try:
-    _, _malos, _ = genera_ventas()
-    _a = set(int(i) for i in anomalos)
-    _v, _f = len(_a & set(_malos)), len(_a - set(_malos))
-    _ok = _v >= 28 and _f <= 5
-    _m = "%d de las %d filas afectadas encontradas, %d marcadas por error." % (_v, len(_malos), _f)
-except Exception as _e:
-    _ok, _m = False, str(_e)
-feedback = {"correct": _ok, "message": ("Correcto: " if _ok else "Todavía no: ") + _m}
-feedback
-```
-
-### Pregunta 2, Supermercados con un cambio de nivel
-
-Asignar a `afectados` la lista ordenada de los supermercados cuyas ventas bajaron de forma persistente en 2024, más allá de la estacionalidad.
-
-```{pyodide}
-#| exercise: c4_afectados
-afectados = ______
-
-print(afectados)
-```
-
-::: {.solution exercise="c4_afectados"}
-```python
-import numpy as np
-
-v = ventas[(ventas["ventas"] > 0) & ~ventas["fecha"].isin(FERIADOS)].copy()
-v["segundo_semestre"] = v["fecha"].dt.month >= 6
-def cociente(anio):
-    m = v[v["fecha"].dt.year == anio].groupby(["supermercado", "segundo_semestre"])["ventas"].median().unstack()
-    return m[True] / m[False]
-# el cociente entre semestres de 2024, dividido por el de 2023, descuenta la estacionalidad
-cambio = cociente(2024) / cociente(2023)
-afectados = sorted(int(s) for s in cambio[cambio < 0.85].index)
-
-print(afectados)
-```
-:::
-
-```{pyodide}
-#| exercise: c4_afectados
-#| check: true
-try:
-    _ok = [int(s) for s in afectados] == [3, 6]
-    _m = "Correcto: los supermercados 3 y 6 venden un 25 % menos desde junio de 2024." if _ok else \
-         "Se esperaban dos supermercados. Comparar el nivel de 2024 con el de 2023 en los mismos meses."
-except Exception as _e:
-    _ok, _m = False, str(_e)
-feedback = {"correct": _ok, "message": _m}
-feedback
-```
-
-### Pregunta 3, El pronóstico
-
-Escribir la función `pronostica(historia, futuro)`. `historia` contiene las filas de `ventas` anteriores a una fecha de origen; `futuro` contiene las filas de los 28 días siguientes, con las columnas `fecha`, `supermercado` y `promocion`, sin las ventas. La función devuelve una predicción por fila de `futuro`.
-
-La comprobación aplica la función con tres orígenes, el 1 de septiembre, el 1 de octubre y el 1 de noviembre de 2024, y calcula el error porcentual absoluto ponderado, la suma de los errores absolutos dividida por la suma de las ventas, sin contar los feriados ni los días anómalos. Exige un error de 0,08 o menos en el conjunto de los supermercados y de 0,09 o menos en los dos de la pregunta 2.
-
-```{pyodide}
-#| exercise: c4_pronostico
-def pronostica(historia, futuro):
-    ______
-
-o = pd.Timestamp("2024-09-01")
-fin = o + pd.Timedelta(days=28)
-fu = ventas[(ventas["fecha"] >= o) & (ventas["fecha"] < fin)]
-p = pronostica(ventas[ventas["fecha"] < o], fu.drop(columns="ventas"))
-print(p[:7].round(0))
-```
-
-::: {.solution exercise="c4_pronostico"}
-```python
-import numpy as np
-import pandas as pd
-
-def marca_anomalos(d):
-    out = []
-    for s, g in d.groupby("supermercado"):
-        g = g.sort_values("fecha")
-        v = g["ventas"].to_numpy().astype(float)
-        base = v / np.where(g["promocion"].to_numpy() == 1, 1.35, 1.0)
-        fer = g["fecha"].isin(FERIADOS).to_numpy()
-        for i in range(len(g)):
-            if fer[i]:
-                continue
-            if v[i] == 0:
-                out.append(g.index[i]); continue
-            vec = [base[j] for j in range(i - 21, i + 22, 7)
-                   if 0 <= j < len(g) and j != i and not fer[j] and v[j] > 0]
-            if base[i] > 1.6 * np.median(vec):
-                out.append(g.index[i])
-    return out
-
-CAMBIO = pd.Timestamp("2024-06-01")
-AFECTADOS = {3, 6}
-
-def atributos(f, promo, s):
-    """Tendencia, estacionalidad anual, promocion, dia de la semana y el
-    cambio de nivel de los supermercados afectados, en escala logaritmica."""
-    f = pd.DatetimeIndex(f)
-    doy = f.dayofyear.to_numpy()
-    return np.column_stack(
-        [np.ones(len(f)), (f - pd.Timestamp("2022-01-01")).days.to_numpy() / 365.0,
-         np.sin(2 * np.pi * doy / 365.25), np.cos(2 * np.pi * doy / 365.25), promo]
-        + [(f.dayofweek == k).astype(float) for k in range(1, 7)]
-        + [(f >= CAMBIO).astype(float) * (s in AFECTADOS)])
-
-def pronostica(historia, futuro):
-    malos = set(marca_anomalos(historia))
-    out = pd.Series(0.0, index=futuro.index)
-    for s, g in historia.groupby("supermercado"):
-        g = g[~g.index.isin(malos) & ~g["fecha"].isin(FERIADOS)]
-        b = np.linalg.lstsq(atributos(g["fecha"], g["promocion"].to_numpy(), s),
-                            np.log(g["ventas"].to_numpy()), rcond=None)[0]
-        fu = futuro[futuro["supermercado"] == s]
-        p = np.exp(atributos(fu["fecha"], fu["promocion"].to_numpy(), s) @ b)
-        p[fu["fecha"].isin(FERIADOS).to_numpy()] = 0.0
-        out.loc[fu.index] = p
-    return out.to_numpy()
-
-o = pd.Timestamp("2024-09-01")
-fin = o + pd.Timedelta(days=28)
-fu = ventas[(ventas["fecha"] >= o) & (ventas["fecha"] < fin)]
-p = pronostica(ventas[ventas["fecha"] < o], fu.drop(columns="ventas"))
-print(p[:7].round(0))
-```
-:::
-
-```{pyodide}
-#| exercise: c4_pronostico
-#| check: true
-import numpy as _np, pandas as _pd
-try:
-    _, _malos, _ = genera_ventas()
-    _malos = set(_malos)
-    _num = {"todos": 0.0, "af": 0.0, "ing": 0.0}; _den = {"todos": 0.0, "af": 0.0}
-    for _o in ("2024-09-01", "2024-10-01", "2024-11-01"):
-        _o = _pd.Timestamp(_o)
-        _h = ventas[ventas["fecha"] < _o]
-        _fu = ventas[(ventas["fecha"] >= _o) & (ventas["fecha"] < _o + _pd.Timedelta(days=28))]
-        _p = _np.asarray(pronostica(_h.copy(), _fu.drop(columns="ventas").copy()), float)
-        _y = _fu["ventas"].to_numpy().astype(float)
-        _ok_f = ~_fu.index.isin(list(_malos)) & ~_fu["fecha"].isin(FERIADOS).to_numpy()
-        _af = _fu["supermercado"].isin([3, 6]).to_numpy()
-        _ult = _h[_h["fecha"] > _h["fecha"].max() - _pd.Timedelta(days=7)]
-        _mp = {(r.supermercado, r.fecha.dayofweek): r.ventas for r in _ult.itertuples()}
-        _ing = _np.array([_mp[(r.supermercado, r.fecha.dayofweek)] for r in _fu.itertuples()], float)
-        _num["todos"] += _np.abs(_y - _p)[_ok_f].sum(); _den["todos"] += _y[_ok_f].sum()
-        _num["af"] += _np.abs(_y - _p)[_ok_f & _af].sum(); _den["af"] += _y[_ok_f & _af].sum()
-        _num["ing"] += _np.abs(_y - _ing)[_ok_f].sum()
-    _w, _wa, _wi = _num["todos"] / _den["todos"], _num["af"] / _den["af"], _num["ing"] / _den["todos"]
-    _ok = _w <= 0.08 and _wa <= 0.09
-    _m = "error ponderado %.4f en total y %.4f en los supermercados 3 y 6; el pedido actual, con la semana anterior, tiene %.4f." % (_w, _wa, _wi)
-except Exception as _e:
-    _ok, _m = False, "error al ejecutar: %s" % _e
-feedback = {"correct": _ok, "message": ("Correcto: " if _ok else "Todavía no: ") + _m}
-feedback
-```
-
-### Pregunta 4, Propuesta al área de compras
-
-Redactar una propuesta de entre 250 y 400 palabras para el área de compras. Debe decir cuánto mejora el pronóstico al método actual, con qué frecuencia se reentrena y con qué datos, qué se vigila cada mes para saber que sigue funcionando, qué se hace con los días anómalos y cómo se responde al gerente de operaciones sobre los dos supermercados que venden menos.
+- `anomalos.csv`, con las columnas `fecha` y `supermercado` de las filas marcadas como anómalas.
+- `pronosticos.csv`, con las columnas `origen`, `fecha`, `supermercado` y `prediccion` para los tres orígenes de la pregunta 4.
+- Una propuesta de entre 250 y 400 palabras para el área de compras que diga cuánto mejora el pronóstico al método actual, con qué frecuencia se reentrena y con qué datos, qué se vigila cada mes para saber que sigue funcionando, qué se hace con los días anómalos y cómo se responde al gerente de operaciones sobre los dos supermercados que venden menos.
+- El cuaderno o los scripts del análisis, ejecutables de principio a fin.
 
 ## Rúbrica
 
 | Criterio | Completo | Incompleto |
 |---|---|---|
-| Preguntas 1 a 3 | La comprobación automática marca las tres como correctas. | Alguna no se cumple. |
+| Días anómalos | Encuentra al menos 28 de las filas afectadas con no más de 5 marcadas por error. Explica que se excluyen del ajuste y de la evaluación y que un día con el sistema caído no equivale a un día sin demanda. | Los deja en los datos o los elimina sin explicar el criterio. |
+| Cambio de nivel | Identifica los dos supermercados, mide la caída descontando la estacionalidad, la incorpora al modelo y muestra el error de esos dos con y sin ese tratamiento. | Menciona la caída sin tratarla, o reentrena con todos los datos sin comprobar el efecto. |
+| Pronóstico | El error ponderado es de 0,08 o menos en el conjunto y de 0,09 o menos en los dos supermercados afectados. | No supera esos límites o no se compara con el método actual. |
 | Evaluación | Compara con el método actual en los mismos orígenes y con la misma métrica, y explica por qué la evaluación usa orígenes sucesivos y no una partición al azar (ML aplicado 04, Series 07). | Da una sola cifra de error sin comparación, o evalúa con una partición al azar. |
-| Días anómalos | Explica que se excluyen del ajuste y de la evaluación, cómo se detectaron y que un día con el sistema caído no es un día sin demanda. | Los deja en los datos o los elimina sin explicar el criterio. |
-| Cambio de nivel | Mide la caída de los supermercados 3 y 6, la incorpora al modelo con una variable de cambio de nivel o con una ventana posterior al cambio, y muestra el error de esos dos con y sin ese tratamiento. | Menciona la caída sin tratarla, o reentrena con todos los datos sin comprobar el efecto. |
 | Vigilancia | Propone medir cada mes el error por supermercado con su intervalo y revisar los que se alejen, con las ideas de ML aplicado 11 y 12. | No propone vigilancia, o solo vigila la distribución de las ventas. |
+
+::: {.callout-note collapse="true" title="Nota de enseñanza (abrir después de entregar)"}
+**Días anómalos.** Hay 30 filas afectadas: 15 con ventas en cero fuera de los feriados y 15 con las ventas duplicadas. Los ceros se reconocen directamente. Las duplicadas se separan comparando cada día, descontado el efecto de la promoción, con la mediana del mismo día de la semana en las tres semanas anteriores y siguientes: un cociente mayor que 1,6 las marca. Ese criterio encuentra las 30 sin falsos positivos.
+
+**Cambio de nivel.** El cociente entre la mediana de junio a diciembre y la de enero a mayo, dividido por el mismo cociente del año anterior, descuenta la estacionalidad. Vale 0,734 en el supermercado 3 y 0,758 en el 6; en los otros seis está entre 0,968 y 1,020. Los dos venden alrededor de un 25 % menos desde junio de 2024.
+
+**Pronóstico de referencia.** Una regresión del logaritmo de las ventas por supermercado, con tendencia, un término anual de seno y coseno, la promoción, el día de la semana y una variable de cambio de nivel desde junio de 2024 en los supermercados 3 y 6, ajustada sin los feriados ni los días anómalos. Su error ponderado es 0,066 en el conjunto y 0,068 en los supermercados 3 y 6. El método actual tiene 0,145 y 0,156.
+
+**La trampa.** Sin la variable de cambio de nivel, el modelo promedia el nivel anterior y el posterior: el error en los supermercados 3 y 6 sube a 0,164, peor que el método actual, aunque el del conjunto (0,088) siga pareciendo aceptable. Mirar solo el error agregado esconde el problema del gerente.
+
+**Errores frecuentes.** Tratar los ceros del sistema caído como demanda nula; evaluar con una partición al azar de los días; ajustar con datos posteriores al origen; informar solo el error del conjunto.
+:::
 
 <!-- verificacion
 import numpy as np
-d, malos, comp = genera_ventas()
-assert len(malos) == 30 and comp == {3, 6}
-v = d[(d["ventas"] > 0) & ~d["fecha"].isin(FERIADOS) & ~d.index.isin(malos)].copy()
-v["h2"] = v["fecha"].dt.month >= 6
-def cociente(anio):
-    m = v[v["fecha"].dt.year == anio].groupby(["supermercado", "h2"])["ventas"].median().unstack()
+import pandas as pd
+import caso_4
+
+d = pd.read_csv("datos/demanda_ventas.csv", parse_dates=["fecha"])
+v = caso_4.genera()["demanda_ventas"]
+malos = set(np.where(v["_anomalo"])[0])
+assert set(d.supermercado[v["_competidor"]].unique()) == {3, 6}
+FER = pd.to_datetime(["2022-01-01", "2022-12-25", "2023-01-01", "2023-12-25",
+                      "2024-01-01", "2024-12-25"])
+
+def marca(d):
+    out = []
+    for s, g in d.groupby("supermercado"):
+        g = g.sort_values("fecha")
+        x = g.ventas.to_numpy().astype(float)
+        base = x / np.where(g.promocion.to_numpy() == 1, 1.35, 1.0)
+        fer = g.fecha.isin(FER).to_numpy()
+        for i in range(len(g)):
+            if fer[i]:
+                continue
+            if x[i] == 0:
+                out.append(g.index[i]); continue
+            vec = [base[j] for j in range(i - 21, i + 22, 7)
+                   if 0 <= j < len(g) and j != i and not fer[j] and x[j] > 0]
+            if base[i] > 1.6 * np.median(vec):
+                out.append(g.index[i])
+    return out
+
+a = set(marca(d))
+assert len(a & malos) >= 28 and len(a - malos) <= 5
+print("anomalos %d ceros %d dobles %d encontrados %d falsos %d criterio 1.6" % (len(malos),
+      sum(d.ventas[i] == 0 for i in malos), sum(d.ventas[i] > 0 for i in malos),
+      len(a & malos), len(a - malos)))
+
+w = d[(d.ventas > 0) & ~d.fecha.isin(FER) & ~d.index.isin(malos)].copy()
+w["h2"] = w.fecha.dt.month >= 6
+def coc(anio):
+    m = w[w.fecha.dt.year == anio].groupby(["supermercado", "h2"]).ventas.median().unstack()
     return m[True] / m[False]
-c = cociente(2024) / cociente(2023)
-assert set(c[c < 0.85].index) == {3, 6}
-assert c.drop(index=[3, 6]).min() > 0.9
-print("cambio de nivel entre semestres, 2024 frente a 2023: %s" % {int(k): round(float(x), 3) for k, x in c.items()})
+c = coc(2024) / coc(2023)
+assert set(c[c < 0.85].index) == {3, 6} and c.drop(index=[3, 6]).min() > 0.9
+print("cociente %.3f %.3f resto %.3f %.3f" % (c[3], c[6], c.drop(index=[3, 6]).min(),
+      c.drop(index=[3, 6]).max()))
+
+CAMBIO = pd.Timestamp("2024-06-01")
+def atr(f, promo, s, nivel):
+    f = pd.DatetimeIndex(f)
+    doy = f.dayofyear.to_numpy()
+    cols = ([np.ones(len(f)), (f - pd.Timestamp("2022-01-01")).days.to_numpy() / 365.0,
+             np.sin(2 * np.pi * doy / 365.25), np.cos(2 * np.pi * doy / 365.25), promo]
+            + [(f.dayofweek == k).astype(float) for k in range(1, 7)])
+    if nivel:
+        cols.append((f >= CAMBIO).astype(float) * (s in {3, 6}))
+    return np.column_stack(cols)
+
+def pron(h, fu, nivel=True):
+    mal = set(marca(h))
+    out = pd.Series(0.0, index=fu.index)
+    for s, g in h.groupby("supermercado"):
+        g = g[~g.index.isin(mal) & ~g.fecha.isin(FER)]
+        b = np.linalg.lstsq(atr(g.fecha, g.promocion.to_numpy(), s, nivel),
+                            np.log(g.ventas.to_numpy()), rcond=None)[0]
+        f = fu[fu.supermercado == s]
+        p = np.exp(atr(f.fecha, f.promocion.to_numpy(), s, nivel) @ b)
+        p[f.fecha.isin(FER).to_numpy()] = 0
+        out.loc[f.index] = p
+    return out.to_numpy()
+
+num = dict.fromkeys(("ref", "ref_af", "act", "act_af", "sin", "sin_af"), 0.0)
+den = {"t": 0.0, "af": 0.0}
+for o in ("2024-09-01", "2024-10-01", "2024-11-01"):
+    o = pd.Timestamp(o)
+    h = d[d.fecha < o]
+    fu = d[(d.fecha >= o) & (d.fecha < o + pd.Timedelta(days=28))]
+    y = fu.ventas.to_numpy().astype(float)
+    ok = ~fu.index.isin(list(malos)) & ~fu.fecha.isin(FER).to_numpy()
+    af = ok & fu.supermercado.isin([3, 6]).to_numpy()
+    ult = h[h.fecha > h.fecha.max() - pd.Timedelta(days=7)]
+    mp = {(r.supermercado, r.fecha.dayofweek): r.ventas for r in ult.itertuples()}
+    act = np.array([mp[(r.supermercado, r.fecha.dayofweek)] for r in fu.itertuples()], float)
+    for k, p in (("ref", pron(h, fu)), ("act", act), ("sin", pron(h, fu, False))):
+        num[k] += np.abs(y - p)[ok].sum()
+        num[k + "_af"] += np.abs(y - p)[af].sum()
+    den["t"] += y[ok].sum()
+    den["af"] += y[af].sum()
+e = {k: num[k] / den["af" if k.endswith("_af") else "t"] for k in num}
+assert e["ref"] <= 0.08 and e["ref_af"] <= 0.09 and e["sin_af"] > e["act_af"]
+print("error ref %.3f %.3f actual %.3f %.3f sin nivel %.3f %.3f" % (e["ref"], e["ref_af"],
+      e["act"], e["act_af"], e["sin"], e["sin_af"]))
 -->

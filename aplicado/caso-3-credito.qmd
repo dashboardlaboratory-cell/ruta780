@@ -2,6 +2,8 @@
 title: "Caso 3. Riesgo de impago en una cartera de crédito"
 subtitle: "ML aplicado · Caso 3 · después de la Lección 11"
 engine: markdown
+resources:
+  - datos/credito_prestamos.csv
 ---
 
 ::: {.meta-leccion data-leccion="aplicado/caso-3-credito"}
@@ -10,7 +12,7 @@ engine: markdown
 [**Usa** ML aplicado 01 a 11 · Atributos 13]{.item}
 :::
 
-Este caso se resuelve con lo visto hasta la Lección 11 del módulo y con Atributos 13. Corresponde a un bloque de trabajo de unas cuatro horas. La situación y los datos son inventados.
+Este caso se resuelve con lo visto hasta la Lección 11 del módulo y con Atributos 13. Se trabaja fuera de la página, en el entorno que se prefiera, y corresponde a un bloque de unas cuatro horas. La situación y los datos son inventados.
 
 ## Situación
 
@@ -22,7 +24,7 @@ El responsable de riesgos probó un primer modelo y encontró que con los datos 
 
 ## Los datos
 
-La página carga al abrirse la tabla `prestamos`, con los 6000 préstamos concedidos en los últimos tres años y su resultado.
+Un archivo, [`credito_prestamos.csv`](datos/credito_prestamos.csv), con los 6000 préstamos concedidos en los últimos tres años y su resultado, en orden de concesión. Los primeros 4500 se usan para ajustar y los 1500 restantes, los más recientes, para evaluar.
 
 | Columna | Descripción |
 |---|---|
@@ -38,344 +40,114 @@ La página carga al abrirse la tabla `prestamos`, con los 6000 préstamos conced
 | `vivienda` | `propia`, `alquilada` o `familiar` |
 | `impago` | 1 si hubo un atraso de más de 90 días en los doce primeros meses, 0 si no |
 
-```{pyodide}
-#| include: false
-# Genera los datos del caso. Va oculta: el mecanismo es lo que el caso pide descubrir.
-import numpy as np
-import pandas as pd
-
-def genera_prestamos(semilla=932, n=6000):
-    """Prestamos personales concedidos y su resultado a doce meses."""
-    rng = np.random.default_rng(semilla)
-    edad = np.clip(rng.normal(38, 11, n), 19, 75).round()
-    ingreso = np.exp(rng.normal(np.log(1500), 0.5, n)).round(-1)
-    antig = np.clip(rng.gamma(2.0, 2.5, n) * (edad - 18) / 20, 0, 40).round(1)
-    monto = (np.exp(rng.normal(np.log(4000), 0.6, n)) / 100).round() * 100
-    plazo = rng.choice([12, 24, 36, 48], n, p=[0.2, 0.35, 0.3, 0.15])
-    cuota = monto * (0.015 + 1 / plazo)
-    deuda = np.exp(rng.normal(np.log(2500), 0.9, n)).round(-1)
-    consultas = rng.poisson(1.2, n)
-    atrasos = rng.poisson(0.35, n)
-    vivienda = rng.choice(["propia", "alquilada", "familiar"], n, p=[0.35, 0.45, 0.2])
-    z = (-3.3 + 1.6 * np.log(cuota / ingreso + 0.05) / 1.0 + 0.5 * np.log1p(deuda / ingreso)
-         + 0.25 * consultas + 0.55 * atrasos - 0.03 * (antig - 5)
-         + np.where(vivienda == "propia", -0.4, 0.0) - 0.012 * (edad - 38) + 2.0)
-    p = 1 / (1 + np.exp(-z))
-    impago = (rng.random(n) < p).astype(int)
-    t = pd.DataFrame({"id": np.arange(1, n + 1), "edad": edad, "ingreso_mensual": ingreso,
-                      "antiguedad_empleo": antig, "monto": monto, "plazo_meses": plazo,
-                      "deuda_total": deuda, "consultas_6m": consultas, "atrasos_previos": atrasos,
-                      "vivienda": vivienda, "impago": impago})
-    # 1. el ingreso no declarado falta mas entre quienes luego no pagan
-    falta = rng.random(n) < np.where(impago == 1, 0.30, 0.08)
-    t.loc[falta, "ingreso_mensual"] = np.nan
-    # 2. un lote de deudas se cargo en milesimas de la moneda
-    malas = rng.choice(n, 45, replace=False)
-    t.loc[malas, "deuda_total"] = t.loc[malas, "deuda_total"] * 1000
-    t["_p"] = p
-    return t, malas
-
-
-prestamos, _ = genera_prestamos()
-prestamos = prestamos.drop(columns="_p")
-```
-
-```{pyodide}
-print(prestamos.shape)
-print(prestamos.head(6).to_string())
-```
-
 ## Preguntas
 
-Las preguntas 1 a 3 tienen comprobación automática. La 4 y la 5 se evalúan con la rúbrica.
+1. Revisar la calidad de los datos. Identificar los préstamos cuya deuda total es un error de registro y decir cuántos son. Comparar la proporción de impagos entre los préstamos sin ingreso declarado y los que sí lo declararon.
+2. Estimar la probabilidad de impago de cada préstamo, ajustando con los primeros 4500 y evaluando con los 1500 restantes. Informar el AUC, la puntuación de Brier y la media de las probabilidades frente a la proporción real de impagos.
+3. Deducir de los números de la cooperativa la probabilidad de impago por debajo de la cual conviene aprobar, y calcular la ganancia de ese criterio en los 1500 préstamos de prueba frente a aprobarlos todos.
+4. Evaluar la propuesta del responsable de riesgos: ajustar el mismo modelo con las clases equilibradas y medir su ganancia con el mismo criterio.
+5. Elegir tres solicitudes de la muestra de prueba que el criterio rechaza y dar, para cada una, las tres razones principales del rechazo, calculadas como la contribución de cada atributo a su probabilidad de impago. Discutir si el ingreso no declarado puede comunicarse como razón de rechazo.
 
-```{pyodide}
-#| exercise: [c3_revision, c3_modelo, c3_criterio]
-#| setup: true
-import numpy as np
-import pandas as pd
+## Entregables
 
-def genera_prestamos(semilla=932, n=6000):
-    """Prestamos personales concedidos y su resultado a doce meses."""
-    rng = np.random.default_rng(semilla)
-    edad = np.clip(rng.normal(38, 11, n), 19, 75).round()
-    ingreso = np.exp(rng.normal(np.log(1500), 0.5, n)).round(-1)
-    antig = np.clip(rng.gamma(2.0, 2.5, n) * (edad - 18) / 20, 0, 40).round(1)
-    monto = (np.exp(rng.normal(np.log(4000), 0.6, n)) / 100).round() * 100
-    plazo = rng.choice([12, 24, 36, 48], n, p=[0.2, 0.35, 0.3, 0.15])
-    cuota = monto * (0.015 + 1 / plazo)
-    deuda = np.exp(rng.normal(np.log(2500), 0.9, n)).round(-1)
-    consultas = rng.poisson(1.2, n)
-    atrasos = rng.poisson(0.35, n)
-    vivienda = rng.choice(["propia", "alquilada", "familiar"], n, p=[0.35, 0.45, 0.2])
-    z = (-3.3 + 1.6 * np.log(cuota / ingreso + 0.05) / 1.0 + 0.5 * np.log1p(deuda / ingreso)
-         + 0.25 * consultas + 0.55 * atrasos - 0.03 * (antig - 5)
-         + np.where(vivienda == "propia", -0.4, 0.0) - 0.012 * (edad - 38) + 2.0)
-    p = 1 / (1 + np.exp(-z))
-    impago = (rng.random(n) < p).astype(int)
-    t = pd.DataFrame({"id": np.arange(1, n + 1), "edad": edad, "ingreso_mensual": ingreso,
-                      "antiguedad_empleo": antig, "monto": monto, "plazo_meses": plazo,
-                      "deuda_total": deuda, "consultas_6m": consultas, "atrasos_previos": atrasos,
-                      "vivienda": vivienda, "impago": impago})
-    # 1. el ingreso no declarado falta mas entre quienes luego no pagan
-    falta = rng.random(n) < np.where(impago == 1, 0.30, 0.08)
-    t.loc[falta, "ingreso_mensual"] = np.nan
-    # 2. un lote de deudas se cargo en milesimas de la moneda
-    malas = rng.choice(n, 45, replace=False)
-    t.loc[malas, "deuda_total"] = t.loc[malas, "deuda_total"] * 1000
-    t["_p"] = p
-    return t, malas
-
-
-prestamos, _ = genera_prestamos()
-prestamos = prestamos.drop(columns="_p")
-```
-
-
-### Pregunta 1, Revisión de los datos
-
-Asignar a `n_deuda_erronea` el número de préstamos cuya deuda total es un error de registro, y a `impago_sin_ingreso` y `impago_con_ingreso` la proporción de impagos entre los préstamos sin ingreso declarado y entre los que sí lo declararon. La celda imprime las tres cifras.
-
-```{pyodide}
-#| exercise: c3_revision
-n_deuda_erronea = ______
-impago_sin_ingreso = ______
-impago_con_ingreso = ______
-
-print(n_deuda_erronea, round(impago_sin_ingreso, 3),
-      round(impago_con_ingreso, 3))
-```
-
-::: {.solution exercise="c3_revision"}
-```python
-import numpy as np
-
-# en escala logaritmica, 45 deudas quedan tres decadas por encima del resto
-mediana = prestamos["deuda_total"].median()
-n_deuda_erronea = int((prestamos["deuda_total"] > 100 * mediana).sum())
-sin = prestamos["ingreso_mensual"].isna()
-impago_sin_ingreso = float(prestamos.loc[sin, "impago"].mean())
-impago_con_ingreso = float(prestamos.loc[~sin, "impago"].mean())
-
-print(n_deuda_erronea, round(impago_sin_ingreso, 3),
-      round(impago_con_ingreso, 3))
-```
-:::
-
-```{pyodide}
-#| exercise: c3_revision
-#| check: true
-try:
-    _sin = prestamos["ingreso_mensual"].isna()
-    _a = float(prestamos.loc[_sin, "impago"].mean()); _b = float(prestamos.loc[~_sin, "impago"].mean())
-    _ok = (int(n_deuda_erronea) == 45 and abs(float(impago_sin_ingreso) - _a) < 5e-4
-           and abs(float(impago_con_ingreso) - _b) < 5e-4)
-    _m = ("Correcto: 45 deudas mal registradas; sin ingreso declarado, el impago es %.3f frente a %.3f." % (_a, _b)) if _ok else \
-         "Alguna cifra no coincide. Revisar la escala de las deudas más grandes y las proporciones de cada grupo."
-except Exception as _e:
-    _ok, _m = False, str(_e)
-feedback = {"correct": _ok, "message": _m}
-feedback
-```
-
-### Pregunta 2, Probabilidad de impago
-
-Escribir la función `ajusta_y_predice(entreno, prueba)`, que recibe dos tablas con las columnas de `prestamos` y devuelve para cada fila de `prueba` su probabilidad de impago. La comprobación la entrena con los primeros 4500 préstamos y la evalúa con los 1500 restantes. Exige un AUC de al menos 0,78 y probabilidades que sirvan como probabilidades: su media no puede alejarse más de 0,015 de la proporción real de impagos, y la puntuación de Brier no puede pasar de 0,072.
-
-```{pyodide}
-#| exercise: c3_modelo
-def ajusta_y_predice(entreno, prueba):
-    ______
-
-p = ajusta_y_predice(prestamos.iloc[:4500], prestamos.iloc[4500:])
-real = prestamos["impago"].iloc[4500:].mean()
-print(round(float(p.mean()), 4), round(float(real), 4))
-```
-
-::: {.solution exercise="c3_modelo"}
-```python
-import numpy as np
-import pandas as pd
-from sklearn.linear_model import LogisticRegression
-
-def atributos(d, ref):
-    """Corrige la escala de la deuda, imputa el ingreso con un indicador y
-    construye cocientes en escala logaritmica. Los parametros salen de ref."""
-    d = d.copy()
-    med = ref["deuda_total"].median()
-    d.loc[d["deuda_total"] > 100 * med, "deuda_total"] /= 1000
-    mi = np.nanmedian(ref["ingreso_mensual"])
-    ing = d["ingreso_mensual"].fillna(mi)
-    cuota = d["monto"] * (0.015 + 1 / d["plazo_meses"])
-    return pd.DataFrame({
-        "sin_ingreso": d["ingreso_mensual"].isna().astype(float),
-        "log_ingreso": np.log(ing),
-        "log_cuota_ingreso": np.log(cuota / ing + 0.05),
-        "log_deuda_ingreso": np.log1p(d["deuda_total"] / ing),
-        "consultas_6m": d["consultas_6m"],
-        "atrasos_previos": d["atrasos_previos"],
-        "antiguedad_empleo": d["antiguedad_empleo"],
-        "edad": d["edad"],
-        "propia": (d["vivienda"] == "propia").astype(float),
-        "familiar": (d["vivienda"] == "familiar").astype(float)})
-
-def ajusta_y_predice(entreno, prueba):
-    A, B = atributos(entreno, entreno), atributos(prueba, entreno)
-    mu, sd = A.mean(), A.std()
-    # sin reequilibrar las clases: las probabilidades quedan calibradas
-    m = LogisticRegression(max_iter=5000, C=10).fit((A - mu) / sd, entreno["impago"])
-    return m.predict_proba((B - mu) / sd)[:, 1]
-
-p = ajusta_y_predice(prestamos.iloc[:4500], prestamos.iloc[4500:])
-real = prestamos["impago"].iloc[4500:].mean()
-print(round(float(p.mean()), 4), round(float(real), 4))
-```
-:::
-
-```{pyodide}
-#| exercise: c3_modelo
-#| check: true
-import numpy as _np
-def _auc(y, s):
-    o = _np.argsort(s, kind="stable"); r = _np.empty(len(s)); r[o] = _np.arange(1.0, len(s) + 1.0)
-    n1 = y.sum(); n0 = len(y) - n1
-    return (r[y == 1].sum() - n1 * (n1 + 1.0) / 2.0) / (n1 * n0)
-try:
-    _p = _np.asarray(ajusta_y_predice(prestamos.iloc[:4500], prestamos.iloc[4500:]), float)
-    _y = prestamos["impago"].iloc[4500:].to_numpy()
-    _a, _b, _d = _auc(_y, _p), float(_np.mean((_p - _y) ** 2)), float(_p.mean() - _y.mean())
-    _ok = len(_p) == 1500 and _a >= 0.78 and abs(_d) <= 0.015 and _b <= 0.072
-    _m = "AUC %.4f, Brier %.5f, media predicha %.4f frente a %.4f real." % (_a, _b, _p.mean(), _y.mean())
-    if not _ok and abs(_d) > 0.015:
-        _m += " Las probabilidades no están calibradas."
-except Exception as _e:
-    _ok, _m = False, "error al ejecutar: %s" % _e
-feedback = {"correct": _ok, "message": ("Correcto. " if _ok else "Todavía no. ") + _m}
-feedback
-```
-
-### Pregunta 3, Criterio de aprobación
-
-Asignar a `umbral` la probabilidad de impago por debajo de la cual conviene aprobar un préstamo con los números de la cooperativa. La comprobación aplica el criterio a las probabilidades de la pregunta 2 en los 1500 préstamos de prueba y compara la ganancia con la de aprobarlos todos. Para ello, la celda tiene que definir de nuevo `ajusta_y_predice`.
-
-```{pyodide}
-#| exercise: c3_criterio
-def ajusta_y_predice(entreno, prueba):
-    ______
-
-umbral = ______
-
-print(umbral)
-```
-
-::: {.solution exercise="c3_criterio"}
-```python
-import numpy as np
-import pandas as pd
-from sklearn.linear_model import LogisticRegression
-
-def atributos(d, ref):
-    d = d.copy()
-    med = ref["deuda_total"].median()
-    d.loc[d["deuda_total"] > 100 * med, "deuda_total"] /= 1000
-    mi = np.nanmedian(ref["ingreso_mensual"])
-    ing = d["ingreso_mensual"].fillna(mi)
-    cuota = d["monto"] * (0.015 + 1 / d["plazo_meses"])
-    return pd.DataFrame({
-        "sin_ingreso": d["ingreso_mensual"].isna().astype(float),
-        "log_ingreso": np.log(ing),
-        "log_cuota_ingreso": np.log(cuota / ing + 0.05),
-        "log_deuda_ingreso": np.log1p(d["deuda_total"] / ing),
-        "consultas_6m": d["consultas_6m"],
-        "atrasos_previos": d["atrasos_previos"],
-        "antiguedad_empleo": d["antiguedad_empleo"],
-        "edad": d["edad"],
-        "propia": (d["vivienda"] == "propia").astype(float),
-        "familiar": (d["vivienda"] == "familiar").astype(float)})
-
-def ajusta_y_predice(entreno, prueba):
-    A, B = atributos(entreno, entreno), atributos(prueba, entreno)
-    mu, sd = A.mean(), A.std()
-    m = LogisticRegression(max_iter=5000, C=10).fit((A - mu) / sd, entreno["impago"])
-    return m.predict_proba((B - mu) / sd)[:, 1]
-
-# aprobar si 0.15 (1 - p) > 0.60 p, es decir, p < 0.15 / 0.75
-umbral = 0.15 / (0.15 + 0.60)
-
-print(umbral)
-```
-:::
-
-```{pyodide}
-#| exercise: c3_criterio
-#| check: true
-import numpy as _np
-try:
-    _te = prestamos.iloc[4500:]
-    _p = _np.asarray(ajusta_y_predice(prestamos.iloc[:4500], _te), float)
-    _y = _te["impago"].to_numpy(); _mon = _te["monto"].to_numpy()
-    _res = _np.where(_y == 0, 0.15, -0.60) * _mon
-    _g = float(_np.sum(_np.where(_p < float(umbral), _res, 0.0)))
-    _t = float(_np.sum(_res))
-    _ok = abs(float(umbral) - 0.2) < 1e-9 and _g >= _t + 60000
-    _m = "ganancia con el criterio %.0f frente a %.0f aprobando todos; se aprueba el %.1f %%." % (_g, _t, 100 * _np.mean(_p < float(umbral)))
-    if abs(float(umbral) - 0.2) >= 1e-9:
-        _m = "El umbral no corresponde a una ganancia del 15 % y una pérdida del 60 %. " + _m
-except Exception as _e:
-    _ok, _m = False, "error al ejecutar: %s" % _e
-feedback = {"correct": _ok, "message": ("Correcto: " if _ok else "Todavía no: ") + _m}
-feedback
-```
-
-### Pregunta 4, Razones del rechazo
-
-Con el modelo de la pregunta 2, elegir tres solicitudes de la muestra de prueba que el criterio rechaza y, para cada una, dar las tres razones principales del rechazo, calculadas como la contribución de cada atributo a su probabilidad de impago. Explicar en dos frases por qué el ingreso no declarado aparece entre las razones cuando falta, y si es legítimo comunicarlo así al solicitante.
-
-```{pyodide}
-# razones de tres rechazos
-```
-
-### Pregunta 5, Informe para la gerencia
-
-Redactar un informe de entre 250 y 400 palabras para la gerencia. El informe responde a la propuesta de entrenar con las clases equilibradas, con la ganancia que obtendría ese modelo con el mismo umbral; describe los dos problemas encontrados en los datos y su tratamiento; y propone el criterio de aprobación con su ganancia esperada frente a aprobar todo.
+- `probabilidades.csv`, con las columnas `id` y `probabilidad` para los 1500 préstamos de prueba.
+- Un informe de entre 250 y 400 palabras para la gerencia que responda a la propuesta de entrenar con las clases equilibradas, con la ganancia que obtendría; describa los dos problemas encontrados en los datos y su tratamiento, y proponga el criterio de aprobación con su ganancia esperada frente a aprobar todo.
+- Las razones de los tres rechazos, redactadas como se comunicarían al solicitante.
+- El cuaderno o los scripts del análisis, ejecutables de principio a fin.
 
 ## Rúbrica
 
 | Criterio | Completo | Incompleto |
 |---|---|---|
-| Preguntas 1 a 3 | La comprobación automática marca las tres como correctas. | Alguna no se cumple. |
+| Calidad de los datos | Explica que el ingreso no declarado es informativo y se trata con un indicador, y que 45 deudas estaban registradas en otra escala y se corrigen antes de ajustar, con los parámetros tomados solo de la muestra de ajuste. | Imputa sin indicador, o elimina las filas sin explicar el efecto. |
+| Modelo | El AUC en prueba es de al menos 0,78, la media de las probabilidades no se aleja más de 0,015 de la proporción real y la puntuación de Brier no pasa de 0,072. | Las probabilidades no están calibradas o el modelo no supera la referencia sin corregir los datos. |
 | Clases equilibradas | Mide la ganancia del modelo entrenado con las clases equilibradas y el umbral 0,2, y explica que sus probabilidades están infladas: rechaza a la mayoría y gana menos que aprobar todo. Relaciona el umbral con los costes (ML aplicado 01 y 08). | Rechaza la propuesta sin cifras, o la acepta. |
-| Calidad de los datos | Explica que el ingreso no declarado es informativo (el impago es casi cuatro veces mayor) y que se trata con un indicador, y que 45 deudas estaban registradas en otra escala y se corrigen antes de ajustar. | Imputa sin indicador, o elimina las filas sin explicar el efecto. |
 | Razones del rechazo | Las contribuciones se calculan con un método de la Lección 10 y se expresan en términos que el solicitante entiende. Discute que la ausencia de un dato sea una razón de rechazo. | Da las importancias globales del modelo como razones de cada rechazo. |
-| Informe | Tiene entre 250 y 400 palabras, usa cifras de las preguntas y no usa términos técnicos sin explicarlos. | Falta alguna de las tres partes. |
+| Informe | Tiene entre 250 y 400 palabras, usa cifras del análisis y no usa términos técnicos sin explicarlos. | Falta alguna de las tres partes. |
+
+::: {.callout-note collapse="true" title="Nota de enseñanza (abrir después de entregar)"}
+**Los datos.** Hay 45 deudas registradas en otra escala: quedan tres órdenes de magnitud por encima del resto y se separan con un corte en cien veces la mediana. Hay 606 préstamos sin ingreso declarado, y su proporción de impagos es 0,251, frente a 0,066 entre los que lo declararon. La ausencia es informativa: se imputa y se añade un indicador.
+
+**Modelo de referencia.** Una regresión logística con la deuda corregida, el indicador de ingreso ausente y los cocientes de cuota y deuda sobre ingreso en escala logarítmica da en prueba un AUC de 0,805, una puntuación de Brier de 0,0684 y una probabilidad media de 0,084 frente a 0,086 de impagos reales. Con los datos sin corregir y sin cocientes, el AUC baja a 0,765.
+
+**El criterio.** Aprobar conviene cuando 0,15 (1 − p) supera 0,60 p, es decir, cuando la probabilidad de impago es menor que 0,2. En los 1500 préstamos de prueba el criterio aprueba el 88,3 % y gana 568 755 dólares, frente a 445 710 aprobando todos.
+
+**La trampa.** Con las clases equilibradas el AUC apenas cambia (0,804), pero la probabilidad media sube a 0,355: el modelo ya no estima probabilidades. Con el mismo umbral aprueba solo el 36,3 % y gana 235 050 dólares, menos que aprobar todo. El defecto del primer modelo estaba en el umbral de 0,5, que no corresponde a los costes; el desequilibrio de las clases no necesitaba corrección.
+
+**Errores frecuentes.** Reequilibrar las clases y seguir usando el umbral de los costes; imputar el ingreso con la mediana sin indicador; calcular la mediana de la deuda o del ingreso con toda la tabla; comunicar como razones de un rechazo las importancias globales del modelo.
+:::
 
 <!-- verificacion
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LogisticRegression
-t, malas = genera_prestamos()
+import caso_3
+
+t = pd.read_csv("datos/credito_prestamos.csv")
+v = caso_3.genera()["credito_prestamos"]
+
+def auc(y, sc):
+    o = np.argsort(sc, kind="stable")
+    r = np.empty(len(sc)); r[o] = np.arange(1.0, len(sc) + 1.0)
+    n1 = y.sum(); n0 = len(y) - n1
+    return (r[y == 1].sum() - n1 * (n1 + 1.0) / 2.0) / (n1 * n0)
+
+def logit(X, y, pesos=None, lam=0.1):
+    # regresion logistica por Newton, con pesos por fila y una penalizacion pequena
+    pesos = np.ones(len(y)) if pesos is None else pesos
+    X = np.column_stack([np.ones(len(X)), X])
+    w = np.zeros(X.shape[1])
+    pen = lam * np.r_[0, np.ones(len(w) - 1)]
+    for _ in range(100):
+        p = 1 / (1 + np.exp(-X @ w))
+        H = (X * (pesos * p * (1 - p))[:, None]).T @ X + np.diag(pen)
+        w += np.linalg.solve(H, X.T @ (pesos * (y - p)) - pen * w)
+    return lambda Z: 1 / (1 + np.exp(-np.column_stack([np.ones(len(Z)), Z]) @ w))
+
 # 1. las deudas mal registradas se separan del resto
-med = t["deuda_total"].median()
-assert int((t["deuda_total"] > 100 * med).sum()) == 45
-assert set(np.where(t["deuda_total"] > 100 * med)[0]) == set(malas)
-# 2. el ingreso ausente es informativo
-sin = t["ingreso_mensual"].isna()
-assert t.loc[sin, "impago"].mean() > 3 * t.loc[~sin, "impago"].mean()
-# 3. entrenar con las clases equilibradas gana menos que aprobar todo
-d = t.copy(); d.loc[d["deuda_total"] > 100 * med, "deuda_total"] /= 1000
-mi = np.nanmedian(d["ingreso_mensual"]); ing = d["ingreso_mensual"].fillna(mi)
-Z = pd.DataFrame({"s": sin.astype(float), "i": np.log(ing),
-                  "c": np.log(d["monto"] * (0.015 + 1 / d["plazo_meses"]) / ing + 0.05),
-                  "d": np.log1p(d["deuda_total"] / ing), "q": d["consultas_6m"],
-                  "a": d["atrasos_previos"], "e": d["antiguedad_empleo"], "x": d["edad"],
-                  "p": (d["vivienda"] == "propia").astype(float)})
-Z = ((Z - Z.iloc[:4500].mean()) / Z.iloc[:4500].std()).to_numpy()
-y = t["impago"].to_numpy(); mon = t["monto"].to_numpy()
-res = np.where(y[4500:] == 0, 0.15, -0.60) * mon[4500:]
-g = {}
-for w in (None, "balanced"):
-    m = LogisticRegression(max_iter=5000, C=10, class_weight=w).fit(Z[:4500], y[:4500])
-    g[w] = float(np.sum(np.where(m.predict_proba(Z[4500:])[:, 1] < 0.2, res, 0.0)))
-assert g["balanced"] < res.sum() < g[None]
-print("ganancia: calibrado %.0f, clases equilibradas %.0f, aprobar todo %.0f" % (g[None], g["balanced"], res.sum()))
+mal = t.deuda_total > 100 * t.deuda_total.median()
+assert mal.sum() == 45 and (mal == v._deuda_erronea).all()
+sin = t.ingreso_mensual.isna()
+assert t.impago[sin].mean() > 3 * t.impago[~sin].mean()
+print("erroneas %d sin ingreso %d impago %.3f %.3f" % (mal.sum(), sin.sum(),
+      t.impago[sin].mean(), t.impago[~sin].mean()))
+
+def atr(d, ref):
+    d = d.copy()
+    d.loc[d.deuda_total > 100 * ref.deuda_total.median(), "deuda_total"] /= 1000
+    ing = d.ingreso_mensual.fillna(np.nanmedian(ref.ingreso_mensual))
+    cuota = d.monto * (0.015 + 1 / d.plazo_meses)
+    return pd.DataFrame({"sin": d.ingreso_mensual.isna().astype(float), "li": np.log(ing),
+                         "lc": np.log(cuota / ing + 0.05), "ld": np.log1p(d.deuda_total / ing),
+                         "q": d.consultas_6m, "a": d.atrasos_previos, "e": d.antiguedad_empleo,
+                         "x": d.edad, "pr": (d.vivienda == "propia").astype(float),
+                         "fa": (d.vivienda == "familiar").astype(float)})
+
+tr, te = t.iloc[:4500], t.iloc[4500:]
+A, B = atr(tr, tr), atr(te, tr)
+mu, sd = A.mean(), A.std()
+A, B = ((A - mu) / sd).to_numpy(), ((B - mu) / sd).to_numpy()
+y, yt = tr.impago.to_numpy(), te.impago.to_numpy()
+res = np.where(yt == 0, 0.15, -0.60) * te.monto.to_numpy()
+
+p = logit(A, y)(B)
+assert auc(yt, p) >= 0.78 and abs(p.mean() - yt.mean()) <= 0.015 and np.mean((p - yt) ** 2) <= 0.072
+print("auc %.3f brier %.4f media %.3f real %.3f" % (auc(yt, p), np.mean((p - yt) ** 2), p.mean(), yt.mean()))
+g = np.sum(np.where(p < 0.2, res, 0.0))
+print("margen 0.15 perdida 0.60 umbral por defecto 0.5")
+print("aprueba %.1f ganancia %.0f todo %.0f" % (100 * np.mean(p < 0.2), g, res.sum()))
+
+wb = np.where(y == 1, len(y) / (2 * y.sum()), len(y) / (2 * (len(y) - y.sum())))
+pb = logit(A, y, wb)(B)
+gb = np.sum(np.where(pb < 0.2, res, 0.0))
+assert gb < res.sum() < g
+print("equilibradas auc %.3f media %.3f aprueba %.1f ganancia %.0f" % (auc(yt, pb), pb.mean(),
+      100 * np.mean(pb < 0.2), gb))
+
+cols = ["edad", "antiguedad_empleo", "monto", "plazo_meses", "deuda_total",
+        "consultas_6m", "atrasos_previos"]
+Ar = tr[cols].assign(ing=tr.ingreso_mensual.fillna(tr.ingreso_mensual.median()))
+Br = te[cols].assign(ing=te.ingreso_mensual.fillna(tr.ingreso_mensual.median()))
+pr = logit(((Ar - Ar.mean()) / Ar.std()).to_numpy(), y)(((Br - Ar.mean()) / Ar.std()).to_numpy())
+assert auc(yt, pr) < auc(yt, p) - 0.02
+print("sin corregir auc %.3f" % auc(yt, pr))
 -->

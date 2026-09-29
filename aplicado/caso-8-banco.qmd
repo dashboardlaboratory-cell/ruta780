@@ -4,9 +4,6 @@ subtitle: "ML aplicado · Caso integrador 8"
 engine: markdown
 resources:
   - datos/banco.csv
-pyodide:
-  resources:
-    - datos/banco.csv
 ---
 
 ::: {.meta-leccion data-leccion="aplicado/caso-8-banco"}
@@ -15,7 +12,7 @@ pyodide:
 [**Usa** ML aplicado 01 a 12]{.item}
 :::
 
-Este caso usa datos reales y públicos. Corresponde a un bloque de trabajo de unas cuatro horas.
+Este caso usa datos reales y públicos. Se resuelve fuera de la página, en el entorno de trabajo que se prefiera, y corresponde a un bloque de unas cuatro horas.
 
 ## Situación
 
@@ -25,7 +22,7 @@ Un analista presentó un modelo con un AUC de 0,92 y propone llamar a los client
 
 ## Los datos
 
-La tabla `banco` es la base pública *Bank Marketing* del repositorio de aprendizaje automático de la Universidad de California en Irvine (S. Moro, P. Rita y P. Cortez, 2014, DOI 10.24432/C5K306), con licencia CC BY 4.0. Tiene una fila por llamada, ordenadas por fecha.
+Un archivo, [`banco.csv`](datos/banco.csv), separado por punto y coma, con una fila por llamada. Es la base pública *Bank Marketing* del repositorio de aprendizaje automático de la Universidad de California en Irvine (S. Moro, P. Rita y P. Cortez, 2014, DOI 10.24432/C5K306), con licencia CC BY 4.0. Las filas están ordenadas por fecha, de mayo de 2008 a noviembre de 2010; la tabla no trae el año.
 
 | Columna | Descripción |
 |---|---|
@@ -37,198 +34,74 @@ La tabla `banco` es la base pública *Bank Marketing* del repositorio de aprendi
 | `pdays`, `previous`, `poutcome` | Días desde el último contacto de una campaña anterior (−1 si no lo hubo), contactos anteriores y resultado de la campaña anterior |
 | `y` | `yes` si el cliente contrató el depósito |
 
-```{pyodide}
-import pandas as pd
-
-banco = pd.read_csv("datos/banco.csv", sep=";")
-print(banco.shape)
-print(banco.head(5).to_string())
-```
-
-Para las preguntas 2 y 3, salvo que se indique otra cosa, una fila de cada cinco (las de posición 0, 5, 10…) forma la muestra de prueba y el resto la de entrenamiento.
+Para comparar resultados con la nota de enseñanza, una fila de cada cinco (las de posición 0, 5, 10…) forma la muestra de prueba y el resto la de entrenamiento. La ganancia neta de un criterio se calcula en la muestra de prueba: 100 euros por cada depósito contratado entre los llamados, menos 10 euros por llamada.
 
 ## Preguntas
 
-Las preguntas 1 a 3 tienen comprobación automática. La 4 se evalúa con la rúbrica.
+1. Identificar las columnas, distintas de `y`, cuyo valor no se conoce en el momento de decidir si se llama al cliente, y justificar cada una con su descripción.
+2. Estimar el AUC de un modelo que usa todas las columnas y el de uno que no usa las de la pregunta 1, con la muestra de prueba. Estimar después el AUC del segundo modelo entrenado con el 80 % más antiguo de las filas y evaluado con el 20 % más reciente.
+3. Decidir a qué filas de la muestra de prueba conviene llamar, y calcular la ganancia neta frente a la regla del analista y frente a llamar a todos.
+4. Calcular la proporción de éxito de cada año de la base y relacionarla con la diferencia entre las estimaciones del AUC de la pregunta 2.
 
-```{pyodide}
-#| exercise: [c8_columnas, c8_auc, c8_llamadas]
-#| setup: true
-import pandas as pd
+## Entregables
 
-banco = pd.read_csv("datos/banco.csv", sep=";")
-```
-
-### Pregunta 1, Información que no existe al elegir
-
-Asignar a `columnas_posteriores` la lista de columnas de `banco`, distintas de `y`, cuyo valor no se conoce en el momento de decidir si se llama al cliente.
-
-```{pyodide}
-#| exercise: c8_columnas
-columnas_posteriores = ______
-
-print(sorted(columnas_posteriores))
-```
-
-::: {.solution exercise="c8_columnas"}
-```python
-# la duración se conoce al colgar; el número de contactos de la campaña
-# incluye la llamada que se está decidiendo y las siguientes
-columnas_posteriores = ["duration", "campaign"]
-
-print(sorted(columnas_posteriores))
-```
-:::
-
-```{pyodide}
-#| exercise: c8_columnas
-#| check: true
-try:
-    _c = set(columnas_posteriores)
-    _ok = _c == {"duration", "campaign"}
-    _m = ("Correcto: la duración y el número de contactos de la campaña se conocen después de llamar." if _ok
-          else "Se esperaban dos columnas. Revisar la descripción de cada una: ¿cuáles dependen de la llamada que se está decidiendo?")
-except Exception as _e:
-    _ok, _m = False, str(_e)
-feedback = {"correct": _ok, "message": _m}
-feedback
-```
-
-### Pregunta 2, Tres estimaciones del AUC
-
-Con la muestra de entrenamiento y la de prueba, asignar a `auc_con_llamada` el AUC de un modelo que usa todas las columnas y a `auc_sin_llamada` el de un modelo que no usa las de la pregunta 1. Después, asignar a `auc_temporal` el AUC del segundo modelo entrenado con el 80 % más antiguo de las filas y evaluado con el 20 % más reciente.
-
-```{pyodide}
-#| exercise: c8_auc
-auc_con_llamada = ______
-auc_sin_llamada = ______
-auc_temporal = ______
-
-print(round(auc_con_llamada, 3), round(auc_sin_llamada, 3), round(auc_temporal, 3))
-```
-
-::: {.solution exercise="c8_auc"}
-```python
-import numpy as np
-import pandas as pd
-from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.metrics import roc_auc_score
-
-y = (banco["y"] == "yes").astype(int).to_numpy()
-todas = pd.get_dummies(banco.drop(columns="y"), dtype=float)
-sin = pd.get_dummies(banco.drop(columns=["y", "duration", "campaign"]), dtype=float)
-n = len(banco)
-prueba = np.arange(n) % 5 == 0
-antiguas = np.arange(n) < int(0.8 * n)
-
-def auc(X, entreno, evalua):
-    m = GradientBoostingClassifier(random_state=0).fit(X[entreno], y[entreno])
-    return roc_auc_score(y[evalua], m.predict_proba(X[evalua])[:, 1])
-
-auc_con_llamada = auc(todas, ~prueba, prueba)
-auc_sin_llamada = auc(sin, ~prueba, prueba)
-auc_temporal = auc(sin, antiguas, ~antiguas)
-
-print(round(auc_con_llamada, 3), round(auc_sin_llamada, 3), round(auc_temporal, 3))
-```
-:::
-
-```{pyodide}
-#| exercise: c8_auc
-#| check: true
-try:
-    _a, _b, _c = float(auc_con_llamada), float(auc_sin_llamada), float(auc_temporal)
-    _ok = _a > 0.88 and 0.75 <= _b <= 0.83 and 0.60 <= _c <= 0.75 and _c < _b - 0.04
-    _m = ("%.3f con la duración, %.3f sin ella y %.3f al predecir el período siguiente." % (_a, _b, _c))
-except Exception as _e:
-    _ok, _m = False, str(_e)
-feedback = {"correct": _ok, "message": ("Correcto: " if _ok else "Todavía no: ") + _m}
-feedback
-```
-
-### Pregunta 3, A quién llamar
-
-Escribir la función `llamar(entreno, prueba)`, que devuelve un vector de valores lógicos, verdadero para las filas de `prueba` a las que conviene llamar. La comprobación la aplica a la muestra de prueba y calcula la ganancia neta: 100 euros por cada depósito contratado entre los llamados, menos 10 euros por llamada. Exige una ganancia de al menos 38 000 euros.
-
-```{pyodide}
-#| exercise: c8_llamadas
-def llamar(entreno, prueba):
-    ______
-
-import numpy as np
-fila = np.arange(len(banco))
-sel = llamar(banco[fila % 5 != 0], banco[fila % 5 == 0])
-print(int(sel.sum()), "llamadas")
-```
-
-::: {.solution exercise="c8_llamadas"}
-```python
-import numpy as np
-import pandas as pd
-from sklearn.ensemble import GradientBoostingClassifier
-
-def llamar(entreno, prueba, coste=10, margen=100):
-    """Llamar cuando el margen esperado supera el coste de la llamada."""
-    quitar = ["y", "duration", "campaign"]
-    X = pd.get_dummies(pd.concat([entreno, prueba]).drop(columns=quitar), dtype=float)
-    Xe, Xp = X.iloc[:len(entreno)], X.iloc[len(entreno):]
-    m = GradientBoostingClassifier(random_state=0)
-    m.fit(Xe, (entreno["y"] == "yes").astype(int))
-    return m.predict_proba(Xp)[:, 1] * margen > coste
-
-fila = np.arange(len(banco))
-sel = llamar(banco[fila % 5 != 0], banco[fila % 5 == 0])
-print(int(sel.sum()), "llamadas")
-```
-:::
-
-```{pyodide}
-#| exercise: c8_llamadas
-#| check: true
-import numpy as _np
-try:
-    _f = _np.arange(len(banco))
-    _pr = banco[_f % 5 == 0]
-    _s = _np.asarray(llamar(banco[_f % 5 != 0].copy(), _pr.copy()), bool)
-    _y = (_pr["y"] == "yes").to_numpy().astype(int)
-    _g = float(_np.where(_s, 100 * _y - 10, 0).sum())
-    _todos = float((100 * _y - 10).sum())
-    _ok = len(_s) == len(_y) and _g >= 38000
-    _m = "%d llamadas, ganancia %.0f euros; llamar a todos daría %.0f." % (_s.sum(), _g, _todos)
-except Exception as _e:
-    _ok, _m = False, "error al ejecutar: %s" % _e
-feedback = {"correct": _ok, "message": ("Correcto: " if _ok else "Todavía no: ") + _m}
-feedback
-```
-
-### Pregunta 4, Informe para la dirección comercial
-
-Redactar un informe de entre 250 y 400 palabras que responda al analista: por qué su AUC de 0,92 no se alcanzará al elegir a quién llamar, por qué el umbral de 0,5 deja fuera clientes rentables, y qué cabe esperar en la campaña siguiente a la vista del AUC temporal. Incluir la proporción de éxito de cada año de la base y una recomendación sobre cada cuánto recalcular el modelo.
+- `llamadas.csv`, con la posición en la base de cada fila de la muestra de prueba a la que se llama.
+- Un informe para la dirección comercial de entre 250 y 400 palabras que responda al analista: por qué su AUC de 0,92 no se alcanzará al elegir a quién llamar, por qué el umbral de 0,5 deja fuera clientes rentables, qué cabe esperar en la campaña siguiente a la vista del AUC temporal, y cada cuánto recalcular el modelo.
+- El cuaderno o los scripts del análisis, ejecutables de principio a fin.
 
 ## Rúbrica
 
 | Criterio | Completo | Incompleto |
 |---|---|---|
-| Preguntas 1 a 3 | La comprobación automática marca las tres como correctas. | Alguna no se cumple. |
 | Columnas posteriores | Explica por qué la duración y el número de contactos no están disponibles al decidir y mide su efecto en el AUC. | Menciona la duración sin medir el efecto, u omite el número de contactos. |
 | Umbral | Relaciona el umbral con el coste y el margen, y compara la ganancia con la regla del 0,5 y con llamar a todos. | Usa el 0,5 o un umbral sin justificación económica. |
-| Cambio en el tiempo | Compara el AUC al azar con el temporal, muestra la proporción de éxito por período y propone recalcular y recalibrar con los datos recientes. | No trata el orden temporal de los datos. |
-| Informe | Tiene entre 250 y 400 palabras y usa cifras de las preguntas. | Falta alguna de las partes. |
+| Cambio en el tiempo | Reconstruye el año a partir del orden de las filas, compara el AUC al azar con el temporal, muestra la proporción de éxito por período y propone recalcular y recalibrar con los datos recientes. | No trata el orden temporal de los datos. |
+| Informe | Tiene entre 250 y 400 palabras y usa cifras del análisis. | Falta alguna de las partes. |
+
+::: {.callout-note collapse="true" title="Nota de enseñanza (abrir después de entregar)"}
+**Columnas posteriores.** `duration` se conoce al colgar, y `campaign` cuenta los contactos de la campaña incluida la llamada que se está decidiendo. Las dos describen la llamada, no al cliente antes de ella.
+
+**Tres AUC.** Con árboles potenciados con los valores por omisión de scikit-learn, el modelo con todas las columnas da un AUC de 0,92 en la muestra de prueba; sin `duration` ni `campaign`, 0,79. Entrenado con el 80 % más antiguo y evaluado con el 20 % más reciente, el AUC baja a 0,69. El 0,92 del analista mide la capacidad de reconocer una llamada exitosa cuando ya ocurrió.
+
+**Umbral.** Con 100 euros de margen y 10 de coste, llamar conviene cuando la probabilidad de contratar supera 0,1. Ese criterio llama a 2548 de las 9043 filas de prueba y gana unos 46 mil euros. La regla del 0,5 llama a 337 y gana unos 17 mil. Llamar a todos gana unos 15 mil.
+
+**Cambio en el tiempo.** El año se reconstruye con el orden de las filas: cada vez que el mes retrocede empieza un año nuevo. La proporción de éxito es del 5,1 % en 2008 (27 729 llamadas), del 17,1 % en 2009 (14 862) y del 51,6 % en 2010 (2620). El 20 % más reciente tiene un 31,6 % de éxito, frente al 6,7 % del 80 % más antiguo. Un modelo entrenado con el pasado ordena peor y subestima la probabilidad de éxito: su probabilidad media en el período reciente queda por debajo del 20 %, frente al 31,6 % observado, lo que cambia el número de llamadas que el umbral de 0,1 aconseja.
+
+**Errores frecuentes.** Usar `duration` o `campaign`; aceptar un AUC calculado con una partición al azar como previsión de la campaña siguiente; fijar el umbral en 0,5; no advertir que la base no trae el año.
+:::
 
 <!-- verificacion
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import roc_auc_score
+
+banco = pd.read_csv("datos/banco.csv", sep=";")
 y = (banco["y"] == "yes").astype(int).to_numpy()
-n = len(banco); pr = np.arange(n) % 5 == 0
+n = len(banco)
+pr = np.arange(n) % 5 == 0
+antiguas = np.arange(n) < int(0.8 * n)
 Xs = pd.get_dummies(banco.drop(columns=["y", "duration", "campaign"]), dtype=float)
 Xd = pd.get_dummies(banco.drop(columns=["y"]), dtype=float)
-ps = GradientBoostingClassifier(random_state=0).fit(Xs[~pr], y[~pr]).predict_proba(Xs[pr])[:, 1]
-pd_ = GradientBoostingClassifier(random_state=0).fit(Xd[~pr], y[~pr]).predict_proba(Xd[pr])[:, 1]
-a_s, a_d = roc_auc_score(y[pr], ps), roc_auc_score(y[pr], pd_)
-assert a_d - a_s > 0.08
+def ajusta(X, e):
+    return GradientBoostingClassifier(random_state=0).fit(X[e], y[e])
+ps = ajusta(Xs, ~pr).predict_proba(Xs[pr])[:, 1]
+pd_ = ajusta(Xd, ~pr).predict_proba(Xd[pr])[:, 1]
+pt = ajusta(Xs, antiguas).predict_proba(Xs[~antiguas])[:, 1]
+a_d, a_s, a_t = roc_auc_score(y[pr], pd_), roc_auc_score(y[pr], ps), roc_auc_score(y[~antiguas], pt)
+assert a_d - a_s > 0.08 and a_t < a_s - 0.04
+print("auc %.2f %.2f %.2f" % (a_d, a_s, a_t))
 g = lambda s: float(np.where(s, 100 * y[pr] - 10, 0).sum())
-assert g(ps * 100 > 10) > g(ps > 0.5) + 20000
-print("AUC %.3f con la duración y %.3f sin ella; ganancia %.0f con el umbral de costes y %.0f con 0,5" % (a_d, a_s, g(ps * 100 > 10), g(ps > 0.5)))
+gc, g5, gt = g(ps * 100 > 10), g(ps > 0.5), g(np.ones(pr.sum(), bool))
+assert gc >= 38000 and gc > g5 + 20000
+print("ganancia %.0f miles llamadas %d; 0,5 %.0f miles llamadas %d; todos %.0f miles de %d"
+      % (gc / 1e3, (ps * 100 > 10).sum(), g5 / 1e3, (ps > 0.5).sum(), gt / 1e3, pr.sum()))
+meses = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+m = banco["month"].map({k: i for i, k in enumerate(meses)}).to_numpy()
+anio = 2008 + np.concatenate([[0], np.cumsum(np.diff(m) < 0)])
+for a in (2008, 2009, 2010):
+    print("anio %d filas %d exito %.1f" % (a, (anio == a).sum(), 100 * y[anio == a].mean()))
+print("exito prueba temporal %.1f entrenamiento %.1f" % (100 * y[~antiguas].mean(), 100 * y[antiguas].mean()))
+assert pt.mean() < 0.20 < y[~antiguas].mean()
+print("probabilidad media predicha en el periodo reciente < 20; umbral %.1f" % (10 / 100))
 -->
