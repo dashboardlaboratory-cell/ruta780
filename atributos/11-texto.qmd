@@ -1,0 +1,619 @@
+---
+title: "Texto: bolsa de palabras, n-gramas y hashing"
+subtitle: "Feature Engineering · Lección 11"
+nivel: L3
+modulo: atributos
+fase: F2
+prereqs: [atributos/08-categoricas-ficticias, estadistica/17-p-hacking, ml/03-regresion-logistica]
+siguientes: []
+libro: "FES §5.6 Creating Features from Text Data · §5.2 Encoding Predictors with Many Categories"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="atributos/11-texto"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F2]{.item}
+[**Libro** FES 5]{.item}
+[**Prereqs** [Categóricas I](08-categoricas-ficticias.qmd) · [P-hacking](../estadistica/17-p-hacking.qmd) · [Regresión logística](../ml/03-regresion-logistica.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Construir la bolsa de palabras de un conjunto de documentos y acotar su fracción de entradas no nulas. En la celda se miden 0,0155 frente a la cota 0,0198.
+2. Seleccionar palabras clave con una prueba por término y controlar los falsos descubrimientos. Entre 249 términos, la regla $p<0{,}05$ elige 39, de los que 19 no tienen relación con la clase; el procedimiento de Benjamini-Hochberg elige 23, de los que 3 no la tienen.
+3. Demostrar que la bolsa de palabras pierde el orden y medir lo que recuperan los bigramas: el AUC pasa de 0,5071 con palabras sueltas a 0,9380 con palabras y bigramas.
+4. Calcular la frecuencia inversa de documento y explicar por qué mide la rareza de un término y no su relación con la variable objetivo.
+5. Calcular la fracción esperada de términos que comparten cubo en el hashing y medir su efecto: el AUC vale 0,7325 con 16 cubos y 0,9333 con 1024.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Atributos 02**: la fuga por selección, que aparece si las palabras clave se eligen con todos los documentos antes de la validación.
+- **Atributos 08**: el hashing de atributos con $B$ cubos, aplicado allí a los niveles de una categórica.
+- **Estadística 17**: la tasa de falsos descubrimientos y el procedimiento de Benjamini-Hochberg.
+- **Machine Learning 3**: la regresión logística ajustada por Newton-Raphson y el AUC.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Atributos 12**: un bigrama es una interacción entre dos palabras consecutivas, y el número de interacciones crece del mismo modo.
+- **Atributos 15**: la selección de palabras clave por su valor $p$ es un filtro, y comparte sus riesgos.
+- **Atributos 16**: el pipeline completo, donde el vocabulario y la selección se ajustan dentro de cada pliegue.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $N$ | ene | Número de documentos |
+| $V$ | uve | Número de términos del vocabulario |
+| $L_i$ | ele i | Número de palabras del documento $i$ |
+| $x_{iw}$ | equis i uve doble | Veces que el término $w$ aparece en el documento $i$ |
+| $\mathrm{df}(w)$ | de efe de uve doble | Número de documentos que contienen el término $w$ |
+| $m$ | eme | Número de términos sometidos a prueba |
+| $q$ | cu | Nivel de la tasa de falsos descubrimientos |
+| $B$ | be | Número de cubos del hashing |
+| $T$ | te | Número de términos distintos que se asignan a los cubos |
+:::
+
+## 1. Bolsa de palabras
+
+::: {.definicion}
+**Definición 11.1 ([bolsa de palabras]{.g}).** Dado un vocabulario de $V$ términos, la bolsa de palabras representa el documento $i$ por el vector $(x_{i1},\dots,x_{iV})$, donde $x_{iw}$ es el número de veces que el término $w$ aparece en el documento. La matriz de $N$ documentos tiene una fila por documento y una columna por término.
+:::
+
+::: {.proposicion}
+**Proposición 11.2 (densidad de la bolsa de palabras).** Si el documento $i$ tiene $L_i$ palabras, su fila tiene a lo sumo $\min(L_i,V)$ entradas no nulas, y la fracción de entradas no nulas de la matriz es a lo sumo $\bar L/V$, donde $\bar L$ es la longitud media. En la celda, con 1000 documentos de 40 palabras de media y $V=2000$, la fracción vale 0,0155 y la cota 0,0198.
+:::
+
+::: {.demostracion}
+*Demostración.* Cada entrada no nula de la fila $i$ corresponde a un término que aparece al menos una vez en el documento, y cada aparición consume una de sus $L_i$ palabras. Por tanto, el número de entradas no nulas no supera $L_i$, ni tampoco $V$. Sumando sobre las filas, el número total de entradas no nulas es a lo sumo $\sum_i L_i=N\bar L$, y al dividir por las $NV$ entradas de la matriz se obtiene la cota. La fracción medida queda por debajo porque las palabras frecuentes se repiten dentro de un documento. ∎
+:::
+
+La Proposición 11.2 justifica que las bibliotecas guarden la bolsa de palabras como matriz dispersa, con solo las entradas no nulas: con un vocabulario de decenas de miles de términos, más del 99 % de la matriz son ceros.
+
+## 2. Palabras clave y falsos descubrimientos
+
+::: {.definicion}
+**Definición 11.3 (prueba de un término).** Para una variable objetivo binaria, la prueba del término $w$ compara la fracción de documentos que lo contienen en cada clase con la prueba $z$ de dos proporciones, y da un valor $p$. Seleccionar palabras clave es quedarse con los términos cuyo valor $p$ cumple un criterio.
+:::
+
+::: {.proposicion}
+**Proposición 11.4 (falsos positivos esperados).** Si entre los $m$ términos sometidos a prueba hay $m_0$ sin relación con la clase, y la prueba de cada uno tiene nivel $\alpha$, el número esperado de términos sin relación con $p<\alpha$ es $\alpha m_0$. En la celda, con $m=249$ términos y $m_0=229$, se esperan 11,5; en ese corpus aparecen 19, y en la media de 20 corpus la fracción de términos sin relación con $p<0{,}05$ vale 0,0542.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $I_w$ el indicador de que el término $w$, sin relación con la clase, tiene $p<\alpha$. Por la definición de nivel, $E[I_w]=\alpha$. El número de falsos positivos es $\sum_w I_w$ sobre los $m_0$ términos sin relación, y por la linealidad de la esperanza su media es $\alpha m_0$. La linealidad no exige independencia entre las pruebas. La prueba $z$ es aproximada, y su nivel real se acerca a $\alpha$ solo cuando el término aparece en suficientes documentos; por eso la celda somete a prueba únicamente los términos presentes en 20 documentos o más. ∎
+:::
+
+El procedimiento de [Benjamini-Hochberg]{.g data-t="procedimiento de Benjamini-Hochberg"} de Estadística 17 ordena los $m$ valores $p$ y elige los $k$ menores, con $k$ el mayor índice tal que $p_{(k)}\le qk/m$. Con pruebas independientes, la proporción esperada de términos sin relación entre los elegidos no supera $q$. En la celda, con $q=0{,}05$, elige 23 términos, de los que 3 no tienen relación con la clase; en la media de 20 corpus, esa proporción vale 0,0460.
+
+```{pyodide}
+import numpy as np, math
+
+def corpus(n, semilla, V=2000):
+    """n documentos sobre V terminos con frecuencias tipo Zipf. Diez
+    terminos son el triple de frecuentes en la clase 1 y otros diez en la 0."""
+    rng = np.random.default_rng(semilla)
+    base = 1.0 / np.arange(1, V + 1)
+    y = rng.integers(0, 2, n)
+    L = rng.poisson(40, n)
+    X = np.zeros((n, V))
+    for c in (0, 1):
+        p = base.copy()
+        p[100:110] *= 3.0 if c == 1 else 1.0
+        p[110:120] *= 3.0 if c == 0 else 1.0
+        X[y == c] = rng.multinomial(L[y == c], p / p.sum())
+    return X, y
+
+def pvalores(X, y, minimo):
+    """Prueba z de dos proporciones sobre la presencia de cada termino."""
+    pres = X > 0
+    f = np.flatnonzero(pres.sum(0) >= minimo)
+    n1, n0 = (y == 1).sum(), (y == 0).sum()
+    a, b = pres[y == 1][:, f].sum(0), pres[y == 0][:, f].sum(0)
+    pp = (a + b) / (n1 + n0)
+    z = (a / n1 - b / n0) / np.sqrt(pp * (1 - pp) * (1 / n1 + 1 / n0))
+    return f, np.array([math.erfc(abs(v) / math.sqrt(2)) for v in z])
+
+def bh(p, q):
+    """Benjamini-Hochberg: rechaza las k menores, con k el mayor indice
+    en que la p ordenada queda bajo q k / m."""
+    o = np.argsort(p); m = len(p)
+    bajo = np.flatnonzero(p[o] <= q * np.arange(1, m + 1) / m)
+    k = bajo[-1] + 1 if len(bajo) else 0
+    sel = np.zeros(m, bool); sel[o[:k]] = True
+    return sel
+
+X, y = corpus(1000, 11)
+print("1000 documentos, vocabulario de 2000 terminos")
+print("  terminos que aparecen alguna vez     : %d" % (X.sum(0) > 0).sum())
+print("  fraccion de entradas no nulas        : %.4f" % (X > 0).mean())
+print("  cota: palabras medias / vocabulario  : %.4f" % (X.sum(1).mean() / 2000))
+f, p = pvalores(X, y, 20)
+verdad = (f >= 100) & (f < 120)
+print("  terminos en 20 documentos o mas      : %d (%d con relacion real)" % (len(f), verdad.sum()))
+for nombre, s in (("p < 0,05 termino a termino", p < 0.05), ("Benjamini-Hochberg, q = 0,05", bh(p, 0.05))):
+    print("  %-30s elegidos %3d, con relacion %2d, sin relacion %2d"
+          % (nombre, s.sum(), (s & verdad).sum(), (s & ~verdad).sum()))
+print("  sin relacion esperados con p < 0,05  : %.1f" % (0.05 * (~verdad).sum()))
+tasa, fdp = [], []
+for sem in range(20):
+    Xs, ys = corpus(1000, 100 + sem)
+    fs, ps = pvalores(Xs, ys, 20)
+    nulos = ~((fs >= 100) & (fs < 120))
+    tasa.append((ps[nulos] < 0.05).mean())
+    s = bh(ps, 0.05)
+    fdp.append((s & nulos).sum() / max(s.sum(), 1))
+print("  media en 20 corpus")
+print("    fraccion de terminos sin relacion con p < 0,05 : %.4f" % np.mean(tasa))
+print("    proporcion de falsos entre los elegidos por BH : %.4f" % np.mean(fdp))
+print("  las 30 p menores:", " ".join("%.2e" % v for v in np.sort(p)[:30]))
+```
+
+```{=html}
+<div class="viz-bh">
+  <div class="controles">
+    <label>Nivel q <input id="bh-q" type="range" min="0.01" max="0.2" step="0.01" value="0.05"> <span id="bh-q-v">0,05</span></label>
+    <label>Criterio
+      <select id="bh-c"><option value="bh" selected>Benjamini-Hochberg</option><option value="p">p &lt; q término a término</option></select>
+    </label>
+  </div>
+  <svg id="bh-svg" viewBox="0 0 660 280" role="img" aria-label="Los 80 menores valores p de los 249 términos, ordenados y en escala logarítmica, con el umbral de cada criterio; los términos con relación real se dibujan como círculos y los que no la tienen como cuadrados, rellenos si el criterio los elige."></svg>
+  <p class="lectura" id="bh-lectura"></p>
+</div>
+<style>
+.viz-bh { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-bh .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-bh label { display: flex; align-items: center; gap: .4rem; }
+.viz-bh input[type=range] { width: 150px; padding: 0; }
+.viz-bh svg { width: 100%; height: auto; display: block; }
+.viz-bh .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("bh-svg"), lec = document.getElementById("bh-lectura");
+  var cq = document.getElementById("bh-q"), cc = document.getElementById("bh-c"), eq = document.getElementById("bh-q-v");
+  // los 80 menores valores p de la celda (de 249) y si el termino tiene relacion real
+  var P = [4.64e-09,7.65e-09,4.61e-07,6.58e-07,7.28e-07,9.55e-07,1.71e-06,2.67e-06,4.95e-06,5.17e-06,5.61e-06,6.84e-06,2.03e-05,3.3e-05,4.24e-05,4.26e-05,0.000167,0.00107,0.00131,0.00169,0.00247,0.00415,0.00433,0.0124,0.014,0.0162,0.0162,0.021,0.0238,0.0241,0.0243,0.0244,0.0253,0.0355,0.0373,0.046,0.0463,0.0484,0.0487,0.0527,0.0534,0.0548,0.0548,0.0608,0.0655,0.0706,0.0712,0.0724,0.0743,0.076,0.0893,0.0946,0.0949,0.104,0.107,0.124,0.124,0.125,0.127,0.129,0.133,0.138,0.145,0.15,0.156,0.159,0.172,0.174,0.179,0.184,0.186,0.19,0.203,0.204,0.211,0.231,0.232,0.242,0.242,0.242];
+  var R = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+  var M = 249, X0 = 58, X1 = 628, Y0 = 16, Y1 = 226, LMIN = -9, LMAX = 0;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(k) { return X0 + (k - 0.5) / P.length * (X1 - X0); }
+  function py(p) { var l = Math.log(p) / Math.LN10; l = Math.max(LMIN, Math.min(LMAX, l)); return Y1 - (l - LMIN) / (LMAX - LMIN) * (Y1 - Y0); }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var q = +cq.value, bh = cc.value === "bh", k, i;
+    eq.textContent = q.toFixed(2).replace(".", ",");
+    [-9, -7, -5, -3, -1, 0].forEach(function (l) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(Math.pow(10, l)).toFixed(1) + " L" + X1 + " " + py(Math.pow(10, l)).toFixed(1), stroke: C_L, "stroke-width": 0.8, opacity: .55 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(Math.pow(10, l)) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, "1e" + l));
+    });
+    [1, 20, 40, 60, 80].forEach(function (r) {
+      svg.appendChild(el("text", { x: px(r), y: Y1 + 18, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, String(r)));
+    });
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 38, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "puesto del valor p, de menor a mayor"));
+    // umbral: q k / m para Benjamini-Hochberg, q constante termino a termino
+    var d = "";
+    for (i = 1; i <= P.length; i++) d += (i === 1 ? "M" : " L") + px(i).toFixed(1) + " " + py(bh ? q * i / M : q).toFixed(1);
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_T, "stroke-width": 1.6, "stroke-dasharray": "5 4" }));
+    var kk = 0;
+    if (bh) { for (i = 1; i <= P.length; i++) if (P[i - 1] <= q * i / M) kk = i; }
+    var elegidos = 0, falsos = 0;
+    for (i = 1; i <= P.length; i++) {
+      var sel = bh ? i <= kk : P[i - 1] < q;
+      if (sel) { elegidos++; if (!R[i - 1]) falsos++; }
+      var x = px(i), y = py(P[i - 1]), col = R[i - 1] ? C_A : C_B;
+      var at = { fill: sel ? col : "none", stroke: col, "stroke-width": 1.4 };
+      if (R[i - 1]) { at.cx = x.toFixed(1); at.cy = y.toFixed(1); at.r = 3.6; svg.appendChild(el("circle", at)); }
+      else { at.x = (x - 3.2).toFixed(1); at.y = (y - 3.2).toFixed(1); at.width = 6.4; at.height = 6.4; svg.appendChild(el("rect", at)); }
+    }
+    lec.innerHTML = "Con <strong>" + (bh ? "Benjamini-Hochberg" : "p &lt; q término a término") + "</strong> y q = <strong>" + q.toFixed(2).replace(".", ",") +
+      "</strong> se eligen <strong>" + elegidos + "</strong> términos: <strong>" + (elegidos - falsos) + "</strong> con relación real (círculos) y <strong>" + falsos +
+      "</strong> sin ella (cuadrados). Los elegidos se dibujan rellenos. " +
+      (bh ? "El umbral crece con el puesto, q·k/249, y se eligen todos los términos hasta el último que queda por debajo."
+          : "El umbral es el mismo para los 249 términos, y cada término sin relación tiene probabilidad q de quedar por debajo.");
+  }
+  cq.addEventListener("input", dibujar); cc.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+**Modo de falla.** Las palabras clave se eligen con todos los documentos y después se estima el error del modelo por validación cruzada. Los términos elegidos ya se ajustaron a las clases de los documentos de validación, y el error estimado es optimista. Es la fuga por selección de Atributos 02: la prueba de cada término, la corrección por pruebas múltiples y el filtro de frecuencia mínima forman parte del ajuste y se repiten dentro de cada pliegue.
+
+## 3. Orden y n-gramas
+
+::: {.definicion}
+**Definición 11.5 ([n-grama]{.g}).** Un n-grama es una secuencia de $n$ palabras consecutivas de un documento. Un documento de $L$ palabras tiene $L-n+1$ n-gramas. Los de $n=1$ son las palabras sueltas y los de $n=2$ se llaman bigramas.
+:::
+
+::: {.proposicion}
+**Proposición 11.6 (la bolsa de palabras pierde el orden).** Dos documentos formados por las mismas palabras en distinto orden tienen el mismo vector de bolsa de palabras. Sus bigramas pueden ser distintos.
+:::
+
+::: {.demostracion}
+*Demostración.* El conteo $x_{iw}$ de la Definición 11.1 depende solo de cuántas veces aparece cada término, y una permutación de las palabras no cambia esos conteos. Para la segunda parte basta un ejemplo: «el perro muerde al hombre» y «el hombre muerde al perro» tienen las mismas palabras, y el bigrama «perro muerde» solo aparece en el primero. La celda comprueba los dos hechos. ∎
+:::
+
+La pérdida del orden importa cuando una palabra cambia de sentido según la que la precede. La celda genera reseñas con una a tres frases de opinión entre palabras de relleno: «bueno» y «no malo» suman un punto, «no bueno» y «malo» restan uno, y la clase es positiva cuando la suma es positiva. La palabra «bueno» aparece afirmada y negada con la misma frecuencia.
+
+::: {.proposicion}
+**Proposición 11.7 (negación y palabras sueltas).** En las reseñas de la celda, una regresión logística sobre los conteos de palabras sueltas alcanza un AUC de 0,5071 sobre 5000 reseñas nuevas. Con palabras y bigramas, el AUC vale 0,9380. El número de columnas pasa de 13 a 182.
+:::
+
+::: {.demostracion}
+*Comprobación.* El conteo de «bueno» suma sus apariciones afirmadas y negadas. Como las dos son igual de frecuentes y tienen efectos opuestos, el conteo no informa sobre la clase, y lo mismo ocurre con «malo». El conteo de «no» suma las dos negaciones, que tienen efectos opuestos, y los «no» sueltos del relleno. Los bigramas «no bueno» y «no malo» separan las cuatro frases, y un modelo lineal sobre ellos puede reproducir la suma de puntos. La celda mide los dos AUC con el mismo modelo y los mismos datos. ∎
+:::
+
+```{pyodide}
+import numpy as np, zlib
+
+RELLENO = ["el", "producto", "llego", "y", "la", "caja", "estaba", "muy",
+           "en", "casa"]
+FRASES = [["bueno"], ["no", "bueno"], ["malo"], ["no", "malo"]]
+SIGNO = [1, -1, -1, 1]
+
+def resenas(n, semilla):
+    """Resenas con una a tres frases de opinion entre palabras de relleno.
+    La clase es 1 cuando la suma de los signos de las frases es positiva."""
+    rng = np.random.default_rng(semilla)
+    docs, y = [], np.empty(n, int)
+    for i in range(n):
+        f = rng.integers(0, 4, rng.integers(1, 4))
+        t = list(rng.choice(RELLENO, rng.integers(4, 10)))
+        for j in f:
+            pos = rng.integers(0, len(t) + 1)
+            t[pos:pos] = FRASES[j]
+        if rng.random() < 0.3:              # un «no» suelto, que no niega nada
+            t.insert(rng.integers(0, len(t) + 1), "no")
+        s = sum(SIGNO[j] for j in f)
+        y[i] = int(s > 0) if s != 0 else int(rng.random() < 0.5)
+        docs.append(t)
+    return docs, y
+
+def ngramas(t, n):
+    return [" ".join(t[i:i + n]) for i in range(len(t) - n + 1)]
+
+def conteos(docs, vocab):
+    M = np.zeros((len(docs), len(vocab)))
+    for i, t in enumerate(docs):
+        for w in t:
+            if w in vocab:
+                M[i, vocab[w]] += 1
+    return M
+
+def logistica(X, y, lam=1.0):
+    """Regresion logistica con penalizacion ridge, por Newton-Raphson."""
+    X = np.column_stack([np.ones(len(X)), X]); b = np.zeros(X.shape[1])
+    P = lam * np.eye(X.shape[1]); P[0, 0] = 0.0
+    for _ in range(50):
+        p = 1 / (1 + np.exp(-X @ b))
+        paso = np.linalg.solve((X * (p * (1 - p))[:, None]).T @ X + P,
+                               X.T @ (p - y) + P @ b)
+        b -= paso
+        if np.abs(paso).max() < 1e-8:
+            break
+    return b
+
+def auc(s, y):
+    """Estadistico de rangos, con rangos medios en los empates."""
+    o = np.argsort(s, kind="stable"); r = np.empty(len(s)); i = 0
+    while i < len(s):
+        j = i
+        while j + 1 < len(s) and s[o[j + 1]] == s[o[i]]:
+            j += 1
+        r[o[i:j + 1]] = (i + j) / 2 + 1; i = j + 1
+    n1 = y.sum(); n0 = len(y) - n1
+    return (r[y == 1].sum() - n1 * (n1 + 1) / 2) / (n1 * n0)
+
+a = "el perro muerde al hombre".split()
+b = "el hombre muerde al perro".split()
+print("bolsas iguales  :", sorted(a) == sorted(b))
+print("bigramas iguales:", sorted(ngramas(a, 2)) == sorted(ngramas(b, 2)))
+
+tr, ytr = resenas(2000, 1)
+te, yte = resenas(5000, 2)
+print()
+print("2000 resenas de entrenamiento, 5000 de prueba")
+for nombre, n in (("palabras sueltas", 1), ("palabras y bigramas", 2)):
+    f = lambda d: [sum((ngramas(t, k) for k in range(1, n + 1)), []) for t in d]
+    dtr, dte = f(tr), f(te)
+    vocab = {w: j for j, w in enumerate(sorted({w for t in dtr for w in t}))}
+    bb = logistica(conteos(dtr, vocab), ytr)
+    s = np.column_stack([np.ones(len(dte)), conteos(dte, vocab)]) @ bb
+    print("  %-20s columnas %3d, AUC %.4f" % (nombre, len(vocab), auc(s, yte)))
+
+# idf: log(N / documentos que contienen el termino)
+N = len(tr)
+df = {}
+for t in tr:
+    for w in set(ngramas(t, 1) + ngramas(t, 2)):
+        df[w] = df.get(w, 0) + 1
+print()
+print("idf de algunos terminos")
+for w in ("el", "no", "bueno", "no bueno", "producto y"):
+    print("  %-10s en %4d documentos, idf %.4f" % (w, df.get(w, 0), np.log(N / df[w]) if w in df else float("nan")))
+
+
+def cubo(w, m):
+    """Cubo y signo de un termino con crc32, que da el mismo valor en
+    toda maquina y toda sesion."""
+    h = zlib.crc32(w.encode("utf-8"))
+    return h % m, (1.0 if (h >> 31) == 0 else -1.0)
+
+def hashear(docs, m):
+    M = np.zeros((len(docs), m))
+    for i, t in enumerate(docs):
+        for w in t:
+            j, s = cubo(w, m)
+            M[i, j] += s
+    return M
+
+f2 = lambda d: [ngramas(t, 1) + ngramas(t, 2) for t in d]
+dtr, dte = f2(tr), f2(te)
+terms = sorted({w for t in dtr for w in t})
+T = len(terms)
+print()
+print("hashing de palabras y bigramas: %d terminos distintos" % T)
+print("%7s %13s %13s %8s" % ("cubos", "comparten", "formula", "AUC"))
+for m in (16, 64, 256, 1024):
+    cub = np.array([cubo(w, m)[0] for w in terms])
+    ocup = np.bincount(cub, minlength=m)
+    comparte = float((ocup[cub] > 1).mean())
+    Htr, Hte = hashear(dtr, m), hashear(dte, m)
+    usadas = np.flatnonzero(np.abs(Htr).sum(0) > 0)   # las demas son nulas
+    bb = logistica(Htr[:, usadas], ytr)
+    s = np.column_stack([np.ones(len(dte)), Hte[:, usadas]]) @ bb
+    print("%7d %13.4f %13.4f %8.4f" % (m, comparte, 1 - (1 - 1 / m) ** (T - 1), auc(s, yte)))
+```
+
+::: {.definicion}
+**Definición 11.8 ([tf-idf]{.g}).** La frecuencia inversa de documento del término $w$ es $\mathrm{idf}(w)=\log\big(N/\mathrm{df}(w)\big)$. La representación tf-idf sustituye cada conteo $x_{iw}$ por $x_{iw}\,\mathrm{idf}(w)$.
+:::
+
+::: {.proposicion}
+**Proposición 11.9 (lo que mide la idf).** Un término presente en todos los documentos tiene $\mathrm{idf}=0$, y su columna tf-idf es nula. La idf ordena los términos por su rareza y no usa la variable objetivo. En la celda, «producto y» aparece en 63 de 2000 reseñas y tiene idf 3,4578, y «no bueno» aparece en 857 y tiene 0,8475, aunque solo el segundo tiene relación con la clase.
+:::
+
+::: {.demostracion}
+*Demostración.* Si $\mathrm{df}(w)=N$, entonces $\mathrm{idf}(w)=\log 1=0$, y todos los productos $x_{iw}\,\mathrm{idf}(w)$ se anulan. La idf es una función decreciente de $\mathrm{df}(w)$, que se calcula sin mirar la clase de ningún documento. Un término raro recibe un peso alto con independencia de su relación con la variable objetivo. En las reseñas, «producto y» une dos palabras de relleno, que el generador elige sin mirar la clase. ∎
+:::
+
+## 4. Hashing de términos
+
+El número de n-gramas distintos crece con $n$ y con el número de documentos, y un vocabulario que no cabe en memoria o que cambia con los documentos nuevos plantea el mismo problema que las categóricas con muchos niveles de Atributos 08. El [hashing de atributos]{.g} de la Definición 8.5 asigna cada término a uno de $B$ cubos con una función hash y cuenta las apariciones por cubo.
+
+::: {.proposicion}
+**Proposición 11.10 (fracción de términos que comparten cubo).** Si $T$ términos se asignan a $B$ cubos de forma independiente y uniforme, la probabilidad de que un término dado comparta cubo con algún otro es
+$$1-\Big(1-\frac1B\Big)^{T-1}.$$
+Con los 182 términos de las reseñas vale 0,5076 con 256 cubos y 0,1621 con 1024; con la función crc32 se miden 0,5220 y 0,1703.
+:::
+
+::: {.demostracion}
+*Demostración.* Fijado el cubo del término, cada uno de los otros $T-1$ términos cae en él con probabilidad $1/B$, de forma independiente. La probabilidad de que ninguno caiga es $(1-1/B)^{T-1}$, y la del suceso complementario es la de la fórmula. ∎
+:::
+
+::: {.proposicion}
+**Proposición 11.11 (hashing con signo).** Si cada término $w$ recibe, además de su cubo, un signo $s(w)\in\{-1,1\}$ con $E[s(w)s(w')]=0$ para $w\ne w'$, y cada aparición suma $s(w)$ en su cubo, el producto interno esperado entre los vectores de dos documentos es el producto interno de sus bolsas de palabras.
+:::
+
+::: {.demostracion}
+*Demostración.* Sea $h(w)$ el cubo de $w$ y $\phi_b(x)=\sum_{w:h(w)=b}s(w)x_w$. Entonces
+$$\sum_b\phi_b(x)\phi_b(x')=\sum_{w,w':\,h(w)=h(w')}s(w)s(w')\,x_wx'_{w'}.$$
+Los términos con $w=w'$ dan $s(w)^2x_wx'_w=x_wx'_w$. Los términos con $w\ne w'$ que comparten cubo tienen esperanza nula por la hipótesis sobre los signos. Queda $\sum_w x_wx'_w$. Sin signo, cada par de términos que comparte cubo suma un producto positivo, y el producto interno se sobreestima. ∎
+:::
+
+La última tabla de la celda de la Sección 3 mide el efecto sobre el modelo. Con 16 cubos todos los términos comparten cubo y el AUC cae a 0,7325; con 1024 cubos comparte el 17 % de los términos y el AUC vale 0,9333, cerca del 0,9380 del vocabulario completo.
+
+```{=html}
+<div class="viz-cubos">
+  <div class="controles">
+    <label>Cubos <input id="cu-b" type="range" min="3" max="14" step="1" value="8"> <span id="cu-b-v">256</span></label>
+    <label>Términos distintos <input id="cu-t" type="range" min="50" max="5000" step="1" value="182"> <span id="cu-t-v">182</span></label>
+  </div>
+  <svg id="cu-svg" viewBox="0 0 660 270" role="img" aria-label="Fracción esperada de términos que comparten cubo con algún otro, en función del número de cubos en escala logarítmica, para el número de términos elegido."></svg>
+  <p class="lectura" id="cu-lectura"></p>
+</div>
+<style>
+.viz-cubos { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-cubos .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-cubos label { display: flex; align-items: center; gap: .4rem; }
+.viz-cubos input[type=range] { width: 150px; padding: 0; }
+.viz-cubos svg { width: 100%; height: auto; display: block; }
+.viz-cubos .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("cu-svg"), lec = document.getElementById("cu-lectura");
+  var cb = document.getElementById("cu-b"), ct = document.getElementById("cu-t");
+  var eb = document.getElementById("cu-b-v"), et = document.getElementById("cu-t-v");
+  // marco fijo: de 2^3 a 2^14 cubos y de 0 a 1 en la fraccion
+  var X0 = 58, X1 = 628, Y0 = 18, Y1 = 214, L0 = 3, L1 = 14;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(l) { return X0 + (l - L0) / (L1 - L0) * (X1 - X0); }
+  function py(v) { return Y1 - v * (Y1 - Y0); }
+  function comparte(B, T) { return 1 - Math.pow(1 - 1 / B, T - 1); }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var l = +cb.value, B = Math.pow(2, l), T = +ct.value, t;
+    eb.textContent = String(B); et.textContent = String(T);
+    [0, 0.25, 0.5, 0.75, 1].forEach(function (v) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(v).toFixed(1) + " L" + X1 + " " + py(v).toFixed(1), stroke: C_L, "stroke-width": 0.8, opacity: .55 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(v) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, v.toFixed(2).replace(".", ",")));
+    });
+    [3, 6, 8, 10, 12, 14].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y1 + 18, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, String(Math.pow(2, v))));
+    });
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 38, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "cubos (escala logarítmica)"));
+    var d = "";
+    for (t = L0; t <= L1 + 1e-9; t += 0.1) d += (t === L0 ? "M" : " L") + px(t).toFixed(1) + " " + py(comparte(Math.pow(2, t), T)).toFixed(1);
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_A, "stroke-width": 2.6 }));
+    var f = comparte(B, T);
+    svg.appendChild(el("circle", { cx: px(l).toFixed(1), cy: py(f).toFixed(1), r: 6.5, fill: C_B }));
+    lec.innerHTML = "Con <strong>" + T + "</strong> términos distintos y <strong>" + B + "</strong> cubos, se espera que el <strong>" +
+      (100 * f).toFixed(1).replace(".", ",") + " %</strong> de los términos comparta cubo con algún otro. " +
+      "La fracción es 1 − (1 − 1/B)^(T − 1) (Proposición 11.10): baja al aumentar los cubos y sube con los términos. " +
+      "Con los 182 términos de las reseñas y 1024 cubos vale 16,2 %.";
+  }
+  cb.addEventListener("input", dibujar); ct.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+**Modo de falla.** La función `hash` de Python aplicada a un texto está aleatorizada por proceso: cambia en cada sesión salvo que se fije la variable de entorno `PYTHONHASHSEED`. Un hashing escrito con `hash(w) % B` asigna los términos a cubos distintos en el entrenamiento y en la predicción, sin ningún error. La celda usa `zlib.crc32`, que da el mismo valor en toda máquina y toda sesión; las bibliotecas usan funciones fijas del mismo tipo.
+
+## 5. Limitaciones
+
+La lección no trata la limpieza del texto: la eliminación de palabras vacías, la reducción de las palabras a su raíz y la normalización de mayúsculas y signos. FES §5.6 las aplica y advierte de que pueden perjudicar al modelo. Tampoco trata las representaciones densas aprendidas, que asignan a cada palabra un vector de pocas dimensiones.
+
+El filtro de 20 documentos y el nivel $q$ son hiperparámetros. Un filtro más bajo somete a prueba más términos raros, con pruebas $z$ menos fiables; uno más alto descarta términos con relación real.
+
+El resultado de Benjamini-Hochberg exige pruebas independientes o con dependencia positiva. Los términos de un mismo documento no son independientes, y la garantía es aproximada; la media de 20 corpus de la celda es una comprobación en este caso y no una demostración.
+
+## Ejercicios
+
+### Ejercicio 1, Fracción de términos que comparten cubo
+
+La celda trae el número de términos `T` y la lista `cubos`. Completar la línea de `fraccion` con la fórmula de la Proposición 11.10 para cada `B` de `cubos`. La celda imprime las fracciones redondeadas; deben dar 1,0, 0,9422, 0,5076 y 0,1621.
+
+```{pyodide}
+#| exercise: ex_cubos
+T = 182
+cubos = [16, 64, 256, 1024]
+
+fraccion = [______ for B in cubos]
+
+print([round(f, 4) for f in fraccion])
+```
+
+::: {.hint exercise="ex_cubos"}
+Para cada `B`, la fracción es `1 - (1 - 1 / B) ** (T - 1)`.
+:::
+
+::: {.solution exercise="ex_cubos"}
+```{pyodide}
+T = 182
+cubos = [16, 64, 256, 1024]
+
+fraccion = [1 - (1 - 1 / B) ** (T - 1) for B in cubos]
+
+print([round(f, 4) for f in fraccion])
+```
+
+Con 16 cubos todos los términos comparten cubo con algún otro. Con 1024, la fracción baja a 0,1621: para que baje a la mitad hay que multiplicar el número de cubos por algo más de dos, porque la fracción es aproximadamente $1-e^{-(T-1)/B}$.
+:::
+
+```{pyodide}
+#| exercise: ex_cubos
+#| check: true
+if [round(f, 4) for f in fraccion] == [1.0, 0.9422, 0.5076, 0.1621]:
+    feedback = {"correct": True, "message": "Correcto: 1,0, 0,9422, 0,5076 y 0,1621."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [1.0, 0.9422, 0.5076, 0.1621]."}
+feedback
+```
+
+### Ejercicio 2, Bigramas de una reseña
+
+La celda trae la lista `palabras` de una reseña. Completar la línea de `bigramas` con los pares de palabras consecutivas, unidos por un espacio, en el orden del texto. La celda imprime cuántos hay y los tres primeros; deben ser 7, y el primero «el producto».
+
+```{pyodide}
+#| exercise: ex_bigramas
+texto = "el producto no es bueno y llego tarde"
+palabras = texto.split()
+
+bigramas = ______
+
+print(len(bigramas), bigramas[:3])
+```
+
+::: {.hint exercise="ex_bigramas"}
+Por la Definición 11.5, hay `len(palabras) - 1` bigramas; el de la posición `i` une `palabras[i]` y `palabras[i + 1]`.
+:::
+
+::: {.solution exercise="ex_bigramas"}
+```{pyodide}
+texto = "el producto no es bueno y llego tarde"
+palabras = texto.split()
+
+bigramas = [palabras[i] + " " + palabras[i + 1]
+            for i in range(len(palabras) - 1)]
+
+print(len(bigramas), bigramas[:3])
+```
+
+Las ocho palabras dan siete bigramas. «es bueno» aparece entre ellos, pero la negación está dos posiciones antes, en «no es»: un bigrama solo recoge la palabra inmediatamente anterior, y una negación más lejana necesita trigramas o una ventana más amplia.
+:::
+
+```{pyodide}
+#| exercise: ex_bigramas
+#| check: true
+esperado = ["el producto", "producto no", "no es", "es bueno",
+            "bueno y", "y llego", "llego tarde"]
+if list(bigramas) == esperado:
+    feedback = {"correct": True, "message": "Correcto: siete bigramas."}
+else:
+    feedback = {"correct": False, "message": "Se esperaban 7 bigramas, desde «el producto» hasta «llego tarde»."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Atributos 11**:
+
+1. Repetir la selección de palabras clave con filtros de 5 y de 50 documentos, y contar los términos sin relación elegidos con $p<0{,}05$ y con Benjamini-Hochberg. Explicar por qué el filtro cambia el número de pruebas.
+2. Elegir las palabras clave con todos los documentos y después estimar el AUC por validación cruzada; repetirlo eligiéndolas dentro de cada pliegue, y comparar las dos estimaciones con el AUC sobre documentos nuevos.
+3. Sustituir `zlib.crc32` por la función `hash` de Python, ejecutar el hashing en dos sesiones y comparar las columnas. Guardar el caso en `50-Errores/`.
+
+## Del libro
+
+La §5.6 de FES, *Creating Features from Text Data*, usa los textos libres de perfiles de OkCupid para predecir si una persona trabaja en un campo científico o técnico. Tras limpiar el texto, eliminar palabras vacías y reducir las palabras a su raíz, somete a prueba los términos con al menos 50 apariciones en los 10 000 perfiles y elige como palabras clave las de razón de odds de al menos 2 en cualquier dirección y tasa de falsos descubrimientos menor que $10^{-5}$: 52 términos. Añadidas a los atributos básicos del perfil, el AUC pasa de 0,77 a 0,839. La sección trata además atributos de sentimiento, n-gramas y tf-idf, y cita trabajos que muestran que la eliminación de palabras vacías y la reducción a la raíz pueden perjudicar al modelo.
+
+El hashing de atributos se presenta en la §5.2, *Encoding Predictors with Many Categories*, para categóricas con muchos niveles.
+
+Esta lección añade la cota de densidad de la bolsa de palabras, la demostración del número esperado de falsos positivos y su medición, la comparación de palabras sueltas y bigramas con una negación, la fracción de términos que comparten cubo y la demostración del hashing con signo.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- Bolsa de palabras: una columna por término; a lo sumo $\bar L/V$ de entradas no nulas.
+- Con $m_0$ términos sin relación y nivel $\alpha$, se esperan $\alpha m_0$ falsos positivos, sin necesidad de independencia.
+- Benjamini-Hochberg: los $k$ menores, con $k$ el mayor índice tal que $p_{(k)}\le qk/m$.
+- La selección de palabras clave se hace dentro de cada pliegue de la validación.
+- La bolsa de palabras pierde el orden; «no bueno» necesita bigramas.
+- idf: $\log(N/\mathrm{df})$; mide rareza, no relación con la clase.
+- Comparten cubo: $1-(1-1/B)^{T-1}$.
+- `hash` de Python cambia en cada sesión: el hashing usa una función fija.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos. En el corpus de palabras clave, 1000 documentos sobre un vocabulario de 2000 términos, de los que aparecen 1950; la fracción de entradas no nulas vale 0,0155 frente a la cota 0,0198. Pasan el filtro de 20 documentos 249 términos, 20 con relación real. La regla $p<0{,}05$ elige 39, con 20 con relación y 19 sin ella, frente a 11,5 esperados; Benjamini-Hochberg con $q=0{,}05$ elige 23, con 20 y 3. En 20 corpus, la fracción media de términos sin relación con $p<0{,}05$ vale 0,0542, y la proporción media de términos sin relación entre los elegidos por Benjamini-Hochberg, 0,0460. En las reseñas, con 2000 de entrenamiento y 5000 de prueba, el AUC vale 0,5071 con 13 columnas de palabras sueltas y 0,9380 con 182 columnas de palabras y bigramas. La idf de «el», «no», «bueno», «no bueno» y «producto y» vale 0,6636, 0,2132, 0,3581, 0,8475 y 3,4578. Con hashing crc32, la fracción de términos que comparten cubo y el AUC valen 1,0000 y 0,7325 con 16 cubos, 0,9176 y 0,8694 con 64, 0,5220 y 0,9166 con 256, y 0,1703 y 0,9333 con 1024. Las Proposiciones 11.2, 11.4, 11.6, 11.10 y 11.11 se demuestran aquí.
+
+**Lo que se usa de otras lecciones sin repetir.** La fuga por selección es de Atributos 02; el hashing de atributos, de Atributos 08; el procedimiento de Benjamini-Hochberg, de Estadística 17; la regresión logística por Newton-Raphson y el AUC por rangos, de Machine Learning 3.
+
+**Lo que se enuncia sin demostrar.** Que Benjamini-Hochberg controla la tasa de falsos descubrimientos con pruebas independientes. Que la función `hash` de Python aplicada a un texto está aleatorizada por proceso, que es un comportamiento documentado del lenguaje.
+
+**Lo que es mío, no del libro.** Los dos corpus sintéticos y todas sus mediciones. La cota de densidad, la demostración del número esperado de falsos positivos y la del hashing con signo. La comparación de palabras sueltas y bigramas con frases negadas.
+:::

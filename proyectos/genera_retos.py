@@ -23,8 +23,10 @@ MOD = {"estadistica": "Estadística", "matematica": "Matemática",
 
 def secciones_existentes():
     hay = set()
-    for nb in ("F0-retos", "F1-retos", "F2-retos", "F3-retos", "F5-retos"):
-        d = json.loads((RAIZ/"proyectos"/"notebooks"/f"{nb}.ipynb").read_text(encoding="utf-8"))
+    # todos los cuadernos que existan: una lista fija dejo fuera F4-retos y
+    # duplico sus trece secciones (30-09-2026)
+    for ruta in sorted((RAIZ/"proyectos"/"notebooks").glob("F*-retos.ipynb")):
+        d = json.loads(ruta.read_text(encoding="utf-8"))
         for c in d["cells"]:
             if c["cell_type"] != "markdown": continue
             for l in c["source"]:

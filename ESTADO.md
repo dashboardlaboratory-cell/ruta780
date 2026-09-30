@@ -5417,6 +5417,34 @@ Esos CSV están en `.gitignore`: **antes de `quarto render` o `quarto preview`
 en local hay que correr `python3 aplicado/generadores/generar.py`** (lo hace
 también `casos.py`, y el CI tiene un paso propio antes del render).
 
+### 3.107 Atributos 11, texto (30-09-2026)
+
+**Atributos 11, Texto: bolsa de palabras, n-gramas y hashing (L3, FES §5.6 y
+§5.2).** FES §5.6 se abrió antes de escribir y sus cifras se citan verbatim
+(4918 términos con 50 apariciones, 52 palabras clave con razón de odds 2 y FDR
+menor que 1e-5, AUC de 0,77 a 0,839).
+
+- Densidad de la bolsa de palabras: 0,0155 frente a la cota $\bar L/V$ 0,0198.
+- Palabras clave: con 249 términos, $p<0{,}05$ elige 39 (19 sin relación,
+  11,5 esperados); Benjamini-Hochberg elige 23 (3 sin relación). Media en 20
+  corpus: 0,0542 y 0,0460.
+- Negación: palabras sueltas AUC 0,5071; con bigramas 0,9380.
+- idf mide rareza: «producto y», relleno puro, idf 3,4578 frente a 0,8475 de
+  «no bueno». El primer borrador usaba «muy bueno» y afirmaba que no tenía
+  relación con la clase; sí la tenía (siempre acompaña a un «bueno» afirmado).
+  Se detectó midiendo antes de publicar.
+- Hashing con crc32: comparten cubo 0,5220 con 256 cubos (fórmula 0,5076);
+  AUC 0,7325 con 16 cubos y 0,9333 con 1024. Hashing con signo demostrado.
+
+En Pyodide las celdas tardan 8,5 s y 3,9 s. El vocabulario de relleno se
+redujo de 20 a 10 palabras porque la regresión por Newton con 552 columnas
+tardaba demasiado en el navegador.
+
+**`genera_retos.py` buscaba secciones existentes en una lista fija de
+cuadernos** sin F4-retos, y duplicó sus trece secciones. Ahora recorre todos
+los `F*-retos.ipynb`. La entrada del glosario «conjunto» decía «sin orden de
+magnitud»; pasa a «sin orden garantizado».
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
