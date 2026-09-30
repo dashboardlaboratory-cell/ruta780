@@ -5069,7 +5069,8 @@ los textos de los visuales. `salidas.py` acepta ya lecciones sueltas.
    coste; pasa a «coste por holgura» y la pregunta de lectura explica la
    formulación de ISLP.
 
-**Pendiente de esta auditoría:** el visual de ML 25 dibuja «sin la
+**Pendiente de esta auditoría** (los visuales de ML 15 y ML 25 quedaron
+resueltos el 27-09-2026, §3.103; sigue abierto el término de Python 26 y 27): el visual de ML 25 dibuja «sin la
 modificación del lasso» como coeficientes fijos en mínimos cuadrados, cuando
 LAR sin modificar también sale de cero (exige cambiar el cálculo); la rama
 `rExt < 1` del visual 0 de ML 15 es inalcanzable; y el término «techo de una
