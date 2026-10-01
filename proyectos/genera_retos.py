@@ -41,7 +41,7 @@ def retos_de(p):
     m = re.search(r"^## Reto\s*\n(.*?)^## ", t, re.S | re.M)
     if not m: return None, None, []
     cuerpo = m.group(1)
-    nb = re.search(r"notebooks/(F\d-retos)\.ipynb`, sección \*\*([^*]+)\*\*", cuerpo)
+    nb = re.search(r"notebooks/(F\d-retos)\.ipynb`(?:\]\([^)]*\))?, sección \*\*([^*]+)\*\*", cuerpo)
     if not nb: return None, None, []
     puntos = re.findall(r"^\d+\.\s+(.+?)(?=^\d+\.\s|\Z)", cuerpo, re.S | re.M)
     return nb.group(1), nb.group(2).strip(), [re.sub(r"\s+", " ", x).strip() for x in puntos]

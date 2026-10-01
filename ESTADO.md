@@ -5445,6 +5445,36 @@ cuadernos** sin F4-retos, y duplicó sus trece secciones. Ahora recorre todos
 los `F*-retos.ipynb`. La entrada del glosario «conjunto» decía «sin orden de
 magnitud»; pasa a «sin orden garantizado».
 
+### 3.108 Fundamentos 5 tras una revisión externa (30-09-2026)
+
+Luis trajo una segunda revisión externa, esta vez de Fundamentos 5, hecha en el
+navegador. Se comprobó cada hallazgo antes de aplicarlo:
+
+- **El visual del salto enseñaba el mecanismo equivocado.** El puesto no
+  avanzaba al borrar y terminaba en `[1, 3, 4]`; Python deja `[1, 3, 2, 4]`.
+  El arreglo que proponía la revisión (avanzar siempre) tampoco replicaba la
+  celda: `remove(2)` borra el PRIMER 2, no el del puesto actual. El visual
+  usa ahora `indexOf(2)`.
+- Prop. «range(a, b) produce b − a números» era falsa con a > b: pasa a
+  max(0, ⌈(b − a)/k⌉), con demostración y cinco casos en la celda.
+- La memoria de `range` se mide con `sys.getsizeof` (cumple, porque la cifra
+  depende de la plataforma).
+- Nuevos: reasignar la variable del bucle (referencia del lenguaje §8.3,
+  verificada en la versión 3.14), acumulador con nombre, `break`,
+  `zip(strict=True)` (la celda lo salta en Python < 3.10, el local es 3.8),
+  inserción que revisita, tabla de cuándo usar cada forma de recorrer.
+- La revisión afirmaba que la referencia describe la modificación de la lista
+  durante el recorrido; en la versión 3.14 ese párrafo ya no está y no se cita.
+- Ejercicios rehechos (acumulador, zip, predicción). **Los dos primeros
+  comprueban con `user_code`**: vuelven a ejecutar el código con otros datos,
+  y una respuesta escrita a mano no pasa. Probado en Pyodide con Playwright.
+- `lang: es` en `_quarto.yml`. Los botones de quarto-live siguen en inglés.
+- `retos.py` y `genera_retos.py` aceptan el cuaderno enlazado en el Reto.
+
+Pendiente de la misma revisión: traducir los botones de quarto-live, enlazar
+cada proposición con un ancla, una celda por proposición en el resto del
+sitio, y aplicar el patrón `user_code` a los demás ejercicios.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

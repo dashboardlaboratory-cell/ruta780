@@ -45,7 +45,7 @@ MODULOS = {
 }
 
 REF = re.compile(
-    r"En\s+`proyectos/notebooks/(?P<nb>[^`]+\.ipynb)`,\s*secci[oó]n\s*\*\*(?P<mod>[A-Za-zÁÉÍÓÚáéíóú]+)\s*(?P<num>\d+)\*\*"
+    r"En\s+\[?`proyectos/notebooks/(?P<nb>[^`]+\.ipynb)`(?:\]\([^)]*\))?,\s*secci[oó]n\s*\*\*(?P<mod>[A-Za-zÁÉÍÓÚáéíóú]+)\s*(?P<num>\d+)\*\*"
 )
 
 
