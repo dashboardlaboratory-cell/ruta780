@@ -5475,6 +5475,28 @@ Pendiente de la misma revisión: traducir los botones de quarto-live, enlazar
 cada proposición con un ancla, una celda por proposición en el resto del
 sitio, y aplicar el patrón `user_code` a los demás ejercicios.
 
+### 3.109 Atributos 12, interacciones (03-10-2026)
+
+**Atributos 12, Detección de interacciones (L3, FES §7.1, §7.2 y §7.3).** FES
+cap. 7 se abrió antes de escribir: los conteos de 4950 y casi 125 000 parejas
+están en §7.2 (no en §7.3), y la advertencia de sobreajuste y el uso de la FDR,
+en §7.3.1.
+
+- Centrado antes del producto: mismo ajuste (demostrado por el espacio
+  generado); el coeficiente de x1 pasa de −3,4128 a 0,3657 = b1 + b3 m2; la
+  correlación de x1 con el producto, de 0,6961 a 0,0418.
+- Interacción pura: el producto es ortogonal a todo modelo aditivo
+  (demostrado); R² sobre datos nuevos 0,0001 aditivo frente a 0,8038 con el
+  producto. Consecuencia: el boosting con tocones no la ve.
+- Búsqueda de 435 parejas: p < 0,05 da 22 falsas (21,65 esperadas), BH
+  ninguna; la herencia fuerte no prueba la pareja x3 x4 (p = 2,9e-10).
+- Los dos ejercicios comprueban con `user_code` (probado en Pyodide).
+- `visuales.py` encontró etiquetas superpuestas cuando las tres rectas se
+  cruzan en un extremo; se sustituyeron por una leyenda fija y trazos
+  distintos.
+
+`/tmp/ci-venv` volvió a desaparecer (limpieza de /tmp de macOS) y se recreó.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
