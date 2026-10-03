@@ -1,0 +1,533 @@
+---
+title: "Selección I: filtros y envolturas"
+subtitle: "Feature Engineering · Lección 15"
+nivel: L3
+modulo: atributos
+fase: F2
+prereqs: [atributos/02-el-proceso-y-la-fuga, atributos/12-interacciones, ml/07-seleccion-de-subconjuntos]
+siguientes: []
+libro: "FES §10.2 Classes of Feature Selection Methodologies · §10.3 Effect of Irrelevant Features · §10.4 Overfitting to Predictors and External Validation · §11.2 Simple Filters"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="atributos/15-seleccion-filtros"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F2]{.item}
+[**Libro** FES 10 · 11]{.item}
+[**Prereqs** [El proceso y la fuga](02-el-proceso-y-la-fuga.qmd) · [Interacciones](12-interacciones.qmd) · [Selección de subconjuntos](../ml/07-seleccion-de-subconjuntos.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Distinguir los tres tipos de selección de atributos: intrínseca, por filtro y por envoltura.
+2. Medir el daño de las columnas irrelevantes según el modelo. Con 100 columnas de ruido, el error del modelo lineal pasa de 1,0104 a 1,5082, y el de 10 vecinos, de 1,4700 a 2,8909.
+3. Demostrar que un filtro univariante puede descartar una variable útil: $x_2$ tiene correlación cero con $y$ y lleva el $R^2$ de 0,4730 a 0,9198 junto con $x_1$.
+4. Medir el error de seleccionar con todas las filas antes de validar: con etiquetas al azar, la validación cruzada estima un error de 0,0600 cuando el real es 0,5; seleccionando dentro de cada pliegue, 0,5280.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Atributos 02**: la fuga por selección y la validación que la detecta.
+- **Atributos 12**: una interacción pura, que ningún filtro univariante ve.
+- **Machine Learning 7**: la selección de subconjuntos hacia delante y hacia atrás.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **Atributos 16**: la búsqueda global y el pipeline completo, con la selección dentro de cada pliegue.
+- **Machine Learning 8**: el lasso, una selección intrínseca.
+- **ML aplicado 05**: los pipelines que impiden ajustar un paso fuera de la validación.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $n$ | ene | Número de filas |
+| $p$ | pe | Número de predictores candidatos |
+| $q$ | cu | Número de columnas de ruido añadidas |
+| $k$ | ka | Número de predictores que se conservan |
+| $R^2$ | erre cuadrado | Fracción de la varianza de $y$ explicada |
+:::
+
+## 1. Tipos de selección y columnas irrelevantes
+
+::: {.definicion}
+**Definición 15.1 ([selección de atributos]{.g}).** Elegir un subconjunto de los predictores candidatos. La selección es **intrínseca** si la hace el propio ajuste del modelo, como el lasso o un árbol; es un **filtro** si ordena los predictores con un criterio calculado antes de ajustar el modelo, como la correlación de cada uno con $y$; y es una **envoltura** si ajusta el modelo con distintos subconjuntos y elige por su rendimiento, como la selección hacia delante o la eliminación recursiva.
+:::
+
+::: {.proposicion}
+**Proposición 15.2 (columnas irrelevantes).** Con 5 predictores con efecto, ruido de varianza 1 y 300 filas, el error cuadrático medio sobre 2000 filas nuevas es:
+
+| Columnas de ruido | Lineal | 10 vecinos |
+|---|---|---|
+| 0 | 1,0104 | 1,4700 |
+| 20 | 1,1692 | 2,3151 |
+| 100 | 1,5082 | 2,8909 |
+:::
+
+::: {.demostracion}
+*Comprobación.* En el modelo lineal, cada columna de ruido añade un coeficiente que se estima con error. Por la Proposición 1.5 de Machine Learning 1, el error esperado sobre los mismos puntos crece como $\sigma^2(n+p)/n$; sobre puntos nuevos crece algo más, y la tabla lo mide. En los vecinos más cercanos, la distancia al cuadrado suma una contribución por columna. Con columnas tipificadas, cada columna de ruido aporta en media lo mismo que una con efecto, de modo que con 100 de ruido y 5 con efecto más del 95 % de la distancia procede de columnas que no informan sobre $y$, y los vecinos se eligen casi solo por las columnas de ruido. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def datos(n, q, semilla):
+    """5 predictores con efecto y q columnas de ruido."""
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, 5 + q))
+    y = X[:, :5] @ np.array([1.0, 0.8, 0.6, 0.4, 0.2]) + rng.standard_normal(n)
+    return X, y
+
+def lineal(Xa, ya, Xb):
+    A = np.column_stack([np.ones(len(Xa)), Xa])
+    c = np.linalg.lstsq(A, ya, rcond=None)[0]
+    return np.column_stack([np.ones(len(Xb)), Xb]) @ c
+
+def vecinos(Xa, ya, Xb, k=10):
+    """Media de los k vecinos mas cercanos."""
+    d = ((Xb[:, None, :] - Xa[None, :, :]) ** 2).sum(2)
+    return ya[np.argsort(d, 1)[:, :k]].mean(1)
+
+print("300 filas de entrenamiento; error cuadratico medio sobre 2000 nuevas")
+print("varianza del ruido 1: es el minimo alcanzable")
+print("  %-14s %10s %12s" % ("ruido", "lineal", "10 vecinos"))
+for q in (0, 20, 100):
+    Xa, ya = datos(300, q, 1)
+    Xb, yb = datos(2000, q, 2)
+    print("  %3d columnas  %10.4f %12.4f" % (q, np.mean((yb - lineal(Xa, ya, Xb)) ** 2),
+                                           np.mean((yb - vecinos(Xa, ya, Xb)) ** 2)))
+```
+
+FES §10.3 llega a la misma conclusión con otra simulación: las columnas de ruido empeoran la regresión lineal, perjudican mucho a las máquinas de vectores soporte y a las redes neuronales, y no afectan a los bosques aleatorios. El daño depende del modelo, y la selección importa más en los que usan todas las columnas por igual.
+
+## 2. Filtros
+
+Un filtro univariante puntúa cada predictor por separado, por ejemplo con su correlación con $y$ o con el valor $p$ de su prueba, y conserva los $k$ mejores. Es rápido y no depende del modelo. Evalúa cada predictor sin los demás, y por eso puede descartar uno que solo es útil en combinación.
+
+::: {.proposicion}
+**Proposición 15.3 (una variable supresora).** Sean $a$, $x_2$ y $\varepsilon$ independientes, con $a$ y $x_2$ de varianza 1 y $\varepsilon$ de varianza $0{,}09$, y sean $x_1=a+x_2$ e $y=a+\varepsilon$. Entonces $\mathrm{Cor}(y,x_2)=0$, el $R^2$ de $y$ sobre $x_1$ vale $1/(2\cdot1{,}09)=0{,}4587$ y el de $y$ sobre $x_1$ y $x_2$ vale $1/1{,}09=0{,}9174$. En la celda, con 5000 filas, se miden 0,0186; 0,4730 y 0,9198.
+:::
+
+::: {.demostracion}
+*Demostración.* $\mathrm{Cov}(y,x_2)=\mathrm{Cov}(a+\varepsilon,x_2)=0$ por la independencia. $\mathrm{Cov}(y,x_1)=\mathrm{Var}(a)=1$, $\mathrm{Var}(x_1)=2$ y $\mathrm{Var}(y)=1{,}09$, de modo que el $R^2$ de una regresión simple, el cuadrado de la correlación, vale $1/(2\cdot1{,}09)$. Con las dos columnas, $x_1-x_2=a$ está en el espacio que generan, y el ajuste reproduce $a$; el error es $\varepsilon$ y el $R^2$ vale $1-0{,}09/1{,}09=1/1{,}09$. ∎
+:::
+
+Un filtro por correlación pone a $x_2$ en el último lugar, con el ruido, aunque es la columna que más mejora el modelo una vez está $x_1$. Lo mismo ocurre con las interacciones puras de la Proposición 12.4: sus variables pueden no tener ninguna relación con $y$ por separado.
+
+```{pyodide}
+import numpy as np
+
+# x1 = a + x2 y y = a + ruido: x2 no tiene relacion con y, pero sirve
+# para limpiar a x1 de la parte que no explica y
+rng = np.random.default_rng(3)
+n = 5000
+a = rng.standard_normal(n)
+x2 = rng.standard_normal(n)
+x1 = a + x2
+y = a + 0.3 * rng.standard_normal(n)
+
+def r2(*cols):
+    A = np.column_stack((np.ones(n),) + cols)
+    c = np.linalg.lstsq(A, y, rcond=None)[0]
+    return 1 - np.mean((y - A @ c) ** 2) / y.var()
+
+print("correlacion de y con x1: %.4f" % np.corrcoef(y, x1)[0, 1])
+print("correlacion de y con x2: %.4f" % np.corrcoef(y, x2)[0, 1])
+print("R2 con x1      : %.4f" % r2(x1))
+print("R2 con x2      : %.4f" % r2(x2))
+print("R2 con x1 y x2 : %.4f" % r2(x1, x2))
+print("techo Var(a) / Var(y) = 1 / 1,09: %.4f" % (1 / 1.09))
+```
+
+```{=html}
+<div class="viz-supresion">
+  <div class="controles">
+    <label>Peso de x₂ en x₁ <input id="su-s" type="range" min="0" max="2" step="0.05" value="1"> <span id="su-s-v">1,00</span></label>
+    <label>Ruido de y <input id="su-e" type="range" min="0.1" max="1" step="0.05" value="0.3"> <span id="su-e-v">0,30</span></label>
+  </div>
+  <svg id="su-svg" viewBox="0 0 660 270" role="img" aria-label="R cuadrado de y sobre x1 solo, en función del peso de x2 en x1, frente al R cuadrado con x1 y x2 juntos; x2 solo tiene R cuadrado cero."></svg>
+  <p class="lectura" id="su-lectura"></p>
+</div>
+<style>
+.viz-supresion { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-supresion .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-supresion label { display: flex; align-items: center; gap: .4rem; }
+.viz-supresion input[type=range] { width: 150px; padding: 0; }
+.viz-supresion svg { width: 100%; height: auto; display: block; }
+.viz-supresion .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("su-svg"), lec = document.getElementById("su-lectura");
+  var cs = document.getElementById("su-s"), ce = document.getElementById("su-e");
+  var es = document.getElementById("su-s-v"), ee = document.getElementById("su-e-v");
+  // marco fijo: peso de 0 a 2 y R cuadrado de 0 a 1
+  var X0 = 58, X1 = 628, Y0 = 18, Y1 = 214;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(s) { return X0 + s / 2 * (X1 - X0); }
+  function py(v) { return Y1 - v * (Y1 - Y0); }
+  function coma(v, d) { return v.toFixed(d).replace(".", ","); }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var s = +cs.value, e = +ce.value, q;
+    es.textContent = coma(s, 2); ee.textContent = coma(e, 2);
+    var ambos = 1 / (1 + e * e);
+    [0, 0.25, 0.5, 0.75, 1].forEach(function (v) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(v).toFixed(1) + " L" + X1 + " " + py(v).toFixed(1), stroke: C_L, "stroke-width": 0.8, opacity: .55 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(v) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, coma(v, 2)));
+    });
+    [0, 0.5, 1, 1.5, 2].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y1 + 18, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, coma(v, 1)));
+    });
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 38, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "peso de x₂ en x₁"));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(ambos).toFixed(1) + " L" + X1 + " " + py(ambos).toFixed(1), stroke: C_A, "stroke-width": 2, "stroke-dasharray": "6 4" }));
+    var d = "";
+    for (q = 0; q <= 2.0001; q += 0.02) d += (q === 0 ? "M" : " L") + px(q).toFixed(1) + " " + py(ambos / (1 + q * q)).toFixed(1);
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_B, "stroke-width": 2.6 }));
+    var solo = ambos / (1 + s * s);
+    svg.appendChild(el("circle", { cx: px(s).toFixed(1), cy: py(solo).toFixed(1), r: 6.5, fill: C_B }));
+    lec.innerHTML = "x₂ tiene correlación <strong>0</strong> con y para cualquier peso, y un filtro univariante lo descarta. " +
+      "Con x₁ solo, R² = <strong>" + coma(solo, 4) + "</strong> (curva roja); con x₁ y x₂ juntos, R² = <strong>" + coma(ambos, 4) +
+      "</strong> (línea discontinua), porque x₁ − peso·x₂ recupera la parte de x₁ que explica y (Proposición 15.3).";
+  }
+  cs.addEventListener("input", dibujar); ce.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Envolturas y selección dentro de la validación
+
+Una envoltura ajusta el modelo con distintos subconjuntos y conserva el que mejor rinde. La eliminación recursiva de FES §11.3 parte de todos los predictores y quita en cada paso el de menor importancia; la selección por pasos de FES §11.4 y de Machine Learning 7 añade o quita uno cada vez. Las envolturas ven las combinaciones que un filtro no ve, a cambio de ajustar el modelo muchas veces y de un riesgo mayor de ajustarse al azar de la muestra.
+
+::: {.proposicion}
+**Proposición 15.4 (seleccionar fuera de la validación).** Con 50 filas, 1000 predictores sin relación con la clase y etiquetas al azar, el error real de cualquier clasificador es 0,5. Si el filtro elige los 20 predictores de mayor correlación con todas las filas y después se estima el error por validación cruzada de 5 pliegues, la media de 20 repeticiones es 0,0600. Si el filtro se ajusta dentro de cada pliegue, con las filas de entrenamiento del pliegue, la media es 0,5280.
+:::
+
+::: {.demostracion}
+*Comprobación.* Con 1000 columnas y 50 filas, algunas columnas tienen por azar una correlación alta con las etiquetas observadas. El filtro con todas las filas elige esas columnas mirando también las etiquetas de las filas de validación, y el clasificador las separa bien porque la correlación incluye a esas filas. El filtro dentro del pliegue elige columnas correlacionadas con las etiquetas de entrenamiento, y esa correlación no se traslada a las filas de validación, que no intervinieron. La celda mide las dos estimaciones con los mismos datos. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def top(X, y, k=20):
+    """Filtro: los k predictores de mayor correlacion absoluta con y."""
+    Xc = X - X.mean(0); yc = y - y.mean()
+    c = np.abs(Xc.T @ yc) / np.sqrt((Xc ** 2).sum(0) * (yc ** 2).sum())
+    return np.argsort(-c)[:k]
+
+def centroide(Xa, ya, Xb):
+    """Asigna cada fila a la clase de centroide mas cercano."""
+    m0, m1 = Xa[ya == 0].mean(0), Xa[ya == 1].mean(0)
+    return (((Xb - m1) ** 2).sum(1) < ((Xb - m0) ** 2).sum(1)).astype(int)
+
+def errores(semilla, n=50, p=1000):
+    """Etiquetas al azar: ningun predictor tiene relacion con la clase."""
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, p))
+    y = rng.permutation(np.repeat([0, 1], n // 2))
+    pl = rng.permutation(n) % 5
+    s = top(X, y)                                   # filtro con todas las filas
+    fuera = np.mean([np.mean(centroide(X[pl != k][:, s], y[pl != k], X[pl == k][:, s]) != y[pl == k])
+                     for k in range(5)])
+    dentro = []
+    for k in range(5):                              # filtro dentro de cada pliegue
+        s = top(X[pl != k], y[pl != k])
+        dentro.append(np.mean(centroide(X[pl != k][:, s], y[pl != k], X[pl == k][:, s]) != y[pl == k]))
+    return fuera, np.mean(dentro)
+
+r = np.array([errores(s) for s in range(20)])
+print("50 filas, 1000 predictores sin relacion con la clase; error real 0,5")
+print("error estimado por validacion cruzada, media de 20 repeticiones")
+print("  filtro con todas las filas      : %.4f" % r[:, 0].mean())
+print("  filtro dentro de cada pliegue   : %.4f" % r[:, 1].mean())
+print("  la peor repeticion del primero  : %.4f" % r[:, 0].max())
+```
+
+```{=html}
+<div class="viz-seleccion">
+  <div class="controles">
+    <label>El filtro se ajusta
+      <select id="se-m"><option value="fuera" selected>con todas las filas</option><option value="dentro">dentro de cada pliegue</option></select>
+    </label>
+  </div>
+  <svg id="se-svg" viewBox="0 0 660 250" role="img" aria-label="Error estimado por validación cruzada en 20 repeticiones con etiquetas al azar, según el filtro se ajuste con todas las filas o dentro de cada pliegue; el error real es 0,5."></svg>
+  <p class="lectura" id="se-lectura"></p>
+</div>
+<style>
+.viz-seleccion { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-seleccion .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-seleccion label { display: flex; align-items: center; gap: .4rem; }
+.viz-seleccion svg { width: 100%; height: auto; display: block; }
+.viz-seleccion .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("se-svg"), lec = document.getElementById("se-lectura"), cm = document.getElementById("se-m");
+  // errores de las 20 repeticiones de la celda de la seccion 3
+  var FUERA = [0.14,0.04,0.12,0.06,0.04,0.04,0.06,0.04,0.04,0.08,0.12,0.04,0.02,0.08,0.02,0.04,0.06,0.04,0.06,0.06];
+  var DENTRO = [0.56,0.54,0.56,0.44,0.56,0.40,0.50,0.42,0.58,0.68,0.66,0.50,0.48,0.56,0.52,0.60,0.44,0.54,0.56,0.46];
+  var X0 = 58, X1 = 628, Y0 = 16, Y1 = 196;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(i) { return X0 + (i + 0.5) / 20 * (X1 - X0); }
+  function py(v) { return Y1 - v / 0.8 * (Y1 - Y0); }
+  function coma(v, d) { return v.toFixed(d).replace(".", ","); }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var dentro = cm.value === "dentro", E = dentro ? DENTRO : FUERA, i, s = 0;
+    [0, 0.2, 0.4, 0.6, 0.8].forEach(function (v) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(v).toFixed(1) + " L" + X1 + " " + py(v).toFixed(1), stroke: C_L, "stroke-width": 0.8, opacity: .55 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(v) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, coma(v, 1)));
+    });
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(0.5).toFixed(1) + " L" + X1 + " " + py(0.5).toFixed(1), stroke: C_T, "stroke-width": 1.6, "stroke-dasharray": "6 4" }));
+    svg.appendChild(el("text", { x: X1, y: py(0.5) - 6, "text-anchor": "end", "font-size": 10.5, fill: C_T }, "error real 0,5"));
+    for (i = 0; i < 20; i++) {
+      s += E[i];
+      svg.appendChild(el("circle", { cx: px(i).toFixed(1), cy: py(E[i]).toFixed(1), r: 5.5, fill: dentro ? C_A : C_B }));
+    }
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 22, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "repetición"));
+    lec.innerHTML = "Con el filtro ajustado <strong>" + (dentro ? "dentro de cada pliegue" : "con todas las filas") + "</strong>, el error estimado medio de las 20 repeticiones es <strong>" +
+      coma(s / 20, 3) + "</strong>. " + (dentro ? "Está cerca del error real 0,5: ningún predictor tiene relación con la clase."
+      : "Las etiquetas son al azar y el error real es 0,5; los 20 predictores elegidos ya se ajustaron a las filas de validación (Proposición 15.4).");
+  }
+  cm.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+**Modo de falla.** Se eligen los predictores con todas las filas, con un filtro o con una envoltura, y se presenta el error de la validación cruzada del modelo final. Es la fuga de Atributos 02 en su forma más grave: con muchos candidatos y pocas filas, la estimación puede salir cerca de cero sin que exista ninguna relación. La selección es un paso del ajuste y se repite dentro de cada pliegue; para comparar varias configuraciones de la selección hace falta además una validación anidada, que trata ML aplicado 06.
+
+## 4. Limitaciones
+
+El filtro de la lección usa la correlación de Pearson, que mide la relación lineal entre dos variables. FES §11.2 trata otros criterios, como pruebas por clase o medidas no lineales, con el mismo riesgo de evaluar cada predictor por separado.
+
+La Proposición 15.2 usa predictores independientes. Con columnas de ruido correlacionadas con las útiles, el efecto sobre los vecinos más cercanos cambia, y el lineal sufre además la colinealidad.
+
+Las envolturas que buscan entre muchos subconjuntos, como los algoritmos genéticos o el recocido simulado, se tratan en Atributos 16.
+
+## Ejercicios
+
+### Ejercicio 1, R² con y sin la variable supresora
+
+Con la Proposición 15.3, calcular el $R^2$ de $y$ sobre $x_1$ solo y sobre $x_1$ y $x_2$ cuando $x_1=a+s\,x_2$. La celda trae el peso `s` y la varianza del ruido de $y$ en `ruido`. Completar las líneas de `r2_x1` y `r2_ambos`. La celda imprime los dos valores con cuatro decimales; con `s = 1` y `ruido = 0.09` deben dar 0.4587 y 0.9174. La comprobación vuelve a ejecutar el código con otros valores.
+
+```{pyodide}
+#| exercise: ex_supresion
+s, ruido = 1.0, 0.09
+
+r2_ambos = ______
+r2_x1 = ______
+
+print(round(r2_x1, 4), round(r2_ambos, 4))
+```
+
+::: {.hint exercise="ex_supresion"}
+Con las dos columnas se recupera $a$, y el $R^2$ es $\mathrm{Var}(a)/\mathrm{Var}(y)=1/(1+\text{ruido})$. Con $x_1$ solo, el cuadrado de la correlación divide además por $\mathrm{Var}(x_1)=1+s^2$.
+:::
+
+::: {.solution exercise="ex_supresion"}
+```{pyodide}
+s, ruido = 1.0, 0.09
+
+r2_ambos = 1 / (1 + ruido)
+r2_x1 = r2_ambos / (1 + s ** 2)
+
+print(round(r2_x1, 4), round(r2_ambos, 4))
+```
+
+Con `s = 0`, $x_1$ es $a$ y las dos cifras coinciden. Cuanto mayor es el peso de $x_2$ en $x_1$, más gana el modelo al añadir $x_2$, aunque su correlación con $y$ siga siendo cero.
+:::
+
+```{pyodide}
+#| exercise: ex_supresion
+#| check: true
+import contextlib, io, re
+otro = re.sub(r"(?m)^s, ruido\s*=.*$", "s, ruido = 2.0, 1.0", user_code)
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(otro, ns)
+    general = (abs(ns.get("r2_x1") - 0.1) < 1e-9
+               and abs(ns.get("r2_ambos") - 0.5) < 1e-9)
+except Exception:
+    general = False
+ok = round(r2_x1, 4) == 0.4587 and round(r2_ambos, 4) == 0.9174
+if ok and general:
+    feedback = {"correct": True, "message": "Correcto, también con otros valores."}
+elif ok:
+    feedback = {"correct": False,
+                "message": "Da 0.4587 y 0.9174, pero con s = 2 y ruido = 1 no da 0.1 y 0.5."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 0.4587 y 0.9174."}
+feedback
+```
+
+### Ejercicio 2, El filtro dentro de cada pliegue
+
+Con la Proposición 15.4, estimar el error de validación cruzada ajustando el filtro dentro de cada pliegue. La celda genera 50 filas con 1000 predictores sin relación con la clase a partir de `semilla`, y trae las funciones `top` y `centroide` de la celda de la Sección 3. Completar la línea de `s` para que el filtro use solo las filas de entrenamiento del pliegue `k`. La celda imprime el error medio, que con `semilla = 0` debe quedar cerca de 0,5. La comprobación vuelve a ejecutar el código con otra semilla.
+
+```{pyodide}
+#| exercise: ex_pliegue
+import numpy as np
+
+def top(X, y, k=20):
+    Xc = X - X.mean(0); yc = y - y.mean()
+    c = np.abs(Xc.T @ yc) / np.sqrt((Xc ** 2).sum(0) * (yc ** 2).sum())
+    return np.argsort(-c)[:k]
+
+def centroide(Xa, ya, Xb):
+    m0, m1 = Xa[ya == 0].mean(0), Xa[ya == 1].mean(0)
+    d1 = ((Xb - m1) ** 2).sum(1)
+    d0 = ((Xb - m0) ** 2).sum(1)
+    return (d1 < d0).astype(int)
+
+semilla = 0
+rng = np.random.default_rng(semilla)
+X = rng.standard_normal((50, 1000))
+y = rng.permutation(np.repeat([0, 1], 25))
+pl = rng.permutation(50) % 5
+
+errores = []
+for k in range(5):
+    tr, va = pl != k, pl == k
+    s = ______
+    pred = centroide(X[tr][:, s], y[tr], X[va][:, s])
+    errores.append(np.mean(pred != y[va]))
+
+print(round(float(np.mean(errores)), 4))
+```
+
+::: {.hint exercise="ex_pliegue"}
+El filtro recibe las filas de entrenamiento del pliegue: `X[tr]` y `y[tr]`.
+:::
+
+::: {.solution exercise="ex_pliegue"}
+```{pyodide}
+import numpy as np
+
+def top(X, y, k=20):
+    Xc = X - X.mean(0); yc = y - y.mean()
+    c = np.abs(Xc.T @ yc) / np.sqrt((Xc ** 2).sum(0) * (yc ** 2).sum())
+    return np.argsort(-c)[:k]
+
+def centroide(Xa, ya, Xb):
+    m0, m1 = Xa[ya == 0].mean(0), Xa[ya == 1].mean(0)
+    d1 = ((Xb - m1) ** 2).sum(1)
+    d0 = ((Xb - m0) ** 2).sum(1)
+    return (d1 < d0).astype(int)
+
+semilla = 0
+rng = np.random.default_rng(semilla)
+X = rng.standard_normal((50, 1000))
+y = rng.permutation(np.repeat([0, 1], 25))
+pl = rng.permutation(50) % 5
+
+errores = []
+for k in range(5):
+    tr, va = pl != k, pl == k
+    s = top(X[tr], y[tr])
+    pred = centroide(X[tr][:, s], y[tr], X[va][:, s])
+    errores.append(np.mean(pred != y[va]))
+
+print(round(float(np.mean(errores)), 4))
+```
+
+Da 0,56. Con `s = top(X, y)`, el filtro vería las etiquetas de las filas de validación y el error bajaría a 0,14 con esta misma semilla, la primera repetición de la celda de la Sección 3.
+:::
+
+```{pyodide}
+#| exercise: ex_pliegue
+#| check: true
+import contextlib, io, re
+import numpy as np
+def _ref(semilla):
+    r = np.random.default_rng(semilla)
+    X_ = r.standard_normal((50, 1000))
+    y_ = r.permutation(np.repeat([0, 1], 25))
+    p_ = r.permutation(50) % 5
+    e = []
+    for k in range(5):
+        tr_, va_ = p_ != k, p_ == k
+        s_ = top(X_[tr_], y_[tr_])
+        e.append(np.mean(centroide(X_[tr_][:, s_], y_[tr_], X_[va_][:, s_]) != y_[va_]))
+    return float(np.mean(e))
+otro = re.sub(r"(?m)^semilla\s*=.*$", "semilla = 7", user_code)
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(otro, ns)
+    general = abs(float(np.mean(ns.get("errores"))) - _ref(7)) < 1e-9
+except Exception:
+    general = False
+ok = abs(float(np.mean(errores)) - _ref(0)) < 1e-9
+if ok and general:
+    feedback = {"correct": True,
+                "message": "Correcto: el filtro solo ve las filas de entrenamiento del pliegue."}
+elif float(np.mean(errores)) < 0.3:
+    feedback = {"correct": False,
+                "message": "El error sale muy por debajo de 0,5: el filtro está viendo las filas de validación."}
+else:
+    feedback = {"correct": False,
+                "message": "El filtro debe ajustarse con X[tr] y y[tr]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Atributos 15**:
+
+1. Repetir la Proposición 15.2 con un bosque aleatorio de `scikit-learn` y comprobar si su error cambia al añadir 100 columnas de ruido.
+2. Programar la selección hacia delante como envoltura, con el error de validación cruzada como criterio, sobre los datos de la Proposición 15.3, y comprobar que elige $x_2$ en el segundo paso.
+3. Repetir la Proposición 15.4 con selección hacia delante en lugar del filtro, dentro y fuera de la validación, y guardar el caso en `50-Errores/`.
+
+## Del libro
+
+La §10.2 de FES, *Classes of Feature Selection Methodologies*, distingue los métodos intrínsecos, los filtros y las envolturas. La §10.3, *Effect of Irrelevant Features*, añade entre 10 y 200 columnas de ruido a una función no lineal de 20 predictores relevantes, con 500 o 1000 filas de entrenamiento: las columnas de ruido empeoran la regresión lineal, el lasso se mantiene estable, las máquinas de vectores soporte y las redes neuronales se ven muy afectadas, y los bosques aleatorios y el bagging no cambian. La §10.4, *Overfitting to Predictors and External Validation*, explica que al seleccionar fuera del remuestreo los mismos datos miden el rendimiento y guían la selección, y cita un análisis en que la validación dejando uno fuera daba errores cercanos a cero y un conjunto reservado los medía entre 15 y 20 puntos más altos. La §11.2, *Simple Filters*, trata los filtros univariantes.
+
+El mismo error se presenta en ESL §7.10, *Cross-Validation*, como la forma incorrecta de combinar la selección de predictores con la validación cruzada.
+
+Esta lección añade la demostración de la variable supresora y las mediciones de las tres proposiciones con datos sintéticos.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- Selección intrínseca, por filtro y por envoltura.
+- Las columnas irrelevantes dañan más a los vecinos más cercanos que al modelo lineal; a los bosques casi no.
+- Un filtro univariante descarta las variables supresoras y las de una interacción pura.
+- Seleccionar con todas las filas y validar después: error estimado 0,06 con etiquetas al azar.
+- La selección es un paso del ajuste: dentro de cada pliegue.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos. Con 300 filas y 2000 nuevas, el error cuadrático medio del modelo lineal vale 1,0104, 1,1692 y 1,5082 con 0, 20 y 100 columnas de ruido, y el de 10 vecinos 1,4700, 2,3151 y 2,8909. Con la variable supresora y 5000 filas, la correlación de $y$ con $x_1$ vale 0,6877 y con $x_2$ 0,0186; el $R^2$ vale 0,4730 con $x_1$, 0,0003 con $x_2$ y 0,9198 con las dos, frente al techo 0,9174. Con etiquetas al azar, el error estimado medio de 20 repeticiones vale 0,0600 con el filtro fuera de la validación, con un máximo de 0,1400, y 0,5280 dentro. La Proposición 15.3 se demuestra aquí.
+
+**Lo que se usa de otras lecciones sin repetir.** La fuga por selección es de Atributos 02; la interacción pura, de Atributos 12; el crecimiento del error con el número de parámetros, de Machine Learning 1; la selección por pasos, de Machine Learning 7.
+
+**Lo que se enuncia sin demostrar.** Las Proposiciones 15.2 y 15.4 se comprueban con simulaciones y no se demuestran en general.
+
+**Lo que es mío, no del libro.** Las tres simulaciones y la demostración de la variable supresora.
+:::

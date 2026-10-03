@@ -5514,6 +5514,20 @@ recomendación de dejar fuera biorreactores enteros se verificaron verbatim.
 - El preprocesamiento de perfiles (fondo, derivadas) de FES 9.3 a 9.5 queda
   fuera y se dice en Limitaciones.
 
+### 3.111 Atributos 15, selección por filtros y envolturas (03-10-2026)
+
+**Atributos 15 (L3, FES §10.2–10.4 y §11.2).** FES cap. 10 verificado verbatim
+(simulación de 20 relevantes más 10 a 200 de ruido; el análisis de Ambroise y
+McLachlan con errores 15–20 puntos mayores en un conjunto reservado).
+
+- Columnas irrelevantes: lineal 1,0104 a 1,5082, 10 vecinos 1,4700 a 2,8909.
+- Variable supresora demostrada: Cor(y, x2) = 0 y R² 0,4587 a 0,9174
+  (medidos 0,4730 y 0,9198): un filtro univariante la descarta.
+- Seleccionar con todas las filas, etiquetas al azar: error estimado 0,0600
+  (máximo 0,14) frente a 0,5280 dentro del pliegue.
+- El ejercicio 2 calcula en la comprobación el error de referencia con otra
+  semilla, y distingue la fuga de otros fallos. Probado en Pyodide.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
