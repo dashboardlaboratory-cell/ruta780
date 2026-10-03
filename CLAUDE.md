@@ -1,4 +1,7 @@
-# Ruta 780 — reglas de trabajo
+# datasciencemap — reglas de trabajo
+
+(Antes «Ruta 780»; el nombre cambió el 03-10-2026. La carpeta y el
+repositorio siguen llamándose `ruta780`, y la URL publicada no cambia.)
 
 Plataforma de estudio de Luis. 86 semanas, 2 h/día. Él estudia; yo construyo.
 

@@ -1,7 +1,7 @@
-# Ruta 780
+# datasciencemap
 
 Plataforma de aprendizaje de Python, matemática y machine learning.
-780 horas en 78 semanas, 2 h al día de lunes a viernes.
+Sesiones de 2 h al día de lunes a viernes.
 
 **Sitio:** https://dashboardlaboratory-cell.github.io/ruta780/
 

@@ -1,6 +1,6 @@
-# Ruta 780
+# datasciencemap
 
-Plataforma personal de aprendizaje: Python, matemática y ML en 86 semanas.
+Plataforma personal de aprendizaje: Python, matemática y ML.
 Un solo usuario (Luis), sesiones de estudio de 2 h, lectura larga con derivaciones
 LaTeX, ejercicios ejecutables en el navegador (Pyodide) y visuales interactivos.
 

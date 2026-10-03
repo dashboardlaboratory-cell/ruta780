@@ -1,4 +1,4 @@
-# Estado de Ruta 780 y qué sigue
+# Estado de datasciencemap (antes Ruta 780) y qué sigue
 
 Última actualización: **19-09-2026**, tras una sesión larga que publicó **veintitrés
 lecciones** y cerró **cinco deudas**.
