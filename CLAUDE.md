@@ -172,7 +172,10 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
     automática: situación, datos para descargar con su diccionario, preguntas,
     entregables (archivos, informe y cuaderno), rúbrica y una nota de
     enseñanza plegada con los resultados de referencia, el mecanismo y la
-    trampa. El generador vive en `aplicado/generadores/caso_N.py`; la verdad
+    trampa. Los módulos de Series y Causal cierran con un caso del mismo
+    formato (`series/caso-*.qmd`, `causal/caso-*.qmd`). El generador vive en
+    `aplicado/generadores/caso_*.py` (con `MODULO = "series"` si el caso es de
+    otro módulo); la verdad
     oculta va en columnas con prefijo `_`, que `generar.py` no escribe. Los CSV
     sintéticos no se guardan en el repo: se generan antes del render (local y
     CI). `casos.py` comprueba el formato, que no haya celdas, que cada CSV

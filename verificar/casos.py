@@ -4,7 +4,7 @@
 Los casos se resuelven fuera de la página: la página da la situación, los datos
 para descargar, las preguntas, los entregables, la rúbrica y una nota de
 enseñanza plegada con los resultados de referencia. Para cada página
-`aplicado/caso-N-*.qmd`:
+`aplicado/caso-*.qmd`, `series/caso-*.qmd` y `causal/caso-*.qmd`:
 
   forma       tiene las secciones del formato y la nota de enseñanza plegada, y
               ninguna celda que corra en el navegador
@@ -39,10 +39,15 @@ NOTA = re.compile(r'::: \{\.callout-note collapse="true" title="Nota de enseñan
 CIFRA = re.compile(r"(?<![\w/.,])[-−]?\d{1,3}(?:[  ]\d{3})+(?:,\d+)?|[-−]?\d+,\d+|[-−]?\d+\.\d+|\d+")
 
 
+GENERADORES = APLICADO / "generadores"
+CARPETA = APLICADO
+
+
 def ejecuta(codigo):
+    # corre desde la carpeta de la página, con los generadores importables
     r = subprocess.run([sys.executable, "-c",
-                        "import sys; sys.path.insert(0, 'generadores')\n" + codigo],
-                       capture_output=True, text=True, timeout=900, cwd=APLICADO)
+                        "import sys; sys.path.insert(0, %r)\n" % str(GENERADORES) + codigo],
+                       capture_output=True, text=True, timeout=900, cwd=CARPETA)
     return r.returncode, r.stdout, r.stderr
 
 
@@ -62,6 +67,8 @@ def cifras(texto):
 
 
 def revisar(p):
+    global CARPETA
+    CARPETA = p.parent
     t = p.read_text(encoding="utf-8")
     h = []
     for s in SECCIONES:
@@ -75,7 +82,7 @@ def revisar(p):
 
     front = t.split("---", 2)[1]
     for ruta in sorted(set(re.findall(r"\]\((datos/[^)]+)\)", t))):
-        archivo = APLICADO / ruta
+        archivo = p.parent / ruta
         if not archivo.exists():
             h.append(("datos", f"{ruta} no existe"))
             continue
@@ -118,7 +125,7 @@ def main():
         print("✗ los generadores fallan:", r.stderr.strip().split("\n")[-1])
         return 1
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    paginas = [pathlib.Path(a).resolve() for a in args] if args else sorted(APLICADO.glob("caso-*.qmd"))
+    paginas = [pathlib.Path(a).resolve() for a in args] if args else sorted(p for m in ("aplicado", "series", "causal") for p in (RAIZ / m).glob("caso-*.qmd"))
     total = 0
     for p in paginas:
         print(f"== {p.relative_to(RAIZ)}")

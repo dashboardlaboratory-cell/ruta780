@@ -5548,6 +5548,20 @@ escribieron en esta tanda, cada una con FES abierto antes, cifras declaradas
 y probadas en los dos entornos, y ejercicios que comprueban con `user_code`
 probados en Pyodide.
 
+### 3.113 Caso integrador de Series de tiempo (03-10-2026)
+
+`series/caso-1-centro-de-llamadas.qmd`: plan de agentes de un centro de
+atención con tres colas, llamadas por hora durante dos años y cuatro semanas
+por planificar. Formato de trabajo externo (regla 26); generador
+`aplicado/generadores/caso_s1.py` con `MODULO = "series"`, y `generar.py` y
+`casos.py` aceptan casos en `series/` y `causal/`.
+
+Trampas comprobadas: cambio de nivel de soporte (×1,39 desde junio de 2025;
+el método actual lo subestima 7,06 llamadas por hora); validación al azar
+3,01 frente a origen móvil 4,09 y real 4,60; MAPE 41,5 % frente a 42,7 %
+con MAE un 34 % mayor y 339 horas sin llamadas; plan por cuantil 0,75 cuesta
+22 560 frente a 24 980 por media y 44 920 con el método actual.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
