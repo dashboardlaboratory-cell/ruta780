@@ -5528,6 +5528,26 @@ McLachlan con errores 15–20 puntos mayores en un conjunto reservado).
 - El ejercicio 2 calcula en la comprobación el error de referencia con otra
   semilla, y distingue la fuga de otros fallos. Probado en Pyodide.
 
+### 3.112 Atributos 16 y el módulo de Feature Engineering completo (03-10-2026)
+
+**Atributos 16, Selección II: búsqueda global y el pipeline (L4, FES §12.2 a
+§12.4).** Verificado verbatim en FES: aceptación de subconjuntos peores,
+remuestreo interno y externo, cruce y mutación, AUC 0,750 y 0,731 en prueba.
+
+- Recocido simulado sobre 30 candidatos: con 300 pasos o más, el subconjunto
+  elegido tiene menor error de validación que los tres con efecto (hasta
+  1,0388 frente a 1,0820) y mayor error sobre filas nuevas (1,1287 a 1,2200
+  frente a 1,0174).
+- Sesgo del mínimo demostrado, E[min ê] ≤ min e; con la aproximación de Blom
+  0,9227, 0,8751 y 0,8386 (medidos 0,9243, 0,8744 y 0,8372).
+- Validación anidada de la búsqueda: 1,2448 frente a 1,0617 interna y 1,1287
+  real.
+
+**Feature Engineering queda en 16 de 16.** Las lecciones 11 a 16 se
+escribieron en esta tanda, cada una con FES abierto antes, cifras declaradas
+y probadas en los dos entornos, y ejercicios que comprueban con `user_code`
+probados en Pyodide.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

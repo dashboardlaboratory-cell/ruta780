@@ -1,0 +1,570 @@
+---
+title: "Selección II: búsqueda global y el pipeline"
+subtitle: "Feature Engineering · Lección 16"
+nivel: L4
+modulo: atributos
+fase: F2
+prereqs: [atributos/15-seleccion-filtros, aplicado/05-pipelines, aplicado/06-ajuste-de-hiperparametros]
+siguientes: []
+libro: "FES §12.2 Simulated Annealing · §12.3 Genetic Algorithms · §12.4 Test Set Results"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="atributos/16-seleccion-global-y-pipeline"}
+[[L4]{.nivel .nivel-L4} **Producción**]{.item}
+[**Fase** F2]{.item}
+[**Libro** FES 12]{.item}
+[**Prereqs** [Selección I](15-seleccion-filtros.qmd) · [Pipelines](../aplicado/05-pipelines.qmd) · [Ajuste de hiperparámetros](../aplicado/06-ajuste-de-hiperparametros.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Describir el recocido simulado y el algoritmo genético como búsquedas sobre subconjuntos de predictores.
+2. Demostrar que el menor de varios errores estimados es una estimación sesgada hacia abajo, y calcular el sesgo: con 100 subconjuntos del mismo error real 1 y estimaciones de desviación 0,05, la media del mínimo es 0,8751 según la aproximación y 0,8744 en la simulación.
+3. Medir el efecto en una búsqueda: el subconjunto elegido tiene un error de validación menor que el de los tres predictores con efecto (1,0388 frente a 1,0820) y un error mayor sobre datos nuevos (1,2200 frente a 1,0174).
+4. Construir el pipeline con todos los pasos del módulo dentro de la validación y estimar su error con validación anidada.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Atributos 15**: los filtros, las envolturas y la selección dentro de la validación.
+- **ML aplicado 05**: los pipelines de `scikit-learn`.
+- **ML aplicado 06**: la validación cruzada anidada para elegir hiperparámetros.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **ML aplicado 11**: el análisis de errores, que empieza por una estimación del error sin sesgo de selección.
+- **Casos de ML aplicado**: cada caso exige que la preparación de los datos se ajuste sin ver las filas de evaluación.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $p$ | pe | Número de predictores candidatos |
+| $m$ | eme | Número de subconjuntos evaluados |
+| $e_i$, $\hat e_i$ | e i, e i sombrero | Error real del subconjunto $i$ y su estimación por validación |
+| $\sigma$ | sigma | Desviación del error de la estimación |
+| $T$ | te | Temperatura del recocido simulado |
+| $\Delta$ | delta | Aumento del error al pasar a un subconjunto peor |
+:::
+
+## 1. Búsqueda global
+
+Una envoltura de Atributos 15 recorre los subconjuntos de uno en uno y se detiene cuando ningún cambio mejora el error. Con $p$ candidatos hay $2^p$ subconjuntos, y una búsqueda que solo acepta mejoras se queda en el primer subconjunto que no se puede mejorar con un cambio. Las búsquedas globales aceptan a veces empeorar para salir de él.
+
+::: {.definicion}
+**Definición 16.1 ([recocido simulado]{.g}).** Una búsqueda que en cada paso cambia un predictor del subconjunto actual y estima el error del nuevo. Si el error baja, acepta el cambio; si sube en $\Delta$, lo acepta con probabilidad $e^{-\Delta/T}$, donde la temperatura $T$ disminuye con los pasos. Guarda el mejor subconjunto visitado. Un **algoritmo genético** mantiene en cambio una población de subconjuntos, combina partes de dos de ellos y cambia al azar algunos predictores de los descendientes.
+:::
+
+::: {.proposicion}
+**Proposición 16.2 (la búsqueda se ajusta a su propia validación).** Con 100 filas, 30 candidatos de los que 3 tienen efecto y ruido de desviación 1, el error de validación cruzada del subconjunto elegido y su error sobre 5000 filas nuevas son:
+
+| Subconjunto | Validación | Filas nuevas | Tamaño | Con efecto |
+|---|---|---|---|---|
+| los tres con efecto | 1,0820 | 1,0174 | 3 | 3 |
+| recocido, 100 pasos | 1,1090 | 1,2487 | 15 | 1 |
+| recocido, 300 pasos | 1,0617 | 1,1287 | 11 | 2 |
+| recocido, 1000 pasos | 1,0433 | 1,2101 | 7 | 1 |
+| codicioso, 300 pasos | 1,0388 | 1,2200 | 7 | 1 |
+
+Con 300 pasos o más, la búsqueda encuentra subconjuntos con un error de validación menor que el del modelo con los tres predictores con efecto, y todos tienen sobre filas nuevas un error mayor.
+:::
+
+::: {.demostracion}
+*Comprobación.* La validación cruzada estima el error de cada subconjunto con un error aleatorio, que depende de las 100 filas. La búsqueda evalúa cientos de subconjuntos y conserva el de menor estimación, que tiende a ser uno cuyo error aleatorio es negativo. La Proposición 16.3 lo demuestra en general. La tabla muestra además que más pasos no dan mejor modelo: el de 1000 pasos tiene menor error de validación que el de 300 y mayor error sobre filas nuevas. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def datos(n, semilla, p=30):
+    """30 candidatos; solo los tres primeros tienen efecto."""
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, p))
+    y = X[:, 0] * 0.5 + X[:, 1] * 0.4 + X[:, 2] * 0.3 + rng.standard_normal(n)
+    return X, y
+
+def ajusta(X, y, cols):
+    A = np.column_stack([np.ones(len(y)), X[:, cols]])
+    return np.linalg.lstsq(A, y, rcond=None)[0]
+
+def predice(c, X, cols):
+    return np.column_stack([np.ones(len(X)), X[:, cols]]) @ c
+
+def cv_rmse(X, y, cols, pl):
+    """Raiz del error cuadratico medio por validacion cruzada de 5 pliegues."""
+    e = 0.0
+    for k in range(5):
+        tr, va = pl != k, pl == k
+        e += ((y[va] - predice(ajusta(X[tr], y[tr], cols), X[va], cols)) ** 2).sum()
+    return float(np.sqrt(e / len(y)))
+
+def recocido(X, y, pl, iters, semilla, t0=0.05):
+    """Recocido simulado sobre subconjuntos: cambia un predictor por paso y
+    acepta un subconjunto peor con probabilidad exp(-diferencia / temperatura)."""
+    rng = np.random.default_rng(semilla)
+    p = X.shape[1]
+    actual = rng.random(p) < 0.5
+    fa = cv_rmse(X, y, actual, pl)
+    mejor, fm, camino = actual.copy(), fa, []
+    for t in range(iters):
+        nuevo = actual.copy()
+        j = rng.integers(p)
+        nuevo[j] = not nuevo[j]
+        fn = cv_rmse(X, y, nuevo, pl)
+        temp = t0 * (1 - t / iters) + 1e-9
+        if fn < fa or rng.random() < np.exp(-(fn - fa) / temp):
+            actual, fa = nuevo, fn
+        if fa < fm:
+            mejor, fm = actual.copy(), fa
+        camino.append(fa)
+    return mejor, fm, camino
+
+X, y = datos(100, 1)
+Xn, yn = datos(5000, 2)
+pl = np.random.default_rng(0).permutation(100) % 5
+
+def nuevas(cols):
+    return float(np.sqrt(np.mean((yn - predice(ajusta(X, y, cols), Xn, cols)) ** 2)))
+
+verdad = np.zeros(30, bool); verdad[:3] = True
+print("100 filas, 30 candidatos, 3 con efecto; desviacion del ruido 1")
+print("  %-24s %10s %10s %8s %8s" % ("subconjunto", "CV", "nuevas", "tamano", "con efecto"))
+print("  %-24s %10.4f %10.4f %8d %8d" % ("los tres con efecto", cv_rmse(X, y, verdad, pl), nuevas(verdad), 3, 3))
+for nombre, it, t0 in (("recocido, 100 pasos", 100, 0.05), ("recocido, 300 pasos", 300, 0.05),
+                       ("recocido, 1000 pasos", 1000, 0.05), ("codicioso, 300 pasos", 300, 0.0)):
+    m, f, _ = recocido(X, y, pl, it, 5, t0)
+    print("  %-24s %10.4f %10.4f %8d %8d" % (nombre, f, nuevas(m), m.sum(), m[:3].sum()))
+```
+
+```{=html}
+<div class="viz-recocido">
+  <div class="controles">
+    <label>Paso <input id="re-t" type="range" min="1" max="300" step="1" value="300"> <span id="re-t-v">300</span></label>
+    <label>Búsqueda
+      <select id="re-m"><option value="temp" selected>recocido simulado</option><option value="cod">codiciosa, sin temperatura</option></select>
+    </label>
+  </div>
+  <svg id="re-svg" viewBox="0 0 660 270" role="img" aria-label="Error de validación cruzada del subconjunto actual a lo largo de 300 pasos de la búsqueda, con recocido simulado o de forma codiciosa, frente al error del subconjunto de los tres predictores con efecto."></svg>
+  <p class="lectura" id="re-lectura"></p>
+</div>
+<style>
+.viz-recocido { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-recocido .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-recocido label { display: flex; align-items: center; gap: .4rem; }
+.viz-recocido input[type=range] { width: 150px; padding: 0; }
+.viz-recocido svg { width: 100%; height: auto; display: block; }
+.viz-recocido .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("re-svg"), lec = document.getElementById("re-lectura");
+  var ct = document.getElementById("re-t"), cm = document.getElementById("re-m"), et = document.getElementById("re-t-v");
+  // error de validacion del subconjunto actual en cada paso, de la celda de la seccion 1
+  var TEMP = [1.2560,1.2515,1.2676,1.1787,1.1769,1.2131,1.2131,1.2325,1.2171,1.1935,1.1917,1.1917,1.1854,1.1702,1.1854,1.1729,1.1973,1.1811,1.1898,1.1990,1.1818,1.2076,1.2219,1.2076,1.2178,1.2178,1.2074,1.1821,1.1821,1.1939,1.1969,1.1969,1.1919,1.1885,1.1919,1.2057,1.2026,1.1981,1.2119,1.2252,1.2097,1.1982,1.1982,1.2026,1.2026,1.2108,1.2090,1.2169,1.2180,1.2197,1.2035,1.2279,1.2365,1.2177,1.2310,1.2177,1.2296,1.2296,1.2238,1.2157,1.2157,1.2007,1.2039,1.1980,1.1980,1.2202,1.2252,1.2446,1.2682,1.2459,1.2322,1.2420,1.2341,1.2131,1.1668,1.1451,1.1357,1.1393,1.1261,1.1314,1.1287,1.1271,1.1271,1.1274,1.1269,1.1354,1.1354,1.1624,1.1878,1.1977,1.2178,1.1958,1.1905,1.1537,1.1405,1.1762,1.1954,1.1662,1.1843,1.1984,1.1984,1.1843,1.1774,1.1607,1.1764,1.1859,1.1813,1.1446,1.1446,1.1311,1.0921,1.0951,1.0951,1.0898,1.0898,1.0937,1.0989,1.1092,1.1029,1.1009,1.0932,1.0909,1.0909,1.0932,1.0909,1.1067,1.1170,1.1170,1.1168,1.1249,1.1277,1.1325,1.1363,1.1363,1.1363,1.1413,1.1273,1.1120,1.1120,1.1204,1.2215,1.2215,1.2239,1.2239,1.1973,1.2635,1.2571,1.2530,1.2530,1.2530,1.2571,1.2571,1.1013,1.1351,1.1308,1.1248,1.1248,1.1036,1.1305,1.1230,1.1103,1.1187,1.1320,1.1341,1.1341,1.1321,1.1321,1.1137,1.1120,1.1013,1.1117,1.1117,1.1075,1.1052,1.1179,1.1213,1.1292,1.1292,1.1292,1.1292,1.1361,1.1324,1.1252,1.1191,1.1191,1.1231,1.1328,1.1293,1.1284,1.1290,1.1124,1.1144,1.1186,1.1075,1.1306,1.1306,1.1464,1.1308,1.1234,1.1302,1.1302,1.1525,1.1525,1.1525,1.1525,1.1248,1.1248,1.1248,1.1124,1.1124,1.1252,1.1215,1.1188,1.1188,1.1188,1.1234,1.1213,1.1221,1.1356,1.1432,1.1294,1.1305,1.1305,1.1221,1.1058,1.1078,1.1078,1.1227,1.1227,1.1227,1.1214,1.1242,1.1242,1.1045,1.1033,1.0982,1.1016,1.1016,1.1107,1.1107,1.1107,1.1016,1.1016,1.1016,1.1016,1.1016,1.1016,1.0996,1.0996,1.0996,1.0994,1.1005,1.0908,1.0908,1.0812,1.0812,1.0813,1.0813,1.0813,1.0813,1.0813,1.0813,1.0813,1.0727,1.0727,1.0658,1.0658,1.0658,1.0705,1.0705,1.0620,1.0620,1.0620,1.0620,1.0728,1.0712,1.0712,1.0644,1.0644,1.0644,1.0644,1.0644,1.0644,1.0644,1.0644,1.0644,1.0644,1.0644,1.0627,1.0627,1.0627,1.0627,1.0627,1.0627,1.0617,1.0617,1.0617,1.0617,1.0617,1.0617];
+  var COD = [1.2560,1.2515,1.2515,1.1757,1.1729,1.1729,1.1729,1.1729,1.1632,1.1469,1.1247,1.1247,1.1117,1.1117,1.1117,1.1117,1.1117,1.1117,1.1117,1.1117,1.1117,1.1117,1.1025,1.1025,1.1025,1.0980,1.0980,1.0980,1.0980,1.0980,1.0980,1.0980,1.0980,1.0980,1.0980,1.0980,1.0980,1.0980,1.0980,1.0980,1.0980,1.0980,1.0850,1.0763,1.0763,1.0763,1.0763,1.0763,1.0763,1.0763,1.0763,1.0763,1.0562,1.0562,1.0562,1.0562,1.0562,1.0562,1.0562,1.0562,1.0562,1.0534,1.0534,1.0534,1.0534,1.0534,1.0534,1.0534,1.0526,1.0526,1.0526,1.0526,1.0526,1.0508,1.0508,1.0508,1.0508,1.0508,1.0508,1.0508,1.0508,1.0508,1.0508,1.0422,1.0422,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388,1.0388];
+  var NUEVAS = { temp: 1.1287, cod: 1.2200 }, VERDAD = 1.0820;
+  var X0 = 58, X1 = 628, Y0 = 16, Y1 = 214, VMIN = 1.0, VMAX = 1.3;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(i) { return X0 + (i - 1) / 299 * (X1 - X0); }
+  function py(v) { return Y1 - (v - VMIN) / (VMAX - VMIN) * (Y1 - Y0); }
+  function coma(v, d) { return v.toFixed(d).replace(".", ","); }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var t = +ct.value, modo = cm.value, C = modo === "temp" ? TEMP : COD, i;
+    et.textContent = String(t);
+    [1.0, 1.1, 1.2, 1.3].forEach(function (v) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(v).toFixed(1) + " L" + X1 + " " + py(v).toFixed(1), stroke: C_L, "stroke-width": 0.8, opacity: .55 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(v) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, coma(v, 1)));
+    });
+    [1, 100, 200, 300].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y1 + 18, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, String(v)));
+    });
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 38, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "paso de la búsqueda"));
+    svg.appendChild(el("path", { d: "M" + X0 + " " + py(VERDAD).toFixed(1) + " L" + X1 + " " + py(VERDAD).toFixed(1), stroke: C_T, "stroke-width": 1.4, "stroke-dasharray": "6 4" }));
+    svg.appendChild(el("text", { x: X1, y: py(VERDAD) - 6, "text-anchor": "end", "font-size": 10.5, fill: C_T }, "los tres con efecto"));
+    var d = "", mejor = Infinity;
+    for (i = 1; i <= t; i++) { d += (i === 1 ? "M" : " L") + px(i).toFixed(1) + " " + py(C[i - 1]).toFixed(1); mejor = Math.min(mejor, C[i - 1]); }
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: modo === "temp" ? C_A : C_B, "stroke-width": 2 }));
+    svg.appendChild(el("circle", { cx: px(t).toFixed(1), cy: py(C[t - 1]).toFixed(1), r: 6, fill: modo === "temp" ? C_A : C_B }));
+    lec.innerHTML = "En el paso <strong>" + t + "</strong>, el subconjunto actual tiene error de validación <strong>" + coma(C[t - 1], 4) + "</strong>, y el mejor hasta ahora <strong>" + coma(mejor, 4) + "</strong>. " +
+      (modo === "temp" ? "El recocido acepta a veces subconjuntos peores, y la curva sube y baja." : "La búsqueda codiciosa solo acepta mejoras, y la curva no sube nunca.") +
+      " Tras 300 pasos, el error sobre filas nuevas del subconjunto elegido es <strong>" + coma(NUEVAS[modo], 4) + "</strong>, frente a 1,0174 de los tres con efecto: un error de validación menor no es un modelo mejor.";
+  }
+  ct.addEventListener("input", dibujar); cm.addEventListener("change", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+::: {.proposicion}
+**Proposición 16.3 (sesgo del mínimo).** Sean $\hat e_1,\dots,\hat e_m$ estimaciones insesgadas de los errores $e_1,\dots,e_m$. Entonces
+$$E\Big[\min_i \hat e_i\Big]\le \min_i e_i .$$
+Si todos los errores valen $e$ y las estimaciones son normales independientes de desviación $\sigma$, la diferencia es $\sigma$ por la media del máximo de $m$ normales tipificadas, que se aproxima por $\Phi^{-1}\big((m-0{,}375)/(m+0{,}25)\big)$. Con $e=1$ y $\sigma=0{,}05$, la aproximación da 0,9227, 0,8751 y 0,8386 para 10, 100 y 1000 subconjuntos, y la celda mide 0,9243, 0,8744 y 0,8372.
+:::
+
+::: {.demostracion}
+*Demostración.* Para cada $j$, $\min_i\hat e_i\le\hat e_j$. Tomando esperanzas, $E[\min_i\hat e_i]\le E[\hat e_j]=e_j$ para todo $j$, y por tanto también para el menor de los $e_j$. En el caso de errores iguales, $\min_i\hat e_i=e-\sigma\max_i z_i$ con $z_i=-(\hat e_i-e)/\sigma$ normales tipificadas, y la media del mínimo es $e$ menos $\sigma$ por la media del máximo. La aproximación de la media del máximo es la de Blom, que se usa sin demostrar. ∎
+:::
+
+```{pyodide}
+import numpy as np
+from statistics import NormalDist
+
+# m subconjuntos con el mismo error real, 1,0; la validacion lo estima
+# con un error aleatorio de desviacion 0,05
+rng = np.random.default_rng(16)
+print("media del menor de m errores estimados (2000 repeticiones)")
+print("  %6s %10s %12s" % ("m", "simulada", "aproximada"))
+for m in (1, 10, 100, 1000):
+    est = 1.0 + 0.05 * rng.standard_normal((2000, m))
+    blom = NormalDist().inv_cdf((m - 0.375) / (m + 0.25))   # media del maximo de m normales
+    print("  %6d %10.4f %12.4f" % (m, est.min(1).mean(), 1.0 - 0.05 * blom))
+```
+
+```{=html}
+<div class="viz-minimo">
+  <div class="controles">
+    <label>Subconjuntos evaluados <input id="mi-m" type="range" min="0" max="3" step="0.05" value="2"> <span id="mi-m-v">100</span></label>
+    <label>Error de la estimación <input id="mi-s" type="range" min="0.01" max="0.15" step="0.01" value="0.05"> <span id="mi-s-v">0,05</span></label>
+  </div>
+  <svg id="mi-svg" viewBox="0 0 660 270" role="img" aria-label="Media del menor de m errores estimados cuando todos los subconjuntos tienen el mismo error real 1, en función de m en escala logarítmica."></svg>
+  <p class="lectura" id="mi-lectura"></p>
+</div>
+<style>
+.viz-minimo { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-minimo .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-minimo label { display: flex; align-items: center; gap: .4rem; }
+.viz-minimo input[type=range] { width: 150px; padding: 0; }
+.viz-minimo svg { width: 100%; height: auto; display: block; }
+.viz-minimo .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("mi-svg"), lec = document.getElementById("mi-lectura");
+  var cm = document.getElementById("mi-m"), cs = document.getElementById("mi-s");
+  var em = document.getElementById("mi-m-v"), es = document.getElementById("mi-s-v");
+  // marco fijo: de 1 a 1000 subconjuntos y error estimado de 0,4 a 1,05
+  var X0 = 58, X1 = 628, Y0 = 16, Y1 = 214, VMIN = 0.4, VMAX = 1.05;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  // inversa de la normal tipica (algoritmo de Acklam)
+  function invnorm(p) {
+    var a = [-39.69683028665376, 220.9460984245205, -275.9285104469687, 138.3577518672690, -30.66479806614716, 2.506628277459239];
+    var b = [-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155288572];
+    var c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
+    var d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416];
+    var q, r;
+    if (p < 0.02425) { q = Math.sqrt(-2 * Math.log(p)); return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1); }
+    if (p > 1 - 0.02425) { q = Math.sqrt(-2 * Math.log(1 - p)); return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1); }
+    q = p - 0.5; r = q * q;
+    return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q / (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1);
+  }
+  function minimo(m, s) { return 1 - s * invnorm((m - 0.375) / (m + 0.25)); }
+  function px(l) { return X0 + l / 3 * (X1 - X0); }
+  function py(v) { return Y1 - (Math.max(v, VMIN) - VMIN) / (VMAX - VMIN) * (Y1 - Y0); }
+  function coma(v, d) { return v.toFixed(d).replace(".", ","); }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var l = +cm.value, m = Math.round(Math.pow(10, l)), s = +cs.value, t;
+    em.textContent = String(m); es.textContent = coma(s, 2);
+    [0.4, 0.6, 0.8, 1.0].forEach(function (v) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(v).toFixed(1) + " L" + X1 + " " + py(v).toFixed(1), stroke: C_L, "stroke-width": 0.8, opacity: .55 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(v) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, coma(v, 1)));
+    });
+    [0, 1, 2, 3].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y1 + 18, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, String(Math.pow(10, v))));
+    });
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 38, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "subconjuntos evaluados (escala logarítmica)"));
+    svg.appendChild(el("text", { x: X1, y: py(1) - 6, "text-anchor": "end", "font-size": 10.5, fill: C_T }, "error real 1"));
+    var d = "";
+    for (t = 0; t <= 3.0001; t += 0.05) d += (t === 0 ? "M" : " L") + px(t).toFixed(1) + " " + py(minimo(Math.pow(10, t), s)).toFixed(1);
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_A, "stroke-width": 2.6 }));
+    var v = minimo(m, s);
+    svg.appendChild(el("circle", { cx: px(l).toFixed(1), cy: py(v).toFixed(1), r: 6.5, fill: C_B }));
+    lec.innerHTML = "Con <strong>" + m + "</strong> subconjuntos del mismo error real, 1, estimados con un error de desviación <strong>" + coma(s, 2) +
+      "</strong>, el menor de los errores estimados vale en media <strong>" + coma(v, 4) + "</strong> (Proposición 16.3). Cuantos más subconjuntos se evalúan, más baja el mínimo sin que ninguno sea mejor.";
+  }
+  cm.addEventListener("input", dibujar); cs.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+FES §12.2 propone separar dos remuestreos: uno interno, que guía la búsqueda, y otro externo, que estima el rendimiento del procedimiento y fija cuántos pasos dar. Es la validación anidada de la sección siguiente.
+
+## 2. El pipeline y la validación anidada
+
+::: {.definicion}
+**Definición 16.4 ([pipeline]{.g}).** La secuencia de pasos que se ajustan con datos para pasar de las filas originales a una predicción: imputación de faltantes, escalado, codificación de categóricas, vocabulario de texto, interacciones, agregación, selección y modelo. Cada paso que estima algo con las filas, como una media, un vocabulario, una lista de predictores o unos coeficientes, forma parte del ajuste.
+:::
+
+Los pasos del módulo que se ajustan con datos son los de las lecciones 05 (centrado y escala), 08 a 10 (codificación, incluida la supervisada), 11 (vocabulario y palabras clave), 12 (interacciones elegidas), 13 (imputación), 14 (agregados) y 15 y 16 (selección). Para que la validación no tenga fuga, todos se ajustan con las filas de entrenamiento de cada pliegue y se aplican sin cambios a las de validación.
+
+::: {.proposicion}
+**Proposición 16.5 (validación anidada de una búsqueda).** Con los datos de la Proposición 16.2 y un recocido de 300 pasos:
+
+1. La validación cruzada interna del subconjunto elegido con las 100 filas vale 1,0617.
+2. La validación anidada, que repite la búsqueda completa dentro de cada uno de 5 pliegues externos y evalúa solo en el pliegue que queda fuera, vale 1,2448.
+3. El error del subconjunto elegido sobre 5000 filas nuevas vale 1,1287.
+:::
+
+::: {.demostracion}
+*Comprobación.* La estimación interna es el mínimo de muchas estimaciones y, por la Proposición 16.3, sesgada hacia abajo. En la anidada, las filas de cada pliegue externo no intervienen en la búsqueda que se evalúa con ellas, y la estimación no tiene ese sesgo. Queda por encima del error real porque cada búsqueda usa 80 filas en lugar de 100, y con menos filas el procedimiento elige peor. La celda mide las tres cantidades. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def datos(n, semilla, p=30):
+    """30 candidatos; solo los tres primeros tienen efecto."""
+    rng = np.random.default_rng(semilla)
+    X = rng.standard_normal((n, p))
+    y = X[:, 0] * 0.5 + X[:, 1] * 0.4 + X[:, 2] * 0.3 + rng.standard_normal(n)
+    return X, y
+
+def ajusta(X, y, cols):
+    A = np.column_stack([np.ones(len(y)), X[:, cols]])
+    return np.linalg.lstsq(A, y, rcond=None)[0]
+
+def predice(c, X, cols):
+    return np.column_stack([np.ones(len(X)), X[:, cols]]) @ c
+
+def cv_rmse(X, y, cols, pl):
+    """Raiz del error cuadratico medio por validacion cruzada de 5 pliegues."""
+    e = 0.0
+    for k in range(5):
+        tr, va = pl != k, pl == k
+        e += ((y[va] - predice(ajusta(X[tr], y[tr], cols), X[va], cols)) ** 2).sum()
+    return float(np.sqrt(e / len(y)))
+
+def recocido(X, y, pl, iters, semilla, t0=0.05):
+    """Recocido simulado sobre subconjuntos: cambia un predictor por paso y
+    acepta un subconjunto peor con probabilidad exp(-diferencia / temperatura)."""
+    rng = np.random.default_rng(semilla)
+    p = X.shape[1]
+    actual = rng.random(p) < 0.5
+    fa = cv_rmse(X, y, actual, pl)
+    mejor, fm, camino = actual.copy(), fa, []
+    for t in range(iters):
+        nuevo = actual.copy()
+        j = rng.integers(p)
+        nuevo[j] = not nuevo[j]
+        fn = cv_rmse(X, y, nuevo, pl)
+        temp = t0 * (1 - t / iters) + 1e-9
+        if fn < fa or rng.random() < np.exp(-(fn - fa) / temp):
+            actual, fa = nuevo, fn
+        if fa < fm:
+            mejor, fm = actual.copy(), fa
+        camino.append(fa)
+    return mejor, fm, camino
+
+X, y = datos(100, 1)
+Xn, yn = datos(5000, 2)
+
+# validacion anidada: el recocido se repite dentro de cada pliegue externo,
+# con sus propios pliegues internos, y el pliegue externo solo evalua
+externo = np.random.default_rng(9).permutation(100) % 5
+e = 0.0
+for k in range(5):
+    tr, va = externo != k, externo == k
+    interno = np.random.default_rng(10 + k).permutation(tr.sum()) % 5
+    m, _, _ = recocido(X[tr], y[tr], interno, 300, 5)
+    e += ((y[va] - predice(ajusta(X[tr], y[tr], m), X[va], m)) ** 2).sum()
+anidada = float(np.sqrt(e / 100))
+
+pl = np.random.default_rng(0).permutation(100) % 5
+m, interna, _ = recocido(X, y, pl, 300, 5)
+real = float(np.sqrt(np.mean((yn - predice(ajusta(X, y, m), Xn, m)) ** 2)))
+print("recocido de 300 pasos sobre las 100 filas")
+print("  CV interna del subconjunto elegido  : %.4f" % interna)
+print("  validacion anidada del procedimiento: %.4f" % anidada)
+print("  error sobre 5000 filas nuevas       : %.4f" % real)
+```
+
+**Modo de falla.** Se informa como rendimiento del modelo el error de validación con que la búsqueda eligió los predictores, o los hiperparámetros. Es el mínimo de muchas estimaciones y está sesgado hacia abajo; el sesgo crece con el número de configuraciones probadas. El rendimiento del procedimiento se estima con un remuestreo externo o con un conjunto de prueba que no haya intervenido en ninguna decisión.
+
+## 3. Limitaciones
+
+El recocido de la lección usa una temperatura inicial y un enfriamiento lineal elegidos a mano; son hiperparámetros del procedimiento y la validación anidada los trataría como tales. El algoritmo genético se describe y no se programa.
+
+La aproximación de Blom y la Proposición 16.3 en su forma cuantitativa suponen estimaciones independientes. Las estimaciones de subconjuntos parecidos están correlacionadas, y el sesgo real es menor que el de la fórmula, aunque sigue presente.
+
+La validación anidada multiplica el coste: con 5 pliegues externos, la búsqueda se repite cinco veces.
+
+## Ejercicios
+
+### Ejercicio 1, Probabilidad de aceptar un subconjunto peor
+
+Con la Definición 16.1, calcular la probabilidad de que el recocido acepte un subconjunto cuyo error es mayor en cada valor de la lista `diferencias`. La celda trae la temperatura `temp`. Completar la línea de `prob`. La celda imprime las probabilidades con cuatro decimales; con `temp = 0.05` deben dar 0,8187, 0,3679 y 0,1353. La comprobación vuelve a ejecutar el código con otra temperatura.
+
+```{pyodide}
+#| exercise: ex_aceptacion
+import math
+
+temp = 0.05
+diferencias = [0.01, 0.05, 0.1]
+
+prob = [______ for d in diferencias]
+
+print([round(p, 4) for p in prob])
+```
+
+::: {.hint exercise="ex_aceptacion"}
+La probabilidad es `math.exp(-d / temp)`.
+:::
+
+::: {.solution exercise="ex_aceptacion"}
+```{pyodide}
+import math
+
+temp = 0.05
+diferencias = [0.01, 0.05, 0.1]
+
+prob = [math.exp(-d / temp) for d in diferencias]
+
+print([round(p, 4) for p in prob])
+```
+
+Un empeoramiento igual a la temperatura se acepta con probabilidad $e^{-1}=0{,}3679$. Al bajar la temperatura, la misma diferencia se acepta cada vez menos, y al final la búsqueda solo acepta mejoras.
+:::
+
+```{pyodide}
+#| exercise: ex_aceptacion
+#| check: true
+import contextlib, io, re
+otro = re.sub(r"(?m)^temp\s*=.*$", "temp = 0.1", user_code)
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(otro, ns)
+    general = [round(p, 4) for p in ns.get("prob")] == [0.9048, 0.6065, 0.3679]
+except Exception:
+    general = False
+ok = [round(p, 4) for p in prob] == [0.8187, 0.3679, 0.1353]
+if ok and general:
+    feedback = {"correct": True, "message": "Correcto, también con otra temperatura."}
+elif ok:
+    feedback = {"correct": False,
+                "message": "Da las cifras pedidas, pero con temp = 0.1 no da [0.9048, 0.6065, 0.3679]."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [0.8187, 0.3679, 0.1353]."}
+feedback
+```
+
+### Ejercicio 2, Media del menor error estimado
+
+Con la Proposición 16.3, medir por simulación la media del menor de `m` errores estimados. La celda genera en `est` 2000 repeticiones de `m` estimaciones del mismo error real 1, con desviación `sigma`. Completar la línea de `minimos` con el menor valor de cada repetición. La celda imprime su media con cuatro decimales, que con `m = 100` debe quedar cerca de la aproximación 0,8751. La comprobación vuelve a ejecutar el código con otro `m`.
+
+```{pyodide}
+#| exercise: ex_minimo
+import numpy as np
+
+m, sigma = 100, 0.05
+rng = np.random.default_rng(1)
+est = 1.0 + sigma * rng.standard_normal((2000, m))
+
+minimos = ______
+
+print(round(float(np.mean(minimos)), 4))
+```
+
+::: {.hint exercise="ex_minimo"}
+Cada fila de `est` es una repetición; el menor de cada fila se obtiene con `min` a lo largo del eje 1.
+:::
+
+::: {.solution exercise="ex_minimo"}
+```{pyodide}
+import numpy as np
+
+m, sigma = 100, 0.05
+rng = np.random.default_rng(1)
+est = 1.0 + sigma * rng.standard_normal((2000, m))
+
+minimos = est.min(axis=1)
+
+print(round(float(np.mean(minimos)), 4))
+```
+
+Da 0,8738: aunque los 100 subconjuntos tienen el mismo error real, el mejor parece cerca de un 13 % mejor. Con `est.min()` sin eje se obtendría un solo número, el menor de las 200 000 estimaciones.
+:::
+
+```{pyodide}
+#| exercise: ex_minimo
+#| check: true
+import contextlib, io, re
+import numpy as np
+otro = re.sub(r"(?m)^m, sigma\s*=.*$", "m, sigma = 10, 0.05", user_code)
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(otro, ns)
+    general = round(float(np.mean(ns.get("minimos"))), 4) == 0.9233
+except Exception:
+    general = False
+ok = np.ndim(minimos) == 1 and round(float(np.mean(minimos)), 4) == 0.8738
+if ok and general:
+    feedback = {"correct": True, "message": "Correcto: 0,8738, y 0,9233 con m = 10."}
+elif ok:
+    feedback = {"correct": False, "message": "Da 0,8738, pero con m = 10 no da 0,9233."}
+else:
+    feedback = {"correct": False,
+                "message": "Se esperaba una media de 0,8738, con un mínimo por repetición."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Atributos 16**:
+
+1. Programar un algoritmo genético sobre los datos de la Proposición 16.2 y comparar su error de validación y su error sobre filas nuevas con los del recocido.
+2. Construir con `scikit-learn` un pipeline con imputación, escalado, codificación de una categórica y selección, y estimar su error con validación cruzada anidada; comparar con la estimación que se obtiene ajustando la selección fuera del pipeline.
+3. Repetir la Proposición 16.5 con 200 filas y explicar cómo cambia la distancia entre la estimación anidada y el error real. Guardar el caso en `50-Errores/`.
+
+## Del libro
+
+El capítulo 12 de FES, *Global Search Methods*, trata la búsqueda global de subconjuntos de predictores. La §12.2, *Simulated Annealing*, acepta un subconjunto peor con una probabilidad que disminuye con las iteraciones, y propone un remuestreo interno que guía la búsqueda y otro externo que fija el número de iteraciones. La §12.3, *Genetic Algorithms*, describe el cruce, en que dos cromosomas intercambian parte de sus genes, y la mutación de una pequeña fracción de los genes de los descendientes. La §12.4, *Test Set Results*, compara los subconjuntos elegidos sobre un conjunto de prueba: el AUC vale 0,750 con el algoritmo genético sin restricciones y 0,731 con la versión restringida, los dos por encima de sus estimaciones por remuestreo.
+
+Esta lección añade la demostración del sesgo del mínimo, la medición de la búsqueda frente al modelo con los predictores con efecto y la validación anidada de la búsqueda.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- Recocido simulado: acepta un empeoramiento $\Delta$ con probabilidad $e^{-\Delta/T}$; la temperatura baja.
+- El mínimo de estimaciones insesgadas está sesgado hacia abajo: $E[\min\hat e_i]\le\min e_i$.
+- Con 100 subconjuntos iguales y $\sigma=0{,}05$, el mejor parece cerca de un 13 % mejor sin serlo.
+- Una búsqueda larga baja el error de validación y puede subir el real.
+- Todo paso que estima algo con las filas va dentro del pipeline y de cada pliegue.
+- El rendimiento de un procedimiento con búsqueda se estima con validación anidada o con un conjunto de prueba intacto.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos. Con 100 filas y 30 candidatos, el subconjunto de los tres predictores con efecto tiene error de validación 1,0820 y sobre filas nuevas 1,0174; el recocido con 100, 300 y 1000 pasos elige subconjuntos con 1,1090 y 1,2487, 1,0617 y 1,1287, y 1,0433 y 1,2101; la búsqueda codiciosa de 300 pasos, 1,0388 y 1,2200. La media del menor de $m$ errores estimados vale 0,9994, 0,9243, 0,8744 y 0,8372 con 1, 10, 100 y 1000 subconjuntos. La validación anidada de la búsqueda de 300 pasos vale 1,2448, frente a 1,0617 de la interna y 1,1287 sobre filas nuevas. La Proposición 16.3 se demuestra aquí.
+
+**Lo que se usa de otras lecciones sin repetir.** Los filtros, las envolturas y la selección dentro de la validación son de Atributos 15; los pipelines y la validación anidada, de ML aplicado 05 y 06; cada paso del pipeline, de las lecciones del módulo que se citan en la Sección 2.
+
+**Lo que se enuncia sin demostrar.** La aproximación de Blom para la media del máximo de $m$ normales. Las Proposiciones 16.2 y 16.5 se comprueban en un caso.
+
+**Lo que es mío, no del libro.** Las simulaciones, la demostración del sesgo del mínimo y la comparación de la búsqueda con el modelo de los predictores con efecto.
+:::
