@@ -5587,6 +5587,17 @@ Descargando Pyodide). Si una versión nueva de la extensión cambia una
 cadena, el script avisa y no falla. Probado en el navegador: los ejercicios
 siguen comprobándose después de recodificar los bloques.
 
+### 3.116 Anclas y enlaces entre proposiciones (03-10-2026)
+
+Un script al final de `encabezado.html` da a cada bloque `.definicion` y
+`.proposicion` el id `r-N-M` según su etiqueta, y convierte cada mención
+«Proposición N.M» (y Definición, Teorema, Lema, Corolario) en un enlace: a la
+misma página si N es la lección actual, o a la lección N del mismo módulo,
+que busca en la barra lateral. Una mención seguida de «de Machine Learning 1»
+u otro nombre de módulo se deja sin enlace, porque se refiere a otro módulo.
+Probado en Fundamentos 5 (11 enlaces) y ML 1 (22). Sin cambios en las
+lecciones.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

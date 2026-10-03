@@ -392,3 +392,84 @@
   }
 })();
 </script>
+<script>
+// Anclas para definiciones y proposiciones, y enlaces en sus menciones.
+// Cada bloque .definicion o .proposicion recibe el id «r-N-M» a partir de su
+// etiqueta («Proposición 5.2.» da r-5-2). Después, cada mención en el texto
+// («la Proposición 4.2») se convierte en enlace: a la misma página si N es la
+// lección actual, o a la lección N del mismo módulo, que se busca en la barra
+// lateral. Si la mención sigue con «de Machine Learning 1» o similar, se
+// refiere a otro módulo y se deja sin enlace.
+(function () {
+  var TIPOS = "Definición|Proposición|Teorema|Lema|Corolario";
+  var ETIQUETA = new RegExp("^(" + TIPOS + ")\\s+(\\d+)\\.(\\d+)");
+  var MENCION = new RegExp("(" + TIPOS + ")\\s+(\\d+)\\.(\\d+)", "g");
+  function anclas() {
+    document.querySelectorAll(".definicion, .proposicion").forEach(function (b) {
+      var s = b.querySelector("strong");
+      var m = s && s.textContent.trim().match(ETIQUETA);
+      if (m && !b.id) b.id = "r-" + m[2] + "-" + m[3];
+    });
+  }
+  function leccionActual() {
+    var m = location.pathname.match(/\/(\d+)-[^\/]*\.html$/);
+    return m ? parseInt(m[1], 10) : null;
+  }
+  function paginaDeLeccion(n) {
+    // la barra lateral enlaza las lecciones del módulo: 04-... para la 4
+    var carpeta = location.pathname.replace(/[^\/]*$/, "");
+    var enlaces = document.querySelectorAll("#quarto-sidebar a[href]");
+    for (var i = 0; i < enlaces.length; i++) {
+      var url = new URL(enlaces[i].getAttribute("href"), location.href);
+      var m = url.pathname.match(/\/(\d+)-[^\/]*\.html$/);
+      if (m && parseInt(m[1], 10) === n && url.pathname.replace(/[^\/]*$/, "") === carpeta) return url.pathname;
+    }
+    return null;
+  }
+  function enlazarMenciones() {
+    var raiz = document.querySelector("#quarto-document-content") || document.querySelector("main");
+    if (!raiz) return;
+    var actual = leccionActual();
+    var paseo = document.createTreeWalker(raiz, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (n) {
+        for (var p = n.parentElement; p && p !== raiz; p = p.parentElement) {
+          var t = p.tagName;
+          if (t === "A" || t === "CODE" || t === "PRE" || t === "SCRIPT" || t === "STYLE" || t === "svg" || t === "TEXT") return NodeFilter.FILTER_REJECT;
+          // la etiqueta del propio bloque no se enlaza
+          if (t === "STRONG" && p.parentElement && p.parentElement.parentElement &&
+              /\b(definicion|proposicion)\b/.test(p.parentElement.parentElement.className) &&
+              p === p.parentElement.firstElementChild) return NodeFilter.FILTER_REJECT;
+        }
+        MENCION.lastIndex = 0;
+        return MENCION.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      }
+    });
+    var nodos = [];
+    while (paseo.nextNode()) nodos.push(paseo.currentNode);
+    nodos.forEach(function (nodo) {
+      var texto = nodo.nodeValue, trozos = document.createDocumentFragment(), ultimo = 0, m;
+      MENCION.lastIndex = 0;
+      while ((m = MENCION.exec(texto)) !== null) {
+        var n = parseInt(m[2], 10), resto = texto.slice(m.index + m[0].length);
+        var destino = null, ancla = "#r-" + m[2] + "-" + m[3];
+        if (!/^\s+de\s+[A-ZÁÉÍÓÚ]/.test(resto)) {
+          if (n === actual) { if (document.querySelector(ancla)) destino = ancla; }
+          else { var pag = paginaDeLeccion(n); if (pag) destino = pag + ancla; }
+        }
+        if (!destino) continue;
+        trozos.appendChild(document.createTextNode(texto.slice(ultimo, m.index)));
+        var a = document.createElement("a");
+        a.href = destino; a.className = "ref-interna"; a.textContent = m[0];
+        trozos.appendChild(a);
+        ultimo = m.index + m[0].length;
+      }
+      if (ultimo === 0) return;
+      trozos.appendChild(document.createTextNode(texto.slice(ultimo)));
+      nodo.parentNode.replaceChild(trozos, nodo);
+    });
+  }
+  function iniciar() { anclas(); enlazarMenciones(); }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", iniciar);
+  else iniciar();
+})();
+</script>
