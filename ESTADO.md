@@ -5577,6 +5577,16 @@ objetivo gana 2,69; por gasto previo, 1,30.
 
 Quedan escritos los casos de los tres módulos que los pedían.
 
+### 3.115 Interfaz de quarto-live en español (03-10-2026)
+
+`post/traduce_live.py` corre como `post-render` de Quarto y traduce los
+textos fijos de quarto-live: los botones de `live-runtime.js` (Ejecutar,
+Reiniciar, Ver pista, Ver solución, Código Python, el aviso de `______`) y
+los de los bloques OJS que cada página lleva en base64 (Ejercicio,
+Descargando Pyodide). Si una versión nueva de la extensión cambia una
+cadena, el script avisa y no falla. Probado en el navegador: los ejercicios
+siguen comprobándose después de recodificar los bloques.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
