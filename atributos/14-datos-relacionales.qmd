@@ -1,0 +1,482 @@
+---
+title: "Atributos de datos relacionales"
+subtitle: "Feature Engineering · Lección 14"
+nivel: L3
+modulo: atributos
+fase: F2
+prereqs: [atributos/02-el-proceso-y-la-fuga, atributos/06-de-uno-a-muchos, python/12-groupby-y-agregacion]
+siguientes: []
+libro: "FES §9.2 What are the Experimental Unit and the Unit of Prediction? · §9.6 Impacts of Data Processing on Modeling"
+engine: markdown
+---
+
+::: {.meta-leccion data-leccion="atributos/14-datos-relacionales"}
+[[L3]{.nivel .nivel-L3} **Desde cero**]{.item}
+[**Fase** F2]{.item}
+[**Libro** FES 9]{.item}
+[**Prereqs** [El proceso y la fuga](02-el-proceso-y-la-fuga.qmd) · [De uno a muchos](06-de-uno-a-muchos.qmd) · [Groupby y agregación](../python/12-groupby-y-agregacion.qmd)]{.item}
+:::
+
+## Objetivo
+
+Al terminar esta lección se puede:
+
+1. Distinguir la unidad experimental de la unidad de predicción en una tabla con varias filas por unidad.
+2. Medir el error de validar por filas cuando las filas de una unidad se parecen entre sí. En la celda, la validación por filas da al vecino más cercano un error de 0,7516 y lo prefiere al modelo lineal; por unidades da 1,5748 y prefiere el lineal, y sobre unidades nuevas el error es 1,5080.
+3. Calcular la fiabilidad de la media de una unidad en función de sus filas: con ruido el doble del efecto, la correlación con el efecto pasa de 0,4472 con una fila a 0,9129 con veinte.
+4. Construir atributos por agregación hasta un corte y medir la fuga de agregar después de él: el AUC pasa de 0,7002 a 0,7808 sin que el modelo mejore.
+
+:::: {.hilo}
+::: {}
+#### De dónde viene
+
+- **Atributos 02**: la fuga y la validación que la detecta.
+- **Atributos 06**: de una columna a muchas; aquí, de muchas filas a una.
+- **Python 12**: `groupby` y las funciones de agregación.
+:::
+
+::: {}
+#### Para qué sirve después
+
+- **ML aplicado 04**: la partición por grupos y la temporal, que aplican esta lección a la validación.
+- **Atributos 16**: el pipeline, donde la agregación se ajusta dentro de cada pliegue.
+- **Series de tiempo 7**: la validación temporal, que respeta el corte en cada pliegue.
+:::
+::::
+
+## Notación
+
+::: {.notacion}
+| Notación | Se lee | Significado |
+|---|---|---|
+| $U$ | u | Número de unidades |
+| $m$ | eme | Filas por unidad |
+| $\sigma_b$ | sigma be | Desviación del efecto de la unidad |
+| $\sigma_e$ | sigma e | Desviación del ruido de cada fila |
+| $\bar y_u$ | ye barra u | Media de las filas de la unidad $u$ |
+| $t_0$ | te cero | Corte: el último momento con información disponible al predecir |
+:::
+
+## 1. Unidad experimental y unidad de predicción
+
+::: {.definicion}
+**Definición 14.1 ([unidad experimental]{.g}).** En una tabla con varias filas por entidad, la unidad experimental es la entidad cuyas filas comparten información que no se repite en otras entidades: un cliente con sus compras, un paciente con sus visitas, un reactor con sus mediciones diarias. La unidad de predicción es aquello sobre lo que el modelo predice, y puede ser la misma entidad o cada una de sus filas.
+:::
+
+::: {.proposicion}
+**Proposición 14.2 (validar por filas o por unidades).** Si las filas de una misma unidad se parecen entre sí y la respuesta lleva un efecto propio de la unidad, la validación cruzada por filas pone filas de la misma unidad en entrenamiento y en validación, y estima un error menor que el de unidades nuevas. En la celda, con 40 unidades de 15 filas:
+
+| Modelo | Por filas | Por unidades | Unidades nuevas |
+|---|---|---|---|
+| vecino más cercano | 0,7516 | 1,5748 | 1,5080 |
+| lineal | 1,0773 | 1,1128 | 1,0646 |
+
+La validación por filas elige el vecino más cercano; la validación por unidades y las unidades nuevas eligen el lineal.
+:::
+
+::: {.demostracion}
+*Comprobación.* En la validación por filas, la fila de validación tiene en el entrenamiento otras 14 filas de su unidad, cercanas en los atributos y con el mismo efecto de la unidad en la respuesta. El vecino más cercano es de la misma unidad en el 83,83 % de las filas, y su respuesta comparte el efecto. Una unidad nueva no tiene filas en el entrenamiento, y su vecino más cercano es de otra unidad, con otro efecto. La validación por unidades deja fuera las 15 filas de cada unidad a la vez y reproduce esa situación: su estimación, 1,5748, está cerca de 1,5080. El modelo lineal no puede copiar la respuesta de un vecino, y sus tres estimaciones son parecidas. ∎
+:::
+
+```{pyodide}
+import numpy as np
+
+def datos(U, m, semilla):
+    """U unidades con m filas cada una. Las filas de una unidad estan juntas
+    en el espacio de los atributos, y y lleva un efecto propio de la unidad."""
+    rng = np.random.default_rng(semilla)
+    u = np.repeat(np.arange(U), m)
+    centro = rng.normal(0, 1.0, (U, 3))
+    X = centro[u] + rng.normal(0, 0.15, (U * m, 3))
+    efecto = rng.normal(0, 1.0, U)
+    y = 0.8 * X[:, 0] + efecto[u] + rng.normal(0, 0.5, U * m)
+    return X, y, u
+
+def vecino(Xtr, ytr, Xte):
+    """Prediccion por el vecino mas cercano."""
+    d = ((Xte[:, None, :] - Xtr[None, :, :]) ** 2).sum(2)
+    return ytr[d.argmin(1)]
+
+def lineal(Xtr, ytr, Xte):
+    A = np.column_stack([np.ones(len(Xtr)), Xtr])
+    c = np.linalg.lstsq(A, ytr, rcond=None)[0]
+    return np.column_stack([np.ones(len(Xte)), Xte]) @ c
+
+def rmse_cv(modelo, pliegue):
+    e = [np.mean((y[pliegue == k] - modelo(X[pliegue != k], y[pliegue != k], X[pliegue == k])) ** 2)
+         for k in range(5)]
+    return float(np.sqrt(np.mean(e)))
+
+X, y, u = datos(40, 15, 1)
+Xn, yn, un = datos(40, 15, 2)            # 40 unidades nuevas
+rng = np.random.default_rng(0)
+por_filas = rng.permutation(len(y)) % 5
+por_unidades = (rng.permutation(40) % 5)[u]
+
+d = ((X[:, None] - X[None]) ** 2).sum(2)
+np.fill_diagonal(d, np.inf)
+print("40 unidades con 15 filas cada una")
+print("  el vecino mas cercano es de la misma unidad: %.4f" % (u[d.argmin(1)] == u).mean())
+print("  RMSE %-18s %10s %10s %10s" % ("", "por filas", "unidades", "nuevas"))
+for nombre, modelo in (("vecino mas cercano", vecino), ("lineal", lineal)):
+    nuevas = float(np.sqrt(np.mean((yn - modelo(X, y, Xn)) ** 2)))
+    print("       %-18s %10.4f %10.4f %10.4f"
+          % (nombre, rmse_cv(modelo, por_filas), rmse_cv(modelo, por_unidades), nuevas))
+```
+
+**Modo de falla.** Se valida por filas un modelo que va a predecir sobre clientes, pacientes o máquinas nuevos. La estimación es optimista, y el error es peor que el de no validar: la comparación entre modelos favorece a los que memorizan la unidad. FES §9.2 recomienda dejar fuera todas las filas de una o varias unidades a la vez.
+
+## 2. Agregar a la unidad
+
+::: {.definicion}
+**Definición 14.3 ([agregación]{.g}).** Agregar es construir una fila por unidad a partir de sus filas: el número de filas, la suma, la media, el máximo, el valor más reciente o el tiempo desde la última fila. Cada agregado es un atributo de la unidad.
+:::
+
+::: {.proposicion}
+**Proposición 14.4 (fiabilidad de la media de una unidad).** Si la fila $j$ de la unidad $u$ vale $b_u+e_{uj}$, con efectos $b_u$ de varianza $\sigma_b^2$ y ruidos independientes de varianza $\sigma_e^2$, la correlación entre la media $\bar y_u$ de $m$ filas y el efecto $b_u$ es
+$$\rho_m=\sqrt{\frac{1}{1+\sigma_e^2/(m\sigma_b^2)}}.$$
+Con $\sigma_e=2\sigma_b$, vale 0,4472 con una fila, 0,7454 con cinco y 0,9129 con veinte; en la celda se miden 0,4267, 0,7474 y 0,9133.
+:::
+
+::: {.demostracion}
+*Demostración.* La media es $\bar y_u=b_u+\bar e_u$, con $\mathrm{Var}(\bar e_u)=\sigma_e^2/m$ e independiente de $b_u$. Entonces $\mathrm{Cov}(\bar y_u,b_u)=\sigma_b^2$ y $\mathrm{Var}(\bar y_u)=\sigma_b^2+\sigma_e^2/m$, y la correlación es $\sigma_b^2/\big(\sigma_b\sqrt{\sigma_b^2+\sigma_e^2/m}\big)$, que se simplifica en la fórmula. ∎
+:::
+
+La Proposición 14.4 dice que un mismo agregado es más fiable en las unidades con más filas. Un cliente con una compra y otro con cincuenta tienen la misma columna «gasto medio», y la del primero es casi ruido. Por eso conviene añadir el número de filas como atributo, o encoger las medias de las unidades con pocas filas hacia la media global, como la codificación supervisada de Atributos 09.
+
+```{=html}
+<div class="viz-fiab">
+  <div class="controles">
+    <label>Ruido / efecto (σₑ/σ_b) <input id="fi-r" type="range" min="0.25" max="4" step="0.05" value="2"> <span id="fi-r-v">2,00</span></label>
+    <label>Filas por unidad <input id="fi-m" type="range" min="1" max="50" step="1" value="5"> <span id="fi-m-v">5</span></label>
+  </div>
+  <svg id="fi-svg" viewBox="0 0 660 270" role="img" aria-label="Correlación entre la media de las filas de una unidad y su efecto, en función del número de filas, para la razón de ruido elegida."></svg>
+  <p class="lectura" id="fi-lectura"></p>
+</div>
+<style>
+.viz-fiab { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-fiab .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-fiab label { display: flex; align-items: center; gap: .4rem; }
+.viz-fiab input[type=range] { width: 150px; padding: 0; }
+.viz-fiab svg { width: 100%; height: auto; display: block; }
+.viz-fiab .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("fi-svg"), lec = document.getElementById("fi-lectura");
+  var cr = document.getElementById("fi-r"), cm = document.getElementById("fi-m");
+  var er = document.getElementById("fi-r-v"), em = document.getElementById("fi-m-v");
+  // marco fijo: de 1 a 50 filas y correlacion de 0 a 1
+  var X0 = 58, X1 = 628, Y0 = 18, Y1 = 214;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function px(m) { return X0 + (m - 1) / 49 * (X1 - X0); }
+  function py(v) { return Y1 - v * (Y1 - Y0); }
+  function rho(r, m) { return Math.sqrt(1 / (1 + r * r / m)); }
+  function coma(v, d) { return v.toFixed(d).replace(".", ","); }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var r = +cr.value, m = +cm.value, q;
+    er.textContent = coma(r, 2); em.textContent = String(m);
+    [0, 0.25, 0.5, 0.75, 1].forEach(function (v) {
+      svg.appendChild(el("path", { d: "M" + X0 + " " + py(v).toFixed(1) + " L" + X1 + " " + py(v).toFixed(1), stroke: C_L, "stroke-width": 0.8, opacity: .55 }));
+      svg.appendChild(el("text", { x: X0 - 8, y: py(v) + 4, "text-anchor": "end", "font-size": 10, fill: C_T, opacity: .7 }, coma(v, 2)));
+    });
+    [1, 10, 20, 30, 40, 50].forEach(function (v) {
+      svg.appendChild(el("text", { x: px(v), y: Y1 + 18, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, String(v)));
+    });
+    svg.appendChild(el("text", { x: (X0 + X1) / 2, y: Y1 + 38, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, "filas por unidad"));
+    var d = "";
+    for (q = 1; q <= 50; q++) d += (q === 1 ? "M" : " L") + px(q).toFixed(1) + " " + py(rho(r, q)).toFixed(1);
+    svg.appendChild(el("path", { d: d, fill: "none", stroke: C_A, "stroke-width": 2.6 }));
+    var v = rho(r, m), m90 = Math.ceil(r * r / (1 / 0.81 - 1) - 1e-9);
+    svg.appendChild(el("circle", { cx: px(m).toFixed(1), cy: py(v).toFixed(1), r: 6.5, fill: C_B }));
+    lec.innerHTML = "Con un ruido por fila <strong>" + coma(r, 2) + "</strong> veces el efecto de la unidad y <strong>" + m +
+      "</strong> filas, la media de la unidad tiene correlación <strong>" + coma(v, 3) + "</strong> con el efecto (Proposición 14.4). " +
+      "Para llegar a 0,9 hacen falta " + m90 + " filas: el número crece con el cuadrado de la razón de ruido.";
+  }
+  cr.addEventListener("input", dibujar); cm.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+::: {.proposicion}
+**Proposición 14.5 (agregar después del corte).** Si la variable objetivo se mide en un intervalo posterior al corte $t_0$ y un agregado incluye filas de ese intervalo, el agregado contiene parte de la variable objetivo. En la celda, con la etiqueta «sin compras en los meses 10 a 12», el AUC de las compras de los meses 1 a 9 vale 0,7002, y el de las compras de los meses 1 a 12, 0,7808.
+:::
+
+::: {.demostracion}
+*Demostración.* La etiqueta es una función de las filas posteriores a $t_0$: vale 1 cuando su suma es cero. El agregado de los meses 1 a 12 es la suma de los meses 1 a 9 más esa misma suma, de modo que en los clientes que abandonan solo cuenta la primera parte y en los demás cuenta también la segunda. La diferencia entre las dos clases crece por construcción. Al predecir en el momento $t_0$, los meses posteriores no existen, y el atributo calculado entonces tiene otra distribución que el de entrenamiento. ∎
+:::
+
+El mejor agregado de la celda no es el que pasa el corte. Las compras de los meses 7 a 9, los tres anteriores al corte, dan un AUC de 0,8358 sin ninguna fuga: la ventana del agregado es una decisión de modelado, y la reciente suele informar más que la total.
+
+```{pyodide}
+import numpy as np
+
+def auc(s, y):
+    """Estadistico de rangos, con rangos medios en los empates."""
+    o = np.argsort(s, kind="stable"); r = np.empty(len(s)); i = 0
+    while i < len(s):
+        j = i
+        while j + 1 < len(s) and s[o[j + 1]] == s[o[i]]:
+            j += 1
+        r[o[i:j + 1]] = (i + j) / 2 + 1; i = j + 1
+    n1 = y.sum(); n0 = len(y) - n1
+    return (r[y == 1].sum() - n1 * (n1 + 1) / 2) / (n1 * n0)
+
+# Fiabilidad de la media de una unidad: efecto con desviacion 1,
+# ruido de cada fila con desviacion 2
+rng = np.random.default_rng(14)
+efecto = rng.standard_normal(2000)
+print("correlacion entre la media de m filas y el efecto de la unidad")
+for m in (1, 5, 20):
+    media = efecto + rng.normal(0, 2.0, (2000, m)).mean(1)
+    print("  m = %2d: medida %.4f, formula %.4f"
+          % (m, np.corrcoef(media, efecto)[0, 1], np.sqrt(1 / (1 + 4 / m))))
+print()
+
+# Compras mensuales de 3000 clientes; el 40 % deja de comprar en un mes al azar
+rng = np.random.default_rng(15)
+N = 3000
+tasa = rng.gamma(2.0, 1.0, N)
+fin = np.where(rng.random(N) < 0.4, rng.integers(4, 13, N), 13)
+meses = np.arange(1, 13)
+compras = rng.poisson(tasa[:, None] * np.ones(12)) * (meses[None, :] < fin[:, None])
+corte = 9
+y = (compras[:, corte:].sum(1) == 0).astype(int)   # sin compras en los meses 10 a 12
+print("abandono despues del mes %d: %.4f" % (corte, y.mean()))
+print("AUC de menos compras como puntuacion de abandono")
+for nombre, a in (("compras de los meses 1 a 9", compras[:, :corte].sum(1)),
+                  ("compras de los meses 7 a 9", compras[:, corte - 3:corte].sum(1)),
+                  ("compras de los meses 1 a 12 (fuga)", compras.sum(1))):
+    print("  %-36s %.4f" % (nombre, auc(-a, y)))
+```
+
+```{=html}
+<div class="viz-ventana">
+  <div class="controles">
+    <label>Corte tras el mes <input id="ve-c" type="range" min="3" max="11" step="1" value="9"> <span id="ve-c-v">9</span></label>
+    <label>Agregar hasta el mes <input id="ve-h" type="range" min="1" max="12" step="1" value="9"> <span id="ve-h-v">9</span></label>
+  </div>
+  <svg id="ve-svg" viewBox="0 0 660 230" role="img" aria-label="Compras mensuales de un cliente durante doce meses, con el corte de predicción y la ventana de meses que se agregan; los meses agregados después del corte se marcan como fuga."></svg>
+  <p class="lectura" id="ve-lectura"></p>
+</div>
+<style>
+.viz-ventana { border: 1px solid var(--r-linea, #ddd); border-radius: 3px; padding: 1rem 1.1rem; margin: 1.7rem 0; }
+.viz-ventana .controles { display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; align-items: center; margin-bottom: .85rem; font-size: .85rem; }
+.viz-ventana label { display: flex; align-items: center; gap: .4rem; }
+.viz-ventana input[type=range] { width: 150px; padding: 0; }
+.viz-ventana svg { width: 100%; height: auto; display: block; }
+.viz-ventana .lectura { font-size: .85rem; margin-top: .75rem; min-height: 4.6em; line-height: 1.6; }
+</style>
+<script>
+(function () {
+  var C_T = "var(--r-tinta,#1f2430)", C_L = "var(--r-linea,#ddd)", C_A = "#0F6E68", C_B = "#B4342E";
+  var svg = document.getElementById("ve-svg"), lec = document.getElementById("ve-lectura");
+  var cc = document.getElementById("ve-c"), ch = document.getElementById("ve-h");
+  var ec = document.getElementById("ve-c-v"), eh = document.getElementById("ve-h-v");
+  // un cliente que deja de comprar en el mes 8; los meses ocupan sitios fijos
+  var COMPRAS = [3, 2, 4, 2, 1, 2, 1, 0, 0, 0, 0, 0];
+  var X0 = 40, W = 50, BASE = 150, ESC = 22;
+  function el(t, at, txt) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", t);
+    for (var k in at) e.setAttribute(k, at[k]);
+    if (txt !== undefined) e.textContent = txt;
+    return e;
+  }
+  function dibujar() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var c = +cc.value, h = +ch.value, i, total = 0, fuga = 0, despues = 0;
+    ec.textContent = String(c); eh.textContent = String(h);
+    for (i = 0; i < 12; i++) {
+      var mes = i + 1, x = X0 + i * W, alto = COMPRAS[i] * ESC;
+      var dentro = mes <= h, tras = mes > c;
+      if (dentro) { total += COMPRAS[i]; if (tras) fuga += COMPRAS[i]; }
+      if (tras) despues += COMPRAS[i];
+      svg.appendChild(el("rect", { x: x + 8, y: BASE - alto, width: W - 16, height: Math.max(alto, 1),
+        fill: dentro ? (tras ? C_B : C_A) : "none", stroke: tras ? C_B : C_A, "stroke-width": 1.4, opacity: dentro ? .8 : .5 }));
+      svg.appendChild(el("text", { x: x + W / 2, y: BASE + 16, "text-anchor": "middle", "font-size": 10.5, fill: C_T, opacity: .7 }, String(mes)));
+    }
+    // corte: linea vertical entre el mes c y el c+1
+    var xc = X0 + c * W;
+    svg.appendChild(el("path", { d: "M" + xc + " 14 L" + xc + " " + (BASE + 4), stroke: C_T, "stroke-width": 1.8, "stroke-dasharray": "5 4" }));
+    svg.appendChild(el("text", { x: xc + 4, y: 24, "font-size": 10.5, fill: C_T }, "corte"));
+    // ventana agregada: una barra bajo los meses incluidos
+    var xh = X0 + h * W;
+    svg.appendChild(el("path", { d: "M" + X0 + " " + (BASE + 30) + " L" + xh + " " + (BASE + 30), stroke: h > c ? C_B : C_A, "stroke-width": 5 }));
+    svg.appendChild(el("text", { x: X0, y: BASE + 50, "font-size": 10.5, fill: C_T, opacity: .8 }, "meses agregados: 1 a " + h));
+    var etiqueta = despues === 0 ? "abandona" : "sigue comprando";
+    lec.innerHTML = "Corte tras el mes <strong>" + c + "</strong>: la etiqueta mira los meses " + (c + 1) + " a 12, y este cliente <strong>" + etiqueta + "</strong>. " +
+      "El atributo suma las compras de los meses 1 a " + h + ": <strong>" + total + "</strong>. " +
+      (h > c ? "La ventana pasa el corte y suma " + fuga + " compras de los meses que definen la etiqueta: es una <strong>fuga</strong>. Al predecir, esos meses todavía no existen."
+             : "La ventana termina en el corte o antes, y el atributo solo usa información disponible al predecir.");
+  }
+  cc.addEventListener("input", dibujar); ch.addEventListener("input", dibujar);
+  dibujar();
+})();
+</script>
+```
+
+## 3. Limitaciones
+
+La lección trata la unidad con una sola variable de agrupación. Con unidades anidadas, como mediciones dentro de días dentro de reactores, la validación deja fuera la unidad de nivel más alto que el modelo tenga que generalizar.
+
+FES cap. 9 trata además el preprocesamiento de perfiles, series de mediciones de una misma unidad sobre una escala ordenada, como los espectros: corrección del fondo, suavizado, derivadas y reducción de la correlación entre columnas. Esta lección no los desarrolla.
+
+La fiabilidad de la Proposición 14.4 supone ruidos independientes y de la misma varianza en todas las unidades. Con ruido correlacionado entre filas de una unidad, más filas aportan menos de lo que da la fórmula.
+
+## Ejercicios
+
+### Ejercicio 1, Filas necesarias para una media fiable
+
+Con la Proposición 14.4, calcular la correlación entre la media de una unidad y su efecto. La celda trae `sb` y `se`, las desviaciones del efecto y del ruido, y la lista `filas`. Completar la línea de `rho`. La celda imprime las correlaciones con cuatro decimales; deben dar 0,4472, 0,7454, 0,9129 y 0,9806. La comprobación vuelve a ejecutar el código con otras desviaciones.
+
+```{pyodide}
+#| exercise: ex_fiabilidad
+sb, se = 1.0, 2.0
+filas = [1, 5, 20, 100]
+
+rho = [______ for m in filas]
+
+print([round(r, 4) for r in rho])
+```
+
+::: {.hint exercise="ex_fiabilidad"}
+Para cada `m`, la correlación es `(1 / (1 + se ** 2 / (m * sb ** 2))) ** 0.5`.
+:::
+
+::: {.solution exercise="ex_fiabilidad"}
+```{pyodide}
+sb, se = 1.0, 2.0
+filas = [1, 5, 20, 100]
+
+rho = [(1 / (1 + se ** 2 / (m * sb ** 2))) ** 0.5 for m in filas]
+
+print([round(r, 4) for r in rho])
+```
+
+Con ruido el doble del efecto, hacen falta 18 filas para pasar de 0,9. Si el ruido fuera igual al efecto bastarían 5.
+:::
+
+```{pyodide}
+#| exercise: ex_fiabilidad
+#| check: true
+import contextlib, io, re
+otro = re.sub(r"(?m)^sb, se\s*=.*$", "sb, se = 2.0, 2.0", user_code)
+otro = re.sub(r"(?m)^filas\s*=.*$", "filas = [1, 4]", otro)
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(otro, ns)
+    general = [round(r, 4) for r in ns.get("rho")] == [0.7071, 0.8944]
+except Exception:
+    general = False
+ok = [round(r, 4) for r in rho] == [0.4472, 0.7454, 0.9129, 0.9806]
+if ok and general:
+    feedback = {"correct": True, "message": "Correcto, también con otras desviaciones."}
+elif ok:
+    feedback = {"correct": False,
+                "message": "Da las cifras pedidas, pero con sb = se = 2 y filas [1, 4] no da [0.7071, 0.8944]."}
+else:
+    feedback = {"correct": False,
+                "message": "Se esperaba [0.4472, 0.7454, 0.9129, 0.9806]."}
+feedback
+```
+
+### Ejercicio 2, Partición por unidades
+
+Con la Proposición 14.2, obtener las filas que van a validación cuando se dejan fuera unidades completas. La celda trae la lista `unidad`, con la unidad de cada fila, y la lista `fuera`, con las unidades que se dejan fuera. Completar la línea de `filas_validacion` con los puestos de las filas cuya unidad está en `fuera`, en orden. La celda imprime la lista, que debe ser `[2, 3, 4, 6, 7]`. La comprobación vuelve a ejecutar el código con otras listas.
+
+```{pyodide}
+#| exercise: ex_unidades
+unidad = [0, 0, 1, 1, 1, 2, 3, 3]
+fuera = [1, 3]
+
+filas_validacion = ______
+
+print(filas_validacion)
+```
+
+::: {.hint exercise="ex_unidades"}
+`enumerate(unidad)` entrega el puesto y la unidad de cada fila; se conservan los puestos cuya unidad está en `fuera`.
+:::
+
+::: {.solution exercise="ex_unidades"}
+```{pyodide}
+unidad = [0, 0, 1, 1, 1, 2, 3, 3]
+fuera = [1, 3]
+
+filas_validacion = [i for i, u in enumerate(unidad) if u in fuera]
+
+print(filas_validacion)
+```
+
+Las tres filas de la unidad 1 y las dos de la unidad 3 van juntas a validación. Ninguna unidad queda repartida entre entrenamiento y validación.
+:::
+
+```{pyodide}
+#| exercise: ex_unidades
+#| check: true
+import contextlib, io, re
+otro = re.sub(r"(?m)^unidad\s*=.*$", "unidad = [5, 6, 5, 7, 6]", user_code)
+otro = re.sub(r"(?m)^fuera\s*=.*$", "fuera = [6]", otro)
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(otro, ns)
+    general = list(ns.get("filas_validacion")) == [1, 4]
+except Exception:
+    general = False
+ok = list(filas_validacion) == [2, 3, 4, 6, 7]
+if ok and general:
+    feedback = {"correct": True, "message": "Correcto, también con otras listas."}
+elif ok:
+    feedback = {"correct": False,
+                "message": "Da [2, 3, 4, 6, 7], pero con unidad [5, 6, 5, 7, 6] y fuera [6] no da [1, 4]."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba [2, 3, 4, 6, 7]."}
+feedback
+```
+
+## Reto
+
+En `proyectos/notebooks/F2-retos.ipynb`, sección **Atributos 14**:
+
+1. Repetir la comparación de la Proposición 14.2 con 5 filas por unidad y con 50, y explicar cómo cambia la diferencia entre validar por filas y por unidades.
+2. Construir con `groupby` una fila por cliente a partir de una tabla de compras, con el número de compras, el gasto medio y los días desde la última compra hasta un corte, y comprobar que ninguna fila posterior al corte entra en los agregados.
+3. Entrenar un modelo con el agregado de los meses 1 a 12 y otro con el de los meses 1 a 9, evaluar los dos sobre clientes de un periodo posterior con el corte respetado, y guardar el caso en `50-Errores/`.
+
+## Del libro
+
+El capítulo 9 de FES, *Working with Profile Data*, usa la monitorización de una fabricación farmacéutica: 15 biorreactores pequeños y 3 grandes, medidos durante 14 días, con cerca de 2600 longitudes de onda por día. La §9.2, *What are the Experimental Unit and the Unit of Prediction?*, distingue la unidad experimental independiente, el biorreactor, de la unidad de predicción, y advierte de que repartir los días de un mismo biorreactor entre análisis y evaluación da una caracterización artificialmente optimista del modelo; recomienda dejar fuera todos los datos de uno o varios biorreactores a la vez. La §9.6, *Impacts of Data Processing on Modeling*, compara los modelos con los datos crudos y preprocesados.
+
+Esta lección añade la comparación de los dos modelos con validación por filas, por unidades y sobre unidades nuevas, la fórmula de la fiabilidad de la media de una unidad y la fuga de los agregados posteriores al corte.
+
+Los capítulos y secciones se citan por su número y su título; el texto no se reproduce.
+
+## Para el Cerebro
+
+- Unidad experimental: la entidad cuyas filas comparten información. La validación deja fuera unidades completas.
+- Validar por filas favorece a los modelos que memorizan la unidad: puede elegir el modelo equivocado.
+- Fiabilidad de la media de $m$ filas: $\rho_m=\sqrt{1/(1+\sigma_e^2/(m\sigma_b^2))}$.
+- Un agregado de pocas filas es casi ruido: añadir el número de filas o encoger la media.
+- Agregar filas posteriores al corte mete la etiqueta en el atributo.
+- La ventana reciente antes del corte suele informar más que el total.
+
+### Fuentes
+
+::: {#fuentes .fuentes}
+**Lo que esta página demuestra sola.** Todos los resultados numéricos. Con 40 unidades de 15 filas, el vecino más cercano es de la misma unidad en el 83,83 % de las filas; el error cuadrático medio, en raíz, del vecino más cercano vale 0,7516 por filas, 1,5748 por unidades y 1,5080 en unidades nuevas, y el del modelo lineal 1,0773, 1,1128 y 1,0646. La correlación entre la media de la unidad y su efecto se mide en 0,4267, 0,7474 y 0,9133 con 1, 5 y 20 filas, frente a 0,4472, 0,7454 y 0,9129 de la fórmula. Con 3000 clientes y un abandono del 36,87 %, el AUC vale 0,7002 con las compras de los meses 1 a 9, 0,8358 con las de los meses 7 a 9 y 0,7808 con las de los meses 1 a 12. Las Proposiciones 14.4 y 14.5 se demuestran aquí.
+
+**Lo que se usa de otras lecciones sin repetir.** La fuga y la validación son de Atributos 02; la media encogida, de Atributos 09; `groupby`, de Python 12; el AUC por rangos, de Machine Learning 3.
+
+**Lo que se enuncia sin demostrar.** La Proposición 14.2 se comprueba en un caso y no se demuestra en general.
+
+**Lo que es mío, no del libro.** Los tres conjuntos sintéticos y sus mediciones. La fórmula de la fiabilidad de la media con su demostración, y la de la fuga de los agregados posteriores al corte.
+:::

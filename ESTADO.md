@@ -5497,6 +5497,23 @@ en §7.3.1.
 
 `/tmp/ci-venv` volvió a desaparecer (limpieza de /tmp de macOS) y se recreó.
 
+### 3.110 Atributos 14, datos relacionales (03-10-2026)
+
+**Atributos 14, Atributos de datos relacionales (L3, FES §9.2 y §9.6).** FES
+cap. 9 se abrió antes de escribir; las cifras del ejemplo (15 biorreactores
+pequeños y 3 grandes, 14 días, casi 2600 longitudes de onda) y la
+recomendación de dejar fuera biorreactores enteros se verificaron verbatim.
+
+- Validar por filas elige el modelo equivocado: vecino más cercano 0,7516 por
+  filas frente a 1,5748 por unidades (1,5080 en unidades nuevas); el lineal
+  1,0773, 1,1128 y 1,0646.
+- Fiabilidad de la media de una unidad, demostrada: 0,4472, 0,7454 y 0,9129
+  con 1, 5 y 20 filas (medidas 0,4267, 0,7474 y 0,9133).
+- Agregar después del corte: AUC 0,7002 a 0,7808 sin mejora real; la ventana
+  de los tres meses previos al corte da 0,8358 sin fuga.
+- El preprocesamiento de perfiles (fondo, derivadas) de FES 9.3 a 9.5 queda
+  fuera y se dice en Limitaciones.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
