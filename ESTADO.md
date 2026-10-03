@@ -5562,6 +5562,21 @@ el método actual lo subestima 7,06 llamadas por hora); validación al azar
 con MAE un 34 % mayor y 339 horas sin llamadas; plan por cuantil 0,75 cuesta
 22 560 frente a 24 980 por media y 44 920 con el método actual.
 
+### 3.114 Caso integrador de Inferencia causal (03-10-2026)
+
+`causal/caso-1-membresia.qmd`: una membresía con envío gratis, con 20 000
+clientes observacionales que eligen unirse y un experimento de 4000 con una
+prueba gratis al azar. Generador `aplicado/generadores/caso_c1.py`.
+
+Trampas comprobadas: diferencia ingenua 216,51 frente a un efecto real de
+47,17 (confusión por la actividad previa); ajustar por los envíos usados, un
+mediador, da −27,03; ajustar por la encuesta, un colisionador, 31,03.
+Experimento 57,08 [42,26; 71,89], con MDE 21,2; en el sur, MDE 46,6 y sin
+conclusión posible. Ofrecer a todos pierde 3,26 por cliente; al grupo
+objetivo gana 2,69; por gasto previo, 1,30.
+
+Quedan escritos los casos de los tres módulos que los pedían.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
