@@ -5598,6 +5598,25 @@ u otro nombre de módulo se deja sin enlace, porque se refiere a otro módulo.
 Probado en Fundamentos 5 (11 enlaces) y ML 1 (22). Sin cambios en las
 lecciones.
 
+### 3.117 Auditoría de afirmaciones falsas: Fundamentos, Python, Matemática, Estadística y ML (03-10-2026)
+
+Tras la revisión externa (§3.106 y siguientes) se auditaron unas 900
+afirmaciones generales con contraejemplos, simulación y la documentación
+oficial, en Python 3.8 y en el entorno del CI. Hallazgos y correcciones:
+
+- Fundamentos y Python: 7 falsas (rebanadas con j > len, tupla con lista
+  como clave, «todo método de cadena devuelve una cadena», orden de
+  mayúsculas con Ñ y tildes, `groupby` de categóricos en pandas 3, `==` entre
+  fechas con y sin zona, anotaciones antes de 3.14) y 13 imprecisas.
+- Matemática y Estadística: 4 falsas (límite del error bootstrap, lognormal
+  sin varianza finita, R² = cos²θ sin intercepto, iteración de potencia con
+  λ₁ negativo) y 6 imprecisas.
+- ML: 1 falsa (crecimiento de S(n, K)) y 9 imprecisas.
+
+Donde la demostración apelaba a la celda se añadió el caso que faltaba, con
+sus salidas declaradas. Quedan por auditar Series, Causal, Atributos y ML
+aplicado.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco
