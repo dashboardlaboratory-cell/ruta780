@@ -21,12 +21,12 @@ engine: markdown
 
 Al terminar esta lección se puede:
 
-1. Descomponer una URL y demostrar que insertar un valor en la consulta por concatenación pierde datos: un `&` trunca el parámetro y crea uno adicional.
+1. Descomponer una URL y comprobar que insertar un valor en la consulta por concatenación pierde datos: un `&` trunca el parámetro y crea uno adicional.
 2. Distinguir `quote` de `quote_plus` e identificar cuál usa `urlencode`.
 3. Clasificar un [código de estado]{.g} y decidir cuáles se reintentan.
 4. Medir una política de reintentos con espera que se duplica: 5 peticiones y 15 unidades de espera acumulada.
 5. Enumerar tres pérdidas de datos de JSON que no producen error: claves repetidas, claves no textuales y enteros que no se representan en un decimal.
-6. Demostrar que deducir el final de la paginación a partir del tamaño de la respuesta falla cuando el total es múltiplo del tamaño de página.
+6. Comprobar que deducir el final de la paginación a partir del tamaño de la respuesta falla cuando el total es múltiplo del tamaño de página.
 
 :::: {.hilo}
 ::: {}
@@ -63,27 +63,118 @@ Esta página no llama a la red. Un servicio simulado devuelve respuestas prepara
 | `k` | ka | El número de intentos realizados |
 :::
 
+## Problema inicial
+
+Este problema va antes de la teoría y se resuelve con lo visto hasta Python 21: un bucle `while`, listas y diccionarios. La Sección 4 vuelve sobre él.
+
+La clase `Servicio` simula un servicio que entrega `total` elementos en páginas de 10. `s.pagina(n)` devuelve la página `n`, empezando en 0, como un diccionario con la lista `items` y el booleano `hay_mas`, y cuenta cada petición en `s.peticiones`. Sustituir `______` por el recorrido que pide páginas y añade sus elementos a `recogidos` hasta tenerlos todos, sin pedir páginas de más. Con `total = 47` la celda debe imprimir 47 y 5. La comprobación vuelve a ejecutar el código con otros totales, entre ellos 40 y 0.
+
+```{pyodide}
+#| exercise: ex_inicial
+class Servicio:
+    """Entrega los datos por paginas y cuenta las peticiones."""
+    def __init__(self, datos, tam):
+        self.datos, self.tam = list(datos), tam
+        self.peticiones = 0
+    def pagina(self, n):
+        self.peticiones = self.peticiones + 1
+        trozo = self.datos[n * self.tam:(n + 1) * self.tam]
+        return {"items": trozo,
+                "hay_mas": (n + 1) * self.tam < len(self.datos)}
+
+total = 47
+s = Servicio(range(total), tam=10)
+
+recogidos = []
+______
+
+print(len(recogidos), s.peticiones)
+```
+
+::: {.hint exercise="ex_inicial"}
+Un contador `n` que empieza en 0 y un `while` que pide `s.pagina(n)`, extiende `recogidos` con `items` y decide si sigue. Conviene probar mentalmente qué pasa con 40 elementos.
+:::
+
+::: {.solution exercise="ex_inicial"}
+```{pyodide}
+class Servicio:
+    """Entrega los datos por paginas y cuenta las peticiones."""
+    def __init__(self, datos, tam):
+        self.datos, self.tam = list(datos), tam
+        self.peticiones = 0
+    def pagina(self, n):
+        self.peticiones = self.peticiones + 1
+        trozo = self.datos[n * self.tam:(n + 1) * self.tam]
+        return {"items": trozo,
+                "hay_mas": (n + 1) * self.tam < len(self.datos)}
+
+total = 47
+s = Servicio(range(total), tam=10)
+
+recogidos = []
+n = 0
+while True:
+    r = s.pagina(n)
+    recogidos.extend(r["items"])
+    if not r["hay_mas"]:
+        break
+    n = n + 1
+
+print(len(recogidos), s.peticiones)
+```
+
+Detenerse cuando una página llega con menos de 10 elementos da 47 y 5, el mismo resultado, y con 40 elementos hace 5 peticiones donde bastan 4. La Sección 4 explica por qué.
+:::
+
+```{pyodide}
+#| exercise: ex_inicial
+#| check: true
+import contextlib, io, re
+casos = [(None, 47, 5), (40, 40, 4), (0, 0, 1), (9, 9, 1), (10, 10, 1)]
+fallo = None
+for tt, n_items, n_pet in casos:
+    otro = user_code
+    if tt is not None:
+        otro = re.sub(r"(?m)^total\s*=.*$", "total = %d" % tt, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = (ns["recogidos"], ns["s"].peticiones)
+        bien = (list(obtenido[0]) == list(range(n_items))
+                and obtenido[1] == n_pet)
+        obtenido = (len(obtenido[0]), obtenido[1])
+    except Exception as err:
+        obtenido, bien = type(err).__name__, False
+    if not bien and fallo is None:
+        fallo = ("con total = %s se esperaban %d elementos en %d "
+                 "peticiones y salio %s" % (47 if tt is None else tt, n_items, n_pet,
+                                            obtenido))
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto, también con 40 y con 0 elementos."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 1. Construcción de la petición
 
 :::: {.definicion}
 **Definición 22.1 (partes de una URL).** Una URL se descompone en **esquema**, **autoridad** (nombre y puerto), **camino**, **consulta** y **fragmento**. La consulta es una lista de pares separados por `&`, y el fragmento, lo que sigue a `#`, no se envía al servidor.
 ::::
 
-:::: {.proposicion}
-**Proposición 22.2.** Insertar un valor en la consulta por concatenación pierde datos cuando ese valor contiene un `&`: el parámetro llega truncado y aparece otro que no se pidió.
+:::: {.regla}
+**Regla 22.2.** Insertar un valor en la consulta por concatenación pierde datos cuando ese valor contiene un `&`: el parámetro llega truncado y aparece otro que no se pidió.
 ::::
 
-:::: {.demostracion}
-*Demostración.* El `&` separa pares en la consulta, de modo que un `&` dentro de un valor se lee como el final de ese par. El texto que le sigue se interpreta como un nombre de parámetro nuevo, sin valor. La celda construye la misma petición de las dos formas y las analiza: en la concatenada, `nota` llega con el valor `'ventas '` y aparece un parámetro `' devoluciones'` vacío; en la construida con `urlencode`, `nota` llega completa. No se produce ningún error: la petición sale, el servidor responde y el dato llega incompleto. ∎
+El `&` separa pares en la consulta, de modo que un `&` dentro de un valor se lee como el final de ese par. El texto que le sigue se interpreta como un nombre de parámetro nuevo, sin valor. La celda construye la misma petición de las dos formas y las analiza: en la concatenada, `nota` llega con el valor `'ventas '` y aparece un parámetro `' devoluciones'` vacío; en la construida con `urlencode`, `nota` llega completa. No se produce ningún error: la petición sale, el servidor responde y el dato llega incompleto.
+
+:::: {.regla}
+**Regla 22.3.** El camino y la consulta se escapan de forma distinta: en el camino el espacio se escribe `%20` y en la consulta `+`. `urlencode` usa la forma de la consulta, que corresponde a su uso.
 ::::
 
-:::: {.proposicion}
-**Proposición 22.3.** El camino y la consulta se escapan de forma distinta: en el camino el espacio se escribe `%20` y en la consulta `+`. `urlencode` usa la forma de la consulta, que corresponde a su uso.
-::::
-
-:::: {.demostracion}
-*Demostración.* Las dos partes tienen gramáticas y caracteres reservados distintos: en un camino la barra separa niveles y debe conservarse, mientras que en un valor de consulta la barra no tiene significado. `quote` conserva la barra por defecto y `quote_plus` convierte el espacio en `+`, que es la forma que admite el formato de la consulta. La celda escapa el mismo texto de las tres maneras y exhibe las tres salidas. ∎
-::::
+Las dos partes tienen gramáticas y caracteres reservados distintos: en un camino la barra separa niveles y debe conservarse, mientras que en un valor de consulta la barra no tiene significado. `quote` conserva la barra por defecto y `quote_plus` convierte el espacio en `+`, que es la forma que admite el formato de la consulta. La celda escapa el mismo texto de las tres maneras y exhibe las tres salidas.
 
 **Modo de falla.** Un valor con espacios insertado por concatenación funciona durante meses, porque el servidor tolera los espacios, y cuando llega un valor con `&` o con `#` el dato se trunca sin aviso. El síntoma aparece en otro lugar: un informe con nombres incompletos, o un filtro que devuelve más filas de las esperadas porque su valor se cortó. Para evitarlo, la consulta no se construye por concatenación; `urlencode` sobre un diccionario no admite ese error.
 
@@ -131,29 +222,152 @@ print()
 print("  quote(%r, safe='') = %r" % (trozo, quote(trozo, safe="")))
 ```
 
+### Ejercicio 22.1, Valor con ampersand
+
+La celda trae el diccionario `datos`, cuyo valor contiene un `&`. Con la Regla 22.2, completar la línea de `consulta` para construir la cadena de consulta de modo que el valor llegue completo. La celda la analiza con `parse_qs` y compara el valor recibido con el original; la comparación debe dar `True`. La comprobación vuelve a ejecutar el código con otros datos.
+
+```{pyodide}
+#| exercise: ex_url
+from urllib.parse import urlencode, parse_qs
+
+datos = {"nota": "ventas & devoluciones"}
+
+consulta = ______
+recibido = parse_qs(consulta)["nota"][0]
+
+print(consulta, "|", recibido, "|", recibido == datos["nota"])
+```
+
+::: {.hint exercise="ex_url"}
+`urlencode` recibe el diccionario completo y escapa cada valor por separado.
+:::
+
+::: {.solution exercise="ex_url"}
+```{pyodide}
+from urllib.parse import urlencode, parse_qs
+
+datos = {"nota": "ventas & devoluciones"}
+
+consulta = urlencode(datos)
+recibido = parse_qs(consulta)["nota"][0]
+
+print(consulta, "|", recibido, "|", recibido == datos["nota"])
+```
+
+La consulta resultante es `nota=ventas+%26+devoluciones` y el valor se recupera completo. Con la consulta escrita a mano, `parse_qs` habría devuelto `'ventas '` y el resto se habría perdido sin aviso.
+:::
+
+```{pyodide}
+#| exercise: ex_url
+#| check: true
+import contextlib, io, re
+otro = user_code
+otro = re.sub(r"(?m)^datos\s*=.*$", 'datos = {"nota": "a+b=c"}', otro)
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(otro, ns)
+    general = ns.get("recibido") == "a+b=c"
+except Exception:
+    general = False
+ok = recibido == "ventas & devoluciones" and "%26" in consulta
+if ok and general:
+    feedback = {"correct": True, "message": "Correcto: el & viaja escapado y el valor llega entero."}
+elif ok:
+    feedback = {"correct": False,
+                "message": "Da los valores pedidos, pero con la nota \"a+b=c\" el valor no llega entero."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba que el & saliera como %26 y el valor volviera entero."}
+feedback
+```
+
+### Ejercicio 22.2, Espacio en el camino y en la consulta
+
+La celda trae el texto `nombre`, que contiene un espacio. Con la Regla 22.3, completar la línea de `camino`, el nombre escapado para usarlo como tramo del camino, y la de `consulta`, la consulta con el parámetro `q` igual a `nombre`. La celda imprime la URL completa, que debe ser `https://api.ejemplo.com/archivos/informe%20anual?q=informe+anual`. La comprobación vuelve a ejecutar el código con otro nombre.
+
+```{pyodide}
+#| exercise: ex_escape
+from urllib.parse import quote, urlencode
+
+nombre = "informe anual"
+
+camino = ______
+consulta = ______
+
+url = "https://api.ejemplo.com/archivos/" + camino + "?" + consulta
+print(url)
+```
+
+::: {.hint exercise="ex_escape"}
+En el camino el espacio pasa a `%20`, que es lo que hace `quote`. `urlencode` recibe un diccionario y usa la forma de la consulta.
+:::
+
+::: {.solution exercise="ex_escape"}
+```{pyodide}
+from urllib.parse import quote, urlencode
+
+nombre = "informe anual"
+
+camino = quote(nombre)
+consulta = urlencode({"q": nombre})
+
+url = "https://api.ejemplo.com/archivos/" + camino + "?" + consulta
+print(url)
+```
+
+Con `quote_plus` en el camino, el servidor recibiría `informe+anual` como nombre del archivo, con un `+` literal en lugar del espacio.
+:::
+
+```{pyodide}
+#| exercise: ex_escape
+#| check: true
+import contextlib, io, re
+base = "https://api.ejemplo.com/archivos/"
+casos = [(None, "informe%20anual?q=informe+anual"),
+         ('"año 2026"', "a%C3%B1o%202026?q=a%C3%B1o+2026"),
+         ('"x&y"', "x%26y?q=x%26y")]
+fallo = None
+for nn, esperado in casos:
+    otro = user_code
+    if nn is not None:
+        otro = re.sub(r"(?m)^nombre\s*=.*$", "nombre = " + nn, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = ns.get("url")
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != base + esperado and fallo is None:
+        fallo = "con nombre = %s se esperaba %s y salio %s" % (
+            nn or "el de la celda", base + esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: %20 en el camino y + en la consulta."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 2. Códigos de estado y reintentos
 
 :::: {.definicion}
 **Definición 22.4 (código de estado).** El **código de estado** indica con un número el resultado de la petición. `2xx` indica éxito; `3xx`, que el recurso está en otra ubicación; `4xx`, que la petición es incorrecta y repetirla sin cambios produce el mismo fallo; `5xx`, que el servidor tuvo un problema, posiblemente transitorio. `429` es el caso particular de «demasiadas peticiones, espera».
 ::::
 
-:::: {.proposicion}
-**Proposición 22.5.** Una política razonable reintenta los `5xx` (salvo `501`), el `429`, el `408` y los errores de red, y no reintenta los demás `4xx`. Reintentar de inmediato un `400` o un `404` no suele cambiar el resultado, porque la petición repetida es idéntica.
+:::: {.regla}
+**Regla 22.5.** Una política razonable reintenta los `5xx` (salvo `501`), el `429`, el `408` y los errores de red, y no reintenta los demás `4xx`. Reintentar de inmediato un `400` o un `404` no suele cambiar el resultado, porque la petición repetida es idéntica.
 ::::
 
-:::: {.demostracion}
-*Comprobación.* La mayoría de los `4xx` describen un defecto de la petición (un cuerpo mal formado, una credencial ausente, una ruta que no existe), y la petición siguiente sería idéntica, de modo que el resultado casi siempre también. Hay excepciones: un `404` deja de serlo si el recurso se crea, y el `408` y el `429` dependen del estado del servidor, por eso se reintentan. Un `5xx` describe un estado del servidor, que puede cambiar; el `501` indica que el servidor no implementa la operación y no cambiará. Es una regla práctica y no una propiedad del protocolo. La celda ejecuta una versión reducida de esa política, que reintenta los `5xx` y el `429`, sobre cuatro guiones: con el `404` se detiene tras 1 petición y con el servidor caído hace 5. ∎
+La mayoría de los `4xx` describen un defecto de la petición (un cuerpo mal formado, una credencial ausente, una ruta que no existe), y la petición siguiente sería idéntica, de modo que el resultado casi siempre también. Hay excepciones: un `404` deja de serlo si el recurso se crea, y el `408` y el `429` dependen del estado del servidor, por eso se reintentan. Un `5xx` describe un estado del servidor, que puede cambiar; el `501` indica que el servidor no implementa la operación y no cambiará. Es una regla práctica y no una propiedad del protocolo. La celda ejecuta una versión reducida de esa política, que reintenta los `5xx` y el `429`, sobre cuatro guiones: con el `404` se detiene tras 1 petición y con el servidor caído hace 5.
+
+:::: {.regla}
+**Regla 22.6.** Con una espera que se duplica en cada reintento, cinco intentos acumulan 15 unidades de espera: `1 + 2 + 4 + 8`. Tras el último intento no se espera, porque esa espera no precede a ninguna petición.
 ::::
 
-:::: {.proposicion}
-**Proposición 22.6.** Con una espera que se duplica en cada reintento, cinco intentos acumulan 15 unidades de espera: `1 + 2 + 4 + 8`. Tras el último intento no se espera, porque esa espera no precede a ninguna petición.
-::::
+Las esperas son `1, 2, 4, 8, …`, y con `k` intentos hay `k - 1` esperas entre ellos; su suma es `2^(k-1) - 1`, que para `k = 5` vale 15. La espera posterior al último intento no precede a ninguna petición y solo retrasa la respuesta al programa. La celda mide 15 unidades en el caso del servidor caído y 3 en el que la petición tiene éxito al tercer intento.
 
-:::: {.demostracion}
-*Demostración.* Las esperas son `1, 2, 4, 8, …`, y con `k` intentos hay `k - 1` esperas entre ellos; su suma es `2^(k-1) - 1`, que para `k = 5` vale 15. La espera posterior al último intento no precede a ninguna petición y solo retrasa la respuesta al programa. La celda mide 15 unidades en el caso del servidor caído y 3 en el que la petición tiene éxito al tercer intento. ∎
-::::
-
-**Modo de falla.** Un reintento sin máximo convierte una caída del servicio en un programa bloqueado, y por la Proposición 3.3 no hay ninguna señal: no se produce error, la memoria no crece y el proceso no avanza. Un reintento sin espera tiene además otro efecto: multiplica la carga sobre un servidor que ya tiene problemas. Para evitar ambos casos se fija un máximo de intentos y una espera creciente.
+**Modo de falla.** Un reintento sin máximo convierte una caída del servicio en un programa bloqueado, y por la Regla 3.3 de Fundamentos no hay ninguna señal: no se produce error, la memoria no crece y el proceso no avanza. Un reintento sin espera tiene además otro efecto: multiplica la carga sobre un servidor que ya tiene problemas. Para evitar ambos casos se fija un máximo de intentos y una espera creciente.
 
 ```{pyodide}
 # Esta pagina NO llama a la red: un servidor simulado devuelve respuestas
@@ -289,23 +503,138 @@ print("  intentos: %d, ultimo codigo: %d" % (intentos, codigo))
 </script>
 ```
 
+### Ejercicio 22.3, Qué códigos se reintentan
+
+La celda trae un código de estado en `codigo`. Con la Regla 22.5, completar la línea de `reintentar` con una expresión que valga `True` para los `5xx` salvo el `501`, para el `429` y para el `408`, y `False` para el resto. Con `codigo = 503` la celda debe imprimir `True`. La comprobación vuelve a ejecutar el código con nueve códigos más.
+
+```{pyodide}
+#| exercise: ex_reintento
+codigo = 503
+
+reintentar = ______
+
+print(codigo, reintentar)
+```
+
+::: {.hint exercise="ex_reintento"}
+`codigo // 100 == 5` reconoce la familia `5xx`. Falta excluir el `501` y añadir los dos `4xx` que dependen del estado del servidor.
+:::
+
+::: {.solution exercise="ex_reintento"}
+```{pyodide}
+codigo = 503
+
+reintentar = ((codigo // 100 == 5 and codigo != 501)
+              or codigo in (408, 429))
+
+print(codigo, reintentar)
+```
+
+`500 <= codigo < 600` es otra forma de reconocer la familia. Un `404` da `False`: repetir la misma petición de inmediato no suele cambiar el resultado.
+:::
+
+```{pyodide}
+#| exercise: ex_reintento
+#| check: true
+import contextlib, io, re
+casos = [(503, True), (500, True), (502, True), (501, False),
+         (429, True), (408, True), (404, False), (400, False),
+         (200, False), (301, False)]
+fallo = None
+for cc, esperado in casos:
+    otro = re.sub(r"(?m)^codigo\s*=.*$", "codigo = %d" % cc, user_code)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = ns.get("reintentar")
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con codigo = %d se esperaba %s y salio %s" % (
+            cc, esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto en los diez códigos."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
+### Ejercicio 22.4, Espera acumulada
+
+Una política de reintentos hace `intentos` = 6 intentos y espera entre cada uno y el siguiente; la primera espera dura 1 unidad y cada una duplica la anterior. Con la Regla 22.6, completar el rango del bucle y sus dos líneas para acumular en `espera_total` la suma de las esperas, actualizando `espera` en cada vuelta. `espera_total` debe dar 31. La comprobación vuelve a ejecutar el código con otros datos.
+
+```{pyodide}
+#| exercise: ex_espera
+intentos = 6
+
+espera_total = 0
+espera = 1
+for k in range(______):
+    ______
+    ______
+
+print(intentos, espera_total)
+```
+
+::: {.hint exercise="ex_espera"}
+Con `k` intentos hay `k - 1` esperas, porque tras el último intento no se espera. `espera_total` debe dar 31.
+:::
+
+::: {.solution exercise="ex_espera"}
+```{pyodide}
+intentos = 6
+
+espera_total = 0
+espera = 1
+for k in range(intentos - 1):
+    espera_total = espera_total + espera
+    espera = espera * 2
+
+print(intentos, espera_total)
+```
+
+31 unidades: `1 + 2 + 4 + 8 + 16`. Cada intento añadido duplica aproximadamente la espera total, de modo que subir el máximo de 6 a 10 la multiplica por al menos dieciséis. Por eso el máximo suele acompañarse de un tope a la espera individual.
+:::
+
+```{pyodide}
+#| exercise: ex_espera
+#| check: true
+import contextlib, io, re
+otro = user_code
+otro = re.sub(r"(?m)^intentos\s*=.*$", 'intentos = 4', otro)
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(otro, ns)
+    general = ns.get("espera_total") == 7
+except Exception:
+    general = False
+ok = espera_total == 31
+if ok and general:
+    feedback = {"correct": True, "message": "Correcto: 1+2+4+8+16 = 31."}
+elif ok:
+    feedback = {"correct": False,
+                "message": "Da los valores pedidos, pero con intentos = 4 no da 7."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba espera_total = 31."}
+feedback
+```
+
 ## 3. Pérdidas de datos en JSON
 
-:::: {.proposicion}
-**Proposición 22.7.** JSON pierde datos en tres casos, y en ninguno levanta una excepción al leer: las claves repetidas conservan solo el último valor, las claves no textuales se convierten en texto y pueden colisionar, y un entero mayor que `2^53` no se conserva en un lector que use decimales.
+:::: {.regla}
+**Regla 22.7.** JSON pierde datos en tres casos, y en ninguno levanta una excepción al leer: las claves repetidas conservan solo el último valor, las claves no textuales se convierten en texto y pueden colisionar, y un entero mayor que `2^53` no se conserva en un lector que use decimales.
 ::::
 
-:::: {.demostracion}
-*Demostración.* El texto `{"id": 1, "id": 2, "nombre": "Ana"}` tiene tres claves y produce un diccionario de dos, porque la segunda `id` sobrescribe a la primera. El diccionario `{1: 'uno', '1': 'otro'}` tiene dos claves distintas (un entero y un texto, distintos por la Proposición 7.7 porque `1 != '1'`), y al escribirse las dos se convierten en la cadena `"1"`; al leerlo de nuevo se obtiene una sola entrada, y la ida y vuelta no conserva el diccionario. El entero `9007199254740993`, que es `2^53 + 1`, se conserva en Python porque sus enteros son exactos por la Proposición 1.3, pero `float` de ese número devuelve `9007199254740992.0`: se pierde el último dígito. La celda exhibe los tres casos. ∎
+El texto `{"id": 1, "id": 2, "nombre": "Ana"}` tiene tres claves y produce un diccionario de dos, porque la segunda `id` sobrescribe a la primera. El diccionario `{1: 'uno', '1': 'otro'}` tiene dos claves distintas (un entero y un texto, distintos porque `1 != '1'`), y al escribirse las dos se convierten en la cadena `"1"`; al leerlo de nuevo se obtiene una sola entrada, y la ida y vuelta no conserva el diccionario. El entero `9007199254740993`, que es `2^53 + 1`, se conserva en Python porque sus enteros son exactos por la Regla 1.3 de Fundamentos, pero `float` de ese número devuelve `9007199254740992.0`: se pierde el último dígito. La celda exhibe los tres casos.
+
+:::: {.regla}
+**Regla 22.8.** `json.dumps` escribe `NaN`, valor que el estándar JSON no admite. Con `allow_nan=False` el error aparece en el programa que escribe y no en el que lee.
 ::::
 
-:::: {.proposicion}
-**Proposición 22.8.** `json.dumps` escribe `NaN`, valor que el estándar JSON no admite. Con `allow_nan=False` el error aparece en el programa que escribe y no en el que lee.
-::::
-
-:::: {.demostracion}
-*Demostración.* El formato define únicamente números finitos, de modo que un lector estricto rechaza `NaN`. El escritor de Python lo produce por comodidad, y el archivo resultante es válido para Python e inválido para otros lectores; `allow_nan=False` restablece el comportamiento del estándar y levanta `ValueError`. Un conjunto y unos bytes levantan `TypeError` sin opciones adicionales, porque no tienen representación en JSON. La celda comprueba los tres casos. ∎
-::::
+El formato define únicamente números finitos, de modo que un lector estricto rechaza `NaN`. El escritor de Python lo produce por comodidad, y el archivo resultante es válido para Python e inválido para otros lectores; `allow_nan=False` restablece el comportamiento del estándar y levanta `ValueError`. Un conjunto y unos bytes levantan `TypeError` sin opciones adicionales, porque no tienen representación en JSON. La celda comprueba los tres casos.
 
 **Modo de falla.** Un identificador de 19 dígitos que se transmite como número se altera en el último dígito al pasar por cualquier consumidor que use decimales (una hoja de cálculo, un navegador, la mayoría de los lenguajes), y el registro que se actualiza pasa a ser otro. El dato parece correcto y el error solo se detecta al cruzarlo con otra fuente. Para evitarlo, los identificadores largos se transmiten como texto y se comprueba en la frontera que así ocurre.
 
@@ -367,19 +696,149 @@ except ValueError:
     print("  con allow_nan=False: ValueError al serializar")
 ```
 
+### Ejercicio 22.5, Identificador como texto
+
+La celda trae el identificador `ident`, mayor que `2^53`, y simula un lector que convierte los enteros en decimales con `parse_int=float`. Con la Regla 22.7, completar la línea de `texto` con el JSON del diccionario `{"id": ...}` escrito de modo que ese lector recupere el identificador exacto. La celda imprime el valor leído y si coincide con `ident`, que debe dar `True`. La comprobación vuelve a ejecutar el código con otro identificador.
+
+```{pyodide}
+#| exercise: ex_ident
+import json
+
+ident = 9007199254740993
+
+texto = ______
+
+leido = json.loads(texto, parse_int=float)["id"]
+print(repr(leido), int(leido) == ident)
+```
+
+::: {.hint exercise="ex_ident"}
+Un número pasa por el lector y se convierte en decimal; un texto llega intacto. `str(ident)` da el texto del número.
+:::
+
+::: {.solution exercise="ex_ident"}
+```{pyodide}
+import json
+
+ident = 9007199254740993
+
+texto = json.dumps({"id": str(ident)})
+
+leido = json.loads(texto, parse_int=float)["id"]
+print(repr(leido), int(leido) == ident)
+```
+
+Con `json.dumps({"id": ident})` el lector devuelve `9007199254740992.0` y la comparación da `False`: el último dígito se pierde sin ningún error.
+:::
+
+```{pyodide}
+#| exercise: ex_ident
+#| check: true
+import contextlib, io, re
+fallo = None
+for ii in (None, 2 ** 60 + 7, 12345):
+    otro = user_code
+    if ii is not None:
+        otro = re.sub(r"(?m)^ident\s*=.*$", "ident = %d" % ii, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = ns["leido"]
+        bien = int(obtenido) == ns["ident"]
+    except Exception as err:
+        obtenido, bien = type(err).__name__, False
+    if not bien and fallo is None:
+        fallo = "con ident = %s el lector recupera %r" % (
+            ii or "el de la celda", obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: como texto, el identificador "
+                           "llega exacto."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
+### Ejercicio 22.6, NaN al escribir
+
+La lista `valores` contiene un `NaN`. Con la Regla 22.8, completar la línea de `texto` con la escritura de `valores` en JSON de modo que el `NaN` levante `ValueError` en el programa que escribe. La celda captura el error y deja `texto` en `None`; con la lista de la celda debe imprimir `None`. La comprobación vuelve a ejecutar el código con una lista sin `NaN`, que debe escribirse con normalidad.
+
+```{pyodide}
+#| exercise: ex_nan
+import json
+
+valores = [1.5, float("nan"), 2.0]
+
+try:
+    texto = ______
+except ValueError:
+    texto = None
+
+print(texto)
+```
+
+::: {.hint exercise="ex_nan"}
+`json.dumps` acepta un argumento que restablece el comportamiento del estándar para los números no finitos.
+:::
+
+::: {.solution exercise="ex_nan"}
+```{pyodide}
+import json
+
+valores = [1.5, float("nan"), 2.0]
+
+try:
+    texto = json.dumps(valores, allow_nan=False)
+except ValueError:
+    texto = None
+
+print(texto)
+```
+
+Sin `allow_nan=False`, `texto` vale `'[1.5, NaN, 2.0]'`, que Python lee y un lector estricto rechaza.
+:::
+
+```{pyodide}
+#| exercise: ex_nan
+#| check: true
+import contextlib, io, re
+casos = [(None, None), ("[1.5, 2.0]", "[1.5, 2.0]"),
+         ('[float("inf")]', None), ("[]", "[]")]
+fallo = None
+for vv, esperado in casos:
+    otro = user_code
+    if vv is not None:
+        otro = re.sub(r"(?m)^valores\s*=.*$", "valores = " + vv, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = ns.get("texto", "sin texto")
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con valores = %s se esperaba %r y salio %r" % (
+            vv or "la de la celda", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: el NaN falla al escribir."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 4. Paginación
 
 :::: {.definicion}
 **Definición 22.9 (paginación).** Un servicio entrega los resultados en **páginas** de tamaño fijo, junto con una señal que indica si quedan más. Recorrerlo consiste en pedir páginas sucesivas hasta que esa señal indique que no quedan.
 ::::
 
-:::: {.proposicion}
-**Proposición 22.10.** Deducir el final de que una página llegue incompleta funciona salvo cuando el total es múltiplo del tamaño de página. Con 47 elementos de 10 en 10 las dos reglas coinciden; con 40, la regla del tamaño pide una página de más.
+:::: {.regla}
+**Regla 22.10.** Deducir el final de que una página llegue incompleta funciona salvo cuando el total es múltiplo del tamaño de página. Con 47 elementos de 10 en 10 las dos reglas coinciden; con 40, la regla del tamaño pide una página de más.
 ::::
 
-:::: {.demostracion}
-*Demostración.* La regla supone que la última página siempre llega incompleta, lo cual es cierto salvo si el total es divisible por el tamaño: en ese caso la última página llega llena, la regla no reconoce el final y pide la siguiente. La celda ejecuta las dos reglas sobre 47 y sobre 40 elementos: con 47 ambas hacen 5 peticiones, y con 40 la regla del tamaño hace 5 (cuatro con datos y una vacía) donde bastaban 4. La señal del servicio evita este caso y no depende de la respuesta del servicio a una página inexistente. ∎
-::::
+La regla supone que la última página siempre llega incompleta, lo cual es cierto salvo si el total es divisible por el tamaño: en ese caso la última página llega llena, la regla no reconoce el final y pide la siguiente. La celda ejecuta las dos reglas sobre 47 y sobre 40 elementos: con 47 ambas hacen 5 peticiones, y con 40 la regla del tamaño hace 5 (cuatro con datos y una vacía) donde bastaban 4. La señal del servicio evita este caso y no depende de la respuesta del servicio a una página inexistente.
 
 **Modo de falla.** En el caso leve, este error cuesta una petición de más. En el caso grave, un servicio que devuelve la primera página cuando se pide una inexistente convierte el bucle en uno que no termina y que además duplica datos. Existe un tercer caso: paginar sobre datos que cambian durante el recorrido, donde una fila insertada desplaza las demás y una página omite elementos que no se vuelven a pedir. Para evitarlo se usa la señal del servicio y, cuando el orden lo permite, se pagina por un valor de corte («los posteriores a este identificador») en lugar de por número de página.
 
@@ -554,133 +1013,85 @@ for total in (40, 47):
 </script>
 ```
 
+El problema inicial pedía este recorrido. Un bucle que se detiene cuando la página llega incompleta da 47 elementos en 5 peticiones con `total = 47`, y con 40 hace 5 peticiones, una de ellas vacía; el que consulta `hay_mas` hace 4. Es la diferencia que establece la Regla 22.10, y la comprobación del problema la detectaba con el total de 40.
+
+### Ejercicio 22.7, Peticiones de cada regla
+
+Un servicio entrega `total` elementos en páginas de `tam`. Con la Regla 22.10, completar la línea de `con_senal`, las peticiones que hace el recorrido que consulta la señal del servicio, y la de `con_tamano`, las que hace el que se detiene en la primera página incompleta. Las dos se piden como fórmulas de `total` y `tam`; una petición se hace siempre, aunque no haya elementos. Con `total = 40` y `tam = 10` deben salir 4 y 5. La comprobación vuelve a ejecutar el código con otros totales.
+
+```{pyodide}
+#| exercise: ex_peticiones
+total = 40
+tam = 10
+
+con_senal = ______
+con_tamano = ______
+
+print(con_senal, con_tamano)
+```
+
+::: {.hint exercise="ex_peticiones"}
+Con la señal se piden las páginas con datos, que son `total / tam` redondeado hacia arriba, y al menos una. La regla del tamaño se detiene en la primera página con menos de `tam` elementos, que es la número `total // tam` contando desde 0.
+:::
+
+::: {.solution exercise="ex_peticiones"}
+```{pyodide}
+total = 40
+tam = 10
+
+con_senal = max(1, (total + tam - 1) // tam)
+con_tamano = total // tam + 1
+
+print(con_senal, con_tamano)
+```
+
+Las dos fórmulas coinciden salvo cuando `total` es múltiplo de `tam` y mayor que cero: entonces la segunda vale una más.
+:::
+
+```{pyodide}
+#| exercise: ex_peticiones
+#| check: true
+import contextlib, io, re
+casos = [(40, 10, 4, 5), (47, 10, 5, 5), (0, 10, 1, 1),
+         (9, 10, 1, 1), (100, 25, 4, 5), (101, 25, 5, 5)]
+fallo = None
+for tt, pp, a, b in casos:
+    otro = re.sub(r"(?m)^total\s*=.*$", "total = %d" % tt, user_code)
+    otro = re.sub(r"(?m)^tam\s*=.*$", "tam = %d" % pp, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = (ns.get("con_senal"), ns.get("con_tamano"))
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != (a, b) and fallo is None:
+        fallo = "con total = %d y tam = %d se esperaba %s y salio %s" % (
+            tt, pp, (a, b), obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: solo difieren con un múltiplo exacto."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 5. Limitaciones
 
 No se ha tratado la autenticación. Un servicio real exige una credencial, que caduca y que no debe escribirse en el código ni guardarse en el repositorio; su almacenamiento y renovación son un tema aparte, y la Lección 16 indica dónde se sitúa la configuración.
 
 Tampoco se ha tratado la reutilización de conexiones. Abrir una conexión nueva por petición repite la negociación inicial, y una sesión que mantiene la conexión abierta cambia el coste de recorrer mil páginas. No se ha tratado la concurrencia: pedir varias páginas a la vez acelera la descarga y entra en conflicto con el límite de peticiones que respeta la Sección 2.
 
-## Ejercicios
+## Pieza del proyecto
 
-### Ejercicio 1, Valor con ampersand
+`caja.py` crece en cada lección y los entregables reutilizan sus piezas. Esta lección añade el cobro en otra moneda, con el tipo de cambio del día pedido a un servicio simulado que a veces falla:
 
-La celda trae el diccionario `datos`, cuyo valor contiene un `&`. Con la Proposición 22.2, completar la línea de `consulta` para construir la cadena de consulta de modo que el valor llegue completo. La celda la analiza con `parse_qs` y compara el valor recibido con el original; la comparación debe dar `True`. La comprobación vuelve a ejecutar el código con otros datos.
+1. Pedir el tipo de cambio al servicio y repetir la petición ante un fallo transitorio, con un número máximo de intentos y una espera que crece entre uno y otro.
+2. Distinguir los fallos que justifican repetir de los que no, y dejar de intentar ante los segundos.
+3. Si el servicio no responde tras el máximo de intentos, usar el último tipo de cambio guardado e indicarlo en el comprobante.
+4. Convertir el total de la compra a la otra moneda, redondeado a dos decimales.
 
-```{pyodide}
-#| exercise: ex_url
-from urllib.parse import urlencode, parse_qs
-
-datos = {"nota": "ventas & devoluciones"}
-
-consulta = ______
-recibido = parse_qs(consulta)["nota"][0]
-
-print(consulta, "|", recibido, "|", recibido == datos["nota"])
-```
-
-::: {.hint exercise="ex_url"}
-`urlencode` recibe el diccionario completo y escapa cada valor por separado.
-:::
-
-::: {.solution exercise="ex_url"}
-```{pyodide}
-from urllib.parse import urlencode, parse_qs
-
-datos = {"nota": "ventas & devoluciones"}
-
-consulta = urlencode(datos)
-recibido = parse_qs(consulta)["nota"][0]
-
-print(consulta, "|", recibido, "|", recibido == datos["nota"])
-```
-
-La consulta resultante es `nota=ventas+%26+devoluciones` y el valor se recupera completo. Con la consulta escrita a mano, `parse_qs` habría devuelto `'ventas '` y el resto se habría perdido sin aviso.
-:::
-
-```{pyodide}
-#| exercise: ex_url
-#| check: true
-import contextlib, io, re
-otro = user_code
-otro = re.sub(r"(?m)^datos\s*=.*$", 'datos = {"nota": "a+b=c"}', otro)
-ns = {}
-try:
-    with contextlib.redirect_stdout(io.StringIO()):
-        exec(otro, ns)
-    general = ns.get("recibido") == "a+b=c"
-except Exception:
-    general = False
-ok = recibido == "ventas & devoluciones" and "%26" in consulta
-if ok and general:
-    feedback = {"correct": True, "message": "Correcto: el & viaja escapado y el valor llega entero."}
-elif ok:
-    feedback = {"correct": False,
-                "message": "Da los valores pedidos, pero con la nota \"a+b=c\" el valor no llega entero."}
-else:
-    feedback = {"correct": False, "message": "Se esperaba que el & saliera como %26 y el valor volviera entero."}
-feedback
-```
-
-### Ejercicio 2, Espera acumulada
-
-Una política de reintentos hace `intentos` = 6 intentos y espera entre cada uno y el siguiente; la primera espera dura 1 unidad y cada una duplica la anterior. Con la Proposición 22.6, completar el rango del bucle y sus dos líneas para acumular en `espera_total` la suma de las esperas, actualizando `espera` en cada vuelta. `espera_total` debe dar 31. La comprobación vuelve a ejecutar el código con otros datos.
-
-```{pyodide}
-#| exercise: ex_espera
-intentos = 6
-
-espera_total = 0
-espera = 1
-for k in range(______):
-    ______
-    ______
-
-print(intentos, espera_total)
-```
-
-::: {.hint exercise="ex_espera"}
-Con `k` intentos hay `k - 1` esperas, porque tras el último intento no se espera. `espera_total` debe dar 31.
-:::
-
-::: {.solution exercise="ex_espera"}
-```{pyodide}
-intentos = 6
-
-espera_total = 0
-espera = 1
-for k in range(intentos - 1):
-    espera_total = espera_total + espera
-    espera = espera * 2
-
-print(intentos, espera_total)
-```
-
-31 unidades: `1 + 2 + 4 + 8 + 16`. Cada intento añadido duplica aproximadamente la espera total, de modo que subir el máximo de 6 a 10 la multiplica por al menos dieciséis. Por eso el máximo suele acompañarse de un tope a la espera individual.
-:::
-
-```{pyodide}
-#| exercise: ex_espera
-#| check: true
-import contextlib, io, re
-otro = user_code
-otro = re.sub(r"(?m)^intentos\s*=.*$", 'intentos = 4', otro)
-ns = {}
-try:
-    with contextlib.redirect_stdout(io.StringIO()):
-        exec(otro, ns)
-    general = ns.get("espera_total") == 7
-except Exception:
-    general = False
-ok = espera_total == 31
-if ok and general:
-    feedback = {"correct": True, "message": "Correcto: 1+2+4+8+16 = 31."}
-elif ok:
-    feedback = {"correct": False,
-                "message": "Da los valores pedidos, pero con intentos = 4 no da 7."}
-else:
-    feedback = {"correct": False, "message": "Se esperaba espera_total = 31."}
-feedback
-```
+Lo usa el [Entregable 29](entregable-29.qmd), el tipo de cambio desde un servicio que falla.
 
 ## Reto
 

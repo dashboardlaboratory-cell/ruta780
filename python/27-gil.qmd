@@ -27,7 +27,7 @@ Al terminar esta lección se puede:
 4. Medir la ganancia de los hilos: ninguna con cálculo puro y `4×` con espera pura.
 5. Contar los interbloqueos al tomar dos cerrojos en órdenes distintos: 512 de 1024 frente a 0.
 6. Elegir entre hilos, procesos y vectorización a partir del coste de arranque de cada uno.
-7. Aplicar el techo de la Lección 26 al paralelismo: repartir el trabajo no exime de medir antes.
+7. Aplicar la cota de la Lección 26 al paralelismo: repartir el trabajo no exime de medir antes.
 
 :::: {.hilo}
 ::: {}
@@ -62,6 +62,99 @@ Esta página no lanza hilos. Un fallo de concurrencia puede no manifestarse en u
 | `h` | hache | El número de hilos o procesos |
 :::
 
+## Problema inicial
+
+Este problema va antes de la teoría y se resuelve con lo visto hasta Python 26: listas, diccionarios y bucles. La Sección 1 vuelve sobre él.
+
+Dos hilos, `A` y `B`, ejecutan cada uno `x = x + 1` sobre la misma `x`, que empieza valiendo `x0`. Cada hilo da tres pasos en este orden: leer `x` en su registro, sumar uno al registro y guardar el registro en `x`. La celda construye en `ordenes` todas las formas de mezclar los seis pasos; en cada cadena, la letra dice qué hilo da su siguiente paso. Completar el cuerpo del bucle interior, que ejecuta el paso número `paso[h]` del hilo `h`, para que `finales` cuente en cuántas mezclas `x` acaba en cada valor. La celda imprime cuántas mezclas hay y `finales`, que deben ser 20 y `{2: 2, 1: 18}`. La comprobación vuelve a ejecutar el código con otros valores de `x0`.
+
+```{pyodide}
+#| exercise: ex_inicial
+from itertools import combinations
+
+x0 = 0
+ordenes = []
+for pos in combinations(range(6), 3):
+    letras = ["A" if i in pos else "B" for i in range(6)]
+    ordenes.append("".join(letras))
+
+finales = {}
+for orden in ordenes:
+    x = x0
+    reg = {"A": None, "B": None}
+    paso = {"A": 0, "B": 0}
+    for h in orden:
+        ______
+        paso[h] = paso[h] + 1
+    finales[x] = finales.get(x, 0) + 1
+
+print(len(ordenes), finales)
+```
+
+::: {.hint exercise="ex_inicial"}
+Tres casos según `paso[h]`: con 0 se copia `x` en `reg[h]`, con 1 se suma uno a `reg[h]` y con 2 se copia `reg[h]` en `x`. Deben salir 20 mezclas y `{2: 2, 1: 18}`.
+:::
+
+::: {.solution exercise="ex_inicial"}
+```{pyodide}
+from itertools import combinations
+
+x0 = 0
+ordenes = []
+for pos in combinations(range(6), 3):
+    letras = ["A" if i in pos else "B" for i in range(6)]
+    ordenes.append("".join(letras))
+
+finales = {}
+for orden in ordenes:
+    x = x0
+    reg = {"A": None, "B": None}
+    paso = {"A": 0, "B": 0}
+    for h in orden:
+        if paso[h] == 0:
+            reg[h] = x
+        elif paso[h] == 1:
+            reg[h] = reg[h] + 1
+        else:
+            x = reg[h]
+        paso[h] = paso[h] + 1
+    finales[x] = finales.get(x, 0) + 1
+
+print(len(ordenes), finales)
+```
+
+Solo en 2 de las 20 mezclas `x` acaba en 2: `AAABBB` y `BBBAAA`. En las otras 18 se pierde un incremento. La Sección 1 explica por qué y qué hace un cerrojo con esas 18.
+:::
+
+```{pyodide}
+#| exercise: ex_inicial
+#| check: true
+import contextlib, io, re
+casos = [(None, {2: 2, 1: 18}), ("5", {7: 2, 6: 18}), ("-1", {1: 2, 0: 18})]
+fallo = None
+for xx, esperado in casos:
+    otro = user_code
+    if xx is not None:
+        otro = re.sub(r"(?m)^x0\s*=.*$", "x0 = " + xx, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = dict(ns["finales"])
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con x0 = %s se esperaba %s y salio %s" % (
+            xx if xx else "0", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: 18 de las 20 mezclas pierden un "
+                           "incremento."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 1. Intercalaciones y cerrojos
 
 :::: {.definicion}
@@ -73,16 +166,16 @@ Esta página no lanza hilos. Un fallo de concurrencia puede no manifestarse en u
 ::::
 
 :::: {.demostracion}
-*Demostración.* Las intercalaciones de dos secuencias de tres pasos corresponden a las formas de elegir qué tres posiciones de seis ocupa la primera, que son `C(6,3) = 20`. El resultado es 2 únicamente cuando un hilo completa sus tres pasos antes de que el otro lea, lo que ocurre en 2 de ellas; en las 18 restantes el segundo hilo lee un valor que el primero aún no ha guardado, y su escritura posterior sobrescribe la del primero. La celda las enumera todas y exhibe paso a paso una de las que fallan. ∎
+*Demostración.* Una intercalación de dos secuencias de tres pasos queda determinada por las tres posiciones de seis que ocupa la primera, de modo que hay $\binom{6}{3}=\frac{6!}{3!\,3!}=20$. El resultado es 2 únicamente cuando un hilo completa sus tres pasos antes de que el otro lea, es decir, cuando los tres pasos de un hilo ocupan las posiciones $1,2,3$ y los del otro las $4,5,6$; eso ocurre en 2 de ellas. En las $20-2=18$ restantes el segundo hilo lee un valor que el primero aún no ha guardado, y su escritura posterior sobrescribe la del primero. La celda las enumera todas y exhibe paso a paso una de las que fallan. [∎]{.fin-demo}
 ::::
 
-:::: {.proposicion}
-**Proposición 27.3.** Un cerrojo no acelera la ejecución: reduce las intercalaciones posibles. Con los tres pasos protegidos, las 20 posibilidades se reducen a 2, y las dos son correctas.
+:::: {.regla}
+**Regla 27.3.** Un cerrojo no acelera la ejecución: reduce las intercalaciones posibles. Con los tres pasos protegidos, las 20 posibilidades se reducen a 2, y las dos son correctas.
 ::::
 
-:::: {.demostracion}
-*Demostración.* El cerrojo impide que el segundo hilo empiece sus pasos mientras el primero está dentro, de modo que las únicas secuencias posibles son las dos que ejecutan un hilo completo seguido del otro. Las dos dan 2 por el argumento de la Proposición 27.2. El coste es que el hilo que espera no avanza, y que adquirir y liberar el cerrojo tiene un coste en cada iteración. La celda comprueba las dos. ∎
-::::
+El cerrojo impide que el segundo hilo empiece sus pasos mientras el primero está dentro, de modo que las únicas secuencias posibles son las dos que ejecutan un hilo completo seguido del otro. Las dos dan 2 por el argumento de la Proposición 27.2. El coste es que el hilo que espera no avanza, y que adquirir y liberar el cerrojo tiene un coste en cada iteración. La celda comprueba las dos.
+
+El problema inicial simulaba las 20 mezclas y obtenía `{2: 2, 1: 18}`, la cuenta de la Proposición 27.2. Con un cerrojo alrededor de los tres pasos solo quedan posibles `AAABBB` y `BBBAAA`, las dos mezclas que en el problema daban 2. El Ejercicio 27.2 obtiene el mismo resultado con un planificador que hace esperar al hilo que no tiene el cerrojo.
 
 **Modo de falla.** Este fallo puede no aparecer nunca en una máquina y aparecer a diario en otra, porque depende del momento en que el intérprete cambia de hilo. El síntoma es un total ligeramente incorrecto, distinto en cada ejecución, sin ninguna excepción y sin cambios en el código; al volver a ejecutar, el error suele desaparecer. Para evitarlo se razona sobre lo que puede ocurrir y no sobre lo que ocurre habitualmente, que es lo que hace la enumeración.
 
@@ -284,27 +377,180 @@ print("  todas dan el resultado correcto: %s"
 </script>
 ```
 
+### Ejercicio 27.1, Intercalaciones incorrectas
+
+Dos hilos ejecutan cada uno una secuencia de `pasos_por_hilo` = 3 pasos. Con la Proposición 27.2, completar `total` con el número de intercalaciones posibles de las dos secuencias y `fallan` con el número de las que no dan el resultado correcto; la celda ya fija en `correctas` = 2 las que sí lo dan. Deben salir 20 y 18. La comprobación vuelve a ejecutar el código con otros datos.
+
+```{pyodide}
+#| exercise: ex_inter
+from math import comb
+
+pasos_por_hilo = 3
+
+total = ______
+correctas = 2
+fallan = ______
+
+print(total, correctas, fallan)
+```
+
+::: {.hint exercise="ex_inter"}
+Intercalar dos secuencias de 3 pasos equivale a elegir qué 3 de las 6 posiciones ocupa la primera. Deben salir 20 y 18.
+:::
+
+::: {.solution exercise="ex_inter"}
+```{pyodide}
+from math import comb
+
+pasos_por_hilo = 3
+
+total = comb(2 * pasos_por_hilo, pasos_por_hilo)
+correctas = 2
+fallan = total - correctas
+
+print(total, correctas, fallan)
+```
+
+20 intercalaciones, de las que 18 fallan. Con tres hilos en lugar de dos habría 1680 intercalaciones, y las correctas seguirían siendo las pocas en que cada hilo termina antes de que el siguiente lea: la proporción de intercalaciones correctas disminuye al añadir hilos.
+:::
+
+```{pyodide}
+#| exercise: ex_inter
+#| check: true
+import contextlib, io, re
+otro = user_code
+otro = re.sub(r"(?m)^pasos_por_hilo\s*=.*$", 'pasos_por_hilo = 2', otro)
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(otro, ns)
+    general = ns.get("total") == 6 and ns.get("fallan") == 4
+except Exception:
+    general = False
+ok = total == 20 and fallan == 18
+if ok and general:
+    feedback = {"correct": True, "message": "Correcto: 20 intercalaciones, 18 fallan."}
+elif ok:
+    feedback = {"correct": False,
+                "message": "Da los valores pedidos, pero con 2 pasos por hilo no da 6 y 4."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba total = 20 y fallan = 18."}
+feedback
+```
+
+### Ejercicio 27.2, Planificador con cerrojo
+
+La celda simula un planificador: la cadena `orden` dice a qué hilo se ofrece cada turno, y en su turno un hilo da su siguiente paso de `x = x + 1`. El hilo toma el cerrojo al leer y lo suelta al guardar, y `dueno` dice qué hilo lo tiene. Con la Regla 27.3, completar la condición del primer `if` para que un hilo pierda su turno cuando el cerrojo lo tiene el otro hilo. La celda imprime `x` y los pasos dados por cada hilo, que deben ser 2 y `{'A': 3, 'B': 3}`. La comprobación vuelve a ejecutar el código con otros órdenes de turnos.
+
+```{pyodide}
+#| exercise: ex_cerrojo
+orden = "ABABABABAB"
+
+x = 0
+reg = {"A": None, "B": None}
+paso = {"A": 0, "B": 0}
+dueno = None
+for h in orden:
+    if paso[h] == 3:
+        continue
+    if ______:
+        continue
+    if paso[h] == 0:
+        dueno = h
+        reg[h] = x
+    elif paso[h] == 1:
+        reg[h] = reg[h] + 1
+    else:
+        x = reg[h]
+        dueno = None
+    paso[h] = paso[h] + 1
+
+print(x, paso)
+```
+
+::: {.hint exercise="ex_cerrojo"}
+El hilo espera si `dueno` no es `None` y es distinto de `h`; el hilo que tiene el cerrojo sigue avanzando. Deben salir 2 y `{'A': 3, 'B': 3}`.
+:::
+
+::: {.solution exercise="ex_cerrojo"}
+```{pyodide}
+orden = "ABABABABAB"
+
+x = 0
+reg = {"A": None, "B": None}
+paso = {"A": 0, "B": 0}
+dueno = None
+for h in orden:
+    if paso[h] == 3:
+        continue
+    if dueno is not None and dueno != h:
+        continue
+    if paso[h] == 0:
+        dueno = h
+        reg[h] = x
+    elif paso[h] == 1:
+        reg[h] = reg[h] + 1
+    else:
+        x = reg[h]
+        dueno = None
+    paso[h] = paso[h] + 1
+
+print(x, paso)
+```
+
+Sin el cerrojo, los mismos turnos alternos dan `x = 1`. Con él, B pierde dos turnos mientras A completa sus tres pasos, y los diez turnos alcanzan para que los dos terminen.
+:::
+
+```{pyodide}
+#| exercise: ex_cerrojo
+#| check: true
+import contextlib, io, re
+casos = [
+    (None, (2, {"A": 3, "B": 3})),
+    ('"AABBAABBAABB"', (2, {"A": 3, "B": 3})),
+    ('"BABABABABA"', (2, {"A": 3, "B": 3})),
+    ('"ABABAB"', (1, {"A": 3, "B": 1})),
+]
+fallo = None
+for oo, esperado in casos:
+    otro = user_code
+    if oo is not None:
+        otro = re.sub(r"(?m)^orden\s*=.*$", "orden = " + oo, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = (ns["x"], dict(ns["paso"]))
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con orden = %s se esperaba %s y salio %s" % (
+            oo if oo else "la de la celda", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: con el cerrojo, x acaba en 2."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 2. GIL y ganancia de los hilos
 
 :::: {.definicion}
 **Definición 27.4 (GIL).** El **GIL** es un cerrojo global que permite ejecutar bytecode de Python a un solo hilo a la vez. Garantiza que las estructuras internas no se corrompan; no garantiza que una operación compuesta se ejecute de forma indivisible. Una operación que pasa a código compilado o que espera a un disco o a la red libera el GIL mientras se ejecuta.
 ::::
 
-:::: {.proposicion}
-**Proposición 27.5.** Con cuatro hilos, una tarea de cálculo puro en Python no obtiene ninguna ganancia; una tarea de espera pura obtiene una ganancia de 4 veces. En los casos intermedios, la ganancia depende de la fracción que libera el GIL.
+:::: {.regla}
+**Regla 27.5.** Con cuatro hilos, una tarea de cálculo puro en Python no obtiene ninguna ganancia; una tarea de espera pura obtiene una ganancia de 4 veces. En los casos intermedios, la ganancia depende de la fracción que libera el GIL.
 ::::
 
-:::: {.demostracion}
-*Demostración.* La parte que retiene el GIL se ejecuta en serie, de modo que `h` hilos tardan `h` veces lo que uno; la parte que lo libera se solapa y tarda lo mismo con uno o con muchos hilos. El total es `retenido · h + soltado`, que con `retenido = 0` da la ganancia máxima `h` y con `soltado = 0` da 1. La celda tabula cinco mezclas y las ganancias para seis fracciones de espera. Los procesos dan siempre `h`, porque cada uno tiene su propio intérprete. ∎
+La parte que retiene el GIL se ejecuta en serie, de modo que `h` hilos tardan `h` veces lo que uno; la parte que lo libera se solapa y tarda lo mismo con uno o con muchos hilos. El total es `retenido · h + soltado`, que con `retenido = 0` da la ganancia máxima `h` y con `soltado = 0` da 1. La celda tabula cinco mezclas y las ganancias para seis fracciones de espera. Los procesos dan siempre `h`, porque cada uno tiene su propio intérprete.
+
+:::: {.regla}
+**Regla 27.6.** Los procesos requieren copiar los datos y arrancar el intérprete; los hilos no. Con 1000 MB y cuatro procesos se copian 4000 MB, y arrancar 16 procesos cuesta 50 veces lo que arrancar 16 hilos.
 ::::
 
-:::: {.proposicion}
-**Proposición 27.6.** Los procesos requieren copiar los datos y arrancar el intérprete; los hilos no. Con 1000 MB y cuatro procesos se copian 4000 MB, y arrancar 16 procesos cuesta 50 veces lo que arrancar 16 hilos.
-::::
-
-:::: {.demostracion}
-*Demostración.* Los hilos comparten la memoria del proceso, de modo que pasarles un dato no lo copia; cada proceso tiene su propio espacio y recibe una copia de los datos que necesita. El arranque de un proceso incluye la creación del intérprete, operación mucho más costosa que crear un hilo dentro de un intérprete existente. La celda tabula las dos cantidades. En consecuencia, repartir en procesos un trabajo sobre una tabla grande puede costar más en copia que lo que ahorra en cálculo. ∎
-::::
+Los hilos comparten la memoria del proceso, de modo que pasarles un dato no lo copia; cada proceso tiene su propio espacio y recibe una copia de los datos que necesita. El arranque de un proceso incluye la creación del intérprete, operación mucho más costosa que crear un hilo dentro de un intérprete existente. La celda tabula las dos cantidades. En consecuencia, repartir en procesos un trabajo sobre una tabla grande puede costar más en copia que lo que ahorra en cálculo.
 
 **Modo de falla.** Aplicar hilos a un bucle de Python que recorre filas no produce ganancia y añade la posibilidad de una condición de carrera como la de la sección anterior. El síntoma es un programa que tarda lo mismo o algo más y que ocasionalmente da un total distinto. Para evitarlo se comprueba primero si la operación se puede vectorizar (Lección 15), porque una operación vectorizada libera el GIL por sí misma.
 
@@ -364,19 +610,140 @@ for mb in (1, 100, 1000):
           % (mb, HILOS, mb * HILOS))
 ```
 
+### Ejercicio 27.3, Hilos frente a procesos
+
+Cada uno de `hilos` = 4 hilos ejecuta una tarea de `unidades` = 100 unidades, y la fracción `suelta` = 0,25 de cada tarea libera el GIL. Con la Regla 27.5, completar `retenido` con las unidades de una tarea que retienen el GIL, `con_hilos` con las unidades que tardan los 4 hilos, y `mejora` con el cociente entre `en_fila`, el tiempo en serie que la celda ya calcula, y `con_hilos`. Deben salir `325.0` y `1.23`. La comprobación vuelve a ejecutar el código con otros datos.
+
+```{pyodide}
+#| exercise: ex_hilos
+unidades, suelta, hilos = 100, 0.25, 4
+
+retenido = ______
+con_hilos = ______
+en_fila = unidades * hilos
+mejora = ______
+
+print(con_hilos, round(mejora, 2))
+```
+
+::: {.hint exercise="ex_hilos"}
+La parte retenida se ejecuta en serie, tantas veces como hilos, y la parte liberada se solapa, de modo que se cuenta una sola vez. Deben salir 325.0 y 1.23.
+:::
+
+::: {.solution exercise="ex_hilos"}
+```{pyodide}
+unidades, suelta, hilos = 100, 0.25, 4
+
+retenido = unidades * (1 - suelta)
+con_hilos = retenido * hilos + unidades * suelta
+en_fila = unidades * hilos
+mejora = en_fila / con_hilos
+
+print(con_hilos, round(mejora, 2))
+```
+
+325 unidades frente a 400: una mejora de 1,23, lejos de las 4 veces que darían los procesos. Con solo un cuarto del trabajo liberando el GIL, la ganancia de los hilos apenas compensa el riesgo de una condición de carrera.
+:::
+
+```{pyodide}
+#| exercise: ex_hilos
+#| check: true
+import contextlib, io, re
+otro = user_code
+otro = re.sub(r"(?m)^unidades, suelta, hilos\s*=.*$", 'unidades, suelta, hilos = 10, 0.5, 2', otro)
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(otro, ns)
+    general = abs(ns.get("con_hilos") - 15.0) < 1e-9
+except Exception:
+    general = False
+ok = con_hilos == 325.0 and round(mejora, 2) == 1.23
+if ok and general:
+    feedback = {"correct": True, "message": "Correcto: 325 unidades y mejora de 1.23."}
+elif ok:
+    feedback = {"correct": False,
+                "message": "Da los valores pedidos, pero con 10, 0.5 y 2 no da 15."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 325.0 y 1.23."}
+feedback
+```
+
+### Ejercicio 27.4, Memoria de las copias
+
+Un trabajo usa una tabla de `mb` megabytes y se reparte en `h` procesos, y la máquina tiene `memoria` megabytes libres. Con la Regla 27.6, completar `copiado` con los megabytes que se copian, `cabe` con `True` si las copias caben en `memoria`, y `maximo` con el mayor número de procesos cuyas copias caben. La celda imprime los tres, que deben ser 4000, `False` y 3. La comprobación vuelve a ejecutar el código con otros datos.
+
+```{pyodide}
+#| exercise: ex_memoria
+mb, h, memoria = 1000, 4, 3000
+
+copiado = ______
+cabe = ______
+maximo = ______
+
+print(copiado, cabe, maximo)
+```
+
+::: {.hint exercise="ex_memoria"}
+Cada proceso recibe su propia copia de la tabla. El número máximo de procesos es la división entera de la memoria libre entre el tamaño de una copia. Deben salir 4000, `False` y 3.
+:::
+
+::: {.solution exercise="ex_memoria"}
+```{pyodide}
+mb, h, memoria = 1000, 4, 3000
+
+copiado = mb * h
+cabe = copiado <= memoria
+maximo = memoria // mb
+
+print(copiado, cabe, maximo)
+```
+
+Con hilos no se copiaría nada, porque comparten la memoria del proceso; con tres procesos se copian 3000 MB y caben, sin margen para nada más.
+:::
+
+```{pyodide}
+#| exercise: ex_memoria
+#| check: true
+import contextlib, io, re
+casos = [(None, (4000, False, 3)), ("250, 4, 1000", (1000, True, 4)),
+         ("300, 2, 1000", (600, True, 3)),
+         ("500, 2, 1000", (1000, True, 2))]
+fallo = None
+for dd, esperado in casos:
+    otro = user_code
+    if dd is not None:
+        otro = re.sub(r"(?m)^mb, h, memoria\s*=.*$",
+                      "mb, h, memoria = " + dd, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = (ns["copiado"], ns["cabe"], ns["maximo"])
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con mb, h, memoria = %s se esperaba %s y salio %s" % (
+            dd if dd else "los de la celda", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: 4000 MB no caben, y 3 procesos sí."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 3. Interbloqueos
 
 :::: {.definicion}
 **Definición 27.7 (interbloqueo).** Un **interbloqueo** es el estado en que cada hilo espera un cerrojo que tiene el otro. Se distingue de un programa lento o todavía en curso en que es un estado del que no se sale, y debe detectarse como tal.
 ::::
 
-:::: {.proposicion}
-**Proposición 27.8.** Si los cerrojos se toman siempre en el mismo orden, ninguna intercalación produce un interbloqueo: 0 de 1024. Con el orden cruzado, se producen interbloqueos en 512 de 1024.
+:::: {.regla}
+**Regla 27.8.** Si los cerrojos se toman siempre en el mismo orden, ninguna intercalación produce un interbloqueo: 0 de 1024. Con el orden cruzado, se producen interbloqueos en 512 de 1024.
 ::::
 
-:::: {.demostracion}
-*Demostración.* Con un orden común, solo el hilo que ya tiene el primer cerrojo puede pedir el segundo, de modo que no se forma el ciclo de esperas. Con el orden cruzado, basta que cada hilo obtenga su primer cerrojo antes de pedir el segundo para que los dos queden esperándose mutuamente. La celda enumera las 1024 intercalaciones de diez turnos, cuenta las que alcanzan el estado de interbloqueo detectándolo explícitamente (los dos hilos bloqueados a la vez) y exhibe una paso a paso. ∎
-::::
+Con un orden común, solo el hilo que ya tiene el primer cerrojo puede pedir el segundo, de modo que no se forma el ciclo de esperas. Con el orden cruzado, basta que cada hilo obtenga su primer cerrojo antes de pedir el segundo para que los dos queden esperándose mutuamente. La celda enumera las 1024 intercalaciones de diez turnos, cuenta las que alcanzan el estado de interbloqueo detectándolo explícitamente (los dos hilos bloqueados a la vez) y exhibe una paso a paso.
 
 **Modo de falla.** Un interbloqueo no levanta ninguna excepción ni consume memoria: el programa deja de avanzar, y por la Lección 25 la traza no aporta información porque no hay error. El síntoma es un proceso activo que no progresa, indistinguible de uno con mucha carga de trabajo. La prevención no tiene coste: se fija un orden global para los cerrojos y se toman siempre en ese orden, por ejemplo ordenándolos por nombre.
 
@@ -575,22 +942,231 @@ print("  ... y desde aqui ninguno de los dos puede avanzar nunca")
 </script>
 ```
 
+### Ejercicio 27.5, Detectar el interbloqueo
+
+Cada hilo necesita los dos cerrojos, `"1"` y `"2"`, y los pide en el orden de su lista en `plan`; al conseguir el segundo termina y suelta los dos. La cadena `orden` reparte los turnos, `tiene` dice qué hilo tiene cada cerrojo y `espera` qué cerrojo espera cada hilo. Con la Definición 27.7, completar la línea de `interbloqueo` con `True` si al final cada hilo espera un cerrojo. Con el orden cruzado de la celda debe salir `True`. La comprobación vuelve a ejecutar el código con otros planes y otros turnos, incluido uno en que un solo hilo queda esperando.
+
+```{pyodide}
+#| exercise: ex_interbloqueo
+plan = {"A": ["1", "2"], "B": ["2", "1"]}
+orden = "ABAB"
+
+tiene = {"1": None, "2": None}
+paso = {"A": 0, "B": 0}
+espera = {"A": None, "B": None}
+for h in orden:
+    if paso[h] == 2:
+        continue
+    c = plan[h][paso[h]]
+    if tiene[c] is None:
+        tiene[c] = h
+        paso[h] = paso[h] + 1
+        espera[h] = None
+        if paso[h] == 2:
+            for k in plan[h]:
+                tiene[k] = None
+    else:
+        espera[h] = c
+
+interbloqueo = ______
+
+print(tiene, espera, interbloqueo)
+```
+
+::: {.hint exercise="ex_interbloqueo"}
+Que un solo hilo espere no es un interbloqueo: el otro terminará y soltará el cerrojo. Hace falta que `espera["A"]` y `espera["B"]` sean los dos distintos de `None`. Debe salir `True`.
+:::
+
+::: {.solution exercise="ex_interbloqueo"}
+```{pyodide}
+plan = {"A": ["1", "2"], "B": ["2", "1"]}
+orden = "ABAB"
+
+tiene = {"1": None, "2": None}
+paso = {"A": 0, "B": 0}
+espera = {"A": None, "B": None}
+for h in orden:
+    if paso[h] == 2:
+        continue
+    c = plan[h][paso[h]]
+    if tiene[c] is None:
+        tiene[c] = h
+        paso[h] = paso[h] + 1
+        espera[h] = None
+        if paso[h] == 2:
+            for k in plan[h]:
+                tiene[k] = None
+    else:
+        espera[h] = c
+
+interbloqueo = espera["A"] is not None and espera["B"] is not None
+
+print(tiene, espera, interbloqueo)
+```
+
+A tiene el cerrojo 1 y espera el 2; B tiene el 2 y espera el 1. Ningún turno posterior cambia ese estado.
+:::
+
+```{pyodide}
+#| exercise: ex_interbloqueo
+#| check: true
+import contextlib, io, re
+casos = [
+    (None, None, True),
+    ('{"A": ["1", "2"], "B": ["1", "2"]}', '"ABAB"', False),
+    ('{"A": ["1", "2"], "B": ["1", "2"]}', '"ABA"', False),
+    (None, '"AABB"', False),
+    (None, '"BABA"', True),
+]
+fallo = None
+for pp, oo, esperado in casos:
+    otro = user_code
+    if pp is not None:
+        otro = re.sub(r"(?m)^plan\s*=.*$", "plan = " + pp, otro)
+    if oo is not None:
+        otro = re.sub(r"(?m)^orden\s*=.*$", "orden = " + oo, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = ns["interbloqueo"]
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido is not esperado and fallo is None:
+        fallo = "con plan = %s y orden = %s se esperaba %s y salio %s" % (
+            pp if pp else "el de la celda", oo if oo else '"ABAB"',
+            esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: hay interbloqueo solo si los dos "
+                           "hilos esperan."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
+### Ejercicio 27.6, Un orden común para los cerrojos
+
+La celda cuenta, entre los 256 repartos posibles de 8 turnos, en cuántos se interbloquean dos hilos que piden los dos cerrojos en los órdenes `orden_a` y `orden_b`. Con la Regla 27.8, completar la línea de `orden_b` a partir de `orden_a` para que no haya ningún interbloqueo. La celda imprime el número de repartos y el de interbloqueos, que deben ser 256 y 0; con `orden_b = ["2", "1"]` el segundo sería 124. La comprobación vuelve a ejecutar el código con `orden_a = ["2", "1"]`.
+
+```{pyodide}
+#| exercise: ex_orden
+from itertools import product
+
+orden_a = ["1", "2"]
+orden_b = ______
+
+def se_bloquea(plan, turnos):
+    tiene = {"1": None, "2": None}
+    paso = {"A": 0, "B": 0}
+    espera = {"A": None, "B": None}
+    for h in turnos:
+        if paso[h] == 2:
+            continue
+        c = plan[h][paso[h]]
+        if tiene[c] is None:
+            tiene[c], paso[h], espera[h] = h, paso[h] + 1, None
+            if paso[h] == 2:
+                for k in plan[h]:
+                    tiene[k] = None
+        else:
+            espera[h] = c
+    return espera["A"] is not None and espera["B"] is not None
+
+plan = {"A": orden_a, "B": orden_b}
+repartos = list(product("AB", repeat=8))
+bloqueos = 0
+for turnos in repartos:
+    if se_bloquea(plan, turnos):
+        bloqueos = bloqueos + 1
+
+print(len(repartos), bloqueos)
+```
+
+::: {.hint exercise="ex_orden"}
+El ciclo de esperas solo se forma si cada hilo puede tener el cerrojo que el otro pide en segundo lugar. Si los dos piden en el mismo orden, el segundo cerrojo solo lo pide quien ya tiene el primero. Deben salir 256 y 0.
+:::
+
+::: {.solution exercise="ex_orden"}
+```{pyodide}
+from itertools import product
+
+orden_a = ["1", "2"]
+orden_b = list(orden_a)
+
+def se_bloquea(plan, turnos):
+    tiene = {"1": None, "2": None}
+    paso = {"A": 0, "B": 0}
+    espera = {"A": None, "B": None}
+    for h in turnos:
+        if paso[h] == 2:
+            continue
+        c = plan[h][paso[h]]
+        if tiene[c] is None:
+            tiene[c], paso[h], espera[h] = h, paso[h] + 1, None
+            if paso[h] == 2:
+                for k in plan[h]:
+                    tiene[k] = None
+        else:
+            espera[h] = c
+    return espera["A"] is not None and espera["B"] is not None
+
+plan = {"A": orden_a, "B": orden_b}
+repartos = list(product("AB", repeat=8))
+bloqueos = 0
+for turnos in repartos:
+    if se_bloquea(plan, turnos):
+        bloqueos = bloqueos + 1
+
+print(len(repartos), bloqueos)
+```
+
+Con el mismo orden no hay interbloqueo en ninguno de los 256 repartos; con los órdenes cruzados lo hay en 124. Ordenar los cerrojos por nombre en los dos hilos es una forma de fijar ese orden común; la comprobación exige el orden de `orden_a`, sea cual sea.
+:::
+
+```{pyodide}
+#| exercise: ex_orden
+#| check: true
+import contextlib, io, re
+casos = [(None, ["1", "2"]), ('["2", "1"]', ["2", "1"])]
+fallo = None
+for aa, esperado in casos:
+    otro = user_code
+    if aa is not None:
+        otro = re.sub(r"(?m)^orden_a\s*=.*$", "orden_a = " + aa, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = (list(ns["orden_b"]), ns["bloqueos"])
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != (esperado, 0) and fallo is None:
+        fallo = "con orden_a = %s se esperaba orden_b = %s y 0 bloqueos, " \
+                "y salio %s" % (aa if aa else '["1", "2"]', esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: con el mismo orden, 0 interbloqueos "
+                           "de 256."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 4. Elección entre hilos, procesos y vectorización
 
+:::: {.regla}
+**Regla 27.9.** Las operaciones de código compilado que ceden el GIL de forma explícita, como la mayoría de las operaciones numéricas de NumPy, lo liberan mientras se ejecutan; las de dtype `object` y las que manipulan objetos de Python no lo ceden. En consecuencia, cuatro hilos sobre un bucle de Python dan 1,00× y sobre una operación mayoritariamente de NumPy dan 3,08×.
+::::
+
+Mientras la ejecución está dentro de código compilado que no accede a objetos de Python, ningún otro hilo necesita el intérprete, de modo que el GIL puede cederse y otro hilo avanzar. Un bucle escrito en Python ejecuta bytecode en cada iteración y retiene el GIL de forma continua. Aplicando la Regla 27.5 con `p = 0` y `p = 0,9` se obtienen las dos cifras. La celda las tabula junto con la tabla de decisión.
+
 :::: {.proposicion}
-**Proposición 27.9.** Las operaciones de código compilado que ceden el GIL de forma explícita, como la mayoría de las operaciones numéricas de NumPy, lo liberan mientras se ejecutan; las de dtype `object` y las que manipulan objetos de Python no lo ceden. En consecuencia, cuatro hilos sobre un bucle de Python dan 1,00× y sobre una operación mayoritariamente de NumPy dan 3,08×.
+**Proposición 27.10.** La Proposición 26.5 se aplica también al paralelismo: si solo el 90 % del trabajo se puede repartir, la mejora no supera 10 veces, con independencia del número de núcleos.
 ::::
 
 :::: {.demostracion}
-*Demostración.* Mientras la ejecución está dentro de código compilado que no accede a objetos de Python, ningún otro hilo necesita el intérprete, de modo que el GIL puede cederse y otro hilo avanzar. Un bucle escrito en Python ejecuta bytecode en cada iteración y retiene el GIL de forma continua. Aplicando la Proposición 27.5 con `p = 0` y `p = 0,9` se obtienen las dos cifras. La celda las tabula junto con la tabla de decisión. ∎
-::::
-
-:::: {.proposicion}
-**Proposición 27.10.** El techo de la Lección 26 acota también el paralelismo: si solo el 90 % del trabajo se puede repartir, la mejora no supera 10 veces, con independencia del número de núcleos.
-::::
-
-:::: {.demostracion}
-*Demostración.* Repartir es un caso particular de acelerar un fragmento, con `s` igual al número de trabajadores; haciéndolo arbitrariamente grande se obtiene el techo `1/(1 − p)` de la Definición 26.4. La celda lo tabula para tres fracciones. Antes de repartir se mide, por tanto, la fracción repartible del trabajo. ∎
+*Demostración.* Repartir la fracción $p$ entre $h$ trabajadores es acelerarla $h$ veces, de modo que por la Definición 26.4 el total pasa a ser $(1-p)+p/h$. Como $p/h\ge 0$, el total no baja de $1-p$ y la mejora no supera $1/(1-p)$, sea cual sea $h$. Con $p=0{,}9$ la cota es $1/0{,}1=10$. La celda lo tabula para tres fracciones. Antes de repartir se mide, por tanto, la fracción repartible del trabajo. [∎]{.fin-demo}
 ::::
 
 **Modo de falla.** Repartir en procesos un trabajo cuyos datos ocupan una parte importante de la memoria multiplica esos datos por el número de procesos, y un programa lento pasa a no terminar por falta de memoria. El síntoma es un fallo que aparece al aumentar el número de trabajadores y desaparece al reducirlo, y que por ello se atribuye a «demasiada carga» en lugar de a la copia. Para evitarlo se cuentan los megabytes antes (`datos × procesos`) y, si no caben, se reparte el trabajo en lugar de los datos: cada proceso lee su propio fragmento del archivo.
@@ -648,133 +1224,83 @@ for frac_paralelizable in (0.5, 0.9, 0.95):
           % (100 * frac_paralelizable, techo))
 ```
 
+### Ejercicio 27.7, Aceleración al repartir
+
+Solo la fracción `p` = 0,9 de un trabajo se puede repartir, y se reparte entre `h` = 8 trabajadores. Con la Proposición 27.10, completar `mejora` con la mejora obtenida y `cota` con la mejora máxima para cualquier número de trabajadores. La celda imprime las dos, que deben ser 4.7059 y 10.0. La comprobación vuelve a ejecutar el código con otros datos.
+
+```{pyodide}
+#| exercise: ex_amdahl
+p, h = 0.9, 8
+
+mejora = ______
+cota = ______
+
+print(round(mejora, 4), round(cota, 4))
+```
+
+::: {.hint exercise="ex_amdahl"}
+Repartir entre `h` trabajadores divide entre `h` la parte repartible; la otra no cambia. La cota es el límite cuando `h` crece sin fin. Deben salir 4.7059 y 10.0.
+:::
+
+::: {.solution exercise="ex_amdahl"}
+```{pyodide}
+p, h = 0.9, 8
+
+mejora = 1 / ((1 - p) + p / h)
+cota = 1 / (1 - p)
+
+print(round(mejora, 4), round(cota, 4))
+```
+
+Con 8 trabajadores se obtiene menos de la mitad de la cota. Con 100 trabajadores la mejora sería 9.1743, y ningún número de trabajadores pasa de 10.
+:::
+
+```{pyodide}
+#| exercise: ex_amdahl
+#| check: true
+import contextlib, io, re
+casos = [(None, 4.7059, 10.0), ("0.5, 2", 1.3333, 2.0),
+         ("0.75, 3", 2.0, 4.0)]
+fallo = None
+for dd, m, c in casos:
+    otro = user_code
+    if dd is not None:
+        otro = re.sub(r"(?m)^p, h\s*=.*$", "p, h = " + dd, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = (round(ns["mejora"], 4), round(ns["cota"], 4))
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != (m, c) and fallo is None:
+        fallo = "con p, h = %s se esperaba %s y salio %s" % (
+            dd if dd else "0.9, 8", (m, c), obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: 4.7059 con 8 trabajadores, y nunca "
+                           "más de 10."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 5. Limitaciones
 
 No se ha usado ninguna de las bibliotecas reales: `threading` y `concurrent.futures` para los hilos, `multiprocessing` para los procesos, y `asyncio` para el caso de mucha espera con un solo hilo, que resuelve el mismo problema sin cerrojos. Esta lección enumera lo que ocurre en el nivel inferior para poder contarlo.
 
 Tampoco se ha tratado que el GIL está dejando de ser obligatorio. Desde Python 3.13 existe una variante del intérprete que puede funcionar sin él, y en ella los hilos reparten también el cálculo puro; en cambio, las condiciones de carrera de la Sección 1 dejan de estar atenuadas por el GIL y aparecen con mucha más frecuencia. Los métodos de esta lección (enumerar intercalaciones, ordenar los cerrojos) siguen siendo válidos y pasan a ser más necesarios.
 
-## Ejercicios
+## Pieza del proyecto
 
-### Ejercicio 1, Intercalaciones incorrectas
+`caja.py` crece en cada lección y los entregables reutilizan sus piezas. Esta lección añade al cierre de caja el análisis del reparto del trabajo:
 
-Dos hilos ejecutan cada uno una secuencia de `pasos_por_hilo` = 3 pasos. Con la Proposición 27.2, completar `total` con el número de intercalaciones posibles de las dos secuencias y `fallan` con el número de las que no dan el resultado correcto; la celda ya fija en `correctas` = 2 las que sí lo dan. Deben salir 20 y 18. La comprobación vuelve a ejecutar el código con otros datos.
+1. Para cada parte del cierre, estimar qué fracción del trabajo es cálculo y qué fracción es espera (leer los archivos de compras, pedir el tipo de cambio), y calcular la mejora con cuatro trabajadores que comparten la memoria y con cuatro que reciben una copia de los datos.
+2. Calcular los megabytes que se copiarían en el segundo caso y el mayor número de trabajadores cuyas copias caben en la memoria disponible.
+3. Si dos partes del cierre actualizan el mismo total, garantizar que ninguna mezcla de sus pasos pierda una actualización, y que dos recursos compartidos se pidan siempre en el mismo orden.
+4. Calcular la mejora máxima del cierre según la fracción que se puede repartir.
 
-```{pyodide}
-#| exercise: ex_inter
-from math import comb
-
-pasos_por_hilo = 3
-
-total = ______
-correctas = 2
-fallan = ______
-
-print(total, correctas, fallan)
-```
-
-::: {.hint exercise="ex_inter"}
-Intercalar dos secuencias de 3 pasos equivale a elegir qué 3 de las 6 posiciones ocupa la primera. Deben salir 20 y 18.
-:::
-
-::: {.solution exercise="ex_inter"}
-```{pyodide}
-from math import comb
-
-pasos_por_hilo = 3
-
-total = comb(2 * pasos_por_hilo, pasos_por_hilo)
-correctas = 2
-fallan = total - correctas
-
-print(total, correctas, fallan)
-```
-
-20 intercalaciones, de las que 18 fallan. Con tres hilos en lugar de dos habría 1680 intercalaciones, y las correctas seguirían siendo las pocas en que cada hilo termina antes de que el siguiente lea: la proporción de intercalaciones correctas disminuye al añadir hilos.
-:::
-
-```{pyodide}
-#| exercise: ex_inter
-#| check: true
-import contextlib, io, re
-otro = user_code
-otro = re.sub(r"(?m)^pasos_por_hilo\s*=.*$", 'pasos_por_hilo = 2', otro)
-ns = {}
-try:
-    with contextlib.redirect_stdout(io.StringIO()):
-        exec(otro, ns)
-    general = ns.get("total") == 6 and ns.get("fallan") == 4
-except Exception:
-    general = False
-ok = total == 20 and fallan == 18
-if ok and general:
-    feedback = {"correct": True, "message": "Correcto: 20 intercalaciones, 18 fallan."}
-elif ok:
-    feedback = {"correct": False,
-                "message": "Da los valores pedidos, pero con 2 pasos por hilo no da 6 y 4."}
-else:
-    feedback = {"correct": False, "message": "Se esperaba total = 20 y fallan = 18."}
-feedback
-```
-
-### Ejercicio 2, Hilos frente a procesos
-
-Cada uno de `hilos` = 4 hilos ejecuta una tarea de `unidades` = 100 unidades, y la fracción `suelta` = 0,25 de cada tarea libera el GIL. Con la Proposición 27.5, completar `retenido` con las unidades de una tarea que retienen el GIL, `con_hilos` con las unidades que tardan los 4 hilos, y `mejora` con el cociente entre `en_fila`, el tiempo en serie que la celda ya calcula, y `con_hilos`. Deben salir `325.0` y `1.23`. La comprobación vuelve a ejecutar el código con otros datos.
-
-```{pyodide}
-#| exercise: ex_hilos
-unidades, suelta, hilos = 100, 0.25, 4
-
-retenido = ______
-con_hilos = ______
-en_fila = unidades * hilos
-mejora = ______
-
-print(con_hilos, round(mejora, 2))
-```
-
-::: {.hint exercise="ex_hilos"}
-La parte retenida se ejecuta en serie, tantas veces como hilos, y la parte liberada se solapa, de modo que se cuenta una sola vez. Deben salir 325.0 y 1.23.
-:::
-
-::: {.solution exercise="ex_hilos"}
-```{pyodide}
-unidades, suelta, hilos = 100, 0.25, 4
-
-retenido = unidades * (1 - suelta)
-con_hilos = retenido * hilos + unidades * suelta
-en_fila = unidades * hilos
-mejora = en_fila / con_hilos
-
-print(con_hilos, round(mejora, 2))
-```
-
-325 unidades frente a 400: una mejora de 1,23, lejos de las 4 veces que darían los procesos. Con solo un cuarto del trabajo liberando el GIL, la ganancia de los hilos apenas compensa el riesgo de una condición de carrera.
-:::
-
-```{pyodide}
-#| exercise: ex_hilos
-#| check: true
-import contextlib, io, re
-otro = user_code
-otro = re.sub(r"(?m)^unidades, suelta, hilos\s*=.*$", 'unidades, suelta, hilos = 10, 0.5, 2', otro)
-ns = {}
-try:
-    with contextlib.redirect_stdout(io.StringIO()):
-        exec(otro, ns)
-    general = abs(ns.get("con_hilos") - 15.0) < 1e-9
-except Exception:
-    general = False
-ok = con_hilos == 325.0 and round(mejora, 2) == 1.23
-if ok and general:
-    feedback = {"correct": True, "message": "Correcto: 325 unidades y mejora de 1.23."}
-elif ok:
-    feedback = {"correct": False,
-                "message": "Da los valores pedidos, pero con 10, 0.5 y 2 no da 15."}
-else:
-    feedback = {"correct": False, "message": "Se esperaba 325.0 y 1.23."}
-feedback
-```
+Lo usa el [Entregable 32](entregable-32.qmd), el rendimiento del cierre de caja.
 
 ## Reto
 
@@ -797,7 +1323,7 @@ Esta lección no se apoya en ninguno de los libros del plan. El material de refe
 - Los procesos copian los datos: 1000 MB y cuatro procesos son 4000 MB. Arrancarlos cuesta 50 veces más que arrancar hilos.
 - Cerrojos en el mismo orden: 0 interbloqueos de 1024. Con el orden cruzado: 512.
 - Un interbloqueo no levanta excepción ni consume memoria: el programa deja de avanzar.
-- La vectorización se intenta primero. El techo de la Lección 26 acota también el paralelismo.
+- La vectorización se intenta primero. La cota de la Lección 26 se aplica también al paralelismo.
 
 ### Fuentes
 

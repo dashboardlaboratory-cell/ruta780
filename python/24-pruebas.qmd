@@ -22,12 +22,12 @@ engine: markdown
 Al terminar esta lección se puede:
 
 1. Escribir un corredor de [pruebas]{.g data-t="prueba"} en quince líneas y explicar que esa es la función de una biblioteca de pruebas.
-2. Demostrar que dos pruebas que pasan no garantizan que el código sea correcto, y exhibir una prueba que pasa con la función completamente errónea.
+2. Comprobar que dos pruebas que pasan no garantizan que el código sea correcto, y exhibir una prueba que pasa con la función completamente errónea.
 3. Escribir una [prueba por propiedades]{.g} y medir que encuentra en 5 intentos un fallo que cuatro ejemplos no detectaron.
 4. Reducir un contraejemplo al caso mínimo: de 6 elementos a 2 en 6 pruebas.
 5. Identificar qué se prueba de un análisis: los [invariantes]{.g data-t="invariante"} que la transformación conserva, en lugar del resultado.
 6. Exhibir un cruce que devuelve 6198 donde debía devolver 5950, sin ningún error, y las tres comprobaciones que lo detectan.
-7. Demostrar que dos pruebas que comparten estado dan resultados distintos según el orden de ejecución.
+7. Comprobar que dos pruebas que comparten estado dan resultados distintos según el orden de ejecución.
 
 :::: {.hilo}
 ::: {}
@@ -35,7 +35,7 @@ Al terminar esta lección se puede:
 
 - **Python 11**: cruces de pandas, cuyo fallo sin error es el tema central de esta lección.
 - **Python 10**: limpieza de datos, etapa en la que se originan las claves repetidas.
-- **Fundamentos 10**: la Proposición 10.8, el valor por defecto mutable, que aquí reaparece como estado compartido entre pruebas.
+- **Fundamentos 10**: la Regla 10.8, el valor por defecto mutable, que aquí reaparece como estado compartido entre pruebas.
 - **Python 22**: el servicio simulado, el mismo recurso visto desde el lado de las pruebas.
 :::
 
@@ -62,27 +62,100 @@ Esta página no usa `pytest`. El corredor de pruebas se escribe en quince línea
 | `k` | ka | El número de entradas generadas antes de hallar un contraejemplo |
 :::
 
+## Problema inicial
+
+Este problema va antes de la teoría y se resuelve con lo visto hasta Python 23: listas, diccionarios y el cruce de tablas de Python 11. La Sección 3 vuelve sobre él.
+
+La celda cruza las ventas de `ventas` con el catálogo `catalogo` por la clave `c` y deja el resultado en `cruce`. No se conoce el resultado correcto. Completar la línea de `sospechoso` con una expresión que valga `True` cuando el cruce ha perdido o duplicado ventas, y `False` cuando no, comparando el cruce con las tablas de partida. Con los datos de la celda debe dar `True`, porque la clave `'a'` está dos veces en el catálogo. La comprobación vuelve a ejecutar el código con un catálogo correcto y con uno al que le falta una clave.
+
+```{pyodide}
+#| exercise: ex_inicial
+ventas = [{"c": "a", "i": 10}, {"c": "b", "i": 5}, {"c": "a", "i": 7}]
+catalogo = [{"c": "a", "z": 1}, {"c": "b", "z": 2}, {"c": "a", "z": 3}]
+
+cruce = []
+for v in ventas:
+    for k in catalogo:
+        if v["c"] == k["c"]:
+            cruce.append(dict(v, **k))
+
+sospechoso = ______
+
+print(len(cruce), sospechoso)
+```
+
+::: {.hint exercise="ex_inicial"}
+Cada venta debe aparecer una sola vez en el cruce. Hay al menos dos cantidades que el cruce debe conservar respecto de `ventas`.
+:::
+
+::: {.solution exercise="ex_inicial"}
+```{pyodide}
+ventas = [{"c": "a", "i": 10}, {"c": "b", "i": 5}, {"c": "a", "i": 7}]
+catalogo = [{"c": "a", "z": 1}, {"c": "b", "z": 2}, {"c": "a", "z": 3}]
+
+cruce = []
+for v in ventas:
+    for k in catalogo:
+        if v["c"] == k["c"]:
+            cruce.append(dict(v, **k))
+
+sospechoso = len(cruce) != len(ventas)
+
+print(len(cruce), sospechoso)
+```
+
+Comparar los totales de `i` antes y después también detecta los dos fallos con estos datos. Ninguna de las dos comprobaciones necesita conocer el resultado correcto: la Sección 3 las llama invariantes.
+:::
+
+```{pyodide}
+#| exercise: ex_inicial
+#| check: true
+import contextlib, io, re
+casos = [(None, True),
+         ('[{"c": "a", "z": 1}, {"c": "b", "z": 2}]', False),
+         ('[{"c": "a", "z": 1}]', True),
+         ('[{"c": "b", "z": 1}, {"c": "a", "z": 2}, {"c": "x", "z": 3}]',
+          False)]
+fallo = None
+for cc, esperado in casos:
+    otro = user_code
+    if cc is not None:
+        otro = re.sub(r"(?m)^catalogo\s*=.*$", "catalogo = " + cc, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = ns.get("sospechoso")
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con catalogo = %s se esperaba %s y salio %s" % (
+            cc or "el de la celda", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto, también con otros catálogos."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 1. Alcance de una prueba
 
 :::: {.definicion}
 **Definición 24.1 (prueba).** Una **prueba** es código que se ejecuta aparte del programa y falla cuando el comportamiento es incorrecto. Un corredor de pruebas recoge las funciones cuyo nombre sigue un patrón, las llama y anota cuáles levantaron `AssertionError`.
 ::::
 
-:::: {.proposicion}
-**Proposición 24.2.** Que todas las pruebas pasen demuestra que el código es correcto en los casos que comprueban. Dos pruebas que pasan son compatibles con una función que falla en un caso que ninguna comprueba.
+:::: {.regla}
+**Regla 24.2.** Que todas las pruebas pasen demuestra que el código es correcto en los casos que comprueban. Dos pruebas que pasan son compatibles con una función que falla en un caso que ninguna comprueba.
 ::::
 
-:::: {.demostracion}
-*Demostración.* Una prueba comprueba el comportamiento sobre las entradas concretas que recibe, de modo que su alcance es ese conjunto y no informa sobre las demás entradas. La celda prueba `media` con `[1, 2, 3]` y con `[5]`, las dos pasan, y `media([])` levanta `ZeroDivisionError`. ∎
+Una prueba comprueba el comportamiento sobre las entradas concretas que recibe, de modo que su alcance es ese conjunto y no informa sobre las demás entradas. La celda prueba `media` con `[1, 2, 3]` y con `[5]`, las dos pasan, y `media([])` levanta `ZeroDivisionError`.
+
+:::: {.regla}
+**Regla 24.3.** Una prueba que compara el resultado consigo mismo pasa siempre, incluso con la función completamente errónea. La comprobación debe comparar el resultado con un valor calculado por otro medio.
 ::::
 
-:::: {.proposicion}
-**Proposición 24.3.** Una prueba que compara el resultado consigo mismo pasa siempre, incluso con la función completamente errónea. La comprobación debe comparar el resultado con un valor calculado por otro medio.
-::::
-
-:::: {.demostracion}
-*Demostración.* `assert f(x) == f(x)` es verdadero para cualquier `f` determinista, sea cual sea el valor que devuelva, de modo que la condición no depende del comportamiento que se pretende comprobar. La celda sustituye la función por una que devuelve siempre `999.0` y la prueba sigue pasando. El valor de referencia debe obtenerse por otro medio: un número escrito a mano, otra implementación o una propiedad. ∎
-::::
+`assert f(x) == f(x)` es verdadero para cualquier `f` determinista, sea cual sea el valor que devuelva, de modo que la condición no depende del comportamiento que se pretende comprobar. La celda sustituye la función por una que devuelve siempre `999.0` y la prueba sigue pasando. El valor de referencia debe obtenerse por otro medio: un número escrito a mano, otra implementación o una propiedad.
 
 **Modo de falla.** La forma habitual de este error es menos visible que `f(x) == f(x)`: consiste en calcular el valor esperado con el mismo código que se prueba, o copiar en la prueba el número que el programa imprimió la primera vez sin comprobarlo. La prueba pasa indefinidamente y fija el comportamiento actual, sea correcto o no. Para evitarlo, el valor esperado se obtiene por un procedimiento distinto: a mano, de una fuente externa o de una propiedad que no dependa de la implementación.
 
@@ -144,27 +217,169 @@ except AssertionError:
 media = antes
 ```
 
+### Ejercicio 24.1, Un corredor de pruebas
+
+La lista `pruebas` contiene dos funciones de prueba; la segunda tiene una aserción falsa. Con la Definición 24.1, sustituir `______` por el cuerpo del bucle: llamar a cada prueba, sumar 1 a `pasadas` si termina sin error y añadir su nombre, `p.__name__`, a `fallidas` si levanta `AssertionError`. La celda imprime `pasadas` y `fallidas`, que deben ser 1 y `['prueba_resta']`. La comprobación vuelve a ejecutar el código con otras listas de pruebas.
+
+```{pyodide}
+#| exercise: ex_corredor
+def prueba_suma():
+    assert 2 + 2 == 4
+
+def prueba_resta():
+    assert 5 - 3 == 1, "5 - 3 no da 1"
+
+pruebas = [prueba_suma, prueba_resta]
+
+pasadas = 0
+fallidas = []
+for p in pruebas:
+    ______
+
+print(pasadas, fallidas)
+```
+
+::: {.hint exercise="ex_corredor"}
+`try:` con la llamada `p()` y la suma a `pasadas`; `except AssertionError:` con el `append`.
+:::
+
+::: {.solution exercise="ex_corredor"}
+```{pyodide}
+def prueba_suma():
+    assert 2 + 2 == 4
+
+def prueba_resta():
+    assert 5 - 3 == 1, "5 - 3 no da 1"
+
+pruebas = [prueba_suma, prueba_resta]
+
+pasadas = 0
+fallidas = []
+for p in pruebas:
+    try:
+        p()
+        pasadas += 1
+    except AssertionError:
+        fallidas.append(p.__name__)
+
+print(pasadas, fallidas)
+```
+
+Es el corredor de la Sección 1 sin la búsqueda por nombre. `pytest` añade a este mecanismo la búsqueda de las pruebas en los archivos y el informe de cada fallo.
+:::
+
+```{pyodide}
+#| exercise: ex_corredor
+#| check: true
+import contextlib, io, re
+casos = [(None, (1, ["prueba_resta"])),
+         ("[prueba_suma, prueba_suma]", (2, [])),
+         ("[]", (0, [])),
+         ("[prueba_resta, prueba_suma, prueba_resta]",
+          (1, ["prueba_resta", "prueba_resta"]))]
+fallo = None
+for pp, esperado in casos:
+    otro = user_code
+    if pp is not None:
+        otro = re.sub(r"(?m)^pruebas\s*=.*$", "pruebas = " + pp, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = (ns.get("pasadas"), ns.get("fallidas"))
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con pruebas = %s se esperaba %s y salio %s" % (
+            pp or "la de la celda", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: una pasa y otra falla."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
+### Ejercicio 24.2, Prueba con valor esperado externo
+
+La celda define `duplica` y una versión errónea, `duplica_rota`, que devuelve siempre 0. Con la Regla 24.3, completar el `return` de `comprueba(f)` con una comprobación de `f` contra valores esperados escritos a mano. La celda aplica `comprueba` a las dos funciones: `pasa_con_buena` debe dar `True` y `pasa_con_rota` debe dar `False`. La comprobación llama además a la función con otros datos.
+
+```{pyodide}
+#| exercise: ex_prueba
+def duplica(x):
+    return 2 * x
+
+def duplica_rota(x):
+    return 0
+
+def comprueba(f):
+    return ______
+
+pasa_con_buena = comprueba(duplica)
+pasa_con_rota = comprueba(duplica_rota)
+
+print(pasa_con_buena, pasa_con_rota)
+```
+
+::: {.hint exercise="ex_prueba"}
+El valor esperado debe obtenerse fuera de la función: un número escrito a mano. Comparar `f(x)` con `f(x)` pasa siempre.
+:::
+
+::: {.solution exercise="ex_prueba"}
+```{pyodide}
+def duplica(x):
+    return 2 * x
+
+def duplica_rota(x):
+    return 0
+
+def comprueba(f):
+    return f(3) == 6 and f(0) == 0 and f(-2) == -4
+
+pasa_con_buena = comprueba(duplica)
+pasa_con_rota = comprueba(duplica_rota)
+
+print(pasa_con_buena, pasa_con_rota)
+```
+
+`True False`. El caso `f(0) == 0` no distingue por sí solo las dos funciones, porque la versión errónea coincide en ese punto: una comprobación necesita al menos un caso en que las dos difieran.
+:::
+
+```{pyodide}
+#| exercise: ex_prueba
+#| check: true
+try:
+    general = comprueba(lambda x: x + x) is True and comprueba(lambda x: 6) is False
+except Exception:
+    general = False
+ok = pasa_con_buena is True and pasa_con_rota is False
+if ok and general:
+    feedback = {"correct": True, "message": "Correcto: pasa con la buena y falla con la rota."}
+elif ok:
+    feedback = {"correct": False,
+                "message": "Da los valores pedidos, pero no distingue otra función correcta de otra rota."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba True y False: la comprobacion tiene que distinguirlas."}
+feedback
+```
+
 ## 2. Pruebas por propiedades
 
 :::: {.definicion}
 **Definición 24.4 (prueba por propiedades).** Una **prueba por propiedades** enuncia una condición que debe cumplirse para toda entrada válida y la comprueba sobre entradas generadas, en busca de un contraejemplo. La prueba especifica qué debe cumplirse, sin describir el fallo.
 ::::
 
-:::: {.proposicion}
-**Proposición 24.5.** Una propiedad encuentra fallos que los ejemplos escritos a mano no cubren. Sobre una ordenación con un error en el último elemento, cuatro ejemplos razonables pasan y la propiedad halla un contraejemplo en el intento 5.
+:::: {.regla}
+**Regla 24.5.** Una propiedad encuentra fallos que los ejemplos escritos a mano no cubren. Sobre una ordenación con un error en el último elemento, cuatro ejemplos razonables pasan y la propiedad halla un contraejemplo en el intento 5.
 ::::
 
-:::: {.demostracion}
-*Demostración.* Los ejemplos escritos a mano cubren los casos que su autor consideró, y un fallo en el último elemento no se manifiesta en ninguna lista cuyo último elemento ya esté en su posición, situación habitual en los ejemplos cortos. La propiedad (el resultado está ordenado y tiene los mismos elementos) se comprueba sobre listas generadas, y basta que una de ellas termine con un valor pequeño. La celda usa una semilla fija, de modo que el resultado es el mismo en cada ejecución: los cuatro ejemplos pasan y el contraejemplo aparece en el quinto intento. ∎
+Los ejemplos escritos a mano cubren los casos que su autor consideró, y un fallo en el último elemento no se manifiesta en ninguna lista cuyo último elemento ya esté en su posición, situación habitual en los ejemplos cortos. La propiedad (el resultado está ordenado y tiene los mismos elementos) se comprueba sobre listas generadas, y basta que una de ellas termine con un valor pequeño. La celda usa una semilla fija, de modo que el resultado es el mismo en cada ejecución: los cuatro ejemplos pasan y el contraejemplo aparece en el quinto intento.
+
+:::: {.regla}
+**Regla 24.6.** Un contraejemplo se reduce eliminando partes mientras siga fallando, hasta obtener el caso mínimo. El de 6 elementos se reduce a 2 en 6 pruebas.
 ::::
 
-:::: {.proposicion}
-**Proposición 24.6.** Un contraejemplo se reduce eliminando partes mientras siga fallando, hasta obtener el caso mínimo. El de 6 elementos se reduce a 2 en 6 pruebas.
-::::
-
-:::: {.demostracion}
-*Demostración.* Si una entrada incumple la propiedad, cualquier subconjunto suyo que siga incumpliéndola es también un contraejemplo y es más fácil de leer. Eliminando un elemento cada vez y conservando el recorte cuando sigue fallando, se llega a un caso del que no se puede eliminar nada. La celda reduce `[2, 7, 2, 17, 13, 1]` a `[13, 1]`, sobre el que `ordena_rota` devuelve `[13, 1]` sin ordenar. El caso mínimo indica dónde está el fallo. ∎
-::::
+Si una entrada incumple la propiedad, cualquier subconjunto suyo que siga incumpliéndola es también un contraejemplo y es más fácil de leer. Eliminando un elemento cada vez y conservando el recorte cuando sigue fallando, se llega a un caso del que no se puede eliminar nada. La celda reduce `[2, 7, 2, 17, 13, 1]` a `[13, 1]`, sobre el que `ordena_rota` devuelve `[13, 1]` sin ordenar. El caso mínimo indica dónde está el fallo.
 
 ```{pyodide}
 import random
@@ -252,7 +467,7 @@ print("  reducido   : %s   (%d elementos) en %d pruebas" % (minimo, len(minimo),
 print("  ordena_rota(%s) = %s" % (minimo, ordena_rota(minimo)))
 ```
 
-**Modo de falla.** Una propiedad mal elegida pasa siempre y tiene el mismo defecto que la prueba de la Proposición 24.3: «el resultado tiene el mismo número de elementos» no detecta una ordenación errónea, porque la errónea también conserva los elementos. Una generación sin semilla produce una prueba que falla de forma intermitente, con un contraejemplo distinto cada vez. Para evitarlo se comprueba que la propiedad falla sobre una versión errónea construida a propósito, como hace esta celda, y se fija la semilla.
+**Modo de falla.** Una propiedad mal elegida pasa siempre y tiene el mismo defecto que la prueba de la Regla 24.3: «el resultado tiene el mismo número de elementos» no detecta una ordenación errónea, porque la errónea también conserva los elementos. Una generación sin semilla produce una prueba que falla de forma intermitente, con un contraejemplo distinto cada vez. Para evitarlo se comprueba que la propiedad falla sobre una versión errónea construida a propósito, como hace esta celda, y se fija la semilla.
 
 ```{=html}
 <div class="viz-propiedad">
@@ -345,27 +560,182 @@ print("  ordena_rota(%s) = %s" % (minimo, ordena_rota(minimo)))
 </script>
 ```
 
+### Ejercicio 24.3, Propiedad de una ordenación
+
+Con la Regla 24.5, completar el `return` de `cumple(f, xs)` con la propiedad de una ordenación: el resultado de `f(xs)` está ordenado de menor a mayor y tiene los mismos elementos que `xs`, repeticiones incluidas. La celda busca un contraejemplo en 200 listas generadas con semilla fija, para `sorted` y para `sin_repetidos`, que pierde los valores repetidos. Debe imprimir `None` para `sorted` y una lista para `sin_repetidos`. La comprobación llama además a `cumple` con otras funciones.
+
+```{pyodide}
+#| exercise: ex_propiedad
+import random
+
+def sin_repetidos(xs):
+    return sorted(set(xs))
+
+def cumple(f, xs):
+    r = f(xs)
+    return ______
+
+for f in (sorted, sin_repetidos):
+    rng = random.Random(3)
+    contra = None
+    for _ in range(200):
+        xs = [rng.randrange(10) for _ in range(rng.randrange(6))]
+        if contra is None and not cumple(f, xs):
+            contra = xs
+    print(f.__name__, contra)
+```
+
+::: {.hint exercise="ex_propiedad"}
+Ordenado: cada `r[i] <= r[i + 1]`. Mismos elementos: `sorted(r) == sorted(xs)`, que tiene en cuenta las repeticiones.
+:::
+
+::: {.solution exercise="ex_propiedad"}
+```{pyodide}
+import random
+
+def sin_repetidos(xs):
+    return sorted(set(xs))
+
+def cumple(f, xs):
+    r = f(xs)
+    return (all(r[i] <= r[i + 1] for i in range(len(r) - 1))
+            and sorted(r) == sorted(xs))
+
+for f in (sorted, sin_repetidos):
+    rng = random.Random(3)
+    contra = None
+    for _ in range(200):
+        xs = [rng.randrange(10) for _ in range(rng.randrange(6))]
+        if contra is None and not cumple(f, xs):
+            contra = xs
+    print(f.__name__, contra)
+```
+
+Con solo la primera mitad, «el resultado está ordenado», `sin_repetidos` pasaría las 200 listas: la propiedad incompleta tiene el defecto que señala el modo de falla de la sección.
+:::
+
+```{pyodide}
+#| exercise: ex_propiedad
+#| check: true
+casos = [(sorted, [3, 1, 2], True),
+         (sorted, [], True),
+         (list, [2, 1], False),
+         (sin_repetidos, [1, 1], False),
+         (lambda xs: sorted(xs)[:-1], [4, 2], False),
+         (lambda xs: [0] * len(xs), [5, 0], False),
+         (lambda xs: sorted(xs, reverse=True), [1, 2], False),
+         (list, [1, 1, 2], True)]
+fallo = None
+for f, xs, esperado in casos:
+    try:
+        obtenido = bool(cumple(f, list(xs)))
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con la entrada %s se esperaba %s y salio %s" % (
+            xs, esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: la propiedad separa las buenas "
+                           "de las rotas."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
+### Ejercicio 24.4, Reducir un contraejemplo
+
+La función `falla` devuelve `True` cuando la lista contiene un 13 y un 1, y la lista `actual` es un contraejemplo de seis elementos. Con la Regla 24.6, completar la línea de `menor` con la lista `actual` sin su elemento de posición `i`. El bucle se queda con `menor` cada vez que sigue fallando, y la celda imprime el caso mínimo, que debe ser `[13, 1]`. La comprobación vuelve a ejecutar el código con otros contraejemplos.
+
+```{pyodide}
+#| exercise: ex_reduce
+def falla(xs):
+    return 13 in xs and 1 in xs
+
+actual = [2, 7, 2, 17, 13, 1]
+cambio, vueltas = True, 0
+while cambio and vueltas < 100:
+    cambio, vueltas = False, vueltas + 1
+    for i in range(len(actual)):
+        menor = ______
+        if falla(menor):
+            actual, cambio = menor, True
+            break
+
+print(actual)
+```
+
+::: {.hint exercise="ex_reduce"}
+Dos rebanadas de `actual`: lo que hay antes de `i` y lo que hay después.
+:::
+
+::: {.solution exercise="ex_reduce"}
+```{pyodide}
+def falla(xs):
+    return 13 in xs and 1 in xs
+
+actual = [2, 7, 2, 17, 13, 1]
+cambio, vueltas = True, 0
+while cambio and vueltas < 100:
+    cambio, vueltas = False, vueltas + 1
+    for i in range(len(actual)):
+        menor = actual[:i] + actual[i + 1:]
+        if falla(menor):
+            actual, cambio = menor, True
+            break
+
+print(actual)
+```
+
+Cada recorte que sigue fallando se conserva, y el proceso termina cuando ningún recorte falla: quitar el 13 o el 1 deja de cumplir `falla`.
+:::
+
+```{pyodide}
+#| exercise: ex_reduce
+#| check: true
+import contextlib, io, re
+casos = [(None, [13, 1]), ("[1, 5, 13, 9]", [1, 13]),
+         ("[13, 1]", [13, 1]), ("[4, 1, 1, 13, 13]", [1, 13])]
+fallo = None
+for aa, esperado in casos:
+    otro = user_code
+    if aa is not None:
+        otro = re.sub(r"(?m)^actual\s*=.*$", "actual = " + aa, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = ns.get("actual")
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con actual = %s se esperaba %s y salio %s" % (
+            aa or "la de la celda", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: el caso mínimo tiene dos elementos."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 3. Invariantes de un análisis
 
 :::: {.definicion}
 **Definición 24.7 (invariante).** Un **invariante** es una propiedad que una transformación debe conservar: el número de filas, un total, la unicidad de una clave, el rango de una columna. De un análisis se prueban sus invariantes y no el resultado, que es desconocido.
 ::::
 
-:::: {.proposicion}
-**Proposición 24.8.** Un cruce contra un catálogo con una clave repetida duplica filas y altera los totales sin levantar ningún error. Sobre 100 ventas y un catálogo de 31 filas con una repetida, el cruce devuelve 104 filas y un total de 6198 donde debía dar 5950.
+:::: {.regla}
+**Regla 24.8.** Un cruce contra un catálogo con una clave repetida duplica filas y altera los totales sin levantar ningún error. Sobre 100 ventas y un catálogo de 31 filas con una repetida, el cruce devuelve 104 filas y un total de 6198 donde debía dar 5950.
 ::::
 
-:::: {.demostracion}
-*Demostración.* Un cruce empareja cada fila de la izquierda con todas las de la derecha que coinciden en la clave, de modo que una clave que aparece dos veces en el catálogo duplica cada fila que la usa. El cliente repetido tiene 4 ventas, que pasan a 8: 104 filas en lugar de 100, con sus importes contados dos veces. El resultado conserva las columnas correctas y contiene números plausibles, de modo que ninguna comprobación de formato lo detecta. La celda mide las cuatro cantidades y comprueba que con el catálogo depurado las tres condiciones se cumplen. ∎
+Un cruce empareja cada fila de la izquierda con todas las de la derecha que coinciden en la clave, de modo que una clave que aparece dos veces en el catálogo duplica cada fila que la usa. El cliente repetido tiene 4 ventas, que pasan a 8: 104 filas en lugar de 100, con sus importes contados dos veces. El resultado conserva las columnas correctas y contiene números plausibles, de modo que ninguna comprobación de formato lo detecta. La celda mide las cuatro cantidades y comprueba que con el catálogo depurado las tres condiciones se cumplen.
+
+:::: {.regla}
+**Regla 24.9.** Las tres comprobaciones que detectan el error no examinan el resultado. Comprueban propiedades que debían cumplirse (la clave del catálogo es única, el cruce conserva el número de filas, el cruce conserva el total), y la primera requiere una pasada por el catálogo.
 ::::
 
-:::: {.proposicion}
-**Proposición 24.9.** Las tres comprobaciones que detectan el error no examinan el resultado. Comprueban propiedades que debían cumplirse (la clave del catálogo es única, el cruce conserva el número de filas, el cruce conserva el total), y la primera requiere una pasada por el catálogo.
-::::
-
-:::: {.demostracion}
-*Demostración.* Comprobar la unicidad de la clave consiste en construir el conjunto de sus valores y comparar su tamaño con el número de filas, lo que requiere una pasada por la Proposición 8.8. Las otras dos comparan una cantidad antes y después de la transformación. Ninguna necesita conocer el resultado esperado, y por eso se pueden escribir antes de examinar los datos. La celda ejecuta las tres sobre el catálogo con la repetición y sobre el depurado: en el primero fallan las tres y en el segundo pasan las tres. ∎
-::::
+Comprobar la unicidad de la clave consiste en construir el conjunto de sus valores y comparar su tamaño con el número de filas, lo que requiere una pasada por la Regla 8.8 de Fundamentos. Las otras dos comparan una cantidad antes y después de la transformación. Ninguna necesita conocer el resultado esperado, y por eso se pueden escribir antes de examinar los datos. La celda ejecuta las tres sobre el catálogo con la repetición y sobre el depurado: en el primero fallan las tres y en el segundo pasan las tres.
 
 **Modo de falla.** Un invariante elegido después de ver el resultado describe lo que salió y no comprueba nada. Si el total cambió y la comprobación se escribe con el total nuevo, la prueba pasa indefinidamente y el error queda fijado. Por eso los invariantes de un análisis se escriben junto a la transformación y se enuncian en términos de lo que la operación debe conservar.
 
@@ -517,182 +887,11 @@ comprueba("el cruce conserva el total",
 </script>
 ```
 
-## 4. Independencia entre pruebas y pruebas de regresión
+El problema inicial pedía decidir si el cruce era sospechoso sin conocer su resultado. Comparar el número de filas o el total de los importes con los de `ventas` son dos de las comprobaciones de la Regla 24.9; la tercera, que la clave del catálogo sea única, se hace antes del cruce y detecta la repetición aunque ninguna venta use la clave repetida.
 
-:::: {.proposicion}
-**Proposición 24.10.** Dos pruebas que comparten un objeto mutable dejan de ser independientes: el mismo código con los mismos datos de partida da resultados distintos según el orden. En un orden pasan las dos; en el otro, una falla.
-::::
+### Ejercicio 24.5, Invariantes de un cruce
 
-:::: {.demostracion}
-*Demostración.* Por la Proposición 4.9, el objeto compartido es único, y una prueba que lo modifica cambia lo que encuentra la siguiente. Es el caso de la Proposición 10.8 (valor por defecto mutable) en las pruebas, y su corrección es la misma de la 10.9: cada prueba construye los objetos que necesita. La celda ejecuta las dos pruebas en los dos órdenes desde el mismo punto de partida y obtiene 2 pasadas y 0 fallos en uno, y 1 y 1 en el otro; cuando cada prueba construye su propio catálogo, los dos órdenes dan 2 y 0. ∎
-::::
-
-:::: {.proposicion}
-**Proposición 24.11.** Una **prueba de regresión** registra un fallo concreto ya observado. Se escribe cuando el fallo ocurre, con el caso mínimo de la Proposición 24.6 y la fecha.
-::::
-
-:::: {.demostracion}
-*Demostración.* Una prueba de regresión tiene por objeto impedir que un fallo ya observado reaparezca sin ser detectado; la búsqueda de fallos nuevos corresponde a las propiedades. Su contenido es, por tanto, el caso que falló. Escribirla antes exigiría prever el fallo. La celda contiene una con su fecha y su descripción, construida sobre el caso mínimo del cruce de la sección anterior. ∎
-::::
-
-**Modo de falla.** Una prueba que falla de forma intermitente (por el orden, por la hora, por un número aleatorio sin semilla) induce a relanzarla hasta que pase, y cuando falla por un motivo real no se examina. Para evitarlo, toda prueba debe ser reproducible: semilla fija en lo aleatorio, sin estado compartido y sin dependencia de la fecha.
-
-```{pyodide}
-# Dos pruebas que comparten un objeto mutable dejan de ser independientes:
-# la que corre primero cambia lo que la otra encuentra. Es la Proposicion
-# 10.8 —el defecto mutable— aparecida en las pruebas.
-CATALOGO = {"c1": "norte"}          # estado compartido entre pruebas
-
-def prueba_anade_cliente():
-    CATALOGO["c2"] = "sur"
-    assert len(CATALOGO) == 2
-
-def prueba_catalogo_pequeno():
-    assert len(CATALOGO) == 1, "el catalogo deberia tener 1 cliente, tiene %d" % len(CATALOGO)
-
-def corre(pruebas):
-    pasadas, fallos = 0, []
-    for nombre, f in pruebas:
-        try:
-            f(); pasadas = pasadas + 1
-        except AssertionError as e:
-            fallos.append((nombre, str(e)))
-    return pasadas, fallos
-
-print("las mismas dos pruebas, en los dos ordenes posibles")
-for etiqueta, orden in (("pequeno primero", [("prueba_catalogo_pequeno", prueba_catalogo_pequeno),
-                                             ("prueba_anade_cliente", prueba_anade_cliente)]),
-                        ("anade primero", [("prueba_anade_cliente", prueba_anade_cliente),
-                                           ("prueba_catalogo_pequeno", prueba_catalogo_pequeno)])):
-    CATALOGO.clear(); CATALOGO["c1"] = "norte"      # mismo punto de partida
-    pasadas, fallos = corre(orden)
-    print("  %-18s pasadas %d, fallos %d %s"
-          % (etiqueta, pasadas, len(fallos), [n for n, _ in fallos]))
-print()
-
-# El arreglo: que cada prueba construya lo que necesita. Es el mismo
-# arreglo de la Proposicion 10.9: no compartir el objeto mutable.
-def catalogo_nuevo():
-    """Se llama al empezar cada prueba y devuelve uno recien hecho."""
-    return {"c1": "norte"}
-
-def prueba_anade_bien():
-    cat = catalogo_nuevo()
-    cat["c2"] = "sur"
-    assert len(cat) == 2
-
-def prueba_pequeno_bien():
-    cat = catalogo_nuevo()
-    assert len(cat) == 1
-
-print("con cada prueba construyendo su catalogo")
-for etiqueta, orden in (("pequeno primero", [("prueba_pequeno_bien", prueba_pequeno_bien),
-                                             ("prueba_anade_bien", prueba_anade_bien)]),
-                        ("anade primero", [("prueba_anade_bien", prueba_anade_bien),
-                                           ("prueba_pequeno_bien", prueba_pequeno_bien)])):
-    pasadas, fallos = corre(orden)
-    print("  %-18s pasadas %d, fallos %d" % (etiqueta, pasadas, len(fallos)))
-print()
-
-# Y una prueba de regresion: el fallo de la celda anterior, congelado.
-def cruza(izq, der, clave):
-    fuera = []
-    for a in izq:
-        for b in der:
-            if a[clave] == b[clave]:
-                f = dict(a); f.update(b); fuera.append(f)
-    return fuera
-
-def prueba_regresion_clave_repetida():
-    """23-09-2026: un catalogo con c7 dos veces duplico 4 filas del cruce."""
-    ventas = [{"id": 1, "cliente": "c7"}, {"id": 2, "cliente": "c1"}]
-    catalogo = [{"cliente": "c7", "zona": "sur"}, {"cliente": "c7", "zona": "sur"},
-                {"cliente": "c1", "zona": "norte"}]
-    unicas = len({c["cliente"] for c in catalogo})
-    assert unicas == len(catalogo), "el catalogo tiene claves repetidas"
-
-print("prueba de regresion")
-try:
-    prueba_regresion_clave_repetida()
-    print("  la prueba de regresion pasa")
-except AssertionError as e:
-    print("  la prueba de regresion FALLA: %s" % e)
-```
-
-## 5. Limitaciones
-
-No se ha tratado la proporción del código que ejecutan las pruebas ni las herramientas que la miden. Esa proporción puede aumentarse sin mejorar las pruebas, porque ejecutar una línea no equivale a comprobar su efecto; la Proposición 24.3 exhibe una prueba que ejecuta la función entera sin comprobar nada. Por eso la lección se ha centrado en qué se comprueba.
-
-Tampoco se ha tratado la sustitución de una dependencia lenta o externa por una simulada durante la prueba, que es lo que hacía el servicio simulado de la Lección 22. No se han presentado las herramientas reales: `pytest` para el corredor y `hypothesis` para las propiedades con reducción automática de contraejemplos, que implementa el procedimiento de la Proposición 24.6.
-
-## Ejercicios
-
-### Ejercicio 1, Prueba con valor esperado externo
-
-La celda define `duplica` y una versión errónea, `duplica_rota`, que devuelve siempre 0. Con la Proposición 24.3, completar el `return` de `comprueba(f)` con una comprobación de `f` contra valores esperados escritos a mano. La celda aplica `comprueba` a las dos funciones: `pasa_con_buena` debe dar `True` y `pasa_con_rota` debe dar `False`. La comprobación llama además a la función con otros datos.
-
-```{pyodide}
-#| exercise: ex_prueba
-def duplica(x):
-    return 2 * x
-
-def duplica_rota(x):
-    return 0
-
-def comprueba(f):
-    return ______
-
-pasa_con_buena = comprueba(duplica)
-pasa_con_rota = comprueba(duplica_rota)
-
-print(pasa_con_buena, pasa_con_rota)
-```
-
-::: {.hint exercise="ex_prueba"}
-El valor esperado debe obtenerse fuera de la función: un número escrito a mano. Comparar `f(x)` con `f(x)` pasa siempre.
-:::
-
-::: {.solution exercise="ex_prueba"}
-```{pyodide}
-def duplica(x):
-    return 2 * x
-
-def duplica_rota(x):
-    return 0
-
-def comprueba(f):
-    return f(3) == 6 and f(0) == 0 and f(-2) == -4
-
-pasa_con_buena = comprueba(duplica)
-pasa_con_rota = comprueba(duplica_rota)
-
-print(pasa_con_buena, pasa_con_rota)
-```
-
-`True False`. El caso `f(0) == 0` no distingue por sí solo las dos funciones, porque la versión errónea coincide en ese punto: una comprobación necesita al menos un caso en que las dos difieran.
-:::
-
-```{pyodide}
-#| exercise: ex_prueba
-#| check: true
-try:
-    general = comprueba(lambda x: x + x) is True and comprueba(lambda x: 6) is False
-except Exception:
-    general = False
-ok = pasa_con_buena is True and pasa_con_rota is False
-if ok and general:
-    feedback = {"correct": True, "message": "Correcto: pasa con la buena y falla con la rota."}
-elif ok:
-    feedback = {"correct": False,
-                "message": "Da los valores pedidos, pero no distingue otra función correcta de otra rota."}
-else:
-    feedback = {"correct": False, "message": "Se esperaba True y False: la comprobacion tiene que distinguirlas."}
-feedback
-```
-
-### Ejercicio 2, Invariantes de un cruce
-
-La celda trae las listas `ventas` y `catalogo`, que comparten la clave `c`, y su cruce `cruce`. Con la Proposición 24.9, completar `clave_unica` con la comprobación previa al cruce, que la clave no se repita en `catalogo`, y `conserva_filas` con la posterior, que `cruce` tenga tantas filas como `ventas`. Con estos datos las dos deben dar `False`. La comprobación vuelve a ejecutar el código con otros datos.
+La celda trae las listas `ventas` y `catalogo`, que comparten la clave `c`, y su cruce `cruce`. Con la Regla 24.9, completar `clave_unica` con la comprobación previa al cruce, que la clave no se repita en `catalogo`, y `conserva_filas` con la posterior, que `cruce` tenga tantas filas como `ventas`. Con estos datos las dos deben dar `False`. La comprobación vuelve a ejecutar el código con otros datos.
 
 ```{pyodide}
 #| exercise: ex_invariante
@@ -754,13 +953,297 @@ else:
 feedback
 ```
 
+## 4. Independencia entre pruebas y pruebas de regresión
+
+:::: {.regla}
+**Regla 24.10.** Dos pruebas que comparten un objeto mutable dejan de ser independientes: el mismo código con los mismos datos de partida da resultados distintos según el orden. En un orden pasan las dos; en el otro, una falla.
+::::
+
+Por la Regla 4.9 de Fundamentos, el objeto compartido es único, y una prueba que lo modifica cambia lo que encuentra la siguiente. Es el caso de la Regla 10.8 de Fundamentos (valor por defecto mutable) en las pruebas, y su corrección es la misma de la Regla 10.9: cada prueba construye los objetos que necesita. La celda ejecuta las dos pruebas en los dos órdenes desde el mismo punto de partida y obtiene 2 pasadas y 0 fallos en uno, y 1 y 1 en el otro; cuando cada prueba construye su propio catálogo, los dos órdenes dan 2 y 0.
+
+:::: {.regla}
+**Regla 24.11.** Una **prueba de regresión** registra un fallo concreto ya observado. Se escribe cuando el fallo ocurre, con el caso mínimo de la Regla 24.6 y la fecha.
+::::
+
+Una prueba de regresión tiene por objeto impedir que un fallo ya observado reaparezca sin ser detectado; la búsqueda de fallos nuevos corresponde a las propiedades. Su contenido es, por tanto, el caso que falló. Escribirla antes exigiría prever el fallo. La celda contiene una con su fecha y su descripción, construida sobre el caso mínimo del cruce de la sección anterior.
+
+**Modo de falla.** Una prueba que falla de forma intermitente (por el orden, por la hora, por un número aleatorio sin semilla) induce a relanzarla hasta que pase, y cuando falla por un motivo real no se examina. Para evitarlo, toda prueba debe ser reproducible: semilla fija en lo aleatorio, sin estado compartido y sin dependencia de la fecha.
+
+```{pyodide}
+# Dos pruebas que comparten un objeto mutable dejan de ser independientes:
+# la que corre primero cambia lo que la otra encuentra. Es la Proposicion
+# 10.8 —el defecto mutable— aparecida en las pruebas.
+CATALOGO = {"c1": "norte"}          # estado compartido entre pruebas
+
+def prueba_anade_cliente():
+    CATALOGO["c2"] = "sur"
+    assert len(CATALOGO) == 2
+
+def prueba_catalogo_pequeno():
+    assert len(CATALOGO) == 1, "el catalogo deberia tener 1 cliente, tiene %d" % len(CATALOGO)
+
+def corre(pruebas):
+    pasadas, fallos = 0, []
+    for nombre, f in pruebas:
+        try:
+            f(); pasadas = pasadas + 1
+        except AssertionError as e:
+            fallos.append((nombre, str(e)))
+    return pasadas, fallos
+
+print("las mismas dos pruebas, en los dos ordenes posibles")
+for etiqueta, orden in (("pequeno primero", [("prueba_catalogo_pequeno", prueba_catalogo_pequeno),
+                                             ("prueba_anade_cliente", prueba_anade_cliente)]),
+                        ("anade primero", [("prueba_anade_cliente", prueba_anade_cliente),
+                                           ("prueba_catalogo_pequeno", prueba_catalogo_pequeno)])):
+    CATALOGO.clear(); CATALOGO["c1"] = "norte"      # mismo punto de partida
+    pasadas, fallos = corre(orden)
+    print("  %-18s pasadas %d, fallos %d %s"
+          % (etiqueta, pasadas, len(fallos), [n for n, _ in fallos]))
+print()
+
+# El arreglo: que cada prueba construya lo que necesita. Es el mismo
+# arreglo de la Regla 10.9 de Fundamentos: no compartir el objeto mutable.
+def catalogo_nuevo():
+    """Se llama al empezar cada prueba y devuelve uno recien hecho."""
+    return {"c1": "norte"}
+
+def prueba_anade_bien():
+    cat = catalogo_nuevo()
+    cat["c2"] = "sur"
+    assert len(cat) == 2
+
+def prueba_pequeno_bien():
+    cat = catalogo_nuevo()
+    assert len(cat) == 1
+
+print("con cada prueba construyendo su catalogo")
+for etiqueta, orden in (("pequeno primero", [("prueba_pequeno_bien", prueba_pequeno_bien),
+                                             ("prueba_anade_bien", prueba_anade_bien)]),
+                        ("anade primero", [("prueba_anade_bien", prueba_anade_bien),
+                                           ("prueba_pequeno_bien", prueba_pequeno_bien)])):
+    pasadas, fallos = corre(orden)
+    print("  %-18s pasadas %d, fallos %d" % (etiqueta, pasadas, len(fallos)))
+print()
+
+# Y una prueba de regresion: el fallo de la celda anterior, congelado.
+def cruza(izq, der, clave):
+    fuera = []
+    for a in izq:
+        for b in der:
+            if a[clave] == b[clave]:
+                f = dict(a); f.update(b); fuera.append(f)
+    return fuera
+
+def prueba_regresion_clave_repetida():
+    """23-09-2026: un catalogo con c7 dos veces duplico 4 filas del cruce."""
+    ventas = [{"id": 1, "cliente": "c7"}, {"id": 2, "cliente": "c1"}]
+    catalogo = [{"cliente": "c7", "zona": "sur"}, {"cliente": "c7", "zona": "sur"},
+                {"cliente": "c1", "zona": "norte"}]
+    unicas = len({c["cliente"] for c in catalogo})
+    assert unicas == len(catalogo), "el catalogo tiene claves repetidas"
+
+print("prueba de regresion")
+try:
+    prueba_regresion_clave_repetida()
+    print("  la prueba de regresion pasa")
+except AssertionError as e:
+    print("  la prueba de regresion FALLA: %s" % e)
+```
+
+### Ejercicio 24.6, Pruebas independientes
+
+Las dos pruebas de la celda usan un catálogo, y el diccionario `CATALOGO` está definido fuera de ellas. Con la Regla 24.10, completar las dos líneas de `cat` para que cada prueba trabaje con un catálogo propio que contenga solo `{"c1": "norte"}`, sin modificar `CATALOGO`. La celda corre las pruebas en los dos órdenes y debe imprimir `2 2 {'c1': 'norte'}`; con `cat = CATALOGO` imprime `2 1` y el catálogo queda con dos clientes. La comprobación vuelve a correr las pruebas varias veces seguidas.
+
+```{pyodide}
+#| exercise: ex_independientes
+CATALOGO = {"c1": "norte"}
+
+def prueba_anade():
+    cat = ______
+    cat["c2"] = "sur"
+    assert len(cat) == 2
+
+def prueba_pequeno():
+    cat = ______
+    assert len(cat) == 1
+
+def corre(orden):
+    pasadas = 0
+    for p in orden:
+        try:
+            p()
+            pasadas += 1
+        except AssertionError:
+            pass
+    return pasadas
+
+uno = corre([prueba_pequeno, prueba_anade])
+dos = corre([prueba_anade, prueba_pequeno])
+print(uno, dos, CATALOGO)
+```
+
+::: {.hint exercise="ex_independientes"}
+Asignar `CATALOGO` a otro nombre no lo copia. Un diccionario nuevo, escrito en la prueba o construido con `dict(CATALOGO)`, no comparte nada con el de fuera.
+:::
+
+::: {.solution exercise="ex_independientes"}
+```{pyodide}
+CATALOGO = {"c1": "norte"}
+
+def prueba_anade():
+    cat = {"c1": "norte"}
+    cat["c2"] = "sur"
+    assert len(cat) == 2
+
+def prueba_pequeno():
+    cat = {"c1": "norte"}
+    assert len(cat) == 1
+
+def corre(orden):
+    pasadas = 0
+    for p in orden:
+        try:
+            p()
+            pasadas += 1
+        except AssertionError:
+            pass
+    return pasadas
+
+uno = corre([prueba_pequeno, prueba_anade])
+dos = corre([prueba_anade, prueba_pequeno])
+print(uno, dos, CATALOGO)
+```
+
+Cada prueba construye su catálogo al empezar, que es el arreglo de la Regla 10.9 de Fundamentos: no compartir el objeto mutable.
+:::
+
+```{pyodide}
+#| exercise: ex_independientes
+#| check: true
+import contextlib, io
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(user_code, ns)
+    obtenido = (ns["uno"], ns["dos"], dict(ns["CATALOGO"]))
+    orden = [ns["prueba_anade"], ns["prueba_anade"],
+             ns["prueba_pequeno"], ns["prueba_anade"],
+             ns["prueba_pequeno"]]
+    repetidas = ns["corre"](orden)
+except Exception as err:
+    obtenido, repetidas = type(err).__name__, None
+if obtenido != (2, 2, {"c1": "norte"}):
+    feedback = {"correct": False,
+                "message": "se esperaba 2 2 {'c1': 'norte'} y salio %s"
+                           % (obtenido,)}
+elif repetidas != 5:
+    feedback = {"correct": False,
+                "message": "corridas cinco veces seguidas pasan %s de 5"
+                           % repetidas}
+else:
+    feedback = {"correct": True,
+                "message": "Correcto: el orden ya no cambia el resultado."}
+feedback
+```
+
+### Ejercicio 24.7, Prueba de regresión
+
+Una versión de `ordena` dejaba sin ordenar el último elemento, y el caso mínimo que lo mostró fue `[13, 1]`. Con la Regla 24.11, completar el `assert` de `prueba_regresion(ordena)` con la condición que congela ese caso: `ordena([13, 1])` debe dar `[1, 13]`. La celda aplica la prueba a `ordena_rota` y a `sorted` y debe imprimir `falla pasa`. La comprobación aplica además la prueba a otras funciones.
+
+```{pyodide}
+#| exercise: ex_regresion
+def ordena_rota(xs):
+    return sorted(xs[:-1]) + xs[-1:]
+
+def prueba_regresion(ordena):
+    """04-10-2026: ordena_rota dejaba [13, 1] sin ordenar."""
+    assert ______
+
+def resultado(ordena):
+    try:
+        prueba_regresion(ordena)
+        return "pasa"
+    except AssertionError:
+        return "falla"
+
+print(resultado(ordena_rota), resultado(sorted))
+```
+
+::: {.hint exercise="ex_regresion"}
+El valor esperado se escribe a mano. Comparar `ordena([13, 1])` con `ordena([13, 1])` pasa siempre, por la Regla 24.3.
+:::
+
+::: {.solution exercise="ex_regresion"}
+```{pyodide}
+def ordena_rota(xs):
+    return sorted(xs[:-1]) + xs[-1:]
+
+def prueba_regresion(ordena):
+    """04-10-2026: ordena_rota dejaba [13, 1] sin ordenar."""
+    assert ordena([13, 1]) == [1, 13]
+
+def resultado(ordena):
+    try:
+        prueba_regresion(ordena)
+        return "pasa"
+    except AssertionError:
+        return "falla"
+
+print(resultado(ordena_rota), resultado(sorted))
+```
+
+La prueba guarda el caso que falló y la fecha. Su función es impedir que ese fallo vuelva sin que se note; los fallos nuevos los buscan las propiedades.
+:::
+
+```{pyodide}
+#| exercise: ex_regresion
+#| check: true
+casos = [(ordena_rota, "falla"), (sorted, "pasa"),
+         (lambda xs: sorted(xs, reverse=True), "falla"),
+         (lambda xs: [1, 13], "pasa"),
+         (lambda xs: list(xs), "falla")]
+fallo = None
+for f, esperado in casos:
+    try:
+        obtenido = resultado(f)
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con otra función se esperaba %s y salio %s" % (
+            esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: la prueba falla con la versión rota."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
+## 5. Limitaciones
+
+No se ha tratado la proporción del código que ejecutan las pruebas ni las herramientas que la miden. Esa proporción puede aumentarse sin mejorar las pruebas, porque ejecutar una línea no equivale a comprobar su efecto; la Regla 24.3 exhibe una prueba que ejecuta la función entera sin comprobar nada. Por eso la lección se ha centrado en qué se comprueba.
+
+Tampoco se ha tratado la sustitución de una dependencia lenta o externa por una simulada durante la prueba, que es lo que hacía el servicio simulado de la Lección 22. No se han presentado las herramientas reales: `pytest` para el corredor y `hypothesis` para las propiedades con reducción automática de contraejemplos, que implementa el procedimiento de la Regla 24.6.
+
+## Pieza del proyecto
+
+`caja.py` crece en cada lección y los entregables reutilizan sus piezas. Esta lección añade las pruebas de la caja:
+
+1. Pruebas de las funciones de la caja con valores esperados calculados a mano, con al menos un caso en que una versión errónea conocida dé otro resultado.
+2. Una prueba por propiedades del total de una compra, sobre compras generadas con semilla fija: el total no depende del orden de las líneas y el total con descuento nunca supera al total sin descuento.
+3. Comprobaciones de los invariantes del informe de ventas: el código de producto es único en el catálogo, y la unión de las líneas con el catálogo conserva el número de líneas y el importe total.
+4. Una prueba de regresión por cada fallo que aparezca, con el caso mínimo y la fecha.
+
+Lo usa el [Entregable 31](entregable-31.qmd), la caja de supermercado con pruebas y depuración.
+
 ## Reto
 
 En `proyectos/notebooks/F2-retos.ipynb`, sección **Python 24**:
 
 1. Escribir el corredor de quince líneas y usarlo sobre una función propia con un fallo conocido. Anotar cuántos ejemplos fueron necesarios para que alguna prueba lo detectara.
 2. Escribir una propiedad para una transformación de un análisis propio (un `groupby`, una limpieza) y generar entradas hasta hallar un contraejemplo. Reducirlo al caso mínimo y guardar los dos en `50-Errores/`.
-3. Tomar un cruce de un análisis propio y añadirle las tres comprobaciones de la Proposición 24.9. Anotar si alguna falla y, si no falla ninguna, cuánto tardarían en ejecutarse sobre los datos completos.
+3. Tomar un cruce de un análisis propio y añadirle las tres comprobaciones de la Regla 24.9. Anotar si alguna falla y, si no falla ninguna, cuánto tardarían en ejecutarse sobre los datos completos.
 
 ## Del libro
 

@@ -22,7 +22,7 @@ engine: markdown
 Al terminar esta lección se puede:
 
 1. Leer una [traza]{.g data-t="traza de llamadas"} como una lista de marcos y recorrerla desde el programa.
-2. Demostrar que el punto donde se levanta la excepción puede ser distinto del punto donde está el fallo, y localizar el marco donde se origina el valor incorrecto.
+2. Comprobar que el punto donde se levanta la excepción puede ser distinto del punto donde está el fallo, y localizar el marco donde se origina el valor incorrecto.
 3. Inspeccionar las variables locales de cada marco sin escribir ningún `print`, que es la función de un depurador.
 4. Explicar por qué `except Exception: pass` destruye la información del fallo, y capturar solo los errores esperados.
 5. Distinguir `__cause__` de `__context__` y explicar qué añade escribir `from e`.
@@ -61,27 +61,113 @@ Al terminar esta lección se puede:
 | `n` | ene | El número de pasos de una transformación |
 :::
 
+## Problema inicial
+
+Este problema va antes de la teoría y se resuelve con lo visto hasta Python 24: bucles, funciones y el invariante de la Definición 24.7. La Sección 3 vuelve sobre él.
+
+Una transformación de `PASOS` pasos se aplica a 100 filas, y la lista `perdidas` dice cuántas filas quita cada paso. La función `sano(hasta)` aplica los pasos `0` a `hasta - 1` y devuelve `True` si siguen las 100 filas; cada llamada suma uno a `llamadas`. Completar la condición del `if` para que `culpable` sea el primer paso tras el cual `sano` devuelve `False`, usando solo `sano`. La celda imprime `culpable` y `llamadas`, que deben dar 6 y 7. La comprobación vuelve a ejecutar el código con otra lista `perdidas`.
+
+```{pyodide}
+#| exercise: ex_inicial
+PASOS = 10
+perdidas = [0, 0, 0, 0, 0, 0, 1, 0, 0, 0]
+llamadas = 0
+
+def sano(hasta):
+    global llamadas
+    llamadas = llamadas + 1
+    return sum(perdidas[:hasta]) == 0
+
+culpable = None
+for k in range(PASOS):
+    if ______:
+        culpable = k
+        break
+
+print(culpable, llamadas)
+```
+
+::: {.hint exercise="ex_inicial"}
+El paso `k` es el culpable si el invariante se cumple antes de aplicarlo y no después de aplicarlo. `sano(k + 1)` dice si se cumple tras aplicar los pasos `0` a `k`.
+:::
+
+::: {.solution exercise="ex_inicial"}
+```{pyodide}
+PASOS = 10
+perdidas = [0, 0, 0, 0, 0, 0, 1, 0, 0, 0]
+llamadas = 0
+
+def sano(hasta):
+    global llamadas
+    llamadas = llamadas + 1
+    return sum(perdidas[:hasta]) == 0
+
+culpable = None
+for k in range(PASOS):
+    if not sano(k + 1):
+        culpable = k
+        break
+
+print(culpable, llamadas)
+```
+
+El recorrido examina los pasos en orden y hace siete llamadas para encontrar el paso 6. Con el culpable en el último paso haría diez. La Sección 3 obtiene el mismo resultado con cuatro llamadas como máximo.
+:::
+
+```{pyodide}
+#| exercise: ex_inicial
+#| check: true
+import contextlib, io, re
+casos = [
+    (None, None, 6),
+    ("5", "[0, 0, 1, 0, 0]", 2),
+    ("4", "[0, 0, 0, 2]", 3),
+    ("3", "[1, 0, 0]", 0),
+]
+fallo = None
+for pp, pe, esperado in casos:
+    otro = user_code
+    if pp is not None:
+        otro = re.sub(r"(?m)^PASOS\s*=.*$", "PASOS = " + pp, otro)
+        otro = re.sub(r"(?m)^perdidas\s*=.*$", "perdidas = " + pe, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = ns.get("culpable")
+        bien = obtenido == esperado
+        if bien and ns.get("llamadas", 0) == 0:
+            fallo = "El paso sale bien, pero sin llamar a sano."
+    except Exception as err:
+        obtenido, bien = type(err).__name__, False
+    if not bien and fallo is None:
+        fallo = "con perdidas = %s se esperaba el paso %s y salio %s" % (
+            pe if pe else "la de la celda", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: el paso 6, en 7 llamadas a sano."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 1. Estructura de una traza
 
 :::: {.definicion}
 **Definición 25.1 (traza de llamadas).** Una **traza** es la cadena de llamadas en curso en el momento del error. Se lee de abajo arriba: la última línea indica qué ocurrió y las anteriores cómo se llegó a ese punto. Se guarda como una estructura en `e.__traceback__`, que el programa puede recorrer, y el texto que se imprime en pantalla es una de sus representaciones.
 ::::
 
-:::: {.proposicion}
-**Proposición 25.2.** El marco donde se levanta la excepción puede ser distinto del marco donde está el fallo. Un valor incorrecto creado en una función puede atravesar varias llamadas antes de llegar a una operación que no lo admite.
+:::: {.regla}
+**Regla 25.2.** El marco donde se levanta la excepción puede ser distinto del marco donde está el fallo. Un valor incorrecto creado en una función puede atravesar varias llamadas antes de llegar a una operación que no lo admite.
 ::::
 
-:::: {.demostracion}
-*Demostración.* Una operación falla cuando recibe un valor que no admite, y ese valor puede haberse creado en cualquier punto anterior y haber pasado por operaciones que lo admitían. La celda construye el caso: `lee_config` devuelve un texto donde debía devolver un número, `prepara` lo transmite sin examinarlo y la excepción se levanta en `escala`. Con enteros no se habría producido el error en ese punto, porque por la Proposición 1.2 el producto de un entero por un texto repite el texto; el error se produce porque los valores son decimales. El fallo está en el primer marco y la excepción en el último. ∎
+Una operación falla cuando recibe un valor que no admite, y ese valor puede haberse creado en cualquier punto anterior y haber pasado por operaciones que lo admitían. La celda construye el caso: `lee_config` devuelve un texto donde debía devolver un número, `prepara` lo transmite sin examinarlo y la excepción se levanta en `escala`. Con enteros no se habría producido el error en ese punto, porque por la Regla 1.2 de Fundamentos el producto de un entero por un texto repite el texto; el error se produce porque los valores son decimales. El fallo está en el primer marco y la excepción en el último.
+
+:::: {.regla}
+**Regla 25.3.** Las variables locales de cada marco siguen accesibles después del error, recorriendo `tb_next` y leyendo `tb_frame.f_locals`. Es la información que muestra un depurador al detenerse, y no requiere ningún `print`.
 ::::
 
-:::: {.proposicion}
-**Proposición 25.3.** Las variables locales de cada marco siguen accesibles después del error, recorriendo `tb_next` y leyendo `tb_frame.f_locals`. Es la información que muestra un depurador al detenerse, y no requiere ningún `print`.
-::::
-
-:::: {.demostracion}
-*Demostración.* La excepción conserva una referencia a la cadena de marcos, y cada marco conserva su diccionario de variables locales en el estado que tenía al propagarse el error. Recorriendo la cadena se obtiene, para cada nivel, el estado en ese momento. La celda lo imprime: en el marco de `prepara` aparece `cfg` con el valor `{'factor': '2'}`, que contiene el texto, antes del punto donde se levanta la excepción. ∎
-::::
+La excepción conserva una referencia a la cadena de marcos, y cada marco conserva su diccionario de variables locales en el estado que tenía al propagarse el error. Recorriendo la cadena se obtiene, para cada nivel, el estado en ese momento. En el marco de `prepara` aparece `cfg` con el valor `{'factor': '2'}`, que contiene el texto, antes del punto donde se levanta la excepción.
 
 **Modo de falla.** Un `print` añadido para diagnosticar se ejecuta antes del error y muestra el estado de una iteración anterior a la que falló; y cuando el fallo ocurre una vez cada mil, hay que filtrar mil salidas para encontrarlo. La traza guarda el estado en el momento del error. Por eso se examina primero la información ya guardada, y se añade instrumentación solo cuando la traza es insuficiente.
 
@@ -222,27 +308,193 @@ while t is not None:
 </script>
 ```
 
+### Ejercicio 25.1, Marco de origen del fallo
+
+La celda llama a `a("x")`, que pasa el valor a `b` y este a `c`, donde se levanta la excepción; la celda la guarda en `fallo`. Con la Regla 25.2, completar `marcos` con la lista de marcos de la traza de `fallo`, `donde_revienta` con el nombre del último marco y `cuantos` con el número de marcos. `donde_revienta` debe dar `c` y `cuantos` debe dar 4. La comprobación vuelve a ejecutar el código con otros datos.
+
+```{pyodide}
+#| exercise: ex_traza
+import traceback
+
+def a(v): return b(v)
+def b(v): return c(v)
+def c(v): return 1.0 * v
+
+fallo = None
+try:
+    a("x")
+except Exception as e:
+    fallo = e
+
+marcos = ______
+
+donde_revienta = ______
+cuantos = ______
+
+print(donde_revienta, cuantos)
+```
+
+::: {.hint exercise="ex_traza"}
+`traceback.extract_tb` sobre `fallo.__traceback__` devuelve la lista de marcos, y cada uno tiene un atributo `name`. Deben salir `c` y 4.
+:::
+
+::: {.solution exercise="ex_traza"}
+```{pyodide}
+import traceback
+
+def a(v): return b(v)
+def b(v): return c(v)
+def c(v): return 1.0 * v
+
+fallo = None
+try:
+    a("x")
+except Exception as e:
+    fallo = e
+
+marcos = traceback.extract_tb(fallo.__traceback__)
+
+donde_revienta = marcos[-1].name
+cuantos = len(marcos)
+
+print(donde_revienta, cuantos)
+```
+
+La excepción se levanta en `c` y hay 4 marcos: el módulo, `a`, `b` y `c`. El valor incorrecto entró en `a`, tres marcos antes del error, que es el caso más corto de la Regla 25.2.
+:::
+
+```{pyodide}
+#| exercise: ex_traza
+#| check: true
+import contextlib, io, re
+otro = user_code
+otro = otro.replace('    a("x")', '    b("x")')
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(otro, ns)
+    general = ns.get("donde_revienta") == "c" and ns.get("cuantos") == 3
+except Exception:
+    general = False
+ok = donde_revienta == "c" and cuantos == 4
+if ok and general:
+    feedback = {"correct": True, "message": "Correcto: revienta en c, con 4 marcos."}
+elif ok:
+    feedback = {"correct": False,
+                "message": "Da los valores pedidos, pero llamando a b(\"x\") no da \"c\" y 3 marcos."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 'c' y 4 marcos."}
+feedback
+```
+
+### Ejercicio 25.2, Variables locales de cada marco
+
+La celda llama a `a(entrada)`, que pasa un valor a `b` y este a `c`, donde la división entre `v - limite` levanta `ZeroDivisionError`; la celda guarda la excepción en `fallo` y recorre su traza marco a marco. Con la Regla 25.3, completar la línea que guarda en `locales[nombre]` las variables locales del marco `t.tb_frame`. La celda imprime el valor de `v` en los marcos de `b` y de `c`, que deben ser 3 y 6. La comprobación vuelve a ejecutar el código con otros valores de `entrada` y `limite`.
+
+```{pyodide}
+#| exercise: ex_locales
+def a(v): return b(v + 1)
+def b(v): return c(v * 2)
+def c(v): return 10 / (v - limite)
+
+entrada = 2
+limite = 6
+fallo = None
+try:
+    a(entrada)
+except ZeroDivisionError as e:
+    fallo = e
+
+locales = {}
+t = fallo.__traceback__
+while t is not None:
+    nombre = t.tb_frame.f_code.co_name
+    locales[nombre] = ______
+    t = t.tb_next
+
+print(locales["b"]["v"], locales["c"]["v"])
+```
+
+::: {.hint exercise="ex_locales"}
+Cada marco guarda sus variables locales en el atributo `f_locals`, como un diccionario de nombre a valor. Deben salir 3 y 6.
+:::
+
+::: {.solution exercise="ex_locales"}
+```{pyodide}
+def a(v): return b(v + 1)
+def b(v): return c(v * 2)
+def c(v): return 10 / (v - limite)
+
+entrada = 2
+limite = 6
+fallo = None
+try:
+    a(entrada)
+except ZeroDivisionError as e:
+    fallo = e
+
+locales = {}
+t = fallo.__traceback__
+while t is not None:
+    nombre = t.tb_frame.f_code.co_name
+    locales[nombre] = dict(t.tb_frame.f_locals)
+    t = t.tb_next
+
+print(locales["b"]["v"], locales["c"]["v"])
+```
+
+`b` recibió 3 y `c` recibió 6, el valor que anula el denominador. La excepción se levanta en `c`, pero el 6 se calculó en `b` a partir del 3 que llegó de `a`; la traza conserva los tres estados sin haber añadido ningún `print`.
+:::
+
+```{pyodide}
+#| exercise: ex_locales
+#| check: true
+import contextlib, io, re
+otro = re.sub(r"(?m)^entrada\s*=.*$", "entrada = 4", user_code)
+otro = re.sub(r"(?m)^limite\s*=.*$", "limite = 10", otro)
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(otro, ns)
+    lo = ns["locales"]
+    general = lo["b"]["v"] == 5 and lo["c"]["v"] == 10
+except Exception:
+    general = False
+try:
+    ok = locales["b"]["v"] == 3 and locales["c"]["v"] == 6
+except Exception:
+    ok = False
+if ok and general:
+    feedback = {"correct": True,
+                "message": "Correcto: b recibió 3 y c recibió 6."}
+elif ok:
+    feedback = {"correct": False,
+                "message": "Da 3 y 6, pero con entrada = 4 y limite = 10 "
+                           "no da 5 y 10."}
+else:
+    feedback = {"correct": False,
+                "message": "Se esperaba v = 3 en el marco de b y v = 6 "
+                           "en el de c."}
+feedback
+```
+
 ## 2. Captura de excepciones y encadenamiento
 
-:::: {.proposicion}
-**Proposición 25.4.** `except Exception` seguido de continuar destruye la información del fallo: el programa sigue con el mismo resultado y no queda registro de qué dato falló ni por qué. Capturar solo el error esperado y anotar el dato produce el mismo total y conserva la información.
+:::: {.regla}
+**Regla 25.4.** `except Exception` seguido de continuar destruye la información del fallo: el programa sigue con el mismo resultado y no queda registro de qué dato falló ni por qué. Capturar solo el error esperado y anotar el dato produce el mismo total y conserva la información.
 ::::
 
-:::: {.demostracion}
-*Demostración.* La excepción contiene el tipo, el mensaje y la traza; descartarla sin leerla descarta los tres, y el contador de fallos que suele sustituirla solo conserva el número de fallos. Capturar `ValueError`, el único error que la conversión puede levantar por un dato incorrecto, deja pasar cualquier otro error: un nombre mal escrito o una interrupción no se confunden con un dato con defectos. La celda procesa las mismas tres filas de las dos formas: los dos totales valen `30.5`, y la segunda indica además que falló el importe `'n/d'` con `ValueError`. ∎
-::::
+La excepción contiene el tipo, el mensaje y la traza; descartarla sin leerla descarta los tres, y el contador de fallos que suele sustituirla solo conserva el número de fallos. Capturar `ValueError`, el único error que la conversión puede levantar por un dato incorrecto, deja pasar cualquier otro error: un nombre mal escrito o una interrupción no se confunden con un dato con defectos. La celda procesa las mismas tres filas de las dos formas: los dos totales valen `30.5`, y la segunda indica además que falló el importe `'n/d'` con `ValueError`.
 
 :::: {.definicion}
 **Definición 25.5 (causa y contexto).** Cuando se levanta una excepción mientras se maneja otra, Python guarda automáticamente la original en **`__context__`**. Escribir `raise … from e` la guarda además en **`__cause__`**, el campo que declara explícitamente la relación entre las dos.
 ::::
 
-:::: {.proposicion}
-**Proposición 25.6.** `raise … from e` guarda el error original en `__cause__`; sin `from`, Python lo guarda igualmente en `__context__`. La diferencia es que `__cause__` declara la relación y `__context__` solo la registra.
+:::: {.regla}
+**Regla 25.6.** `raise … from e` guarda el error original en `__cause__`; sin `from`, Python lo guarda igualmente en `__context__`. La diferencia es que `__cause__` declara la relación y `__context__` solo la registra.
 ::::
 
-:::: {.demostracion}
-*Demostración.* Python conserva automáticamente en `__context__` la excepción que se estaba manejando, de modo que la información no se pierde en ningún caso; `from e` la copia además en `__cause__`, el campo que las herramientas interpretan como «esto fue causado por aquello». La celda comprueba las dos versiones: con `from`, `__cause__` y `__context__` valen ambos `ValueError`; sin `from`, `__cause__` vale `None` y `__context__` sigue siendo `ValueError`. ∎
-::::
+Python conserva automáticamente en `__context__` la excepción que se estaba manejando, de modo que la información no se pierde en ningún caso; `from e` la copia además en `__cause__`, el campo que las herramientas interpretan como «esto fue causado por aquello». La celda comprueba las dos versiones: con `from`, `__cause__` y `__context__` valen ambos `ValueError`; sin `from`, `__cause__` vale `None` y `__context__` sigue siendo `ValueError`.
 
 **Modo de falla.** Un `except` demasiado amplio oculta también los errores del propio programa. Un nombre mal escrito dentro del `try` levanta `NameError`, que `except Exception` captura, y el programa informa de un «dato inválido» inexistente. El síntoma es un recuento de filas descartadas que crece sin que ninguna tenga defectos. Para evitarlo se nombra el error que se espera.
 
@@ -311,19 +563,168 @@ for nombre, f in (("con from", con_from), ("sin from", sin_from)):
                  type(contexto).__name__ if contexto else "None"))
 ```
 
+### Ejercicio 25.3, Capturar solo el error esperado
+
+La lista `textos` trae importes como texto, y dos de ellos no son números. Con la Regla 25.4, completar el tipo de error del `except` para que el bucle sume los importes válidos, anote en `avisos` la posición de los que no se pueden convertir y deje pasar cualquier otro error. La celda imprime `total` y `avisos`, que deben ser 33.5 y `[1, 3]`. La comprobación vuelve a ejecutar el código con otras listas, una de ellas con un valor que no es texto y que debe seguir levantando su error.
+
+```{pyodide}
+#| exercise: ex_captura
+textos = ["10.5", "n/d", "20", "", "3"]
+
+total, avisos = 0.0, []
+for i, s in enumerate(textos):
+    try:
+        total = total + float(s)
+    except ______:
+        avisos.append(i)
+
+print(total, avisos)
+```
+
+::: {.hint exercise="ex_captura"}
+`float("n/d")` levanta `ValueError`; `float(None)` levanta `TypeError`, que es un error del programa y no de un dato. Deben salir 33.5 y `[1, 3]`.
+:::
+
+::: {.solution exercise="ex_captura"}
+```{pyodide}
+textos = ["10.5", "n/d", "20", "", "3"]
+
+total, avisos = 0.0, []
+for i, s in enumerate(textos):
+    try:
+        total = total + float(s)
+    except ValueError:
+        avisos.append(i)
+
+print(total, avisos)
+```
+
+Con `except Exception` el total y los avisos serían los mismos en esta lista, pero un `None` llegado por un fallo anterior se anotaría como un dato inválido más y el error del programa quedaría oculto.
+:::
+
+```{pyodide}
+#| exercise: ex_captura
+#| check: true
+import contextlib, io, re
+casos = [
+    (None, (33.5, [1, 3])),
+    ('["x", "1", "2.5"]', (3.5, [0])),
+    ('["4", None]', "TypeError"),
+]
+fallo = None
+for tt, esperado in casos:
+    otro = user_code
+    if tt is not None:
+        otro = re.sub(r"(?m)^textos\s*=.*$", "textos = " + tt, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = (ns["total"], ns["avisos"])
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con textos = %s se esperaba %s y salio %s" % (
+            tt if tt else "la de la celda", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: solo se captura ValueError, y un "
+                           "None sigue levantando TypeError."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
+### Ejercicio 25.4, Encadenar con la causa
+
+La función `convierte` traduce el `ValueError` de `float` en un error propio, `DatoInvalido`. Con la Regla 25.6, completar la línea del `except` para que levante `DatoInvalido` con la excepción original guardada en `__cause__`. La celda imprime el tipo de la causa y si coincide con el contexto, que deben ser `ValueError` y `True`. La comprobación llama a `convierte` con otros textos.
+
+```{pyodide}
+#| exercise: ex_causa
+class DatoInvalido(Exception):
+    pass
+
+def convierte(s):
+    try:
+        return float(s)
+    except ValueError as e:
+        ______
+
+try:
+    convierte("n/d")
+except DatoInvalido as err:
+    causa = err.__cause__
+    print(type(causa).__name__, causa is err.__context__)
+```
+
+::: {.hint exercise="ex_causa"}
+`raise ... from e` levanta la excepción nueva y guarda `e` en su `__cause__`. Deben salir `ValueError` y `True`.
+:::
+
+::: {.solution exercise="ex_causa"}
+```{pyodide}
+class DatoInvalido(Exception):
+    pass
+
+def convierte(s):
+    try:
+        return float(s)
+    except ValueError as e:
+        raise DatoInvalido("importe no numerico: %r" % s) from e
+
+try:
+    convierte("n/d")
+except DatoInvalido as err:
+    causa = err.__cause__
+    print(type(causa).__name__, causa is err.__context__)
+```
+
+Sin `from e`, `__cause__` valdría `None` y la excepción original seguiría en `__context__`: la información se conserva, pero la relación entre los dos errores no queda declarada.
+:::
+
+```{pyodide}
+#| exercise: ex_causa
+#| check: true
+import contextlib, io
+ns = {}
+fallo = None
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(user_code, ns)
+    if ns["convierte"]("2.5") != 2.5:
+        fallo = "convierte('2.5') debe devolver 2.5."
+    else:
+        try:
+            ns["convierte"]("abc")
+            fallo = "convierte('abc') debe levantar DatoInvalido."
+        except ns["DatoInvalido"] as err:
+            if not isinstance(err.__cause__, ValueError):
+                fallo = ("DatoInvalido se levanta, pero su __cause__ es %s "
+                         "y no el ValueError original."
+                         % type(err.__cause__).__name__)
+except Exception as err:
+    fallo = "La celda levanta %s." % type(err).__name__
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: __cause__ guarda el ValueError."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 3. Bisección
 
 :::: {.definicion}
 **Definición 25.7 (bisección).** **Bisecar** es localizar el punto en que una condición deja de cumplirse dividiendo por la mitad el tramo donde puede estar. Requiere un invariante en el sentido de la Definición 24.7: una comprobación de bajo coste que responda sí o no sobre un punto concreto.
 ::::
 
-:::: {.proposicion}
-**Proposición 25.8.** Localizar el paso que rompe un invariante en una transformación de `n` pasos cuesta `n` comprobaciones en el peor caso examinando los pasos uno por uno, y `⌈log₂ n⌉` bisecando. Sobre 96 pasos con el culpable en el último, la medición da 96 frente a 6, por debajo de la cota `⌈log₂ 96⌉ = 7`.
+:::: {.regla}
+**Regla 25.8.** Localizar el paso que rompe un invariante en una transformación de `n` pasos cuesta `n` comprobaciones en el peor caso examinando los pasos uno por uno, y `⌈log₂ n⌉` bisecando. Sobre 96 pasos con el culpable en el último, la medición da 96 frente a 6, por debajo de la cota `⌈log₂ 96⌉ = 7`.
 ::::
 
-:::: {.demostracion}
-*Demostración.* Si el invariante se cumple antes del paso culpable y no después, la sucesión de respuestas es monótona y se aplica la Proposición 12.3. El examen uno por uno recorre los pasos hasta encontrarlo, lo que en el peor caso (el culpable al final) son `n` comprobaciones; la bisección descarta la mitad del tramo en cada una. La celda mide las dos formas sobre 12 pasos con el fallo en el séptimo (8 comprobaciones frente a 4, con el mismo culpable) y tabula el caso del culpable en el último paso para 12, 24, 48 y 96 pasos. Duplicar la longitud añade una sola comprobación. ∎
-::::
+Si el invariante se cumple antes del paso culpable y no después, la sucesión de respuestas es monótona y se aplica la Proposición 12.3 de Fundamentos. El examen uno por uno recorre los pasos hasta encontrarlo, lo que en el peor caso (el culpable al final) son `n` comprobaciones; la bisección descarta la mitad del tramo en cada una. La celda mide las dos formas sobre 12 pasos con el fallo en el séptimo (8 comprobaciones frente a 4, con el mismo culpable) y tabula el caso del culpable en el último paso para 12, 24, 48 y 96 pasos. Duplicar la longitud añade una sola comprobación.
+
+El problema inicial recorría los diez pasos en orden y llamaba siete veces a `sano` para encontrar el paso 6. Las respuestas de `sano` son monótonas (verdaderas hasta el paso culpable y falsas a partir de él), de modo que el bucle de bisección de la celda siguiente, con `PASOS = 10`, encuentra el mismo paso en cuatro llamadas, y ningún culpable entre 0 y 9 requiere más de cuatro.
 
 **Modo de falla.** Sin invariante no hay nada que bisecar: «el resultado parece anómalo» no responde sí o no sobre un paso concreto, y la búsqueda se reduce a examinar todo de nuevo. Un invariante que se rompe en dos puntos distintos rompe la monotonía; la bisección converge a uno de ellos y el problema se da por resuelto cuando queda la mitad. Para evitarlo se elige una comprobación de bajo coste y precisa, y se vuelve a bisecar después de corregir el fallo encontrado.
 
@@ -482,23 +883,88 @@ print("  despues del paso %d ya no   : %s" % (MALO, sano(MALO + 1)))
 </script>
 ```
 
+### Ejercicio 25.5, Número de comprobaciones
+
+Una transformación tiene `pasos` = 64 pasos, y uno de ellos es el culpable de un error. Con la Regla 25.8, completar `uno_por_uno` con el número de comprobaciones que se necesitan en el peor caso examinando los pasos uno por uno, y las dos líneas del bucle para que `bisecando` cuente las comprobaciones en el peor caso por bisección: cada vuelta reduce `tramo` a la mitad y suma una comprobación. Deben salir 64 y 6. La comprobación vuelve a ejecutar el código con otros datos.
+
+```{pyodide}
+#| exercise: ex_bisecar
+pasos = 64
+
+uno_por_uno = ______
+
+bisecando = 0
+tramo = pasos
+for _ in range(100):  # tope: evita un bucle sin fin
+    if tramo <= 1:
+        break
+    ______
+    ______
+
+print(uno_por_uno, bisecando)
+```
+
+::: {.hint exercise="ex_bisecar"}
+El peor caso del examen uno por uno es que el culpable esté al final. Cada bisección divide el tramo por la mitad, con `//`. Deben salir 64 y 6.
+:::
+
+::: {.solution exercise="ex_bisecar"}
+```{pyodide}
+pasos = 64
+
+uno_por_uno = pasos
+
+bisecando = 0
+tramo = pasos
+for _ in range(100):  # tope: evita un bucle sin fin
+    if tramo <= 1:
+        break
+    tramo = tramo // 2
+    bisecando = bisecando + 1
+
+print(uno_por_uno, bisecando)
+```
+
+64 frente a 6. Sobre 128 pasos serían 128 frente a 7: duplicar la transformación duplica el coste de una forma y añade una sola comprobación a la otra.
+:::
+
+```{pyodide}
+#| exercise: ex_bisecar
+#| check: true
+import contextlib, io, re
+otro = user_code
+otro = re.sub(r"(?m)^pasos\s*=.*$", 'pasos = 16', otro)
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(otro, ns)
+    general = ns.get("uno_por_uno") == 16 and ns.get("bisecando") == 4
+except Exception:
+    general = False
+ok = uno_por_uno == 64 and bisecando == 6
+if ok and general:
+    feedback = {"correct": True, "message": "Correcto: 64 contra 6."}
+elif ok:
+    feedback = {"correct": False,
+                "message": "Da los valores pedidos, pero con pasos = 16 no da 16 y 4."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 64 y 6."}
+feedback
+```
+
 ## 4. Registro de valores anómalos
 
-:::: {.proposicion}
-**Proposición 25.9.** Un mensaje por fila produce tantas líneas como filas, y el registro resultante no es legible. Registrar solo las filas que incumplen una condición, más un resumen, produce 21 líneas frente a 5000: un cociente de 238 a 1, formado por las líneas informativas.
+:::: {.regla}
+**Regla 25.9.** Un mensaje por fila produce tantas líneas como filas, y el registro resultante no es legible. Registrar solo las filas que incumplen una condición, más un resumen, produce 21 líneas frente a 5000: un cociente de 238 a 1, formado por las líneas informativas.
 ::::
 
-:::: {.demostracion}
-*Demostración.* El número de líneas de la primera forma es, por construcción, el número de filas; el de la segunda es el número de filas anómalas más el resumen, que sobre datos correctos es una fracción pequeña. La celda procesa 5000 filas de las que 20 son negativas, produce 21 líneas y muestra tres ejemplos concretos con su identificador. Un recuento por categoría en una sola pasada (Proposición 7.5) añade la distribución del problema: 20 negativas, 500 por encima de 45 y 4480 normales. ∎
+El número de líneas de la primera forma es, por construcción, el número de filas; el de la segunda es el número de filas anómalas más el resumen, que sobre datos correctos es una fracción pequeña. La celda procesa 5000 filas de las que 20 son negativas, produce 21 líneas y muestra tres ejemplos concretos con su identificador. Un recuento por categoría en una sola pasada (Regla 7.5 de Fundamentos) añade la distribución del problema: 20 negativas, 500 por encima de 45 y 4480 normales.
+
+:::: {.regla}
+**Regla 25.10.** Un nivel asociado a cada mensaje permite que el mismo código escriba más o menos mensajes sin modificar ninguna línea: en producción se omiten los detalles y al depurar se muestran.
 ::::
 
-:::: {.proposicion}
-**Proposición 25.10.** Un nivel asociado a cada mensaje permite que el mismo código escriba más o menos mensajes sin modificar ninguna línea: en producción se omiten los detalles y al depurar se muestran.
-::::
-
-:::: {.demostracion}
-*Demostración.* Cada mensaje se emite con un nivel y solo se escribe si ese nivel alcanza el umbral configurado, de modo que subir el umbral suprime los mensajes de detalle y conserva los errores. La celda ejecuta el mismo bucle con tres umbrales y obtiene 5, 1 y 1 líneas. Los mensajes se conservan en el código y se controlan con el umbral, de modo que están disponibles en la depuración siguiente. ∎
-::::
+Cada mensaje se emite con un nivel y solo se escribe si ese nivel alcanza el umbral configurado, de modo que subir el umbral suprime los mensajes de detalle y conserva los errores. La celda ejecuta el mismo bucle con tres umbrales y obtiene 5, 1 y 1 líneas. Los mensajes se conservan en el código y se controlan con el umbral, de modo que están disponibles en la depuración siguiente.
 
 **Modo de falla.** Un mensaje de detalle que construye su texto con una operación costosa consume ese coste aunque el nivel lo descarte, porque el argumento se evalúa antes de la llamada. Sobre un millón de iteraciones, el coste de formatear textos que no se escriben puede superar al del propio cálculo. Para evitarlo, el mensaje se construye solo si va a escribirse, y el formateo se delega en el componente que decide el nivel.
 
@@ -569,157 +1035,163 @@ for nivel in ("detalle", "aviso", "error"):
     print("  nivel %-8s -> %d lineas" % (nivel, len(salida)))
 ```
 
+### Ejercicio 25.6, Registrar solo lo anómalo
+
+La lista `importes` tiene seis importes, dos de ellos negativos. Con la Regla 25.9, completar la condición del `if` para que `registro` reciba una línea por cada importe negativo, y la celda añade al final una línea de resumen. La celda imprime cuántas líneas tiene `registro` y las líneas, que deben ser 3. La comprobación vuelve a ejecutar el código con otra lista, que incluye un importe igual a cero.
+
+```{pyodide}
+#| exercise: ex_anomalos
+importes = [12.0, -3.0, 40.0, 7.5, -1.0, 22.0]
+
+registro = []
+for i, x in enumerate(importes):
+    if ______:
+        registro.append("negativo en %d: %.1f" % (i, x))
+registro.append("resumen: %d de %d" % (len(registro), len(importes)))
+
+print(len(registro))
+for linea in registro:
+    print(linea)
+```
+
+::: {.hint exercise="ex_anomalos"}
+Un importe es anómalo si es menor que cero; un cero no lo es. Deben salir 3 líneas: dos de negativos y el resumen.
+:::
+
+::: {.solution exercise="ex_anomalos"}
+```{pyodide}
+importes = [12.0, -3.0, 40.0, 7.5, -1.0, 22.0]
+
+registro = []
+for i, x in enumerate(importes):
+    if x < 0:
+        registro.append("negativo en %d: %.1f" % (i, x))
+registro.append("resumen: %d de %d" % (len(registro), len(importes)))
+
+print(len(registro))
+for linea in registro:
+    print(linea)
+```
+
+Un mensaje por fila habría escrito 6 líneas; con cinco mil filas serían cinco mil, frente a tantas como anomalías más una.
+:::
+
+```{pyodide}
+#| exercise: ex_anomalos
+#| check: true
+import contextlib, io, re
+casos = [
+    (None, ["negativo en 1: -3.0", "negativo en 4: -1.0",
+            "resumen: 2 de 6"]),
+    ("[0.0, -2.0, 5.0]", ["negativo en 1: -2.0", "resumen: 1 de 3"]),
+    ("[1.0, 2.0]", ["resumen: 0 de 2"]),
+]
+fallo = None
+for ii, esperado in casos:
+    otro = user_code
+    if ii is not None:
+        otro = re.sub(r"(?m)^importes\s*=.*$", "importes = " + ii, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = ns["registro"]
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con importes = %s se esperaba %s y salio %s" % (
+            ii if ii else "la de la celda", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: una línea por negativo y el resumen."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
+### Ejercicio 25.7, Umbral de nivel
+
+Cada mensaje de `mensajes` lleva un nivel, y `NIVELES` asocia a cada nivel un número. Con la Regla 25.10, completar la condición del `if` para que `escritos` reciba los mensajes cuyo nivel alcanza el de `umbral`. La celda imprime cuántos mensajes se escriben, que con `umbral = "aviso"` deben ser 2. La comprobación vuelve a ejecutar el código con los otros dos umbrales.
+
+```{pyodide}
+#| exercise: ex_niveles
+NIVELES = {"detalle": 10, "aviso": 20, "error": 30}
+umbral = "aviso"
+mensajes = [("detalle", "id=1"), ("aviso", "id=2 sin precio"),
+            ("detalle", "id=3"), ("error", "id=4 negativo")]
+
+escritos = []
+for nivel, texto in mensajes:
+    if ______:
+        escritos.append(nivel + ": " + texto)
+
+print(len(escritos))
+```
+
+::: {.hint exercise="ex_niveles"}
+Se comparan los números de los dos niveles, `NIVELES[nivel]` y `NIVELES[umbral]`. Un mensaje del mismo nivel que el umbral se escribe. Deben salir 2.
+:::
+
+::: {.solution exercise="ex_niveles"}
+```{pyodide}
+NIVELES = {"detalle": 10, "aviso": 20, "error": 30}
+umbral = "aviso"
+mensajes = [("detalle", "id=1"), ("aviso", "id=2 sin precio"),
+            ("detalle", "id=3"), ("error", "id=4 negativo")]
+
+escritos = []
+for nivel, texto in mensajes:
+    if NIVELES[nivel] >= NIVELES[umbral]:
+        escritos.append(nivel + ": " + texto)
+
+print(len(escritos))
+```
+
+Con `umbral = "detalle"` se escriben los 4 mensajes y con `umbral = "error"` solo 1. El bucle es el mismo en los tres casos.
+:::
+
+```{pyodide}
+#| exercise: ex_niveles
+#| check: true
+import contextlib, io, re
+casos = [("aviso", 2), ("detalle", 4), ("error", 1)]
+fallo = None
+for u, esperado in casos:
+    otro = re.sub(r"(?m)^umbral\s*=.*$", 'umbral = "%s"' % u, user_code)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = len(ns["escritos"])
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con umbral = %r se esperaban %s mensajes y salio %s" % (
+            u, esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: 2, 4 y 1 mensajes con el mismo bucle."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 5. Limitaciones
 
-No se ha usado un depurador interactivo, porque una página no puede detenerse a esperar órdenes. `pdb` añade la posibilidad de desplazarse por los marcos y ejecutar código en cada uno mientras el programa está detenido; `pdb.post_mortem` realiza de forma interactiva lo de la Proposición 25.3, y un punto de ruptura permite detenerse antes de que ocurra el error.
+No se ha usado un depurador interactivo, porque una página no puede detenerse a esperar órdenes. `pdb` añade la posibilidad de desplazarse por los marcos y ejecutar código en cada uno mientras el programa está detenido; `pdb.post_mortem` realiza de forma interactiva lo de la Regla 25.3, y un punto de ruptura permite detenerse antes de que ocurra el error.
 
 Tampoco se ha tratado el caso de un fallo que no se reproduce, porque depende del orden de dos hilos, de la hora, de un diccionario externo o de un archivo que ya no existe. La bisección no es aplicable cuando la misma entrada da resultados distintos, y el primer paso es conseguir que el fallo ocurra siempre (fijando semillas, congelando la hora, aislando el estado), lo que la Lección 24 llamaba hacer la prueba reproducible.
 
-## Ejercicios
+## Pieza del proyecto
 
-### Ejercicio 1, Marco de origen del fallo
+`caja.py` crece en cada lección y los entregables reutilizan sus piezas. Esta lección añade a la carga de líneas de compra el tratamiento de los errores:
 
-La celda llama a `a("x")`, que pasa el valor a `b` y este a `c`, donde se levanta la excepción; la celda la guarda en `fallo`. Con la Proposición 25.2, completar `marcos` con la lista de marcos de la traza de `fallo`, `donde_revienta` con el nombre del último marco y `cuantos` con el número de marcos. `donde_revienta` debe dar `c` y `cuantos` debe dar 4. La comprobación vuelve a ejecutar el código con otros datos.
+1. Leer cada línea de compra escrita como texto y, si no se puede interpretar, anotar su número y el motivo (formato, cantidad o código desconocido) y seguir con las siguientes.
+2. Un error propio para las líneas inválidas que conserve como causa el error original de la conversión.
+3. Mensajes con tres niveles (detalle, aviso y error) cuyo umbral se elige al ejecutar, sin modificar el código.
+4. Localizar, en la secuencia de pasos que transforma las compras del día, el primero tras el cual el total deja de cuadrar, con un número de comprobaciones que crezca como el logaritmo del número de pasos.
 
-```{pyodide}
-#| exercise: ex_traza
-import traceback
-
-def a(v): return b(v)
-def b(v): return c(v)
-def c(v): return 1.0 * v
-
-fallo = None
-try:
-    a("x")
-except Exception as e:
-    fallo = e
-
-marcos = ______
-
-donde_revienta = ______
-cuantos = ______
-
-print(donde_revienta, cuantos)
-```
-
-::: {.hint exercise="ex_traza"}
-`traceback.extract_tb` sobre `fallo.__traceback__` devuelve la lista de marcos, y cada uno tiene un atributo `name`. Deben salir `c` y 4.
-:::
-
-::: {.solution exercise="ex_traza"}
-```{pyodide}
-import traceback
-
-def a(v): return b(v)
-def b(v): return c(v)
-def c(v): return 1.0 * v
-
-fallo = None
-try:
-    a("x")
-except Exception as e:
-    fallo = e
-
-marcos = traceback.extract_tb(fallo.__traceback__)
-
-donde_revienta = marcos[-1].name
-cuantos = len(marcos)
-
-print(donde_revienta, cuantos)
-```
-
-La excepción se levanta en `c` y hay 4 marcos: el módulo, `a`, `b` y `c`. El valor incorrecto entró en `a`, tres marcos antes del error, que es el caso más corto de la Proposición 25.2.
-:::
-
-```{pyodide}
-#| exercise: ex_traza
-#| check: true
-import contextlib, io, re
-otro = user_code
-otro = otro.replace('    a("x")', '    b("x")')
-ns = {}
-try:
-    with contextlib.redirect_stdout(io.StringIO()):
-        exec(otro, ns)
-    general = ns.get("donde_revienta") == "c" and ns.get("cuantos") == 3
-except Exception:
-    general = False
-ok = donde_revienta == "c" and cuantos == 4
-if ok and general:
-    feedback = {"correct": True, "message": "Correcto: revienta en c, con 4 marcos."}
-elif ok:
-    feedback = {"correct": False,
-                "message": "Da los valores pedidos, pero llamando a b(\"x\") no da \"c\" y 3 marcos."}
-else:
-    feedback = {"correct": False, "message": "Se esperaba 'c' y 4 marcos."}
-feedback
-```
-
-### Ejercicio 2, Número de comprobaciones
-
-Una transformación tiene `pasos` = 64 pasos, y uno de ellos es el culpable de un error. Con la Proposición 25.8, completar `uno_por_uno` con el número de comprobaciones que se necesitan en el peor caso examinando los pasos uno por uno, y las dos líneas del bucle para que `bisecando` cuente las comprobaciones en el peor caso por bisección: cada vuelta reduce `tramo` a la mitad y suma una comprobación. Deben salir 64 y 6. La comprobación vuelve a ejecutar el código con otros datos.
-
-```{pyodide}
-#| exercise: ex_bisecar
-pasos = 64
-
-uno_por_uno = ______
-
-bisecando = 0
-tramo = pasos
-while tramo > 1:
-    ______
-    ______
-
-print(uno_por_uno, bisecando)
-```
-
-::: {.hint exercise="ex_bisecar"}
-El peor caso del examen uno por uno es que el culpable esté al final. Cada bisección divide el tramo por la mitad, con `//`. Deben salir 64 y 6.
-:::
-
-::: {.solution exercise="ex_bisecar"}
-```{pyodide}
-pasos = 64
-
-uno_por_uno = pasos
-
-bisecando = 0
-tramo = pasos
-while tramo > 1:
-    tramo = tramo // 2
-    bisecando = bisecando + 1
-
-print(uno_por_uno, bisecando)
-```
-
-64 frente a 6. Sobre 128 pasos serían 128 frente a 7: duplicar la transformación duplica el coste de una forma y añade una sola comprobación a la otra.
-:::
-
-```{pyodide}
-#| exercise: ex_bisecar
-#| check: true
-import contextlib, io, re
-otro = user_code
-otro = re.sub(r"(?m)^pasos\s*=.*$", 'pasos = 16', otro)
-ns = {}
-try:
-    with contextlib.redirect_stdout(io.StringIO()):
-        exec(otro, ns)
-    general = ns.get("uno_por_uno") == 16 and ns.get("bisecando") == 4
-except Exception:
-    general = False
-ok = uno_por_uno == 64 and bisecando == 6
-if ok and general:
-    feedback = {"correct": True, "message": "Correcto: 64 contra 6."}
-elif ok:
-    feedback = {"correct": False,
-                "message": "Da los valores pedidos, pero con pasos = 16 no da 16 y 4."}
-else:
-    feedback = {"correct": False, "message": "Se esperaba 64 y 6."}
-feedback
-```
+Lo usa el [Entregable 31](entregable-31.qmd), la caja con pruebas y depuración.
 
 ## Reto
 
@@ -751,5 +1223,5 @@ Esta lección no se apoya en ninguno de los libros del plan. El material de refe
 
 **Lo que viene de los libros.** Nada. Ninguno de los libros verificados del plan trata depuración.
 
-**Lo que es mío, no del libro.** La decisión de recorrer la traza desde el programa en lugar de mostrar su texto, lo que la hace idéntica en las dos versiones de Python y muestra que la traza es una estructura; la elección de un fallo que no ocurriría con enteros, para que la Proposición 1.2 explique su aparición tardía; la medición de la bisección en su peor caso, que es la comparación adecuada; el visual donde el panel de variables sigue al marco elegido; y el cierre que relaciona el registro por niveles con la conservación de los mensajes escritos.
+**Lo que es mío, no del libro.** La decisión de recorrer la traza desde el programa en lugar de mostrar su texto, lo que la hace idéntica en las dos versiones de Python y muestra que la traza es una estructura; la elección de un fallo que no ocurriría con enteros, para que la Regla 1.2 de Fundamentos explique su aparición tardía; la medición de la bisección en su peor caso, que es la comparación adecuada; el visual donde el panel de variables sigue al marco elegido; y el cierre que relaciona el registro por niveles con la conservación de los mensajes escritos.
 :::

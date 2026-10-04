@@ -22,7 +22,7 @@ engine: markdown
 Al terminar esta lección se puede:
 
 1. Explicar la diferencia entre una disposición por filas y una [columnar]{.g data-t="disposición columnar"}, y medir los bytes que se leen en cada una: 5 a 1.
-2. Demostrar que, con los mismos datos, la disposición columnar ocupa menos una vez comprimida.
+2. Comprobar que, con los mismos datos, la disposición columnar ocupa menos una vez comprimida.
 3. Implementar la [codificación por diccionario]{.g} y medir la reducción de tamaño: 7,5 a 1.
 4. Medir el efecto de ordenar la columna: 37 500 bytes frente a 24 con codificación por rachas.
 5. Explicar los [grupos de filas]{.g data-t="grupo de filas"} con mínimo y máximo, y medir los grupos omitidos: 18 de 20 frente a ninguno.
@@ -61,27 +61,100 @@ Esta página no usa `pyarrow`. Construye a mano las dos disposiciones y las codi
 | min/max | mínimo y máximo | Las estadísticas que cada grupo guarda por columna |
 :::
 
+## Problema inicial
+
+Este problema va antes de la teoría y se resuelve con lo visto hasta Python 22: el módulo `csv` de Python 4, diccionarios y conversiones de tipo. La Sección 4 vuelve sobre él.
+
+La cadena `texto` es un CSV con dos líneas de compra escritas desde estos valores: `id` de texto con ceros a la izquierda, `cantidad` entera, `activo` booleano y `nota`, que puede faltar. Al leerlo, todo llega como texto. Completar la línea que añade a `convertidas` el diccionario de cada fila con los tipos originales: `id` como texto sin cambios, `cantidad` como `int`, `activo` como `bool` y `nota` como `None` cuando el campo está vacío. Con la cadena de la celda, la primera fila debe quedar `{'id': '007', 'cantidad': 3, 'activo': True, 'nota': None}` y la segunda debe tener `activo` igual a `False`. La comprobación vuelve a ejecutar el código con otro CSV.
+
+```{pyodide}
+#| exercise: ex_inicial
+import csv, io
+
+texto = "id,cantidad,activo,nota\n007,3,True,\n042,0,False,urgente\n"
+
+convertidas = []
+for f in csv.DictReader(io.StringIO(texto)):
+    convertidas.append(______)
+
+print(convertidas)
+```
+
+::: {.hint exercise="ex_inicial"}
+Cada valor de `f` es una cadena. `bool(f["activo"])` vale `True` también para `'False'`, porque toda cadena no vacía es verdadera; hay que comparar el texto.
+:::
+
+::: {.solution exercise="ex_inicial"}
+```{pyodide}
+import csv, io
+
+texto = "id,cantidad,activo,nota\n007,3,True,\n042,0,False,urgente\n"
+
+convertidas = []
+for f in csv.DictReader(io.StringIO(texto)):
+    convertidas.append({"id": f["id"],
+                        "cantidad": int(f["cantidad"]),
+                        "activo": f["activo"] == "True",
+                        "nota": f["nota"] if f["nota"] else None})
+
+print(convertidas)
+```
+
+Cada conversión es una decisión sobre el contenido del texto. `int(f["id"])` daría 7 y `bool(f["activo"])` daría `True` en las dos filas, sin ningún error. La Sección 4 muestra que el CSV no guarda ninguna de estas decisiones.
+:::
+
+```{pyodide}
+#| exercise: ex_inicial
+#| check: true
+import contextlib, io, re
+casos = [
+    (None, [{"id": "007", "cantidad": 3, "activo": True, "nota": None},
+            {"id": "042", "cantidad": 0, "activo": False,
+             "nota": "urgente"}]),
+    ('"id,cantidad,activo,nota\\n0100,12,False,\\n9,1,True,x\\n"',
+     [{"id": "0100", "cantidad": 12, "activo": False, "nota": None},
+      {"id": "9", "cantidad": 1, "activo": True, "nota": "x"}]),
+]
+fallo = None
+for tx, esperado in casos:
+    otro = user_code
+    if tx is not None:
+        otro = re.sub(r"(?m)^texto\s*=.*$", "texto = TTT", otro)
+        otro = otro.replace("TTT", tx)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = ns.get("convertidas")
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "se esperaba %s y salio %s" % (esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto, también con otro CSV."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 1. Disposición por filas y disposición columnar
 
 :::: {.definicion}
 **Definición 23.1 (disposición por filas y columnar).** En una disposición **por filas**, los valores de una misma fila quedan contiguos; en una **columnar**, los de una misma columna. Ambas guardan los mismos datos y ocupan lo mismo sin comprimir; difieren en qué valores quedan adyacentes.
 ::::
 
-:::: {.proposicion}
-**Proposición 23.2.** Una consulta que necesita `q` de las `C` columnas lee `C/q` veces menos bytes en la disposición columnar. Con 10 columnas y 2 pedidas, la medición da 80 000 bytes frente a 16 000, cociente 5 a 1.
+:::: {.regla}
+**Regla 23.2.** Una consulta que necesita `q` de las `C` columnas lee `C/q` veces menos bytes en la disposición columnar. Con 10 columnas y 2 pedidas, la medición da 80 000 bytes frente a 16 000, cociente 5 a 1.
 ::::
 
-:::: {.demostracion}
-*Demostración.* En la disposición columnar los valores de una columna forman un bloque contiguo, de modo que leer `q` columnas es leer `q` bloques: `q · F · 4` bytes. En la disposición por filas los valores necesarios están intercalados con los demás, separados por `C − q` valores de otras columnas, de modo que ningún tramo contiguo contiene solo lo pedido y se recorren los `C · F · 4` bytes. El cociente es `C/q`. La celda lo mide sobre una tabla de 2000 × 10 y comprueba que el cociente coincide con `10/2`. ∎
+En la disposición columnar los valores de una columna forman un bloque contiguo, de modo que leer `q` columnas es leer `q` bloques: `q · F · 4` bytes. En la disposición por filas los valores necesarios están intercalados con los demás, separados por `C − q` valores de otras columnas, de modo que ningún tramo contiguo contiene solo lo pedido y se recorren los `C · F · 4` bytes. El cociente es `C/q`. La celda lo mide sobre una tabla de 2000 × 10 y comprueba que el cociente coincide con `10/2`.
+
+:::: {.regla}
+**Regla 23.3.** Los mismos datos ocupan menos comprimidos en disposición columnar, porque un compresor aprovecha la semejanza entre valores próximos y los valores de una columna se parecen entre sí.
 ::::
 
-:::: {.proposicion}
-**Proposición 23.3.** Los mismos datos ocupan menos comprimidos en disposición columnar, porque un compresor aprovecha la semejanza entre valores próximos y los valores de una columna se parecen entre sí.
-::::
-
-:::: {.demostracion}
-*Demostración.* Un compresor de propósito general sustituye repeticiones por referencias a fragmentos anteriores, y encuentra más repeticiones cuanto más cerca estén los valores parecidos. En la disposición por filas cada valor de una columna está separado del siguiente por los de las otras `C − 1`; en la columnar, es el vecino inmediato. La celda comprime las dos versiones de la misma tabla, obtiene 712 bytes frente a 478 y comprueba que ambas se descomprimen a su contenido original. ∎
-::::
+Un compresor de propósito general sustituye repeticiones por referencias a fragmentos anteriores, y encuentra más repeticiones cuanto más cerca estén los valores parecidos. En la disposición por filas cada valor de una columna está separado del siguiente por los de las otras `C − 1`; en la columnar, es el vecino inmediato. La celda comprime las dos versiones de la misma tabla, obtiene 712 bytes frente a 478 y comprueba que ambas se descomprimen a su contenido original.
 
 **Modo de falla.** La ventaja desaparece cuando la consulta pide todas las columnas: las dos disposiciones leen lo mismo y la columnar añade el coste de recomponer las filas. Elegir el formato por costumbre, sin considerar cómo se consulta, lleva a guardar en columnar tablas que siempre se leen enteras y a guardar por filas tablas anchas de las que se piden dos campos.
 
@@ -226,27 +299,153 @@ print("los dos se descomprimen al mismo contenido: %s"
 </script>
 ```
 
+### Ejercicio 23.1, Bytes leídos
+
+Una tabla tiene `filas` = 100 000 filas y `columnas` = 40 columnas de `ancho` = 4 bytes, y una consulta necesita `pedidas` = 3 columnas. Con la Regla 23.2, completar `por_filas` con los bytes que se leen en la disposición por filas, `columnar` con los que se leen en la disposición columnar, y `cociente` con la división entera `//` de la primera cantidad entre la segunda. Deben salir 16000000, 1200000 y 13. La comprobación vuelve a ejecutar el código con otros datos.
+
+```{pyodide}
+#| exercise: ex_bytes
+filas, columnas, pedidas, ancho = 100000, 40, 3, 4
+
+por_filas = ______
+columnar = ______
+cociente = ______
+
+print(por_filas, columnar, cociente)
+```
+
+::: {.hint exercise="ex_bytes"}
+En la disposición columnar se leen tantos bloques como columnas pedidas. En la disposición por filas, los valores necesarios están intercalados y ningún tramo contiguo los contiene aislados. Deben salir 16000000, 1200000 y 13.
+:::
+
+::: {.solution exercise="ex_bytes"}
+```{pyodide}
+filas, columnas, pedidas, ancho = 100000, 40, 3, 4
+
+por_filas = filas * columnas * ancho
+columnar = filas * pedidas * ancho
+cociente = por_filas // columnar
+
+print(por_filas, columnar, cociente)
+```
+
+16 MB frente a 1,2 MB, un cociente de 40/3 ≈ 13,3, que la división entera `//` de la celda trunca a 13. El cociente es `columnas / pedidas` y no depende del número de filas: duplicar las filas duplica las dos cantidades y deja el cociente igual.
+:::
+
+```{pyodide}
+#| exercise: ex_bytes
+#| check: true
+import contextlib, io, re
+otro = user_code
+otro = re.sub(r"(?m)^filas, columnas, pedidas, ancho\s*=.*$", 'filas, columnas, pedidas, ancho = 10, 5, 2, 8', otro)
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(otro, ns)
+    general = (ns.get("por_filas"), ns.get("columnar"), ns.get("cociente")) == (400, 160, 2)
+except Exception:
+    general = False
+ok = por_filas == 16000000 and columnar == 1200000 and cociente == 13
+if ok and general:
+    feedback = {"correct": True, "message": "Correcto: 16 MB contra 1,2 MB, cociente 13."}
+elif ok:
+    feedback = {"correct": False,
+                "message": "Da los valores pedidos, pero con 10, 5, 2 y 8 no da 400, 160 y 2."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 16000000, 1200000 y 13."}
+feedback
+```
+
+### Ejercicio 23.2, Las columnas de una tabla
+
+La lista `tabla` guarda una tabla de `F` filas y `C` columnas, fila a fila. Con la Regla 23.3, completar la línea de `columnas` con la lista de las `C` columnas, cada una con sus `F` valores en orden. La celda empaqueta las dos disposiciones, las comprime con `zlib` e imprime si la columnar ocupa menos, que debe dar `True`. La comprobación vuelve a ejecutar el código con otros `F` y `C`.
+
+```{pyodide}
+#| exercise: ex_columnas
+import struct, zlib
+
+F, C = 200, 5
+tabla = [[(f * 7 + c * 13) % 50 for c in range(C)] for f in range(F)]
+
+columnas = ______
+
+filas_b = b"".join(struct.pack("<%di" % C, *r) for r in tabla)
+cols_b = b"".join(struct.pack("<%di" % F, *k) for k in columnas)
+menor = len(zlib.compress(cols_b)) < len(zlib.compress(filas_b))
+print(len(columnas), len(cols_b) == len(filas_b), menor)
+```
+
+::: {.hint exercise="ex_columnas"}
+La columna `c` reúne `fila[c]` de cada fila. Una lista por comprensión anidada dentro de otra recorre las `C` columnas.
+:::
+
+::: {.solution exercise="ex_columnas"}
+```{pyodide}
+import struct, zlib
+
+F, C = 200, 5
+tabla = [[(f * 7 + c * 13) % 50 for c in range(C)] for f in range(F)]
+
+columnas = [[fila[c] for fila in tabla] for c in range(C)]
+
+filas_b = b"".join(struct.pack("<%di" % C, *r) for r in tabla)
+cols_b = b"".join(struct.pack("<%di" % F, *k) for k in columnas)
+menor = len(zlib.compress(cols_b)) < len(zlib.compress(filas_b))
+print(len(columnas), len(cols_b) == len(filas_b), menor)
+```
+
+`list(zip(*tabla))` da las mismas columnas como tuplas. Las dos disposiciones ocupan 4000 bytes sin comprimir; comprimidas, la columnar ocupa menos.
+:::
+
+```{pyodide}
+#| exercise: ex_columnas
+#| check: true
+import contextlib, io, re
+fallo = None
+for ff, cc in ((None, None), (30, 4), (7, 9), (1, 3)):
+    otro = user_code
+    if ff is not None:
+        otro = re.sub(r"(?m)^F, C\s*=.*$", "F, C = %d, %d" % (ff, cc), otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        t, k = ns["tabla"], ns["columnas"]
+        bien = len(k) == len(t[0])
+        for c in range(len(t[0])):
+            for f in range(len(t)):
+                bien = bien and k[c][f] == t[f][c]
+        bien = bien and len(k[0]) == len(t)
+    except Exception as err:
+        bien = False
+    if not bien and fallo is None:
+        fallo = ("con F, C = %s, %s las columnas no son las de la tabla"
+                 % (ff or 200, cc or 5))
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: C columnas de F valores."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 2. Codificación por diccionario y por rachas
 
 :::: {.definicion}
 **Definición 23.4 (codificación por diccionario).** La **codificación por diccionario** guarda una sola vez los valores distintos de una columna en un catálogo y sustituye cada fila por el número que indica su posición en él. Es la misma idea que un tipo categórico.
 ::::
 
-:::: {.proposicion}
-**Proposición 23.5.** Sobre una columna de texto con pocos valores distintos, la codificación por diccionario reduce el tamaño en un factor que crece al disminuir la variedad. Con 4 valores en 5000 filas, la medición da 37 500 bytes frente a 5030, un cociente de 7,5 a 1, y cada fila pasa de 7,5 bytes a 1.
+:::: {.regla}
+**Regla 23.5.** Sobre una columna de texto con pocos valores distintos, la codificación por diccionario reduce el tamaño en un factor que crece al disminuir la variedad. Con 4 valores en 5000 filas, la medición da 37 500 bytes frente a 5030, un cociente de 7,5 a 1, y cada fila pasa de 7,5 bytes a 1.
 ::::
 
-:::: {.demostracion}
-*Demostración.* Sin codificar, cada fila guarda el texto completo, de modo que el total es la suma de las longitudes. Con la codificación, el catálogo guarda cada texto una vez y cada fila guarda un índice, cuyo tamaño depende del número de valores distintos y no de su longitud: con 4 valores basta un byte. El total pasa de `F · longitud media` a `catálogo + F · bytes por índice`. La celda lo mide y comprueba las dos cifras. ∎
+Sin codificar, cada fila guarda el texto completo, de modo que el total es la suma de las longitudes. Con la codificación, el catálogo guarda cada texto una vez y cada fila guarda un índice, cuyo tamaño depende del número de valores distintos y no de su longitud: con 4 valores basta un byte. El total pasa de `F · longitud media` a `catálogo + F · bytes por índice`. La celda lo mide y comprueba las dos cifras.
+
+:::: {.regla}
+**Regla 23.6.** Si la columna está ordenada, basta guardar cuántos valores iguales hay seguidos. Sobre los mismos datos la medición da 24 bytes, frente a 5030 con codificación por diccionario y 37 500 sin codificar.
 ::::
 
-:::: {.proposicion}
-**Proposición 23.6.** Si la columna está ordenada, basta guardar cuántos valores iguales hay seguidos. Sobre los mismos datos la medición da 24 bytes, frente a 5030 con codificación por diccionario y 37 500 sin codificar.
-::::
-
-:::: {.demostracion}
-*Demostración.* Al ordenar, todos los valores iguales quedan en un tramo contiguo, y la columna queda descrita por tantas parejas «valor, cuántos» como valores distintos haya, con independencia del número de filas. Con 4 valores distintos son 4 parejas. La celda comprueba que las cuatro rachas tienen 1250 elementos cada una y que ocupan 24 bytes. La ordenación no modifica ningún dato y reduce el tamaño en tres órdenes de magnitud. ∎
-::::
+Al ordenar, todos los valores iguales quedan en un tramo contiguo, y la columna queda descrita por tantas parejas «valor, cuántos» como valores distintos haya, con independencia del número de filas. Con 4 valores distintos son 4 parejas. La celda comprueba que las cuatro rachas tienen 1250 elementos cada una y que ocupan 24 bytes. La ordenación no modifica ningún dato y reduce el tamaño en tres órdenes de magnitud.
 
 **Modo de falla.** Ordenar por una columna deshace el orden por cualquier otra, de modo que la reducción en una columna se pierde en las demás. Una tabla que se escribe ordenada y después recibe filas nuevas al final deja de estar ordenada sin ningún aviso: las rachas se fragmentan y el archivo crece con cada adición. Para evitarlo se reescribe el archivo entero al compactarlo, en lugar de añadir filas, y se elige el orden según la consulta más frecuente.
 
@@ -307,19 +506,145 @@ print("  contra %d del diccionario y %d del texto crudo" % (len(dicc), len(crudo
 print("  cociente frente al crudo: %d a 1" % (len(crudo) // len(rle)))
 ```
 
+### Ejercicio 23.3, Tamaño del catálogo
+
+Una columna tiene `filas` = 1 000 000 de filas con `distintos` = 200 valores distintos de `largo_medio` = 8 bytes de media. Con la Regla 23.5, completar `sin_codificar` con los bytes de la columna sin codificar, `catalogo` con los bytes del catálogo de valores distintos, y `codificada` con los bytes de la columna codificada por diccionario: el catálogo más un índice de 1 byte por fila. La celda imprime los dos tamaños y su cociente redondeado a un decimal. Deben salir 8000000 y 1001600, con un cociente de 8,0. La comprobación vuelve a ejecutar el código con otros datos.
+
+```{pyodide}
+#| exercise: ex_dicc
+filas, distintos, largo_medio = 1000000, 200, 8
+
+sin_codificar = ______
+catalogo = ______
+codificada = ______
+
+print(sin_codificar, codificada, round(sin_codificar / codificada, 1))
+```
+
+::: {.hint exercise="ex_dicc"}
+El catálogo guarda cada valor distinto una sola vez; los índices, uno por fila. Deben salir 8000000 y 1001600, con un cociente de 8.0.
+:::
+
+::: {.solution exercise="ex_dicc"}
+```{pyodide}
+filas, distintos, largo_medio = 1000000, 200, 8
+
+sin_codificar = filas * largo_medio
+catalogo = distintos * largo_medio
+codificada = catalogo + filas * 1
+
+print(sin_codificar, codificada, round(sin_codificar / codificada, 1))
+```
+
+8 MB frente a algo más de 1 MB: un factor de 8, que es el tamaño medio del valor dividido entre el del índice. El catálogo aporta 1600 bytes, una cantidad despreciable: el tamaño depende de los bytes que ocupa cada fila y no del número de valores distintos, mientras estos quepan en un índice de un byte.
+:::
+
+```{pyodide}
+#| exercise: ex_dicc
+#| check: true
+import contextlib, io, re
+otro = user_code
+otro = re.sub(r"(?m)^filas, distintos, largo_medio\s*=.*$", 'filas, distintos, largo_medio = 100, 10, 4', otro)
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(otro, ns)
+    general = ns.get("sin_codificar") == 400 and ns.get("codificada") == 140
+except Exception:
+    general = False
+ok = sin_codificar == 8000000 and codificada == 1001600
+if ok and general:
+    feedback = {"correct": True, "message": "Correcto: 8 MB contra 1,0016 MB, factor 8."}
+elif ok:
+    feedback = {"correct": False,
+                "message": "Da los valores pedidos, pero con 100, 10 y 4 no da 400 y 140."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 8000000 y 1001600."}
+feedback
+```
+
+### Ejercicio 23.4, Codificación por rachas
+
+La lista `valores` tiene seis textos con tres valores distintos. La celda la ordena en `ordenada` y recorre sus elementos. Con la Regla 23.6, sustituir `______` por el cuerpo del bucle, que debe dejar en `rachas` una lista de pares `[valor, cuántos]`, uno por cada tramo de valores iguales seguidos. La celda imprime `rachas` y su longitud, que deben ser `[['a', 3], ['b', 1], ['c', 2]]` y 3. La comprobación vuelve a ejecutar el código con otras listas.
+
+```{pyodide}
+#| exercise: ex_rachas
+valores = ["b", "a", "c", "a", "c", "a"]
+
+ordenada = sorted(valores)
+rachas = []
+for v in ordenada:
+    ______
+
+print(rachas, len(rachas))
+```
+
+::: {.hint exercise="ex_rachas"}
+Si `rachas` no está vacía y su último par tiene el valor `v`, se suma 1 a su cuenta; si no, se añade `[v, 1]`.
+:::
+
+::: {.solution exercise="ex_rachas"}
+```{pyodide}
+valores = ["b", "a", "c", "a", "c", "a"]
+
+ordenada = sorted(valores)
+rachas = []
+for v in ordenada:
+    if rachas and rachas[-1][0] == v:
+        rachas[-1][1] += 1
+    else:
+        rachas.append([v, 1])
+
+print(rachas, len(rachas))
+```
+
+Sobre `valores` sin ordenar salen 6 rachas de longitud 1: la codificación solo reduce el tamaño cuando los valores iguales están juntos.
+:::
+
+```{pyodide}
+#| exercise: ex_rachas
+#| check: true
+import contextlib, io, re
+casos = [(None, [["a", 3], ["b", 1], ["c", 2]]),
+         ('["x", "x", "x"]', [["x", 3]]),
+         ("[]", []),
+         ('["q", "p", "q", "r", "p"]', [["p", 2], ["q", 2], ["r", 1]])]
+fallo = None
+for vv, esperado in casos:
+    otro = user_code
+    if vv is not None:
+        otro = re.sub(r"(?m)^valores\s*=.*$", "valores = " + vv, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = []
+        for par in ns["rachas"]:
+            obtenido.append(list(par))
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con valores = %s se esperaba %s y salio %s" % (
+            vv or "la de la celda", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: tres rachas para seis valores."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 3. Grupos de filas y estadísticas por grupo
 
 :::: {.definicion}
 **Definición 23.7 (grupo de filas).** Un archivo columnar se divide en **grupos de filas**, y cada grupo guarda, por columna, su mínimo y su máximo. Una consulta con un filtro de rango compara ese par con el rango pedido y descarta el grupo entero sin leerlo cuando los intervalos son disjuntos.
 ::::
 
-:::: {.proposicion}
-**Proposición 23.8.** La utilidad de esas estadísticas depende del orden en que se escribieron las filas. Sobre la misma tabla de 20 grupos, un filtro sobre una columna ordenada omite 18 grupos y uno sobre una columna desordenada no omite ninguno: 4000 bytes leídos frente a 40 000, 10 a 1.
+:::: {.regla}
+**Regla 23.8.** La utilidad de esas estadísticas depende del orden en que se escribieron las filas. Sobre la misma tabla de 20 grupos, un filtro sobre una columna ordenada omite 18 grupos y uno sobre una columna desordenada no omite ninguno: 4000 bytes leídos frente a 40 000, 10 a 1.
 ::::
 
-:::: {.demostracion}
-*Demostración.* En una columna ordenada, cada grupo cubre un tramo estrecho de valores, de modo que la mayoría de los tramos no se cruzan con el rango pedido y sus estadísticas bastan para descartarlos. En una columna desordenada, cada grupo contiene valores repartidos por todo el recorrido, su mínimo y su máximo abarcan casi todo el rango y ningún grupo puede descartarse: el filtro lee el archivo entero. La celda mide los dos casos sobre los mismos 10 000 valores y comprueba que con la columna ordenada se lee el 10 % del archivo y con la desordenada el 100 %. ∎
-::::
+En una columna ordenada, cada grupo cubre un tramo estrecho de valores, de modo que la mayoría de los tramos no se cruzan con el rango pedido y sus estadísticas bastan para descartarlos. En una columna desordenada, cada grupo contiene valores repartidos por todo el recorrido, su mínimo y su máximo abarcan casi todo el rango y ningún grupo puede descartarse: el filtro lee el archivo entero. La celda mide los dos casos sobre los mismos 10 000 valores y comprueba que con la columna ordenada se lee el 10 % del archivo y con la desordenada el 100 %.
 
 **Modo de falla.** Las estadísticas se conservan y el filtro da el resultado correcto; lo que se pierde es la posibilidad de omitir grupos, y esa pérdida no produce ningún error ni advertencia. El síntoma es una consulta que tarda diez veces más de lo esperado sobre datos con el mismo formato, y la causa es el orden en que se escribieron, posiblemente meses antes.
 
@@ -464,15 +789,76 @@ print("  cociente            : %d a 1" % (bytes_des // bytes_ord))
 </script>
 ```
 
+### Ejercicio 23.5, Grupos que se omiten
+
+La lista `grupos` guarda el mínimo y el máximo de una columna en cada grupo de filas, y la consulta pide los valores entre `bajo` y `alto`, ambos incluidos. Con la Regla 23.8, completar la línea de `omitidos` con el número de grupos cuyo intervalo no corta el rango pedido, que son los que se descartan sin leer. Con los datos de la celda debe dar 2. La comprobación vuelve a ejecutar el código con otros grupos y otros rangos.
+
+```{pyodide}
+#| exercise: ex_omitidos
+grupos = [(1, 10), (11, 20), (21, 30), (31, 40)]
+bajo, alto = 15, 22
+
+omitidos = ______
+
+print(omitidos, len(grupos) - omitidos)
+```
+
+::: {.hint exercise="ex_omitidos"}
+Un grupo `(mn, mx)` se omite si `mx < bajo` o si `mn > alto`.
+:::
+
+::: {.solution exercise="ex_omitidos"}
+```{pyodide}
+grupos = [(1, 10), (11, 20), (21, 30), (31, 40)]
+bajo, alto = 15, 22
+
+omitidos = sum(1 for mn, mx in grupos if mx < bajo or mn > alto)
+
+print(omitidos, len(grupos) - omitidos)
+```
+
+Se leen los grupos `(11, 20)` y `(21, 30)`. Si los cuatro grupos tuvieran mínimo 1 y máximo 40, como ocurre con una columna desordenada, no se omitiría ninguno.
+:::
+
+```{pyodide}
+#| exercise: ex_omitidos
+#| check: true
+import contextlib, io, re
+casos = [(None, None, 2),
+         ("[(1, 40), (2, 39), (1, 40)]", "15, 22", 0),
+         ("[(1, 10), (11, 20), (21, 30)]", "10, 11", 1),
+         ("[(5, 5), (6, 6), (7, 7)]", "8, 9", 3)]
+fallo = None
+for gg, rr, esperado in casos:
+    otro = user_code
+    if gg is not None:
+        otro = re.sub(r"(?m)^grupos\s*=.*$", "grupos = " + gg, otro)
+        otro = re.sub(r"(?m)^bajo, alto\s*=.*$", "bajo, alto = " + rr, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = ns.get("omitidos")
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con grupos = %s y rango %s se esperaba %s y salio %s" % (
+            gg or "los de la celda", rr or "15, 22", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: dos grupos se omiten."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 4. Pérdidas de tipo en un CSV
 
-:::: {.proposicion}
-**Proposición 23.9.** Una ida y vuelta por CSV pierde el tipo de todas las columnas: los cinco valores vuelven como texto. En particular el ausente vuelve como cadena vacía, y el booleano `False` vuelve como el texto `'False'`, que por la Proposición 2.9 es verdadero.
+:::: {.regla}
+**Regla 23.9.** Una ida y vuelta por CSV pierde el tipo de todas las columnas: los cinco valores vuelven como texto. En particular el ausente vuelve como cadena vacía, y el booleano `False` vuelve como el texto `'False'`, que por la Regla 2.9 de Fundamentos es verdadero.
 ::::
 
-:::: {.demostracion}
-*Demostración.* El formato guarda caracteres separados por comas y no tiene un lugar donde anotar el tipo de cada columna; al leer, todo es texto y cualquier tipo tiene que deducirse del contenido. `None` se escribe como la cadena vacía y deja de distinguirse de un texto vacío legítimo, y `False` se escribe como `'False'`, cuyo valor booleano es el de cualquier cadena no vacía. La celda exhibe las cinco columnas antes y después, y comprueba que `bool('False')` vale `True`. ∎
-::::
+El formato guarda caracteres separados por comas y no tiene un lugar donde anotar el tipo de cada columna; al leer, todo es texto y cualquier tipo tiene que deducirse del contenido. `None` se escribe como la cadena vacía y deja de distinguirse de un texto vacío legítimo, y `False` se escribe como `'False'`, cuyo valor booleano es el de cualquier cadena no vacía. La celda exhibe las cinco columnas antes y después, y comprueba que `bool('False')` vale `True`.
 
 **Modo de falla.** Existe una pérdida más costosa que las cinco anteriores, que se produce cuando el lector deduce los tipos: un identificador `'007'` deducido como entero pasa a `7` y deja de coincidir con su origen. El resultado es plausible (una columna de enteros, ningún error) y el fallo aparece al unir dos tablas y encontrar menos coincidencias de las esperadas. Para evitarlo se declaran los tipos al leer un CSV, y cuando el archivo es un paso intermedio y no un intercambio con personas se usa un formato que guarde los tipos.
 
@@ -528,127 +914,82 @@ for k, t in esquema.items():
 
 Un formato con tipos declarados no tiene ninguno de estos problemas, porque no hay nada que deducir. Es la misma idea de la Lección 19: un tipo declarado y comprobado es más fiable que uno deducido de los datos observados.
 
+El problema inicial pedía deshacer estas pérdidas a mano. Cada conversión era una decisión sobre el texto: `'007'` se deja como texto, `'False'` se compara en lugar de pasarse a `bool`, y el campo vacío se lee como ausente. El CSV no guarda ninguna de esas decisiones y hay que repetirlas en cada lectura; un formato con tipos las registra una vez, al escribir.
+
+### Ejercicio 23.6, Identificadores que cambian al deducir el tipo
+
+La lista `ids` trae identificadores leídos de un CSV como texto. Un lector que deduce los tipos convierte en entero todo lo que tiene forma de número. Con la Regla 23.9, completar la línea de `cambian` con cuántos identificadores no se recuperan iguales tras pasar a `int` y volver a texto con `str`. Con la lista de la celda debe dar 2. La comprobación vuelve a ejecutar el código con otras listas.
+
+```{pyodide}
+#| exercise: ex_ids
+ids = ["007", "42", "0100", "15"]
+
+cambian = ______
+
+print(cambian)
+```
+
+::: {.hint exercise="ex_ids"}
+Para cada `s` de `ids`, se compara `str(int(s))` con `s` y se cuentan las diferencias.
+:::
+
+::: {.solution exercise="ex_ids"}
+```{pyodide}
+ids = ["007", "42", "0100", "15"]
+
+cambian = sum(1 for s in ids if str(int(s)) != s)
+
+print(cambian)
+```
+
+`'007'` pasa a 7 y `'0100'` a 100. Un cruce por `id` con otra tabla que los guarde como texto pierde esas dos filas sin ningún error.
+:::
+
+```{pyodide}
+#| exercise: ex_ids
+#| check: true
+import contextlib, io, re
+casos = [(None, 2), ('["1", "2"]', 0), ('["0", "00"]', 1),
+         ("[]", 0), ('["0001", "010", "100"]', 2)]
+fallo = None
+for ii, esperado in casos:
+    otro = user_code
+    if ii is not None:
+        otro = re.sub(r"(?m)^ids\s*=.*$", "ids = " + ii, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = ns.get("cambian")
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con ids = %s se esperaba %s y salio %s" % (
+            ii or "la de la celda", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: dos identificadores pierden ceros."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 5. Limitaciones
 
 El formato real contiene más elementos de los construidos aquí: páginas dentro de cada grupo con sus propias estadísticas, codificaciones que guardan solo la diferencia con el valor anterior, tipos anidados (listas y estructuras dentro de una celda) y un índice que permite saltar dentro de un grupo además de entre grupos. La biblioteca que lo implementa en Python es `pyarrow`, y esta página no la usa porque una medición sobre la biblioteca incluiría también su implementación.
 
 Tampoco se ha distinguido Parquet de Arrow, que resuelven problemas distintos. Parquet es un formato de archivo, diseñado para ocupar poco y leerse por partes. Arrow es una disposición en memoria, diseñada para que dos programas compartan los mismos bytes sin copiarlos ni convertirlos. Un archivo Parquet se lee y se convierte a Arrow, y esa conversión tiene su propio coste.
 
-## Ejercicios
+## Pieza del proyecto
 
-### Ejercicio 1, Bytes leídos
+`caja.py` crece en cada lección y los entregables reutilizan sus piezas. Esta lección añade el archivo histórico de las líneas de compra:
 
-Una tabla tiene `filas` = 100 000 filas y `columnas` = 40 columnas de `ancho` = 4 bytes, y una consulta necesita `pedidas` = 3 columnas. Con la Proposición 23.2, completar `por_filas` con los bytes que se leen en la disposición por filas, `columnar` con los que se leen en la disposición columnar, y `cociente` con la división entera `//` de la primera cantidad entre la segunda. Deben salir 16000000, 1200000 y 13. La comprobación vuelve a ejecutar el código con otros datos.
+1. Guardar las líneas de compra de cada día en un archivo histórico que conserve en una ida y vuelta el tipo de cada campo: texto con ceros a la izquierda, entero, decimal, booleano y ausente.
+2. Leer del histórico solo los campos que pide un informe y contar los bytes leídos frente a los del archivo entero.
+3. Guardar el nombre del producto como un catálogo de valores distintos más un número por línea, y comparar el tamaño con el del texto completo.
+4. Partir el histórico en bloques con la fecha mínima y máxima de cada uno, de modo que una consulta por rango de fechas descarte sin leerlos los bloques que no lo cortan.
 
-```{pyodide}
-#| exercise: ex_bytes
-filas, columnas, pedidas, ancho = 100000, 40, 3, 4
-
-por_filas = ______
-columnar = ______
-cociente = ______
-
-print(por_filas, columnar, cociente)
-```
-
-::: {.hint exercise="ex_bytes"}
-En la disposición columnar se leen tantos bloques como columnas pedidas. En la disposición por filas, los valores necesarios están intercalados y ningún tramo contiguo los contiene aislados. Deben salir 16000000, 1200000 y 13.
-:::
-
-::: {.solution exercise="ex_bytes"}
-```{pyodide}
-filas, columnas, pedidas, ancho = 100000, 40, 3, 4
-
-por_filas = filas * columnas * ancho
-columnar = filas * pedidas * ancho
-cociente = por_filas // columnar
-
-print(por_filas, columnar, cociente)
-```
-
-16 MB frente a 1,2 MB, un cociente de 40/3 ≈ 13,3, que la división entera `//` de la celda trunca a 13. El cociente es `columnas / pedidas` y no depende del número de filas: duplicar las filas duplica las dos cantidades y deja el cociente igual.
-:::
-
-```{pyodide}
-#| exercise: ex_bytes
-#| check: true
-import contextlib, io, re
-otro = user_code
-otro = re.sub(r"(?m)^filas, columnas, pedidas, ancho\s*=.*$", 'filas, columnas, pedidas, ancho = 10, 5, 2, 8', otro)
-ns = {}
-try:
-    with contextlib.redirect_stdout(io.StringIO()):
-        exec(otro, ns)
-    general = (ns.get("por_filas"), ns.get("columnar"), ns.get("cociente")) == (400, 160, 2)
-except Exception:
-    general = False
-ok = por_filas == 16000000 and columnar == 1200000 and cociente == 13
-if ok and general:
-    feedback = {"correct": True, "message": "Correcto: 16 MB contra 1,2 MB, cociente 13."}
-elif ok:
-    feedback = {"correct": False,
-                "message": "Da los valores pedidos, pero con 10, 5, 2 y 8 no da 400, 160 y 2."}
-else:
-    feedback = {"correct": False, "message": "Se esperaba 16000000, 1200000 y 13."}
-feedback
-```
-
-### Ejercicio 2, Tamaño del catálogo
-
-Una columna tiene `filas` = 1 000 000 de filas con `distintos` = 200 valores distintos de `largo_medio` = 8 bytes de media. Con la Proposición 23.5, completar `sin_codificar` con los bytes de la columna sin codificar, `catalogo` con los bytes del catálogo de valores distintos, y `codificada` con los bytes de la columna codificada por diccionario: el catálogo más un índice de 1 byte por fila. La celda imprime los dos tamaños y su cociente redondeado a un decimal. Deben salir 8000000 y 1001600, con un cociente de 8,0. La comprobación vuelve a ejecutar el código con otros datos.
-
-```{pyodide}
-#| exercise: ex_dicc
-filas, distintos, largo_medio = 1000000, 200, 8
-
-sin_codificar = ______
-catalogo = ______
-codificada = ______
-
-print(sin_codificar, codificada, round(sin_codificar / codificada, 1))
-```
-
-::: {.hint exercise="ex_dicc"}
-El catálogo guarda cada valor distinto una sola vez; los índices, uno por fila. Deben salir 8000000 y 1001600, con un cociente de 8.0.
-:::
-
-::: {.solution exercise="ex_dicc"}
-```{pyodide}
-filas, distintos, largo_medio = 1000000, 200, 8
-
-sin_codificar = filas * largo_medio
-catalogo = distintos * largo_medio
-codificada = catalogo + filas * 1
-
-print(sin_codificar, codificada, round(sin_codificar / codificada, 1))
-```
-
-8 MB frente a algo más de 1 MB: un factor de 8, que es el tamaño medio del valor dividido entre el del índice. El catálogo aporta 1600 bytes, una cantidad despreciable: el tamaño depende de los bytes que ocupa cada fila y no del número de valores distintos, mientras estos quepan en un índice de un byte.
-:::
-
-```{pyodide}
-#| exercise: ex_dicc
-#| check: true
-import contextlib, io, re
-otro = user_code
-otro = re.sub(r"(?m)^filas, distintos, largo_medio\s*=.*$", 'filas, distintos, largo_medio = 100, 10, 4', otro)
-ns = {}
-try:
-    with contextlib.redirect_stdout(io.StringIO()):
-        exec(otro, ns)
-    general = ns.get("sin_codificar") == 400 and ns.get("codificada") == 140
-except Exception:
-    general = False
-ok = sin_codificar == 8000000 and codificada == 1001600
-if ok and general:
-    feedback = {"correct": True, "message": "Correcto: 8 MB contra 1,0016 MB, factor 8."}
-elif ok:
-    feedback = {"correct": False,
-                "message": "Da los valores pedidos, pero con 100, 10 y 4 no da 400 y 140."}
-else:
-    feedback = {"correct": False, "message": "Se esperaba 8000000 y 1001600."}
-feedback
-```
+Lo usa el [Entregable 30](entregable-30.qmd), el archivo histórico en formato columnar.
 
 ## Reto
 

@@ -21,12 +21,12 @@ engine: markdown
 
 Al terminar esta lección se puede:
 
-1. Demostrar el contrato del hash y describir el comportamiento de un diccionario cuando se incumple.
+1. Comprobar el contrato del hash y describir el comportamiento de un diccionario cuando se incumple.
 2. Explicar por qué definir `__eq__` sin `__hash__` deja a la clase fuera de los diccionarios.
-3. Demostrar que `for`, `len` e `in` requieren tres métodos y no una lista, y escribir una clase que los implemente sin guardar elementos.
-4. Demostrar que `__slots__` elimina el diccionario de instancia, y medir que el tamaño del objeto se mantiene constante.
+3. Comprobar que `for`, `len` e `in` requieren tres métodos y no una lista, y escribir una clase que los implemente sin guardar elementos.
+4. Comprobar que `__slots__` elimina el diccionario de instancia, y medir que el tamaño del objeto se mantiene constante.
 5. Leer el [orden de resolución de métodos]{.g data-t="orden de resolución de métodos"} de una jerarquía y determinar qué atributo se usa.
-6. Demostrar que el cuerpo de una clase se ejecuta una sola vez, y reconocer el error de compartir un mutable.
+6. Comprobar que el cuerpo de una clase se ejecuta una sola vez, y reconocer el error de compartir un mutable.
 7. Enumerar los métodos que genera `@dataclass` y lo que añade `frozen`.
 
 :::: {.hilo}
@@ -63,6 +63,80 @@ Al terminar esta lección se puede:
 | `__dict__` | dunder dict | El diccionario donde una instancia guarda sus atributos |
 :::
 
+## Problema inicial
+
+Este problema va antes de la teoría y se resuelve con lo visto hasta Python 16: diccionarios, tuplas y bucles. La Sección 1 vuelve sobre él.
+
+Cada línea de compra de `lineas` es un diccionario con el código y la talla de un producto. Completar la línea de `clave` para que `cuenta` registre cuántas líneas hay de cada producto, entendiendo que dos líneas son del mismo producto si coinciden en código y en talla. La celda imprime cuántos productos distintos hay y las cuentas ordenadas, que deben ser 3 y `[1, 1, 2]`. La comprobación vuelve a ejecutar el código con otras líneas.
+
+```{pyodide}
+#| exercise: ex_inicial
+lineas = [{"codigo": "A1", "talla": "M"}, {"codigo": "B2", "talla": "S"},
+          {"codigo": "A1", "talla": "M"}, {"codigo": "A1", "talla": "L"}]
+
+cuenta = {}
+for linea in lineas:
+    clave = ______
+    cuenta[clave] = cuenta.get(clave, 0) + 1
+
+print(len(cuenta), sorted(cuenta.values()))
+```
+
+::: {.hint exercise="ex_inicial"}
+Usar `linea` directamente como clave levanta `TypeError`: un diccionario no puede ser clave de otro. Una tupla con los dos valores sí puede.
+:::
+
+::: {.solution exercise="ex_inicial"}
+```{pyodide}
+lineas = [{"codigo": "A1", "talla": "M"}, {"codigo": "B2", "talla": "S"},
+          {"codigo": "A1", "talla": "M"}, {"codigo": "A1", "talla": "L"}]
+
+cuenta = {}
+for linea in lineas:
+    clave = (linea["codigo"], linea["talla"])
+    cuenta[clave] = cuenta.get(clave, 0) + 1
+
+print(len(cuenta), sorted(cuenta.values()))
+```
+
+La tupla funciona como clave porque dos tuplas iguales tienen el mismo hash. El diccionario de la línea no lo tiene. La Sección 1 explica por qué, y qué hace falta para que un objeto propio sirva de clave.
+:::
+
+```{pyodide}
+#| exercise: ex_inicial
+#| check: true
+import contextlib, io, re
+L1 = ('[{"codigo": "X", "talla": "S"}, {"codigo": "X", "talla": "M"}, '
+      '{"codigo": "Y", "talla": "S"}, {"codigo": "X", "talla": "S"}, '
+      '{"codigo": "X", "talla": "S"}]')
+L2 = "[]"
+casos = [(None, (3, [1, 1, 2])), (L1, (3, [1, 1, 3])), (L2, (0, []))]
+fallo = None
+for ll, esperado in casos:
+    otro = user_code
+    if ll is not None:
+        otro = re.sub(r"(?ms)^lineas\s*=.*?\]\n", "lineas = " + ll + "\n",
+                      otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        c = ns["cuenta"]
+        obtenido = (len(c), sorted(c.values()))
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con lineas = %s se esperaba %s y salio %s" % (
+            ll or "las de la celda", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: tres productos, uno de ellos "
+                           "con dos líneas."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 1. Igualdad y hash
 
 ::: {.definicion}
@@ -75,18 +149,16 @@ Al terminar esta lección se puede:
 
 Un diccionario coloca cada clave en una cubeta elegida con su hash y, dentro de la cubeta, compara con `==`. De ahí se deriva una obligación que el lenguaje no puede comprobar por su cuenta.
 
-::: {.proposicion}
-**Proposición 17.3 (contrato del hash).** Si $a=b$ entonces `hash(a)` debe ser igual a `hash(b)`. En consecuencia:
+::: {.regla}
+**Regla 17.3 (contrato del hash).** Si $a=b$ entonces `hash(a)` debe ser igual a `hash(b)`. En consecuencia:
 
 1. definir `__eq__` sin definir `__hash__` deja la clase sin hash, y sus instancias no pueden ser claves;
 2. si se define un `__hash__` que depende de algo que `__eq__` ignora, el diccionario guarda dos entradas para claves iguales y la búsqueda de una de ellas falla.
 :::
 
-::: {.demostracion}
-*Demostración.* Para (1): el `__hash__` heredado de `object` devuelve un valor derivado de la identidad, así que dos objetos distintos pero iguales según un `__eq__` basado en el contenido tendrían hashes distintos y violarían el contrato. Python evita ese estado retirando el método: al definir `__eq__` pone `__hash__` en `None`, y llamar a `hash()` levanta `TypeError`.
+Para (1): el `__hash__` heredado de `object` devuelve un valor derivado de la identidad, así que dos objetos distintos pero iguales según un `__eq__` basado en el contenido tendrían hashes distintos y violarían el contrato. Python evita ese estado retirando el método: al definir `__eq__` pone `__hash__` en `None`, y llamar a `hash()` levanta `TypeError`.
 
-Para (2): al insertar, el diccionario calcula el hash y elige cubeta; solo compara con `==` dentro de esa cubeta. Si `hash(a)≠hash(b)` con $a=b$, las dos claves caen en cubetas distintas y la comparación nunca ocurre, de modo que ambas se guardan. Buscar $b$ mira la cubeta de $b$ y no encuentra a $a$. [∎]{.fin-demo}
-:::
+Para (2): al insertar, el diccionario calcula el hash y elige cubeta; solo compara con `==` dentro de esa cubeta. Si `hash(a)≠hash(b)` con $a=b$, las dos claves caen en cubetas distintas y la comparación nunca ocurre, de modo que ambas se guardan. Buscar $b$ mira la cubeta de $b$ y no encuentra a $a$.
 
 **Modo de falla.** Una caché con objetos propios como clave crece sin límite y nunca acierta. Cada consulta calcula un hash distinto del que se guardó, así que el dato se vuelve a calcular y a guardar; el programa funciona, pero la caché no reutiliza ningún resultado y la memoria aumenta. No hay excepción ni aviso: el diccionario hace lo que se le pidió.
 
@@ -157,6 +229,8 @@ print("con PuntoCompleto, la misma busqueda da %s" % (PuntoCompleto(3, 4) in e))
 Las cuatro filas corresponden a los cuatro estados posibles. `Punto` compara por identidad, así que dos puntos con las mismas coordenadas son claves distintas y el diccionario guarda dos, lo cual es coherente. `PuntoIgual` no se puede hashear. `PuntoCompleto` guarda una. `PuntoRoto` guarda dos claves iguales, y es el único de los cuatro cuyo comportamiento es incoherente.
 
 Las dos últimas líneas lo muestran: con `PuntoRoto`, `a == b` vale `True` y `b in d` vale `False`, sin excepción ni aviso.
+
+El problema inicial tropezaba con el caso (1) desde el otro lado. Un diccionario es mutable y no tiene hash, así que `cuenta[linea]` levanta `TypeError`; la tupla `(linea["codigo"], linea["talla"])` sí lo tiene, y dos tuplas iguales dan el mismo. Una clase propia sirve de clave en las mismas condiciones: un `__eq__` sobre el código y la talla, y un `__hash__` sobre esos mismos dos campos, como en `PuntoCompleto`.
 
 ```{=html}
 <div class="viz-cubetas">
@@ -251,27 +325,163 @@ Las dos últimas líneas lo muestran: con `PuntoRoto`, `a == b` vale `True` y `b
 </script>
 ```
 
+### Ejercicio 17.1, Contrato del hash
+
+La celda define dos clases: `SoloEq`, que implementa solo `__eq__`, y `Ambos`, que implementa `__eq__` y `__hash__`. La función `sirve_de_clave` intenta usar una instancia de la clase `C` como clave de un diccionario. Completar sus dos `return` para que devuelva `True` si la clase sirve como clave y `False` si no sirve, según la Regla 17.3. La celda imprime el resultado para las dos clases. La celda debe imprimir dos valores booleanos, uno por clase, y la comprobación debe dar `True`.
+
+```{pyodide}
+#| exercise: ex_hash
+class SoloEq:
+    def __init__(self, v): self.v = v
+    def __eq__(self, o): return self.v == o.v
+
+class Ambos:
+    def __init__(self, v): self.v = v
+    def __eq__(self, o): return self.v == o.v
+    def __hash__(self): return hash(self.v)
+
+def sirve_de_clave(C):
+    try:
+        {C(1): "x"}
+        return ______
+    except TypeError:
+        return ______
+
+print(sirve_de_clave(SoloEq), sirve_de_clave(Ambos))
+sirve_de_clave(Ambos)
+```
+
+::: {.hint exercise="ex_hash"}
+Si construir el diccionario funciona, la clase sirve; si levanta `TypeError`, no. La celda debe imprimir `False True`.
+:::
+
+::: {.solution exercise="ex_hash"}
+```{pyodide}
+class SoloEq:
+    def __init__(self, v): self.v = v
+    def __eq__(self, o): return self.v == o.v
+
+class Ambos:
+    def __init__(self, v): self.v = v
+    def __eq__(self, o): return self.v == o.v
+    def __hash__(self): return hash(self.v)
+
+def sirve_de_clave(C):
+    try:
+        {C(1): "x"}
+        return True
+    except TypeError:
+        return False
+
+print(sirve_de_clave(SoloEq), sirve_de_clave(Ambos))
+sirve_de_clave(Ambos)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_hash
+#| check: true
+if result is True:
+    feedback = {"correct": True, "message": "Correcto: SoloEq no sirve y Ambos sí. El fallo de SoloEq se produce al crear el diccionario, con una excepción. Un __hash__ incoherente con __eq__ no levanta ninguna excepción y hace que las claves dejen de encontrarse.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba True y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 17.2, Un hash coherente con la igualdad
+
+La clase `Producto` considera iguales dos productos con el mismo código y la misma talla, sea cual sea su precio. Completar el `return` de `__hash__` para que cumpla la Regla 17.3 y para que dos productos con distinto código o talla den, en los casos de la comprobación, hashes distintos. La celda imprime si `a` y `b` son iguales, si sus hashes coinciden y si `b` encuentra la entrada guardada con `a`, que deben dar `True True True`. La comprobación prueba otros productos.
+
+```{pyodide}
+#| exercise: ex_hash_propio
+class Producto:
+    def __init__(self, codigo, talla, precio):
+        self.codigo, self.talla = codigo, talla
+        self.precio = precio
+    def __eq__(self, otro):
+        return (self.codigo, self.talla) == (otro.codigo, otro.talla)
+    def __hash__(self):
+        return ______
+
+a = Producto("A1", "M", 10.0)
+b = Producto("A1", "M", 12.5)
+d = {a: "stock 4"}
+print(a == b, hash(a) == hash(b), b in d)
+```
+
+::: {.hint exercise="ex_hash_propio"}
+El hash tiene que depender de lo mismo que mira `__eq__` y de nada más. `hash` de una tupla con esos campos lo cumple.
+:::
+
+::: {.solution exercise="ex_hash_propio"}
+```{pyodide}
+class Producto:
+    def __init__(self, codigo, talla, precio):
+        self.codigo, self.talla = codigo, talla
+        self.precio = precio
+    def __eq__(self, otro):
+        return (self.codigo, self.talla) == (otro.codigo, otro.talla)
+    def __hash__(self):
+        return hash((self.codigo, self.talla))
+
+a = Producto("A1", "M", 10.0)
+b = Producto("A1", "M", 12.5)
+d = {a: "stock 4"}
+print(a == b, hash(a) == hash(b), b in d)
+```
+
+Con el precio dentro del hash, `a` y `b` serían iguales con hashes distintos: el caso (2) de la Regla 17.3, en el que `b in d` da `False` sin aviso.
+:::
+
+```{pyodide}
+#| exercise: ex_hash_propio
+#| check: true
+pares_iguales = [(("A1", "M", 10.0), ("A1", "M", 12.5)),
+                 (("Z", "XL", 1.0), ("Z", "XL", 99.0))]
+pares_distintos = [(("A1", "M", 1.0), ("A1", "L", 1.0)),
+                   (("A1", "M", 1.0), ("B2", "M", 1.0)),
+                   (("Q", "S", 2.0), ("R", "XS", 2.0))]
+fallo = None
+try:
+    for x, y in pares_iguales:
+        p, q = Producto(*x), Producto(*y)
+        if hash(p) != hash(q) or q not in {p: 1}:
+            fallo = ("%s y %s son iguales y sus hashes difieren"
+                     % (x, y))
+    for x, y in pares_distintos:
+        p, q = Producto(*x), Producto(*y)
+        if fallo is None and hash(p) == hash(q):
+            fallo = ("%s y %s dan el mismo hash: el contrato se cumple, "
+                     "pero productos distintos compartirían cubeta"
+                     % (x, y))
+except Exception as err:
+    fallo = "el hash levanta %s" % type(err).__name__
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: el hash mira lo mismo que la "
+                           "igualdad."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 2. Protocolos de `for`, `len` e `in`
 
-::: {.proposicion}
-**Proposición 17.4 (protocolos).** `for x in o` no exige que `o` sea una secuencia: llama a `iter(o)`, que busca `type(o).__iter__` y, si no existe, usa como último recurso el protocolo de secuencia, llamando a `__getitem__` con 0, 1, 2… hasta un `IndexError`. Del mismo modo `len(o)` busca `__len__` y `x in o` busca `__contains__`, y si no lo encuentra recorre con `__iter__` o, en su defecto, con `__getitem__`. Un objeto que defina esos tres métodos se comporta como una colección sin guardar sus elementos.
+::: {.regla}
+**Regla 17.4 (protocolos).** `for x in o` no exige que `o` sea una secuencia: llama a `iter(o)`, que busca `type(o).__iter__` y, si no existe, usa como último recurso el protocolo de secuencia, llamando a `__getitem__` con 0, 1, 2… hasta un `IndexError`. Del mismo modo `len(o)` busca `__len__` y `x in o` busca `__contains__`, y si no lo encuentra recorre con `__iter__` o, en su defecto, con `__getitem__`. Un objeto que defina esos tres métodos se comporta como una colección sin guardar sus elementos.
 :::
 
-::: {.demostracion}
-*Demostración.* Es la definición de los protocolos en el lenguaje: las funciones y sentencias incorporadas están escritas en términos de esos métodos y no de un tipo concreto. La suficiencia se comprueba construyendo la clase; la necesidad, observando que retirar `__iter__` hace fallar al `for` cuando la clase tampoco define `__getitem__`. [∎]{.fin-demo}
-:::
+Es la definición de los protocolos en el lenguaje: las funciones y sentencias incorporadas están escritas en términos de esos métodos y no de un tipo concreto. La suficiencia se comprueba construyendo la clase; la necesidad, observando que retirar `__iter__` hace fallar al `for` cuando la clase tampoco define `__getitem__`.
 
 ::: {.definicion}
 **Definición 17.5 (`__slots__`).** Escribir `__slots__ = ("a", "b")` en el cuerpo de una clase declara de antemano los únicos atributos que sus instancias tendrán. Python les reserva un hueco fijo en el objeto en lugar de darle a cada instancia un diccionario.
 :::
 
-::: {.proposicion}
-**Proposición 17.6 (efecto de `__slots__` en memoria).** Si la clase y todas sus bases declaran `__slots__`, una instancia no tiene `__dict__`, de modo que su tamaño queda fijado al definir la clase y no depende de cuántos datos represente. A cambio, asignar un atributo no declarado levanta `AttributeError`.
+::: {.regla}
+**Regla 17.6 (efecto de `__slots__` en memoria).** Si la clase y todas sus bases declaran `__slots__`, una instancia no tiene `__dict__`, de modo que su tamaño queda fijado al definir la clase y no depende de cuántos datos represente. A cambio, asignar un atributo no declarado levanta `AttributeError`.
 :::
 
-::: {.demostracion}
-*Demostración.* Sin `__slots__`, cada instancia lleva un diccionario donde guarda sus atributos, y un diccionario crece al añadirle claves. Con `__slots__`, el tipo reserva descriptores para los nombres declarados y el objeto guarda los valores en posiciones fijas; al no existir el diccionario, no hay dónde poner un nombre que no estuviera declarado. Si alguna base no declara `__slots__`, sus instancias llevan ya un diccionario, y la subclase lo hereda aunque declare los suyos. [∎]{.fin-demo}
-:::
+Sin `__slots__`, cada instancia lleva un diccionario donde guarda sus atributos, y un diccionario crece al añadirle claves. Con `__slots__`, el tipo reserva descriptores para los nombres declarados y el objeto guarda los valores en posiciones fijas; al no existir el diccionario, no hay dónde poner un nombre que no estuviera declarado. Si alguna base no declara `__slots__`, sus instancias llevan ya un diccionario, y la subclase lo hereda aunque declare los suyos.
 
 **Modo de falla.** Se escribe `__iter__` y se omite `__len__`, y la omisión se detecta tarde porque muchas funciones no lo necesitan. `list(o)` funciona, `sum(o)` funciona, y `len(o)` levanta `TypeError` cuando se llama por primera vez. El caso más grave es el contrario: `__len__` devuelve cero por un caso borde, y entonces el objeto se evalúa como falso en una condición y un `if o:` lo trata como vacío.
 
@@ -339,19 +549,151 @@ La primera mitad muestra el beneficio: ocho funciones y sentencias distintas fun
 
 Las dos clases responden lo mismo a `1999998 in r`; una lo hace con una división y la otra recorriendo dos millones de valores. Definir `__contains__` no añade una operación, pero cambia el coste de una existente, y por eso conviene implementarlo aunque `__iter__` ya la haga funcionar.
 
+### Ejercicio 17.3, Métodos requeridos por un `for`
+
+La clase `Solo` define únicamente `__iter__`, y `o` es una instancia suya. La celda ya intenta `len(o)` y guarda en `funciona_len` si funcionó. Completar la línea de `funciona_for` con una expresión que recorra `o`, por ejemplo con `list`, y compare el resultado con `[10, 20, 30]`. Según la Regla 17.4, `funciona_for` debe quedar en `True` y `funciona_len` en `False`.
+
+```{pyodide}
+#| exercise: ex_proto
+class Solo:
+    """Define solo __iter__."""
+    def __iter__(self):
+        return iter([10, 20, 30])
+
+o = Solo()
+
+funciona_for = ______
+try:
+    len(o)
+    funciona_len = True
+except TypeError:
+    funciona_len = False
+
+print(funciona_for, funciona_len, 20 in o)
+funciona_len
+```
+
+::: {.hint exercise="ex_proto"}
+Con `__iter__` funcionan `for`, `list`, `sum` y el operador `in`, que recorre cuando no hay `__contains__`. `len` es el único que lo requiere.
+:::
+
+::: {.solution exercise="ex_proto"}
+```{pyodide}
+class Solo:
+    """Define solo __iter__."""
+    def __iter__(self):
+        return iter([10, 20, 30])
+
+o = Solo()
+
+funciona_for = list(o) == [10, 20, 30]
+try:
+    len(o)
+    funciona_len = True
+except TypeError:
+    funciona_len = False
+
+print(funciona_for, funciona_len, 20 in o)
+funciona_len
+```
+:::
+
+```{pyodide}
+#| exercise: ex_proto
+#| check: true
+if funciona_for and result is False:
+    feedback = {"correct": True, "message": "Correcto: con solo __iter__ funcionan for, list y el operador in, que recorre el objeto cuando no hay __contains__; len es el único que falla.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": f"Esperaba True y False; obtuve {funciona_for} y {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 17.4, Longitud y pertenencia sin guardar
+
+La clase `Multiplos` representa los múltiplos de `k` entre 0 y `n - 1` sin guardarlos; ya tiene `__iter__`. Completar los `return` de `__len__` y `__contains__` para que respondan sin recorrer los valores. Con `Multiplos(3, 20)` la celda imprime la longitud, si contiene 9, 10 y 21, y si `list(m)` coincide con `range(0, 20, 3)`, y debe dar `7 True False False True`. La comprobación prueba otros valores de `k` y `n`, entre ellos `n = 0`.
+
+```{pyodide}
+#| exercise: ex_multiplos
+class Multiplos:
+    """Los multiplos de k entre 0 y n - 1, sin guardarlos."""
+    def __init__(self, k, n):
+        self.k, self.n = k, n
+    def __iter__(self):
+        return iter(range(0, self.n, self.k))
+    def __len__(self):
+        return ______
+    def __contains__(self, x):
+        return ______
+
+m = Multiplos(3, 20)
+print(len(m), 9 in m, 10 in m, 21 in m,
+      list(m) == list(range(0, 20, 3)))
+```
+
+::: {.hint exercise="ex_multiplos"}
+Hay tantos múltiplos como veces cabe `k` en `n`, redondeando hacia arriba: `(n + k - 1) // k`. Un número está si cae en el intervalo y su resto entre `k` es cero.
+:::
+
+::: {.solution exercise="ex_multiplos"}
+```{pyodide}
+class Multiplos:
+    """Los multiplos de k entre 0 y n - 1, sin guardarlos."""
+    def __init__(self, k, n):
+        self.k, self.n = k, n
+    def __iter__(self):
+        return iter(range(0, self.n, self.k))
+    def __len__(self):
+        return (self.n + self.k - 1) // self.k
+    def __contains__(self, x):
+        return 0 <= x < self.n and x % self.k == 0
+
+m = Multiplos(3, 20)
+print(len(m), 9 in m, 10 in m, 21 in m,
+      list(m) == list(range(0, 20, 3)))
+```
+
+Sin `__contains__`, `9 in m` también funcionaría, por la Regla 17.4, pero recorriendo los valores uno a uno. Con él, la respuesta cuesta una comparación y un resto, sea cual sea `n`.
+:::
+
+```{pyodide}
+#| exercise: ex_multiplos
+#| check: true
+fallo = None
+for k, n in [(3, 20), (1, 5), (5, 5), (4, 0), (7, 50), (2, 1)]:
+    ref = list(range(0, n, k))
+    try:
+        mm = Multiplos(k, n)
+        if len(mm) != len(ref) and fallo is None:
+            fallo = "len(Multiplos(%d, %d)) dio %s y se esperaba %d" % (
+                k, n, len(mm), len(ref))
+        for x in range(-3, n + 5):
+            if (x in mm) != (x in ref) and fallo is None:
+                fallo = "%d in Multiplos(%d, %d) dio %s" % (
+                    x, k, n, x in mm)
+    except Exception as err:
+        if fallo is None:
+            fallo = "Multiplos(%d, %d) levanta %s" % (
+                k, n, type(err).__name__)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: len e in responden sin guardar "
+                           "los valores."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 3. Resolución de atributos
 
-::: {.proposicion}
-**Proposición 17.7 (orden de resolución).** Al pedir un atributo, Python recorre las clases en el orden de `type(o).__mro__`, que se calcula con la linealización C3. Ese orden cumple dos reglas: una clase aparece antes que sus bases, y se respeta el orden en que las bases se escribieron. Si no existe ningún orden que cumpla las dos, la clase no se puede crear y la definición levanta `TypeError`.
+::: {.regla}
+**Regla 17.7 (orden de resolución).** Al pedir un atributo, Python recorre las clases en el orden de `type(o).__mro__`, que se calcula con la linealización C3. Ese orden cumple dos reglas: una clase aparece antes que sus bases, y se respeta el orden en que las bases se escribieron. Si no existe ningún orden que cumpla las dos, la clase no se puede crear y la definición levanta `TypeError`.
 :::
 
-::: {.proposicion}
-**Proposición 17.8 (ejecución única del cuerpo).** El cuerpo de una clase se ejecuta una sola vez, al definirla, y los nombres que crea quedan en la clase. Un objeto mutable creado ahí es el mismo para todas las instancias. Leer un atributo recorre el orden de resolución; asignarlo lo crea en la instancia y oculta al de la clase.
+::: {.regla}
+**Regla 17.8 (ejecución única del cuerpo).** El cuerpo de una clase se ejecuta una sola vez, al definirla, y los nombres que crea quedan en la clase. Un objeto mutable creado ahí es el mismo para todas las instancias. Leer un atributo recorre el orden de resolución; asignarlo lo crea en la instancia y oculta al de la clase.
 :::
 
-::: {.demostracion}
-*Demostración.* La 17.8 se deduce de que `class` es una sentencia ejecutable: evalúa su cuerpo en un espacio de nombres nuevo y construye la clase con él. La asignación `o.attr = v` escribe en `o.__dict__` por definición del protocolo de atributos, mientras que la lectura consulta primero `o.__dict__` y después las clases del orden de resolución. La construcción de ese orden por C3 se enuncia y no se demuestra aquí. [∎]{.fin-demo}
-:::
+La Regla 17.8 se deduce de que `class` es una sentencia ejecutable: evalúa su cuerpo en un espacio de nombres nuevo y construye la clase con él. La asignación `o.attr = v` escribe en `o.__dict__` por definición del protocolo de atributos, mientras que la lectura consulta primero `o.__dict__` y después las clases del orden de resolución. La construcción de ese orden por C3 se enuncia y no se demuestra aquí.
 
 **Modo de falla.** Una clase tiene `cache = {}` o `errores = []` en el cuerpo, con la suposición de que cada instancia tendrá el suyo. En las pruebas hay una sola instancia y el error no se manifiesta; en producción hay muchas y todas escriben en la misma lista. El síntoma habitual es un informe que acumula los errores de ejecuciones anteriores; es el mismo error que el argumento por defecto mutable de la lección 2, con la misma causa.
 
@@ -521,6 +863,147 @@ La segunda parte mide el modo de falla. `Cesta` comparte la lista (`a.articulos 
 </script>
 ```
 
+### Ejercicio 17.5, El método que gana
+
+En la jerarquía de la celda, `D` hereda de `B` y de `C`, que heredan de `A`. `B` no define `nombre`; `A` y `C` sí. Completar la línea de `orden` con la lista de los nombres de las clases en el orden de resolución de `D`, incluido `object`, y la de `gana` con el nombre de la clase cuyo método usa `D().nombre()`, sin ejecutar nada antes. La celda imprime `orden` y si `gana` coincide con lo que devuelve el método, que debe dar `True`.
+
+```{pyodide}
+#| exercise: ex_mro
+class A:
+    def nombre(self): return "A"
+class B(A):
+    pass
+class C(A):
+    def nombre(self): return "C"
+class D(B, C):
+    pass
+
+orden = ______
+gana = ______
+
+print(orden, gana == D().nombre())
+```
+
+::: {.hint exercise="ex_mro"}
+Por la Regla 17.7, una clase va antes que sus bases y las bases se respetan en el orden escrito: `A` no puede ir antes que `C`, porque es base de `C`.
+:::
+
+::: {.solution exercise="ex_mro"}
+```{pyodide}
+class A:
+    def nombre(self): return "A"
+class B(A):
+    pass
+class C(A):
+    def nombre(self): return "C"
+class D(B, C):
+    pass
+
+orden = ["D", "B", "C", "A", "object"]
+gana = "C"
+
+print(orden, gana == D().nombre())
+```
+
+Una búsqueda en profundidad desde la primera base pasaría de `B` a `A` y devolvería `"A"`. El orden de resolución pone a `C` antes que a `A`, y gana `C`.
+:::
+
+```{pyodide}
+#| exercise: ex_mro
+#| check: true
+nombres = []
+for clase in D.__mro__:
+    nombres.append(clase.__name__)
+try:
+    lista = list(orden)
+except Exception:
+    lista = None
+if lista == nombres and gana == D().nombre():
+    feedback = {"correct": True,
+                "message": "Correcto: D, B, C, A, object; el método "
+                           "es el de C."}
+elif lista == nombres:
+    feedback = {"correct": False,
+                "message": "El orden es correcto, pero D().nombre() "
+                           "devuelve %r." % D().nombre()}
+elif gana == D().nombre():
+    feedback = {"correct": False,
+                "message": "gana es correcto, pero el orden no: se "
+                           "esperaba una lista de nombres que empiece "
+                           "por 'D' y termine en 'object'."}
+else:
+    feedback = {"correct": False,
+                "message": "Ni el orden ni gana coinciden."}
+feedback
+```
+
+### Ejercicio 17.6, Una lista por caja
+
+La clase `Caja` guarda las líneas registradas en cada caja. Completar la línea de `self.lineas` para que cada caja tenga su propia lista. La celda registra dos productos en `c1` y uno en `c2`, e imprime las dos listas y si son el mismo objeto; debe dar `['pan', 'leche'] ['huevos'] False`. La comprobación abre otras cajas.
+
+```{pyodide}
+#| exercise: ex_lineas
+class Caja:
+    def __init__(self, nombre):
+        self.nombre = nombre
+        self.lineas = ______
+    def registra(self, producto):
+        self.lineas.append(producto)
+
+c1, c2 = Caja("uno"), Caja("dos")
+c1.registra("pan")
+c1.registra("leche")
+c2.registra("huevos")
+print(c1.lineas, c2.lineas, c1.lineas is c2.lineas)
+```
+
+::: {.hint exercise="ex_lineas"}
+`__init__` se ejecuta una vez por cada caja que se crea, de modo que una lista creada ahí es distinta en cada una.
+:::
+
+::: {.solution exercise="ex_lineas"}
+```{pyodide}
+class Caja:
+    def __init__(self, nombre):
+        self.nombre = nombre
+        self.lineas = []
+    def registra(self, producto):
+        self.lineas.append(producto)
+
+c1, c2 = Caja("uno"), Caja("dos")
+c1.registra("pan")
+c1.registra("leche")
+c2.registra("huevos")
+print(c1.lineas, c2.lineas, c1.lineas is c2.lineas)
+```
+
+Escrita como `lineas = []` en el cuerpo de la clase, la lista se crearía una sola vez, por la Regla 17.8, y las dos cajas imprimirían `['pan', 'leche', 'huevos']`.
+:::
+
+```{pyodide}
+#| exercise: ex_lineas
+#| check: true
+try:
+    x, y, z = Caja("x"), Caja("y"), Caja("z")
+    x.registra(1)
+    z.registra(2)
+    z.registra(3)
+    otras = (x.lineas, y.lineas, z.lineas)
+    propias = (c1.lineas, c2.lineas)
+except Exception as err:
+    otras, propias = type(err).__name__, None
+if (propias == (["pan", "leche"], ["huevos"])
+        and otras == ([1], [], [2, 3])):
+    feedback = {"correct": True,
+                "message": "Correcto: cada caja tiene su lista."}
+else:
+    feedback = {"correct": False,
+                "message": "Se esperaba (['pan', 'leche'], ['huevos']) y, "
+                           "con tres cajas nuevas, ([1], [], [2, 3]); "
+                           "salió %s y %s." % (propias, otras)}
+feedback
+```
+
 ## 4. Métodos generados por `@dataclass`
 
 Los métodos de la sección 1 (`__init__`, `__repr__`, `__eq__` y `__hash__` coherentes) se escriben con tanta frecuencia que el lenguaje incluye un generador. Conviene conocer lo que produce, porque la diferencia entre usar `frozen=True` o no determina si la clase sirve como clave.
@@ -579,7 +1062,78 @@ Las cuatro filas de la primera tabla son `True` en las dos columnas: `@dataclass
 
 La segunda parte muestra lo que añade `frozen`. Con la clase escrita a mano se puede hacer `a1.x = 99`, y a partir de ahí el objeto está en un diccionario bajo su hash anterior: buscarlo con un objeto idéntico devuelve `False`. Con `frozen=True` esa asignación levanta `FrozenInstanceError` y el problema no se produce.
 
-**Modo de falla.** Una `@dataclass` sin `frozen` se usa como clave de un diccionario o dentro de un conjunto. Sin `frozen`, `@dataclass` genera `__eq__` y pone `__hash__` en `None`, así que el error aparece de inmediato y no tiene consecuencias. El caso peligroso es escribir el `__hash__` a mano sin congelar la clase: el programa funciona y pierde claves sin aviso, como en la Proposición 17.3.
+**Modo de falla.** Una `@dataclass` sin `frozen` se usa como clave de un diccionario o dentro de un conjunto. Sin `frozen`, `@dataclass` genera `__eq__` y pone `__hash__` en `None`, así que el error aparece de inmediato y no tiene consecuencias. El caso peligroso es escribir el `__hash__` a mano sin congelar la clase: el programa funciona y pierde claves sin aviso, como en la Regla 17.3.
+
+### Ejercicio 17.7, Una clave inmutable con `@dataclass`
+
+La clase `Clave` se genera con `@dataclass` y se usa como clave del diccionario `stock`. Completar el argumento `frozen` para que `Clave` sirva de clave y sus instancias no se puedan modificar. La celda imprime el stock de `Clave("A1", "M")`, el número de claves y si se pudo cambiar la talla de `k`, y debe dar `4 2 False`.
+
+```{pyodide}
+#| exercise: ex_frozen
+from dataclasses import dataclass, FrozenInstanceError
+
+@dataclass(frozen=______)
+class Clave:
+    codigo: str
+    talla: str
+
+stock = {Clave("A1", "M"): 4, Clave("B2", "S"): 7}
+k = Clave("A1", "M")
+try:
+    k.talla = "L"
+    se_pudo = True
+except FrozenInstanceError:
+    se_pudo = False
+print(stock[Clave("A1", "M")], len(stock), se_pudo)
+```
+
+::: {.hint exercise="ex_frozen"}
+Sin `frozen`, `@dataclass` genera `__eq__` y deja `__hash__` en `None`, y crear `stock` levanta `TypeError`.
+:::
+
+::: {.solution exercise="ex_frozen"}
+```{pyodide}
+from dataclasses import dataclass, FrozenInstanceError
+
+@dataclass(frozen=True)
+class Clave:
+    codigo: str
+    talla: str
+
+stock = {Clave("A1", "M"): 4, Clave("B2", "S"): 7}
+k = Clave("A1", "M")
+try:
+    k.talla = "L"
+    se_pudo = True
+except FrozenInstanceError:
+    se_pudo = False
+print(stock[Clave("A1", "M")], len(stock), se_pudo)
+```
+
+Con `frozen=True` se generan `__eq__` y `__hash__` coherentes sobre los dos campos, y la asignación levanta `FrozenInstanceError`. `unsafe_hash=True` daría el hash sin impedir la asignación: una clave modificada después de guardarla quedaría en la cubeta de su hash anterior.
+:::
+
+```{pyodide}
+#| exercise: ex_frozen
+#| check: true
+try:
+    ok_clave = (stock[Clave("A1", "M")] == 4 and len(stock) == 2
+                and Clave("B2", "S") in stock)
+except Exception:
+    ok_clave = False
+if ok_clave and se_pudo is False:
+    feedback = {"correct": True,
+                "message": "Correcto: la clave sirve y no se puede "
+                           "modificar."}
+elif ok_clave:
+    feedback = {"correct": False,
+                "message": "La clase sirve de clave, pero k.talla se "
+                           "pudo cambiar: falta congelarla."}
+else:
+    feedback = {"correct": False,
+                "message": "Clave no sirve como clave del diccionario."}
+feedback
+```
 
 ## 5. Limitaciones
 
@@ -589,129 +1143,15 @@ La segunda parte muestra lo que añade `frozen`. Con la clase escrita a mano se 
 - La herencia múltiple como decisión de diseño. Aquí se usa para mostrar el orden de resolución; cuándo conviene queda fuera de esta lección.
 - `__slots__` tiene restricciones adicionales: impide añadir atributos nuevos y complica la herencia. Aquí se usa por su efecto en memoria y no se trata en detalle.
 
-## Ejercicios
+## Pieza del proyecto
 
-### Ejercicio 1, Contrato del hash
+`caja.py` crece en cada lección y los entregables reutilizan sus piezas. Esta lección da forma propia a los productos y a las cajas:
 
-La celda define dos clases: `SoloEq`, que implementa solo `__eq__`, y `Ambos`, que implementa `__eq__` y `__hash__`. La función `sirve_de_clave` intenta usar una instancia de la clase `C` como clave de un diccionario. Completar sus dos `return` para que devuelva `True` si la clase sirve como clave y `False` si no sirve, según la Proposición 17.3. La celda imprime el resultado para las dos clases. La celda debe imprimir dos valores booleanos, uno por clase, y la comprobación debe dar `True`.
+1. Representar cada producto del catálogo de modo que dos productos con el mismo código sean iguales y encuentren el mismo precio en el catálogo aunque se hayan creado por separado, y que un producto no se pueda modificar después de crearlo.
+2. Representar una caja que lleve sus propias líneas de compra, de modo que abrir una segunda caja no mezcle sus líneas con las de la primera.
+3. Que una caja responda a cuántas líneas tiene, a si un producto está en la compra y a recorrer sus líneas en orden, con las mismas operaciones que una lista.
 
-```{pyodide}
-#| exercise: ex_hash
-class SoloEq:
-    def __init__(self, v): self.v = v
-    def __eq__(self, o): return self.v == o.v
-
-class Ambos:
-    def __init__(self, v): self.v = v
-    def __eq__(self, o): return self.v == o.v
-    def __hash__(self): return hash(self.v)
-
-def sirve_de_clave(C):
-    try:
-        {C(1): "x"}
-        return ______
-    except TypeError:
-        return ______
-
-print(sirve_de_clave(SoloEq), sirve_de_clave(Ambos))
-sirve_de_clave(Ambos)
-```
-
-::: {.hint exercise="ex_hash"}
-Si construir el diccionario funciona, la clase sirve; si levanta `TypeError`, no. La celda debe imprimir `False True`.
-:::
-
-::: {.solution exercise="ex_hash"}
-```{pyodide}
-class SoloEq:
-    def __init__(self, v): self.v = v
-    def __eq__(self, o): return self.v == o.v
-
-class Ambos:
-    def __init__(self, v): self.v = v
-    def __eq__(self, o): return self.v == o.v
-    def __hash__(self): return hash(self.v)
-
-def sirve_de_clave(C):
-    try:
-        {C(1): "x"}
-        return True
-    except TypeError:
-        return False
-
-print(sirve_de_clave(SoloEq), sirve_de_clave(Ambos))
-sirve_de_clave(Ambos)
-```
-:::
-
-```{pyodide}
-#| exercise: ex_hash
-#| check: true
-if result is True:
-    feedback = {"correct": True, "message": "Correcto: SoloEq no sirve y Ambos sí. El fallo de SoloEq se produce al crear el diccionario, con una excepción. Un __hash__ incoherente con __eq__ no levanta ninguna excepción y hace que las claves dejen de encontrarse.", "type": "success"}
-else:
-    feedback = {"correct": False, "message": f"Esperaba True y obtuve {result}.", "type": "error"}
-feedback
-```
-
-### Ejercicio 2, Métodos requeridos por un `for`
-
-La clase `Solo` define únicamente `__iter__`, y `o` es una instancia suya. La celda ya intenta `len(o)` y guarda en `funciona_len` si funcionó. Completar la línea de `funciona_for` con una expresión que recorra `o`, por ejemplo con `list`, y compare el resultado con `[10, 20, 30]`. Según la Proposición 17.4, `funciona_for` debe quedar en `True` y `funciona_len` en `False`.
-
-```{pyodide}
-#| exercise: ex_proto
-class Solo:
-    """Define solo __iter__."""
-    def __iter__(self):
-        return iter([10, 20, 30])
-
-o = Solo()
-
-funciona_for = ______
-try:
-    len(o)
-    funciona_len = True
-except TypeError:
-    funciona_len = False
-
-print(funciona_for, funciona_len, 20 in o)
-funciona_len
-```
-
-::: {.hint exercise="ex_proto"}
-Con `__iter__` funcionan `for`, `list`, `sum` y el operador `in`, que recorre cuando no hay `__contains__`. `len` es el único que lo requiere.
-:::
-
-::: {.solution exercise="ex_proto"}
-```{pyodide}
-class Solo:
-    """Define solo __iter__."""
-    def __iter__(self):
-        return iter([10, 20, 30])
-
-o = Solo()
-
-funciona_for = list(o) == [10, 20, 30]
-try:
-    len(o)
-    funciona_len = True
-except TypeError:
-    funciona_len = False
-
-print(funciona_for, funciona_len, 20 in o)
-funciona_len
-```
-:::
-
-```{pyodide}
-#| exercise: ex_proto
-#| check: true
-if funciona_for and result is False:
-    feedback = {"correct": True, "message": "Correcto: con solo __iter__ funcionan for, list y el operador in, que recorre el objeto cuando no hay __contains__; len es el único que falla.", "type": "success"}
-else:
-    feedback = {"correct": False, "message": f"Esperaba True y False; obtuve {funciona_for} y {result}.", "type": "error"}
-feedback
-```
+Lo usa el [Entregable 25](entregable-25.qmd), la caja de supermercado con clases.
 
 ## Reto
 
@@ -729,7 +1169,7 @@ Por eso todo lo que se afirma aquí se mide en lugar de citarse: el diccionario 
 
 ## Para el Cerebro
 
-Nota nueva en `10-Conceptos/clases-y-protocolos.md`, enlazada a [[tipos-y-estructuras]], [[funciones-y-scope]] y [[comprehensions]]. Conviene rehacer a mano la Proposición 17.3: describir cómo coloca un diccionario sus claves ocupa un párrafo y justifica por qué la igualdad obliga al hash, duda que reaparece cada vez que se escribe una clase nueva.
+Nota nueva en `10-Conceptos/clases-y-protocolos.md`, enlazada a [[tipos-y-estructuras]], [[funciones-y-scope]] y [[comprehensions]]. Conviene rehacer a mano la Regla 17.3: describir cómo coloca un diccionario sus claves ocupa un párrafo y justifica por qué la igualdad obliga al hash, duda que reaparece cada vez que se escribe una clase nueva.
 
 ```
 ¿Qué exige el contrato del hash?::Que si a == b entonces hash(a) == hash(b)
@@ -749,7 +1189,7 @@ Nota nueva en `10-Conceptos/clases-y-protocolos.md`, enlazada a [[tipos-y-estruc
 ::: {#fuentes .fuentes}
 ### Fuentes
 
-**Lo que esta página demuestra sola.** Todos los resultados. La Proposición 17.3 se argumenta desde cómo un diccionario coloca y compara sus claves, y se comprueba con las cuatro clases de la sección 1: `Punto` guarda dos claves, `PuntoIgual` no se puede hashear, `PuntoCompleto` guarda una y `PuntoRoto` guarda dos iguales, con `a == b` valiendo `True` y `b in d` valiendo `False`. La 17.4 se comprueba construyendo una clase que funciona con ocho operaciones distintas sin guardar elementos, y que ocupa $56$ bytes con diez o con cien mil. La 17.7 se comprueba con el orden `D -> B -> C -> A -> object` y con una jerarquía que no se deja crear. La 17.8, con `a.articulos is b.articulos` valiendo `True`.
+**Lo que esta página demuestra sola.** Todos los resultados. La Regla 17.3 se argumenta desde cómo un diccionario coloca y compara sus claves, y se comprueba con las cuatro clases de la sección 1: `Punto` guarda dos claves, `PuntoIgual` no se puede hashear, `PuntoCompleto` guarda una y `PuntoRoto` guarda dos iguales, con `a == b` valiendo `True` y `b in d` valiendo `False`. La Regla 17.4 se comprueba construyendo una clase que funciona con ocho operaciones distintas sin guardar elementos, y que ocupa $56$ bytes con diez o con cien mil. La Regla 17.7 se comprueba con el orden `D -> B -> C -> A -> object` y con una jerarquía que no se deja crear. La Regla 17.8, con `a.articulos is b.articulos` valiendo `True`.
 
 **Lo que viene de los libros.** Nada. McKinney, que es el texto del módulo, no trata el modelo de objetos ni los protocolos, y no hay otro libro con índice verificado que lo haga. En lugar de citar de memoria, la lección se apoya en lo que se puede ejecutar.
 

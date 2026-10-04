@@ -5617,6 +5617,55 @@ Donde la demostración apelaba a la celda se añadió el caso que faltaba, con
 sus salidas declaradas. Quedan por auditar Series, Causal, Atributos y ML
 aplicado.
 
+### 3.118 Regla 27: Fundamentos y Python con reto primero y ejercicios intercalados (04-10-2026)
+
+Luis trajo seis propuestas de una revisión externa: reto antes de la teoría
+(productive failure de Kapur), examen de salida en lo básico, más ejercicios y
+más cortos, progreso visible, rigor formal solo donde paga y un proyecto como
+hilo diario. Se aplicaron a las 42 lecciones de Fundamentos y Python con la
+regla 27 de `CLAUDE.md`:
+
+- **227 reglas** sustituyen a proposiciones cuya demostración describía la
+  celda. Se conservan **33 proposiciones** cuya demostración deriva con
+  fórmulas (media de las medias, suma de cuadrados, cota de la búsqueda
+  binaria, Amdahl, inclusión-exclusión…).
+- **Examen de salida** en las 12 de Fundamentos y **problema inicial** en las
+  30 de Python, retomado en la sección que introduce la herramienta.
+- **292 ejercicios intercalados** (entre 6 y 8 por lección) más los 42 de
+  inicio: 334 comprobaciones.
+- **Pieza del proyecto**: `caja.py` crece desde Fundamentos 1 y cada pieza
+  enlaza el entregable del catálogo §3.97 que la usa.
+- **Progreso**: `encabezado.html` cuenta los ejercicios resueltos y la racha
+  (sábado y domingo no la cortan), en `localStorage`. El script de anclas
+  enlaza también «Regla N.M».
+
+Pilotos a mano (Fundamentos 2, Python 12); el resto, ocho agentes en paralelo
+con un encargo común. Herramientas nuevas: `verificar/ejecuta.py` (gate en CI,
+ejecuta cada ejercicio con su solución y en blanco con los ámbitos de
+quarto-live, en paralelo) y `verificar/reindexa.py` (reasigna los índices de
+`afirmaciones.json` emparejando celdas por su código). Las 83 menciones
+«Proposición N.M» que ahora son reglas se corrigieron en lecciones,
+entregables y cuadernos de retos.
+
+Todo se probó también en el Pyodide real del sitio, ejercicio por ejercicio,
+con la solución, respuestas alternativas correctas y respuestas erróneas. El
+barrido encontró dos cosas que ningún gate veía:
+
+- **Enteros de 32 bits en el navegador.** En Pyodide (wasm32) `np.arange` da
+  `int32`: Python 8 imprimía un búfer de 40 bytes donde la prosa decía 80.
+  Ya pasaba antes de este cambio. Se fijó `dtype=np.int64` en las celdas que
+  imprimen pasos o bytes (Python 6, 7 y 8).
+- **Bucles sin fin.** Un error natural en el cuerpo de un `while` colgaba la
+  pestaña. En Fundamentos 12 y Python 25 el bucle del ejercicio pasó a
+  `for _ in range(100)` con `break`. `ex_break` de Fundamentos 3 se deja con
+  `while True`, que es lo que esa lección enseña.
+
+Comprobaciones que aceptan respuestas dudosas y quedan anotadas: en Python 21,
+`ex_param` acepta comillas dobles y `ex_null` acepta división entera; en
+Python 24, `ex_invariante` acepta `len(ventas)`; y una docena de ejercicios
+de predicción no reejecutan con otros datos porque la respuesta es un valor
+escrito a mano.
+
 ## 4. Cómo se escribe una lección
 
 El orden importa y está probado. Saltarse el paso 1 es lo que produjo las cinco

@@ -22,9 +22,9 @@ engine: markdown
 Al terminar esta lección se puede:
 
 1. Consultar una base con `sqlite3` y distinguir el [cursor]{.g} de las filas que entrega.
-2. Demostrar, con un apellido que lleva comilla, por qué un valor se pasa como [parámetro]{.g data-t="parámetro de consulta"} en lugar de insertarse en el texto de la consulta.
+2. Explicar, con un apellido que lleva comilla, por qué un valor se pasa como [parámetro]{.g data-t="parámetro de consulta"} en lugar de insertarse en el texto de la consulta.
 3. Explicar por qué un parámetro no puede designar un nombre de columna, y qué se hace en ese caso.
-4. Demostrar que `NULL` representa la ausencia de valor: dos filas que no aparecen en `nota = 5` ni en `nota <> 5`.
+4. Comprobar que `NULL` representa la ausencia de valor: dos filas que no aparecen en `nota = 5` ni en `nota <> 5`.
 5. Distinguir `COUNT(*)` de `COUNT(columna)` y exhibir dos medias que difieren en un factor de dos.
 6. Medir cuántas filas cruzan de la base al programa según dónde se filtra y se agrega: 10 000, 654 o 1.
 7. Usar una [transacción]{.g} para que dos cambios ocurran juntos o no ocurra ninguno.
@@ -63,19 +63,82 @@ Al terminar esta lección se puede:
 | `N` | ene mayúscula | El número de filas de la tabla |
 :::
 
+## Problema inicial
+
+Este problema va antes de la teoría y se resuelve con lo visto hasta Python 20: listas, `None` y bucles. La Sección 3 vuelve sobre él.
+
+La lista `notas` trae la nota de cuatro estudiantes, con `None` para quien no tiene nota. Completar las líneas de `media_presentes`, la media de las notas que existen, y `media_con_ceros`, la media de los cuatro contando cada ausente como cero. Con la lista de la celda deben dar 7.0 y 3.5. La comprobación vuelve a ejecutar el código con otras listas.
+
+```{pyodide}
+#| exercise: ex_inicial
+notas = [5, None, 9, None]
+
+media_presentes = ______
+media_con_ceros = ______
+
+print(media_presentes, media_con_ceros)
+```
+
+::: {.hint exercise="ex_inicial"}
+`sum(notas)` levanta `TypeError` porque `None` no se suma. Una forma: construir primero la lista de las notas que no son `None` y usar su longitud o la de `notas` como divisor.
+:::
+
+::: {.solution exercise="ex_inicial"}
+```{pyodide}
+notas = [5, None, 9, None]
+
+presentes = [x for x in notas if x is not None]
+media_presentes = sum(presentes) / len(presentes)
+media_con_ceros = sum(presentes) / len(notas)
+
+print(media_presentes, media_con_ceros)
+```
+
+El numerador es el mismo, 14, y el divisor cambia de 2 a 4. Las dos medias responden a preguntas distintas. La Sección 3 muestra que SQL calcula una de las dos por defecto.
+:::
+
+```{pyodide}
+#| exercise: ex_inicial
+#| check: true
+import contextlib, io, re
+casos = [(None, 7.0, 3.5), ("[10, None]", 10.0, 5.0),
+         ("[3, 4, 5]", 4.0, 4.0), ("[None, 0, 6, None]", 3.0, 1.5)]
+fallo = None
+for lista, mp, mc in casos:
+    otro = user_code
+    if lista is not None:
+        otro = re.sub(r"(?m)^notas\s*=.*$", "notas = " + lista, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = (ns.get("media_presentes"), ns.get("media_con_ceros"))
+        bien = (abs(obtenido[0] - mp) < 1e-9
+                and abs(obtenido[1] - mc) < 1e-9)
+    except Exception as err:
+        obtenido, bien = type(err).__name__, False
+    if not bien and fallo is None:
+        fallo = "con notas = %s se esperaba %s y salio %s" % (
+            lista or "la de la celda", (mp, mc), obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto, también con otras listas."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 1. Conexión, cursor y filas
 
 :::: {.definicion}
 **Definición 21.1 (conexión y cursor).** Una **conexión** representa la sesión abierta con la base. `con.execute` devuelve un **cursor**, que entrega las filas a medida que se piden: recorrerlo con un `for` las trae de forma incremental, y `fetchall` las carga todas en memoria. Un cursor ya recorrido queda agotado.
 ::::
 
-:::: {.proposicion}
-**Proposición 21.2.** Cada fila llega como una tupla y se accede por puesto. Asignando `sqlite3.Row` a `row_factory`, la misma fila admite además el acceso por nombre de columna.
+:::: {.regla}
+**Regla 21.2.** Cada fila llega como una tupla y se accede por puesto. Asignando `sqlite3.Row` a `row_factory`, la misma fila admite además el acceso por nombre de columna.
 ::::
 
-:::: {.demostracion}
-*Demostración.* El protocolo estándar solo garantiza que una fila sea una secuencia, y la implementación por defecto usa tuplas. `sqlite3.Row` es una clase que conserva los nombres de las columnas del cursor y define el acceso por clave además del posicional, de modo que las dos formas funcionan sobre el mismo objeto. La celda comprueba que `fila['ciudad']` y `fila[0]` devuelven lo mismo, y que `keys()` enumera las columnas. ∎
-::::
+El protocolo estándar solo garantiza que una fila sea una secuencia, y la implementación por defecto usa tuplas. `sqlite3.Row` es una clase que conserva los nombres de las columnas del cursor y define el acceso por clave además del posicional, de modo que las dos formas funcionan sobre el mismo objeto. La celda comprueba que `fila['ciudad']` y `fila[0]` devuelven lo mismo, y que `keys()` enumera las columnas.
 
 **Modo de falla.** El acceso por posición hace depender el programa del orden de las columnas del `SELECT`. Si se añade una columna intermedia, `fila[2]` sigue funcionando y devuelve otra columna sin levantar ningún error: los importes se leen de la columna de fechas y el informe contiene valores absurdos. Para evitarlo se enumeran las columnas en el `SELECT`, sin usar `*`, y se leen por nombre.
 
@@ -119,29 +182,103 @@ print("  fetchall()      -> %s" % cur.fetchall())
 print("  y el cursor queda agotado: %s" % cur.fetchall())
 ```
 
+### Ejercicio 21.1, Lectura por nombre de columna
+
+La celda crea la tabla `ventas` y pide filas de tipo `sqlite3.Row`. Con la Regla 21.2, completar la línea de `importe` con el importe de `fila` leído por el nombre de su columna. La celda imprime `importe`, que debe ser 80.5. La comprobación vuelve a ejecutar el código con las columnas del `SELECT` en otro orden y con otro `id`.
+
+```{pyodide}
+#| exercise: ex_row
+import sqlite3
+
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE ventas "
+            "(id INTEGER, ciudad TEXT, importe REAL)")
+con.executemany("INSERT INTO ventas VALUES (?, ?, ?)",
+                [(1, "Lima", 120.0), (2, "Quito", 80.5)])
+con.row_factory = sqlite3.Row
+
+sql = "SELECT ciudad, importe FROM ventas WHERE id = 2"
+fila = con.execute(sql).fetchone()
+importe = ______
+
+print(importe)
+```
+
+::: {.hint exercise="ex_row"}
+Una fila de tipo `sqlite3.Row` admite `fila["nombre_de_columna"]`, igual que un diccionario.
+:::
+
+::: {.solution exercise="ex_row"}
+```{pyodide}
+import sqlite3
+
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE ventas "
+            "(id INTEGER, ciudad TEXT, importe REAL)")
+con.executemany("INSERT INTO ventas VALUES (?, ?, ?)",
+                [(1, "Lima", 120.0), (2, "Quito", 80.5)])
+con.row_factory = sqlite3.Row
+
+sql = "SELECT ciudad, importe FROM ventas WHERE id = 2"
+fila = con.execute(sql).fetchone()
+importe = fila["importe"]
+
+print(importe)
+```
+
+`fila[1]` también da 80.5 con este `SELECT`, pero con `SELECT importe, ciudad` daría `'Quito'`: es el modo de falla de la Regla 21.2.
+:::
+
+```{pyodide}
+#| exercise: ex_row
+#| check: true
+import contextlib, io, re
+casos = [(None, 80.5),
+         ('sql = "SELECT importe, ciudad FROM ventas WHERE id = 2"', 80.5),
+         ('sql = "SELECT id, ciudad, importe FROM ventas WHERE id = 1"',
+          120.0)]
+fallo = None
+for linea, esperado in casos:
+    otro = user_code
+    if linea is not None:
+        otro = re.sub(r"(?m)^sql\s*=.*$", linea, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = ns.get("importe")
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con %s se esperaba %s y salio %r" % (
+            linea or "la consulta de la celda", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: el nombre no depende del orden."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 2. Parámetros de consulta
 
 :::: {.definicion}
 **Definición 21.3 (parámetro de consulta).** Un **parámetro** es un hueco en la consulta, `?` o `:nombre`, cuyo valor se pasa por separado en una tupla o un diccionario. El motor recibe la consulta y los valores por separado, de modo que un valor no puede interpretarse como parte de la consulta.
 ::::
 
-:::: {.proposicion}
-**Proposición 21.4.** Insertar un valor en el texto de la consulta produce un error cuando el valor contiene una comilla. El apellido `O'Brien` es un ejemplo.
+:::: {.regla}
+**Regla 21.4.** Insertar un valor en el texto de la consulta produce un error cuando el valor contiene una comilla. El apellido `O'Brien` es un ejemplo.
 ::::
 
-:::: {.demostracion}
-*Demostración.* Al construir el texto por sustitución, la comilla del dato cierra la que delimitaba el literal, y el resto deja de leerse como valor: el resultado es un texto que el analizador no reconoce y que levanta `OperationalError`. Con un parámetro no hay ningún literal que cerrar, porque el valor no forma parte del texto de la consulta. La celda ejecuta las dos formas con el mismo apellido: la versión con el valor insertado levanta la excepción y la parametrizada devuelve `[('Quito',)]`. ∎
+Al construir el texto por sustitución, la comilla del dato cierra la que delimitaba el literal, y el resto deja de leerse como valor: el resultado es un texto que el analizador no reconoce y que levanta `OperationalError`. Con un parámetro no hay ningún literal que cerrar, porque el valor no forma parte del texto de la consulta. La celda ejecuta las dos formas con el mismo apellido: la versión con el valor insertado levanta la excepción y la parametrizada devuelve `[('Quito',)]`.
+
+:::: {.regla}
+**Regla 21.5.** Un parámetro representa un valor. `SELECT ? FROM clientes` con `'nombre'` devuelve la cadena `'nombre'` repetida una vez por fila, en lugar del contenido de esa columna.
 ::::
 
-:::: {.proposicion}
-**Proposición 21.5.** Un parámetro representa un valor. `SELECT ? FROM clientes` con `'nombre'` devuelve la cadena `'nombre'` repetida una vez por fila, en lugar del contenido de esa columna.
-::::
+La consulta se analiza antes de recibir los valores. En ese momento el `?` ocupa la posición de una expresión y no puede convertirse en un identificador; el valor recibido después se usa como constante. La celda lo comprueba: el resultado son tres tuplas con la cadena `'nombre'`, una por fila de la tabla, en lugar de los tres nombres.
 
-:::: {.demostracion}
-*Demostración.* La consulta se analiza antes de recibir los valores. En ese momento el `?` ocupa la posición de una expresión y no puede convertirse en un identificador; el valor recibido después se usa como constante. La celda lo comprueba: el resultado son tres tuplas con la cadena `'nombre'`, una por fila de la tabla, en lugar de los tres nombres. ∎
-::::
-
-**Modo de falla.** El error de la Proposición 21.4 es visible. El caso más grave es aquel en que el texto resultante es una consulta válida y distinta de la pretendida. Por eso la regla se aplica también a los datos considerados «de confianza», ya que un dato interno puede pasar a llegar de un formulario. Cuando lo que varía es un nombre de tabla o de columna, se elige de una lista fija escrita en el programa y se comprueba la pertenencia antes de construir el texto; los valores que llegan del exterior no se interpolan.
+**Modo de falla.** El error de la Regla 21.4 es visible. El caso más grave es aquel en que el texto resultante es una consulta válida y distinta de la pretendida. Por eso la regla se aplica también a los datos considerados «de confianza», ya que un dato interno puede pasar a llegar de un formulario. Cuando lo que varía es un nombre de tabla o de columna, se elige de una lista fija escrita en el programa y se comprueba la pertenencia antes de construir el texto; los valores que llegan del exterior no se interpolan.
 
 ```{pyodide}
 import sqlite3
@@ -195,27 +332,170 @@ except sqlite3.OperationalError:
     print("  SELECT ? levanta OperationalError")
 ```
 
+### Ejercicio 21.2, Apellido con comilla
+
+La celda crea la tabla `c` con dos clientes, uno de ellos de apellido `O'Brien`, que se guarda en `buscado`. Con la Regla 21.4, completar los dos argumentos de `con.execute`: la consulta, con un `?` en el lugar del valor, y la tupla que contiene `buscado`. La celda imprime la ciudad del cliente, que debe ser `Quito`. La comprobación vuelve a ejecutar el código con otros datos.
+
+```{pyodide}
+#| exercise: ex_param
+import sqlite3
+
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE c (nombre TEXT, ciudad TEXT)")
+con.executemany("INSERT INTO c VALUES (?, ?)",
+                [("O'Brien", "Quito"), ("Ana", "Lima")])
+
+buscado = "O'Brien"
+ciudad = con.execute(______, ______).fetchone()[0]
+
+print(ciudad)
+```
+
+::: {.hint exercise="ex_param"}
+El hueco se escribe `?` dentro del texto y el valor se pasa en una tupla como segundo argumento. Una tupla de un solo elemento lleva coma, como se vio en Fundamentos 6.
+:::
+
+::: {.solution exercise="ex_param"}
+```{pyodide}
+import sqlite3
+
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE c (nombre TEXT, ciudad TEXT)")
+con.executemany("INSERT INTO c VALUES (?, ?)",
+                [("O'Brien", "Quito"), ("Ana", "Lima")])
+
+buscado = "O'Brien"
+ciudad = con.execute("SELECT ciudad FROM c WHERE nombre = ?",
+                     (buscado,)).fetchone()[0]
+
+print(ciudad)
+```
+
+Devuelve `Quito`. Un error frecuente es escribir `(buscado)` sin la coma. Esa expresión es la cadena entre paréntesis, y `sqlite3` la interpreta como siete parámetros, uno por carácter.
+:::
+
+```{pyodide}
+#| exercise: ex_param
+#| check: true
+import contextlib, io, re
+otro = user_code
+otro = re.sub(r"(?m)^buscado\s*=.*$", 'buscado = "Ana"', otro)
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(otro, ns)
+    general = ns.get("ciudad") == "Lima"
+except Exception:
+    general = False
+ok = ciudad == "Quito"
+if ok and general:
+    feedback = {"correct": True, "message": "Correcto: el parametro no se rompe con la comilla."}
+elif ok:
+    feedback = {"correct": False,
+                "message": "Da los valores pedidos, pero con buscado = \"Ana\" no da \"Lima\"."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 'Quito'."}
+feedback
+```
+
+### Ejercicio 21.3, Columna elegida de una lista fija
+
+La celda crea la tabla `clientes` y recibe en `columna` el nombre de la columna que se quiere listar. Por la Regla 21.5, ese nombre no puede pasar como parámetro; la celda ya comprueba que pertenece a la tupla `permitidas`. Completar la línea de `sql` con el texto de la consulta que selecciona esa columna de `clientes`. La celda imprime los valores, que deben ser `['Lima', 'Quito', 'Lima']`. La comprobación vuelve a ejecutar el código con `columna = "nombre"` y con un nombre que no está en la lista, que debe levantar `ValueError`.
+
+```{pyodide}
+#| exercise: ex_columna
+import sqlite3
+
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE clientes (nombre TEXT, ciudad TEXT)")
+con.executemany("INSERT INTO clientes VALUES (?, ?)", [
+    ("Ana Ruiz", "Lima"), ("O'Brien", "Quito"), ("Eva Sol", "Lima")])
+
+permitidas = ("nombre", "ciudad")
+columna = "ciudad"
+
+if columna not in permitidas:
+    raise ValueError("columna no permitida: " + columna)
+sql = ______
+
+valores = [f[0] for f in con.execute(sql)]
+print(valores)
+```
+
+::: {.hint exercise="ex_columna"}
+Como `columna` ya está en la lista fija, se puede unir al texto: `"SELECT " + columna + ...`. Un `?` en su lugar devolvería la cadena `'ciudad'` repetida.
+:::
+
+::: {.solution exercise="ex_columna"}
+```{pyodide}
+import sqlite3
+
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE clientes (nombre TEXT, ciudad TEXT)")
+con.executemany("INSERT INTO clientes VALUES (?, ?)", [
+    ("Ana Ruiz", "Lima"), ("O'Brien", "Quito"), ("Eva Sol", "Lima")])
+
+permitidas = ("nombre", "ciudad")
+columna = "ciudad"
+
+if columna not in permitidas:
+    raise ValueError("columna no permitida: " + columna)
+sql = "SELECT " + columna + " FROM clientes"
+
+valores = [f[0] for f in con.execute(sql)]
+print(valores)
+```
+
+La unión de textos es aceptable aquí porque `columna` solo puede valer uno de los dos nombres escritos en el programa. Un valor que llega del exterior sigue pasando como parámetro.
+:::
+
+```{pyodide}
+#| exercise: ex_columna
+#| check: true
+import contextlib, io, re
+casos = [(None, ["Lima", "Quito", "Lima"]),
+         ('"nombre"', ["Ana Ruiz", "O'Brien", "Eva Sol"]),
+         ('"ciudad FROM clientes; --"', "ValueError")]
+fallo = None
+for col, esperado in casos:
+    otro = user_code
+    if col is not None:
+        otro = re.sub(r"(?m)^columna\s*=.*$", "columna = " + col, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = ns.get("valores")
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con columna = %s se esperaba %s y salio %s" % (
+            col or "la de la celda", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: la columna sale de la lista fija."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 3. Semántica de `NULL`
 
 :::: {.definicion}
 **Definición 21.6 (`NULL`).** `NULL` representa la ausencia de valor. La comparación de cualquier expresión con `NULL` devuelve `NULL`, que no es verdadero ni falso. Una fila entra en un resultado solo cuando la condición del `WHERE` es verdadera, de modo que las filas con `NULL` en la columna comparada quedan fuera de las dos ramas de cualquier igualdad.
 ::::
 
-:::: {.proposicion}
-**Proposición 21.7.** Las filas con `NULL` no aparecen ni en `nota = 5` ni en `nota <> 5`. Sobre una tabla de 4 filas con 2 nulos, las dos condiciones devuelven 1 y 1, y suman 2 en lugar de 4.
+:::: {.regla}
+**Regla 21.7.** Las filas con `NULL` no aparecen ni en `nota = 5` ni en `nota <> 5`. Sobre una tabla de 4 filas con 2 nulos, las dos condiciones devuelven 1 y 1, y suman 2 en lugar de 4.
 ::::
 
-:::: {.demostracion}
-*Demostración.* Por la Definición 21.6 las dos comparaciones valen `NULL` para esas filas, y `NULL` no es verdadero, de modo que ninguna de las dos las admite. Para encontrarlas se usa `IS NULL`, que devuelve verdadero o falso. La celda cuenta las cuatro cantidades y comprueba que las dos condiciones opuestas suman 2 de 4. ∎
+Por la Definición 21.6 las dos comparaciones valen `NULL` para esas filas, y `NULL` no es verdadero, de modo que ninguna de las dos las admite. Para encontrarlas se usa `IS NULL`, que devuelve verdadero o falso. La celda cuenta las cuatro cantidades y comprueba que las dos condiciones opuestas suman 2 de 4.
+
+:::: {.regla}
+**Regla 21.8.** `COUNT(*)` cuenta filas y `COUNT(columna)` cuenta valores presentes. En consecuencia `AVG` divide entre el número de valores presentes: sobre la misma tabla, `AVG(nota)` vale 7,0 y `AVG(COALESCE(nota, 0))` vale 3,5.
 ::::
 
-:::: {.proposicion}
-**Proposición 21.8.** `COUNT(*)` cuenta filas y `COUNT(columna)` cuenta valores presentes. En consecuencia `AVG` divide entre el número de valores presentes: sobre la misma tabla, `AVG(nota)` vale 7,0 y `AVG(COALESCE(nota, 0))` vale 3,5.
-::::
-
-:::: {.demostracion}
-*Demostración.* Las funciones de agregación ignoran los `NULL`, de modo que `SUM(nota)` vale 14 sobre los dos valores presentes y `AVG` la divide entre 2 y no entre 4. `COALESCE(nota, 0)` sustituye cada ausencia por un cero antes de agregar; la suma sigue siendo 14 y el divisor pasa a 4. Las dos medias responden a preguntas distintas: la primera es la nota media de quienes tienen nota, y la segunda la media de todos contando al ausente como cero. La celda exhibe las dos. ∎
-::::
+Las funciones de agregación ignoran los `NULL`, de modo que `SUM(nota)` vale 14 sobre los dos valores presentes y `AVG` la divide entre 2 y no entre 4. `COALESCE(nota, 0)` sustituye cada ausencia por un cero antes de agregar; la suma sigue siendo 14 y el divisor pasa a 4. Las dos medias responden a preguntas distintas: la primera es la nota media de quienes tienen nota, y la segunda la media de todos contando al ausente como cero. La celda exhibe las dos.
 
 **Modo de falla.** La diferencia entre 7,0 y 3,5 es un factor de dos y aparece sin una elección explícita: `AVG` tiene un comportamiento por defecto y el informe contiene uno de los dos números. El síntoma es una media que no coincide con la que calcula otro equipo sobre los mismos datos; la causa es que uno sustituyó los ausentes y el otro no. Para evitarlo se decide qué significa el ausente y se escribe esa decisión en la consulta.
 
@@ -351,27 +631,161 @@ print("  AVG(COALESCE(nota, 0)) = %r" % uno("SELECT AVG(COALESCE(nota, 0)) FROM 
 </script>
 ```
 
+El problema inicial calculaba las dos medias en Python sobre la misma lista `[5, None, 9, None]`. En SQL, `AVG(nota)` da la primera, 7,0, y `AVG(COALESCE(nota, 0))` la segunda, 3,5. La diferencia está en que SQL calcula la media de los presentes sin que la consulta lo pida, mientras que en Python hubo que elegir el divisor de forma explícita.
+
+### Ejercicio 21.4, Filas sin nota
+
+La celda crea la tabla `t` con cinco filas, dos de ellas con la nota ausente. Con la Regla 21.7, completar la consulta de `sin_nota` para que cuente las filas cuya nota es `NULL`. La celda imprime `sin_nota`, que debe ser 2; con `WHERE nota = NULL` saldría 0. La comprobación vuelve a ejecutar el código con otras notas.
+
+```{pyodide}
+#| exercise: ex_isnull
+import sqlite3
+
+notas = [(5,), (None,), (9,), (None,), (7,)]
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE t (nota INTEGER)")
+con.executemany("INSERT INTO t VALUES (?)", notas)
+
+sin_nota = con.execute(______).fetchone()[0]
+
+print(sin_nota)
+```
+
+::: {.hint exercise="ex_isnull"}
+La comparación `= NULL` vale `NULL` en todas las filas y no admite ninguna. La que responde verdadero o falso es `IS NULL`.
+:::
+
+::: {.solution exercise="ex_isnull"}
+```{pyodide}
+import sqlite3
+
+notas = [(5,), (None,), (9,), (None,), (7,)]
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE t (nota INTEGER)")
+con.executemany("INSERT INTO t VALUES (?)", notas)
+
+sin_nota = con.execute(
+    "SELECT COUNT(*) FROM t WHERE nota IS NULL").fetchone()[0]
+
+print(sin_nota)
+```
+
+`SELECT COUNT(*) - COUNT(nota) FROM t` da el mismo resultado: la diferencia entre filas y valores presentes es el número de ausentes.
+:::
+
+```{pyodide}
+#| exercise: ex_isnull
+#| check: true
+import contextlib, io, re
+casos = [(None, 2), ("[(1,), (2,)]", 0), ("[(None,)]", 1),
+         ("[(None,), (None,), (None,), (4,)]", 3)]
+fallo = None
+for lista, esperado in casos:
+    otro = user_code
+    if lista is not None:
+        otro = re.sub(r"(?m)^notas\s*=.*$", "notas = " + lista, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = ns.get("sin_nota")
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con notas = %s se esperaba %s y salio %s" % (
+            lista or "las de la celda", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: dos filas sin nota."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
+### Ejercicio 21.5, Media con valores ausentes
+
+La celda crea la tabla `t` con cuatro notas, dos de ellas ausentes (`NULL`). Con la Regla 21.8, completar las dos consultas: la de `media_presentes`, la media de las notas presentes, y la de `media_con_ceros`, la media contando cada ausente como cero. Deben salir 6.0 y 3.0. La comprobación vuelve a ejecutar el código con otros datos.
+
+```{pyodide}
+#| exercise: ex_null
+import sqlite3
+
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE t (nota INTEGER)")
+con.executemany("INSERT INTO t VALUES (?)",
+                [(4,), (8,), (None,), (None,)])
+
+media_presentes = con.execute(______).fetchone()[0]
+media_con_ceros = con.execute(______).fetchone()[0]
+
+print(media_presentes, media_con_ceros)
+```
+
+::: {.hint exercise="ex_null"}
+`AVG` ignora los `NULL`. Para contar el ausente como cero se sustituye antes de agregar, con `COALESCE`.
+:::
+
+::: {.solution exercise="ex_null"}
+```{pyodide}
+import sqlite3
+
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE t (nota INTEGER)")
+con.executemany("INSERT INTO t VALUES (?)",
+                [(4,), (8,), (None,), (None,)])
+
+media_presentes = con.execute(
+    "SELECT AVG(nota) FROM t").fetchone()[0]
+media_con_ceros = con.execute(
+    "SELECT AVG(COALESCE(nota, 0)) FROM t").fetchone()[0]
+
+print(media_presentes, media_con_ceros)
+```
+
+6,0 y 3,0: la suma es 12 en los dos casos y el divisor pasa de 2 a 4. Las dos medias responden a preguntas distintas, y la consulta debe indicar cuál se calcula.
+:::
+
+```{pyodide}
+#| exercise: ex_null
+#| check: true
+import contextlib, io, re
+otro = user_code
+otro = otro.replace('[(4,), (8,), (None,), (None,)]', '[(10,), (None,)]')
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(otro, ns)
+    general = ns.get("media_presentes") == 10.0 and ns.get("media_con_ceros") == 5.0
+except Exception:
+    general = False
+ok = media_presentes == 6.0 and media_con_ceros == 3.0
+if ok and general:
+    feedback = {"correct": True, "message": "Correcto: 6.0 y 3.0, el mismo numerador y distinto divisor."}
+elif ok:
+    feedback = {"correct": False,
+                "message": "Da los valores pedidos, pero con las notas 10 y un faltante no da 10.0 y 5.0."}
+else:
+    feedback = {"correct": False, "message": "Se esperaba 6.0 y 3.0."}
+feedback
+```
+
 ## 4. Filtrado en la base y transacciones
 
 :::: {.definicion}
 **Definición 21.9 (transacción).** Una **transacción** agrupa varios cambios de modo que se aplican todos o ninguno. `with con:` abre una transacción: al salir sin excepción la confirma, y si se levanta una excepción deshace los cambios hechos dentro.
 ::::
 
-:::: {.proposicion}
-**Proposición 21.10.** Filtrar y agregar en SQL reduce las filas que cruzan desde la base al programa. Sobre una tabla de 10 000 filas, traerlas todas y filtrar en Python hace cruzar 10 000, filtrar en SQL hace cruzar 654, y delegar también la suma en la base hace cruzar 1. Las tres versiones dan el mismo total.
+:::: {.regla}
+**Regla 21.10.** Filtrar y agregar en SQL reduce las filas que cruzan desde la base al programa. Sobre una tabla de 10 000 filas, traerlas todas y filtrar en Python hace cruzar 10 000, filtrar en SQL hace cruzar 654, y delegar también la suma en la base hace cruzar 1. Las tres versiones dan el mismo total.
 ::::
 
-:::: {.demostracion}
-*Demostración.* Cada fila que cruza se convierte en objetos de Python, y ese coste se produce aunque la fila se descarte después. El `WHERE` descarta filas antes de la conversión, y una agregación reduce el resultado a una sola fila. La celda cuenta las filas recibidas en las tres versiones y comprueba que las tres sumas coinciden: la primera recibe 15 veces más filas que la segunda para el mismo resultado. ∎
+Cada fila que cruza se convierte en objetos de Python, y ese coste se produce aunque la fila se descarte después. El `WHERE` descarta filas antes de la conversión, y una agregación reduce el resultado a una sola fila. La celda cuenta las filas recibidas en las tres versiones y comprueba que las tres sumas coinciden: la primera recibe 15 veces más filas que la segunda para el mismo resultado.
+
+:::: {.regla}
+**Regla 21.11.** Dentro de un bloque `with con:`, una excepción deshace los cambios ya realizados. Una transferencia interrumpida a mitad deja el total intacto.
 ::::
 
-:::: {.proposicion}
-**Proposición 21.11.** Dentro de un bloque `with con:`, una excepción deshace los cambios ya realizados. Una transferencia interrumpida a mitad deja el total intacto.
-::::
-
-:::: {.demostracion}
-*Demostración.* El gestor de contexto de la conexión confirma al salir normalmente y deshace al salir por excepción, que es el protocolo de la Lección 4. Como el descuento y el abono están dentro del mismo bloque, una excepción entre ambos deshace el descuento y ninguno de los dos queda escrito. La celda interrumpe una transferencia entre los dos pasos y comprueba que el total sigue valiendo 150; después la ejecuta entera y comprueba que los saldos cambian y el total se conserva. ∎
-::::
+El gestor de contexto de la conexión confirma al salir normalmente y deshace al salir por excepción, que es el protocolo de la Lección 4. Como el descuento y el abono están dentro del mismo bloque, una excepción entre ambos deshace el descuento y ninguno de los dos queda escrito. La celda interrumpe una transferencia entre los dos pasos y comprueba que el total sigue valiendo 150; después la ejecuta entera y comprueba que los saldos cambian y el total se conserva.
 
 **Modo de falla.** Sin transacción, una interrupción entre los dos cambios deja el importe descontado y no abonado, y el error no es visible en ninguna fila: cada fila es correcta por separado y solo el total revela la pérdida. Para evitarlo, los cambios que deben ocurrir juntos se escriben dentro del mismo bloque, y las comprobaciones de invariantes, como la conservación del total, se hacen explícitas.
 
@@ -545,152 +959,216 @@ print("  saldos: %s   total %d" % (con.execute("SELECT quien, cuanto FROM saldos
 </script>
 ```
 
+### Ejercicio 21.6, Filtrar y sumar en la base
+
+La celda crea la tabla `ventas` con la lista `filas` y pasa dos parámetros, una ciudad y un importe mínimo. Con la Regla 21.10, completar la línea de `sql` con una consulta cuyo resultado sea una sola fila con la suma de los importes de esa ciudad mayores que el mínimo. La celda imprime cuántas filas cruzan y el total, que deben ser 1 y 530.0. La comprobación vuelve a ejecutar el código con otras ventas y otros parámetros.
+
+```{pyodide}
+#| exercise: ex_sumasql
+import sqlite3
+
+filas = [("Lima", 250), ("Quito", 300), ("Lima", 280), ("Lima", 90)]
+params = ("Lima", 200)
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE ventas (ciudad TEXT, importe REAL)")
+con.executemany("INSERT INTO ventas VALUES (?, ?)", filas)
+
+sql = ______
+
+recibidas = con.execute(sql, params).fetchall()
+total = recibidas[0][0]
+print(len(recibidas), total)
+```
+
+::: {.hint exercise="ex_sumasql"}
+La consulta lleva dos `?` en el `WHERE`, uno para la ciudad y otro para el mínimo, y `SUM(importe)` en el `SELECT`.
+:::
+
+::: {.solution exercise="ex_sumasql"}
+```{pyodide}
+import sqlite3
+
+filas = [("Lima", 250), ("Quito", 300), ("Lima", 280), ("Lima", 90)]
+params = ("Lima", 200)
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE ventas (ciudad TEXT, importe REAL)")
+con.executemany("INSERT INTO ventas VALUES (?, ?)", filas)
+
+sql = ("SELECT SUM(importe) FROM ventas "
+       "WHERE ciudad = ? AND importe > ?")
+
+recibidas = con.execute(sql, params).fetchall()
+total = recibidas[0][0]
+print(len(recibidas), total)
+```
+
+Sin `SUM`, la consulta devolvería las 2 filas que cumplen el filtro, y `recibidas[0][0]` sería 250.0, el importe de la primera.
+:::
+
+```{pyodide}
+#| exercise: ex_sumasql
+#| check: true
+import contextlib, io, re
+casos = [(None, None, 530.0),
+         ('[("Quito", 10.0), ("Quito", 20.0), ("Lima", 5.0)]',
+          '("Quito", 0)', 30.0),
+         ('[("Lima", 300.0), ("Lima", 150.0), ("Lima", 100.0)]',
+          '("Lima", 100)', 450.0)]
+fallo = None
+for ff, pp, esperado in casos:
+    otro = user_code
+    if ff is not None:
+        otro = re.sub(r"(?m)^filas\s*=.*$", "filas = " + ff, otro)
+        otro = re.sub(r"(?m)^params\s*=.*$", "params = " + pp, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = (len(ns["recibidas"]), ns["total"])
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != (1, esperado) and fallo is None:
+        fallo = "con filas = %s se esperaba %s y salio %s" % (
+            ff or "las de la celda", (1, esperado), obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: cruza una fila con el total."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
+### Ejercicio 21.7, Transferencia atómica
+
+La función `transfiere` descuenta `importe` de una persona, levanta `ValueError` si su saldo queda negativo y abona el importe a la otra. Con la Regla 21.11, completar la primera línea del cuerpo, la que abre el bloque, para que una transferencia que falla no deje ningún cambio escrito. La celda intenta una transferencia de 130, que falla, y después una de 30: deben quedar `{'ana': 70, 'luis': 80}` y un total de 150. La comprobación llama además a `transfiere` con otros importes.
+
+```{pyodide}
+#| exercise: ex_transaccion
+import sqlite3
+
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE saldos (quien TEXT, cuanto INTEGER)")
+con.executemany("INSERT INTO saldos VALUES (?, ?)",
+                [("ana", 100), ("luis", 50)])
+con.commit()
+
+def transfiere(de, a, importe):
+    ______
+        con.execute("UPDATE saldos SET cuanto = cuanto - ? "
+                    "WHERE quien = ?", (importe, de))
+        q = "SELECT cuanto FROM saldos WHERE quien = ?"
+        if con.execute(q, (de,)).fetchone()[0] < 0:
+            raise ValueError("saldo insuficiente")
+        con.execute("UPDATE saldos SET cuanto = cuanto + ? "
+                    "WHERE quien = ?", (importe, a))
+
+try:
+    transfiere("ana", "luis", 130)
+except ValueError:
+    pass
+transfiere("ana", "luis", 30)
+saldos = dict(con.execute("SELECT quien, cuanto FROM saldos"))
+print(saldos, sum(saldos.values()))
+```
+
+::: {.hint exercise="ex_transaccion"}
+Una conexión es un gestor de contexto: el bloque que abre confirma los cambios al salir sin error y los deshace si sale por una excepción.
+:::
+
+::: {.solution exercise="ex_transaccion"}
+```{pyodide}
+import sqlite3
+
+con = sqlite3.connect(":memory:")
+con.execute("CREATE TABLE saldos (quien TEXT, cuanto INTEGER)")
+con.executemany("INSERT INTO saldos VALUES (?, ?)",
+                [("ana", 100), ("luis", 50)])
+con.commit()
+
+def transfiere(de, a, importe):
+    with con:
+        con.execute("UPDATE saldos SET cuanto = cuanto - ? "
+                    "WHERE quien = ?", (importe, de))
+        q = "SELECT cuanto FROM saldos WHERE quien = ?"
+        if con.execute(q, (de,)).fetchone()[0] < 0:
+            raise ValueError("saldo insuficiente")
+        con.execute("UPDATE saldos SET cuanto = cuanto + ? "
+                    "WHERE quien = ?", (importe, a))
+
+try:
+    transfiere("ana", "luis", 130)
+except ValueError:
+    pass
+transfiere("ana", "luis", 30)
+saldos = dict(con.execute("SELECT quien, cuanto FROM saldos"))
+print(saldos, sum(saldos.values()))
+```
+
+Con `if True:` en lugar de `with con:`, el descuento de 130 queda escrito aunque se levante la excepción: Ana queda en −30, y la transferencia de 30 levanta también `ValueError` porque parte de ese saldo negativo.
+:::
+
+```{pyodide}
+#| exercise: ex_transaccion
+#| check: true
+import contextlib, io
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(user_code, ns)
+    obtenido = ns["saldos"]
+except Exception as err:
+    obtenido = type(err).__name__
+fallo = None
+if obtenido != {"ana": 70, "luis": 80}:
+    fallo = "se esperaba {'ana': 70, 'luis': 80} y salio %s" % (obtenido,)
+else:
+    pruebas = [("luis", "ana", 500, {"ana": 70, "luis": 80}),
+               ("luis", "ana", 80, {"ana": 150, "luis": 0}),
+               ("ana", "luis", 151, {"ana": 150, "luis": 0})]
+    for de, a, imp, esperado in pruebas:
+        try:
+            ns["transfiere"](de, a, imp)
+        except ValueError:
+            pass
+        except Exception as err:
+            fallo = "transfiere levanta %s" % type(err).__name__
+            break
+        q = "SELECT quien, cuanto FROM saldos"
+        ahora = dict(ns["con"].execute(q))
+        if ahora != esperado:
+            fallo = "tras transfiere(%r, %r, %d) se esperaba %s y salio %s" % (
+                de, a, imp, esperado, ahora)
+            break
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: la transferencia fallida no deja rastro."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 5. Limitaciones
 
-No se han tratado los índices. La Proposición 21.10 mide las filas que cruzan hacia el programa y no las que la base examina para encontrarlas; sin un índice adecuado, un `WHERE` recorre la tabla entera aunque devuelva una fila. Es el tema de la Lección 7 de Fundamentos, con la diferencia de que aquí el índice se declara y se mantiene.
+No se han tratado los índices. La Regla 21.10 mide las filas que cruzan hacia el programa y no las que la base examina para encontrarlas; sin un índice adecuado, un `WHERE` recorre la tabla entera aunque devuelva una fila. Es el tema de la Lección 7 de Fundamentos, con la diferencia de que aquí el índice se declara y se mantiene.
 
 Tampoco se ha tratado la diferencia entre SQLite y los motores que se ejecutan en un servidor, donde la conexión es de red, varios programas escriben a la vez y una transacción tiene que decidir qué cambios ve cada uno. Los tipos también difieren: SQLite acepta casi cualquier valor en cualquier columna y los demás motores no.
 
-## Ejercicios
+## Pieza del proyecto
 
-### Ejercicio 1, Apellido con comilla
+`caja.py` crece en cada lección y los entregables reutilizan sus piezas. Esta lección guarda las líneas de compra en una base de datos:
 
-La celda crea la tabla `c` con dos clientes, uno de ellos de apellido `O'Brien`, que se guarda en `buscado`. Con la Proposición 21.4, completar los dos argumentos de `con.execute`: la consulta, con un `?` en el lugar del valor, y la tupla que contiene `buscado`. La celda imprime la ciudad del cliente, que debe ser `Quito`. La comprobación vuelve a ejecutar el código con otros datos.
+1. Guardar cada línea de compra (número de compra, producto, cantidad y precio unitario) en una tabla, de modo que un nombre de producto con comilla, como `Pan d'Or`, se guarde y se recupere sin error.
+2. Calcular el total vendido por producto entre dos horas dadas sin traer al programa las líneas que quedan fuera de ese intervalo.
+3. Registrar una compra completa, con todas sus líneas, de modo que, si una de ellas no se puede guardar, no quede guardada ninguna.
+4. Distinguir en el informe los productos sin precio registrado de los que tienen precio cero.
 
-```{pyodide}
-#| exercise: ex_param
-import sqlite3
-
-con = sqlite3.connect(":memory:")
-con.execute("CREATE TABLE c (nombre TEXT, ciudad TEXT)")
-con.executemany("INSERT INTO c VALUES (?, ?)",
-                [("O'Brien", "Quito"), ("Ana", "Lima")])
-
-buscado = "O'Brien"
-ciudad = con.execute(______, ______).fetchone()[0]
-
-print(ciudad)
-```
-
-::: {.hint exercise="ex_param"}
-El hueco se escribe `?` dentro del texto y el valor se pasa en una tupla como segundo argumento. Una tupla de un solo elemento lleva coma, por la Proposición 6.2.
-:::
-
-::: {.solution exercise="ex_param"}
-```{pyodide}
-import sqlite3
-
-con = sqlite3.connect(":memory:")
-con.execute("CREATE TABLE c (nombre TEXT, ciudad TEXT)")
-con.executemany("INSERT INTO c VALUES (?, ?)",
-                [("O'Brien", "Quito"), ("Ana", "Lima")])
-
-buscado = "O'Brien"
-ciudad = con.execute("SELECT ciudad FROM c WHERE nombre = ?",
-                     (buscado,)).fetchone()[0]
-
-print(ciudad)
-```
-
-Devuelve `Quito`. Un error frecuente es escribir `(buscado)` sin la coma. Esa expresión es la cadena entre paréntesis, y `sqlite3` la interpreta como siete parámetros, uno por carácter.
-:::
-
-```{pyodide}
-#| exercise: ex_param
-#| check: true
-import contextlib, io, re
-otro = user_code
-otro = re.sub(r"(?m)^buscado\s*=.*$", 'buscado = "Ana"', otro)
-ns = {}
-try:
-    with contextlib.redirect_stdout(io.StringIO()):
-        exec(otro, ns)
-    general = ns.get("ciudad") == "Lima"
-except Exception:
-    general = False
-ok = ciudad == "Quito"
-if ok and general:
-    feedback = {"correct": True, "message": "Correcto: el parametro no se rompe con la comilla."}
-elif ok:
-    feedback = {"correct": False,
-                "message": "Da los valores pedidos, pero con buscado = \"Ana\" no da \"Lima\"."}
-else:
-    feedback = {"correct": False, "message": "Se esperaba 'Quito'."}
-feedback
-```
-
-### Ejercicio 2, Media con valores ausentes
-
-La celda crea la tabla `t` con cuatro notas, dos de ellas ausentes (`NULL`). Con la Proposición 21.8, completar las dos consultas: la de `media_presentes`, la media de las notas presentes, y la de `media_con_ceros`, la media contando cada ausente como cero. Deben salir 6.0 y 3.0. La comprobación vuelve a ejecutar el código con otros datos.
-
-```{pyodide}
-#| exercise: ex_null
-import sqlite3
-
-con = sqlite3.connect(":memory:")
-con.execute("CREATE TABLE t (nota INTEGER)")
-con.executemany("INSERT INTO t VALUES (?)",
-                [(4,), (8,), (None,), (None,)])
-
-media_presentes = con.execute(______).fetchone()[0]
-media_con_ceros = con.execute(______).fetchone()[0]
-
-print(media_presentes, media_con_ceros)
-```
-
-::: {.hint exercise="ex_null"}
-`AVG` ignora los `NULL`. Para contar el ausente como cero se sustituye antes de agregar, con `COALESCE`.
-:::
-
-::: {.solution exercise="ex_null"}
-```{pyodide}
-import sqlite3
-
-con = sqlite3.connect(":memory:")
-con.execute("CREATE TABLE t (nota INTEGER)")
-con.executemany("INSERT INTO t VALUES (?)",
-                [(4,), (8,), (None,), (None,)])
-
-media_presentes = con.execute(
-    "SELECT AVG(nota) FROM t").fetchone()[0]
-media_con_ceros = con.execute(
-    "SELECT AVG(COALESCE(nota, 0)) FROM t").fetchone()[0]
-
-print(media_presentes, media_con_ceros)
-```
-
-6,0 y 3,0: la suma es 12 en los dos casos y el divisor pasa de 2 a 4. Las dos medias responden a preguntas distintas, y la consulta debe indicar cuál se calcula.
-:::
-
-```{pyodide}
-#| exercise: ex_null
-#| check: true
-import contextlib, io, re
-otro = user_code
-otro = otro.replace('[(4,), (8,), (None,), (None,)]', '[(10,), (None,)]')
-ns = {}
-try:
-    with contextlib.redirect_stdout(io.StringIO()):
-        exec(otro, ns)
-    general = ns.get("media_presentes") == 10.0 and ns.get("media_con_ceros") == 5.0
-except Exception:
-    general = False
-ok = media_presentes == 6.0 and media_con_ceros == 3.0
-if ok and general:
-    feedback = {"correct": True, "message": "Correcto: 6.0 y 3.0, el mismo numerador y distinto divisor."}
-elif ok:
-    feedback = {"correct": False,
-                "message": "Da los valores pedidos, pero con las notas 10 y un faltante no da 10.0 y 5.0."}
-else:
-    feedback = {"correct": False, "message": "Se esperaba 6.0 y 3.0."}
-feedback
-```
+Lo usa el [Entregable 28](entregable-28.qmd), las ventas en SQL y en tablas.
 
 ## Reto
 
 En `proyectos/notebooks/F2-retos.ipynb`, sección **Python 21**:
 
-1. Cargar una tabla con ausentes y calcular un promedio por grupo de las dos formas de la Proposición 21.8. Anotar cuál de las dos coincide con lo que devuelve `pandas` por defecto, y por qué.
+1. Cargar una tabla con ausentes y calcular un promedio por grupo de las dos formas de la Regla 21.8. Anotar cuál de las dos coincide con lo que devuelve `pandas` por defecto, y por qué.
 2. Escribir la misma consulta insertando el valor en el texto y pasándolo como parámetro, sobre un dato con comilla. Guardar en `50-Errores/` el mensaje de la versión con el valor insertado y la línea que la corrige.
 3. Medir, contando filas como hace la celda, cuánto cruza una agregación por grupo hecha en SQL frente a la misma hecha en Python sobre la tabla entera. Anotar cuántas filas cruzan en cada caso y confirmar que los resultados coinciden.
 

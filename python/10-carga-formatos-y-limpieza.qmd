@@ -26,7 +26,7 @@ pyodide:
 Al terminar esta lección se puede:
 
 1. Definir el [formato delimitado]{.g} e identificar qué información pierde respecto del marco que lo originó.
-2. Demostrar que la ida y vuelta por CSV no es la identidad, que es idempotente a partir de la segunda vuelta, e identificar qué columnas se conservan intactas y cuáles no.
+2. Comprobar que la ida y vuelta por CSV no es la identidad, que es idempotente a partir de la segunda vuelta, e identificar qué columnas se conservan intactas y cuáles no.
 3. Explicar por qué la [inferencia de tipo]{.g} depende de las filas examinadas, y predecir cuándo un [bloque de lectura]{.g} devuelve un tipo distinto del de la columna entera.
 4. Deducir del hecho de que un [valor faltante]{.g} no es igual a sí mismo dos consecuencias: la comparación no lo encuentra y la agrupación descarta sus filas.
 5. Demostrar que el número de filas de una [unión interna]{.g} es la suma de los productos de [multiplicidades]{.g data-t="multiplicidad"}, y deducir que la [normalización de cadenas]{.g} nunca puede reducir ese número.
@@ -46,7 +46,7 @@ Al terminar esta lección se puede:
 #### Para qué sirve después
 
 - **Python 11**: el wrangling, las uniones y el reshape, donde la Proposición 10.6 de esta lección determina cuántas filas produce cada combinación.
-- **Python 12**: `groupby` y la agregación, donde se aplica la Proposición 10.5: las claves faltantes desaparecen sin aviso.
+- **Python 12**: `groupby` y la agregación, donde se aplica la Regla 10.5: las claves faltantes desaparecen sin aviso.
 - **Python 14**: las series de tiempo, donde el faltante se llama `NaT` y la inferencia de tipo debe reconocer las fechas.
 - **Machine Learning 9**: la regresión en alta dimensión, que parte de una matriz cargada y limpiada sin cambiar los tipos en el proceso.
 :::
@@ -67,6 +67,76 @@ Al terminar esta lección se puede:
 | $\rho$ | rho | La función que escribe cada valor como texto en el archivo |
 :::
 
+## Problema inicial
+
+Este problema va antes de la teoría y se resuelve con lo visto hasta Python 9: cadenas, listas y comprensiones. La Sección 1 vuelve sobre él.
+
+La cadena `texto` contiene un archivo delimitado por comas, con una línea de cabecera y las columnas `codigo` e `importe`; la celda ya trae `lineas`, la lista de sus líneas sin la cabecera. Completar las líneas de `codigos` y `total`: `codigos` es la lista de los códigos como texto, con sus ceros a la izquierda, y `total` es la suma de los importes como número. Con el texto de la celda se imprime `['007', '012', '100']` y `16.0`. La comprobación vuelve a ejecutar el código con otro texto.
+
+```{pyodide}
+#| exercise: ex_inicial
+texto = "codigo,importe\n007,10.5\n012,3.0\n100,2.5"
+
+lineas = texto.split("\n")[1:]
+codigos = ______
+total = ______
+
+print(codigos, total)
+```
+
+::: {.hint exercise="ex_inicial"}
+Cada línea se separa por la coma con `split(",")`: el primer trozo es el código, que ya es texto, y el segundo es el importe, que hay que pasar a `float` antes de sumar.
+:::
+
+::: {.solution exercise="ex_inicial"}
+```{pyodide}
+texto = "codigo,importe\n007,10.5\n012,3.0\n100,2.5"
+
+lineas = texto.split("\n")[1:]
+codigos = [l.split(",")[0] for l in lineas]
+total = sum(float(l.split(",")[1]) for l in lineas)
+
+print(codigos, total)
+```
+
+Separar a mano conserva los ceros porque nada convierte el código en número. La Sección 1 muestra que leer el mismo texto con `read_csv` sin declarar tipos devuelve los enteros 7, 12 y 100.
+:::
+
+```{pyodide}
+#| exercise: ex_inicial
+#| check: true
+import contextlib, io, re
+casos = [
+    (None, ["007", "012", "100"], 16.0),
+    ('"codigo,importe\\n0001,1.25\\n20,2.0"', ["0001", "20"], 3.25),
+    ('"codigo,importe\\n09,4.0"', ["09"], 4.0),
+]
+fallo = None
+for tt, cods, tot in casos:
+    otro = user_code
+    if tt is not None:
+        nuevo = "texto = " + tt.replace("\\", "\\\\")
+        otro = re.sub(r"(?m)^texto\s*=.*$", nuevo, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = (list(ns["codigos"]), float(ns["total"]))
+        bien = obtenido[0] == cods and abs(obtenido[1] - tot) < 1e-9
+    except Exception as err:
+        obtenido, bien = type(err).__name__, False
+    if not bien and fallo is None:
+        fallo = "se esperaba %s y %s, y salio %s" % (cods, tot, obtenido)
+if fallo is not None:
+    fallo = re.sub(r"con (\w+ = )?None", "con los datos de la celda", fallo)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto, tambien con otros textos."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 1. Formato delimitado e ida y vuelta por CSV
 
 ::: {.definicion}
@@ -75,8 +145,8 @@ Al terminar esta lección se puede:
 
 Por ello, leer un archivo delimitado exige inferir los tipos. La [inferencia de tipo]{.g} examina los valores de cada columna y elige el dtype más estrecho que los admite a todos. La inferencia acierta en la mayoría de los casos, lo que facilita el uso de `read_csv`; falla en los casos donde la cadena y el número no significan lo mismo.
 
-::: {.proposicion}
-**Proposición 10.2 (idempotencia de la ida y vuelta).** Sea $\varphi$ la operación de escribir un marco como CSV con el formato por defecto y volver a leerlo. Entonces:
+::: {.regla}
+**Regla 10.2 (idempotencia de la ida y vuelta).** Sea $\varphi$ la operación de escribir un marco como CSV con el formato por defecto y volver a leerlo. Entonces:
 
 (a) los valores `float64` sobreviven exactos, porque el formato por defecto escribe la representación más corta que vuelve al mismo número;
 
@@ -85,13 +155,11 @@ Por ello, leer un archivo delimitado exige inferir los tipos. La [inferencia de 
 (c) $\varphi\neq\mathrm{id}$, pero $\varphi\circ\varphi=\varphi$: a partir de la segunda vuelta el marco ya no cambia.
 :::
 
-::: {.demostracion}
-*Demostración.* Se demuestra (c); (a) y (b) se comprueban en la celda siguiente. Escribir es aplicar a cada celda una función de representación $\rho$ que depende solo del valor; leer es aplicar a cada columna la inferencia $\iota$, que depende solo del conjunto de cadenas de esa columna. Así $\varphi=\iota\circ\rho$.
+Las partes (a) y (b) se comprueban en la celda siguiente. La parte (c) se explica así. Escribir es aplicar a cada celda una función de representación $\rho$ que depende solo del valor; leer es aplicar a cada columna la inferencia $\iota$, que depende solo del conjunto de cadenas de esa columna. Así $\varphi=\iota\circ\rho$.
 
 Sea $T$ el conjunto de marcos cuyos dtypes son estables, esto es, tales que $\iota(\rho(D))=D$. La inferencia elige, por construcción, un dtype al que pertenecen todos los valores leídos, y volver a escribir esos valores produce las mismas cadenas: un entero leído como `int64` se escribe como el mismo dígito y se vuelve a inferir `int64`. Luego $\varphi(D)\in T$ para todo $D$, y sobre $T$ la operación es la identidad. Componiendo, $\varphi(\varphi(D))=\varphi(D)$.
 
-Que $\varphi\neq\mathrm{id}$ se ve con un solo contraejemplo: la columna de cadenas `"01"`, `"02"`, `"03"` se escribe tal cual y la inferencia la lee como los enteros $1,2,3$, así que el cero a la izquierda desaparece y la columna pasa de la familia del texto a la de los enteros. [∎]{.fin-demo}
-:::
+Que $\varphi\neq\mathrm{id}$ se ve con un solo contraejemplo: la columna de cadenas `"01"`, `"02"`, `"03"` se escribe tal cual y la inferencia la lee como los enteros $1,2,3$, así que el cero a la izquierda desaparece y la columna pasa de la familia del texto a la de los enteros.
 
 ```{pyodide}
 import io
@@ -138,6 +206,8 @@ print("declarando el tipo, la clave vuelve como:", d["clave"].iloc[0],
 ```
 
 La celda clasifica cada columna por la familia a la que pertenece (texto, entero, flotante, booleano) y no por el nombre de su dtype, porque pandas cambió ese nombre en la versión 3.0: el dtype del texto pasó de llamarse `object` a llamarse `str`. El comportamiento, la clasificación y la proposición no cambian; cambia el nombre. Un programa que compare `df.dtypes.astype(str) == "object"` deja de funcionar al actualizar, y uno que consulte la familia no.
+
+El problema inicial separaba las líneas a mano para conservar los códigos `007`, `012` y `100`. Leído con `pd.read_csv(io.StringIO(texto))`, el mismo texto devuelve en `codigo` los enteros 7, 12 y 100, por la parte (b) de la Regla 10.2. Con `dtype={"codigo": str}` la columna vuelve como texto, con sus ceros, y la suma de `importe` da el mismo 16.0.
 
 **Modo de falla.** Una columna de identificadores con ceros a la izquierda (códigos postales, números de documento, claves de producto) pierde el cero en la primera lectura. La pérdida no es visible: la columna existe, tiene el mismo número de filas y se puede sumar. Se detecta al cruzarla con otra tabla, donde `"01"` y `1` no coinciden y la unión devuelve menos filas de las esperadas.
 
@@ -243,7 +313,7 @@ La celda clasifica cada columna por la familia a la que pertenece (texto, entero
       "</strong> no viaja con él (Definición 10.1). " + (declarar
         ? "Declarando el dtype al leer, el valor vuelve como <strong>" + salida + "</strong>, de familia <strong>" + tipoSalida + "</strong>."
         : "Dejando que pandas lo adivine, vuelve como <strong>" + salida + "</strong>, de familia <strong>" + tipoSalida + "</strong>.") +
-      (igual ? " La ida y vuelta conserva este valor." : " La ida y vuelta lo cambia, y a partir de aquí ya es idempotente: volver a escribirlo y leerlo da lo mismo (Proposición 10.2c).");
+      (igual ? " La ida y vuelta conserva este valor." : " La ida y vuelta lo cambia, y a partir de aquí ya es idempotente: volver a escribirlo y leerlo da lo mismo (Regla 10.2c).");
   }
 
   cv.addEventListener("change", dibujar);
@@ -253,19 +323,174 @@ La celda clasifica cada columna por la familia a la que pertenece (texto, entero
 </script>
 ```
 
+### Ejercicio 10.1, Declarar el tipo al leer
+
+La cadena `texto` es un archivo delimitado con las columnas `clave` y `v`, y las claves llevan ceros a la izquierda. Completar la línea de `tabla` para leer `texto` con `read_csv` declarando la columna `clave` como texto. La celda imprime la lista de claves, que debe ser `['01', '02', '10']`. La comprobación vuelve a ejecutar el código con otro texto.
+
+```{pyodide}
+#| exercise: ex_declarar
+import io
+import pandas as pd
+
+texto = "clave,v\n01,1.5\n02,2.5\n10,3.0"
+
+tabla = ______
+
+print(list(tabla["clave"]))
+```
+
+::: {.hint exercise="ex_declarar"}
+`pd.read_csv` recibe el texto envuelto en `io.StringIO(texto)` y un argumento `dtype` con un diccionario que asocia a `"clave"` el tipo `str`.
+:::
+
+::: {.solution exercise="ex_declarar"}
+```{pyodide}
+import io
+import pandas as pd
+
+texto = "clave,v\n01,1.5\n02,2.5\n10,3.0"
+
+tabla = pd.read_csv(io.StringIO(texto), dtype={"clave": str})
+
+print(list(tabla["clave"]))
+```
+
+Sin `dtype`, la lista sería `[1, 2, 10]`: la inferencia lee las claves como enteros.
+:::
+
+```{pyodide}
+#| exercise: ex_declarar
+#| check: true
+import contextlib, io, re
+casos = [
+    (None, ["01", "02", "10"]),
+    ('"clave,v\\n007,1.0\\n070,2.0"', ["007", "070"]),
+]
+fallo = None
+for tt, esperado in casos:
+    otro = user_code
+    if tt is not None:
+        nuevo = "texto = " + tt.replace("\\", "\\\\")
+        otro = re.sub(r"(?m)^texto\s*=.*$", nuevo, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = list(ns["tabla"]["clave"])
+        bien = obtenido == esperado
+    except Exception as err:
+        obtenido, bien = type(err).__name__, False
+    if not bien and fallo is None:
+        fallo = "se esperaba %s y salio %s" % (esperado, obtenido)
+if fallo is not None:
+    fallo = re.sub(r"con (\w+ = )?None", "con los datos de la celda", fallo)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: las claves vuelven como texto."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
+### Ejercicio 10.2, Columnas que cambian de tipo
+
+La celda trae la función `vuelta`, que escribe un marco como CSV y lo vuelve a leer, y el marco `df` con cuatro columnas. Completar la línea de `cambian` para contar cuántas columnas tienen en `a = vuelta(df)` un dtype distinto del que tenían en `df`. Por la parte (b) de la Regla 10.2, el número impreso debe ser 1, la columna `clave`. La comprobación vuelve a ejecutar el código con otras columnas.
+
+```{pyodide}
+#| exercise: ex_cambian
+import io
+import pandas as pd
+
+def vuelta(df):
+    return pd.read_csv(io.StringIO(df.to_csv(index=False)))
+
+clave = ["01", "02", "03"]
+flag = [True, False, True]
+df = pd.DataFrame({"id": [1, 2, 3], "x": [0.5, 1.5, 2.5],
+                   "clave": clave, "flag": flag})
+a = vuelta(df)
+
+cambian = ______
+
+print(int(cambian))
+```
+
+::: {.hint exercise="ex_cambian"}
+`df.dtypes` y `a.dtypes` son dos Series con el dtype de cada columna. Compararlas con `!=` da un booleano por columna, y la suma cuenta los verdaderos.
+:::
+
+::: {.solution exercise="ex_cambian"}
+```{pyodide}
+import io
+import pandas as pd
+
+def vuelta(df):
+    return pd.read_csv(io.StringIO(df.to_csv(index=False)))
+
+clave = ["01", "02", "03"]
+flag = [True, False, True]
+df = pd.DataFrame({"id": [1, 2, 3], "x": [0.5, 1.5, 2.5],
+                   "clave": clave, "flag": flag})
+a = vuelta(df)
+
+cambian = (df.dtypes != a.dtypes).sum()
+
+print(int(cambian))
+```
+
+Las columnas `id`, `x` y `flag` vuelven con el mismo dtype; `clave` vuelve como entero.
+:::
+
+```{pyodide}
+#| exercise: ex_cambian
+#| check: true
+import contextlib, io, re
+casos = [
+    (None, None, 1),
+    ('["a", "b", "c"]', None, 0),
+    ('["1", "2", "3"]', '["x", "y", "z"]', 1),
+    ('["7", "8", "9"]', '["1", "0", "1"]', 2),
+]
+fallo = None
+for cc, ff, esperado in casos:
+    otro = user_code
+    if cc is not None:
+        otro = re.sub(r"(?m)^clave\s*=.*$", "clave = " + cc, otro)
+    if ff is not None:
+        otro = re.sub(r"(?m)^flag\s*=.*$", "flag = " + ff, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = int(ns["cambian"])
+        bien = obtenido == esperado
+    except Exception as err:
+        obtenido, bien = type(err).__name__, False
+    if not bien and fallo is None:
+        fallo = "con clave = %s se esperaba %d y salio %s" % (
+            cc, esperado, obtenido)
+if fallo is not None:
+    fallo = re.sub(r"con (\w+ = )?None", "con los datos de la celda", fallo)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: solo cambian las columnas de "
+                           "texto que parecen numeros."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 2. Inferencia de tipo por bloques
 
 Un archivo que no cabe en memoria se lee por partes. La lectura por partes puede cambiar los tipos.
 
-::: {.proposicion}
-**Proposición 10.3 (dependencia del tipo respecto al bloque).** La inferencia de tipo se aplica a los valores que el lector tiene delante. Al leer con `chunksize`, cada [bloque de lectura]{.g} se infiere por separado, así que dos bloques de la misma columna pueden salir con dtypes distintos. En consecuencia, un programa que procese los bloques de uno en uno puede funcionar sobre los primeros y fallar sobre uno posterior, y concatenarlos produce el tipo común más ancho, que es el del texto en cuanto uno de ellos lo sea.
+::: {.regla}
+**Regla 10.3 (dependencia del tipo respecto al bloque).** La inferencia de tipo se aplica a los valores que el lector tiene delante. Al leer con `chunksize`, cada [bloque de lectura]{.g} se infiere por separado, así que dos bloques de la misma columna pueden salir con dtypes distintos. En consecuencia, un programa que procese los bloques de uno en uno puede funcionar sobre los primeros y fallar sobre uno posterior, y concatenarlos produce el tipo común más ancho, que es el del texto en cuanto uno de ellos lo sea.
 :::
 
-::: {.demostracion}
-*Demostración.* Sea una columna cuyos primeros $n-1$ valores son dígitos y el último es la cadena `"no disponible"`. Leída entera, la inferencia debe admitir a todos los valores y elige texto. Leída en bloques de tamaño $b<n-1$, los bloques que no contienen la última fila solo ven dígitos, y la inferencia elige para ellos el tipo más estrecho que los admite, el entero; el bloque que contiene la última fila elige texto.
+Sea una columna cuyos primeros $n-1$ valores son dígitos y el último es la cadena `"no disponible"`. Leída entera, la inferencia debe admitir a todos los valores y elige texto. Leída en bloques de tamaño $b<n-1$, los bloques que no contienen la última fila solo ven dígitos, y la inferencia elige para ellos el tipo más estrecho que los admite, el entero; el bloque que contiene la última fila elige texto.
 
-Como `pd.concat` toma el tipo común más ancho de las partes, y ese tipo entre el entero y el texto es el texto, el resultado de concatenar coincide con el de leer entero. La diferencia persiste solo mientras los bloques se traten por separado, que es el modo en que se usa `chunksize`. [∎]{.fin-demo}
-:::
+Como `pd.concat` toma el tipo común más ancho de las partes, y ese tipo entre el entero y el texto es el texto, el resultado de concatenar coincide con el de leer entero. La diferencia persiste solo mientras los bloques se traten por separado, que es el modo en que se usa `chunksize`.
 
 ```{pyodide}
 import io
@@ -374,7 +599,7 @@ print("todos iguales:", len({str(t["v"].dtype) for t in fijos}) == 1)
     lec.innerHTML = "Con bloques de <strong>" + b + " mil</strong> filas salen <strong>" + nb +
       "</strong> bloques, y el valor no numérico cae en el bloque <strong>" + (malo + 1) + "</strong>. " +
       "Ese bloque se infiere <strong>texto</strong> y los otros <strong>" + (nb - 1) + "</strong> se infieren " +
-      "<strong>entero</strong> (Proposición 10.3): la misma columna, dos tipos. Leído de una sola vez el archivo " +
+      "<strong>entero</strong> (Regla 10.3): la misma columna, dos tipos. Leído de una sola vez el archivo " +
       "entero daría <strong>texto</strong>, porque la inferencia vería el valor no numérico desde el principio.";
   }
 
@@ -385,25 +610,175 @@ print("todos iguales:", len({str(t["v"].dtype) for t in fijos}) == 1)
 </script>
 ```
 
+### Ejercicio 10.3, Tipos por bloque
+
+La lista `valores` tiene nueve cadenas `"7"` y, al final, `"sin dato"`; la celda ya construye con ella el texto `bruto`. Completar la línea de `trozos` con la lista de bloques que devuelve `read_csv` al leer `bruto` en bloques de 4 filas. La celda imprime las filas de cada bloque y si su columna `v` es numérica, que deben ser `[4, 4, 2]` y `[True, True, False]`. La comprobación vuelve a ejecutar el código con otra lista.
+
+```{pyodide}
+#| exercise: ex_bloques
+import io
+import pandas as pd
+from pandas.api import types as tipos
+
+valores = ["7"] * 9 + ["sin dato"]
+bruto = pd.DataFrame({"v": valores}).to_csv(index=False)
+
+trozos = ______
+
+print([len(t) for t in trozos])
+print([bool(tipos.is_numeric_dtype(t["v"])) for t in trozos])
+```
+
+::: {.hint exercise="ex_bloques"}
+`pd.read_csv(io.StringIO(bruto), chunksize=4)` devuelve un iterador de bloques; `list(...)` los reúne en una lista.
+:::
+
+::: {.solution exercise="ex_bloques"}
+```{pyodide}
+import io
+import pandas as pd
+from pandas.api import types as tipos
+
+valores = ["7"] * 9 + ["sin dato"]
+bruto = pd.DataFrame({"v": valores}).to_csv(index=False)
+
+trozos = list(pd.read_csv(io.StringIO(bruto), chunksize=4))
+
+print([len(t) for t in trozos])
+print([bool(tipos.is_numeric_dtype(t["v"])) for t in trozos])
+```
+
+Solo el tercer bloque contiene `"sin dato"`, y solo ese se infiere como texto (Regla 10.3).
+:::
+
+```{pyodide}
+#| exercise: ex_bloques
+#| check: true
+import contextlib, io, re
+from pandas.api import types as tipos
+casos = [
+    (None, [4, 4, 2], [True, True, False]),
+    ('["x"] + ["1"] * 7', [4, 4], [False, True]),
+    ('["2", "3", "4", "n", "5"]', [4, 1], [False, True]),
+]
+fallo = None
+for vv, largos, numericos in casos:
+    otro = user_code
+    if vv is not None:
+        otro = re.sub(r"(?m)^valores\s*=.*$", "valores = " + vv, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        l2, n2 = [], []
+        for b in ns["trozos"]:
+            l2.append(len(b))
+            n2.append(bool(tipos.is_numeric_dtype(b["v"])))
+        obtenido = (l2, n2)
+        bien = l2 == largos and n2 == numericos
+    except Exception as err:
+        obtenido, bien = type(err).__name__, False
+    if not bien and fallo is None:
+        fallo = "se esperaba %s y %s, y salio %s" % (
+            largos, numericos, obtenido)
+if fallo is not None:
+    fallo = re.sub(r"con (\w+ = )?None", "con los datos de la celda", fallo)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: cada bloque se infiere por separado."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
+### Ejercicio 10.4, Convertir a número sin romper la columna
+
+La Series `s` tiene cuatro cadenas, y una de ellas no es un número. Completar la línea de `v` con `s` convertida a número de forma que lo que no sea número quede como faltante. La celda imprime la suma de `v` y el número de faltantes, que deben ser 12.0 y 1. La comprobación vuelve a ejecutar el código con otra Series.
+
+```{pyodide}
+#| exercise: ex_coerce
+import pandas as pd
+
+s = pd.Series(["3", "4", "no disponible", "5"])
+
+v = ______
+
+w = pd.Series(v)
+print(float(w.sum()), int(w.isna().sum()))
+```
+
+::: {.hint exercise="ex_coerce"}
+`pd.to_numeric` convierte una Series de texto; con `errors="coerce"` cambia por `NaN` lo que no puede convertir, en lugar de lanzar un error.
+:::
+
+::: {.solution exercise="ex_coerce"}
+```{pyodide}
+import pandas as pd
+
+s = pd.Series(["3", "4", "no disponible", "5"])
+
+v = pd.to_numeric(s, errors="coerce")
+
+w = pd.Series(v)
+print(float(w.sum()), int(w.isna().sum()))
+```
+
+La suma de pandas omite los faltantes, de modo que suma 3, 4 y 5.
+:::
+
+```{pyodide}
+#| exercise: ex_coerce
+#| check: true
+import contextlib, io, re
+casos = [
+    (None, 12.0, 1),
+    ('pd.Series(["x", "1.5", "y", "2"])', 3.5, 2),
+    ('pd.Series(["10", "20"])', 30.0, 0),
+]
+fallo = None
+for ss, suma, faltan in casos:
+    otro = user_code
+    if ss is not None:
+        otro = re.sub(r"(?m)^s\s*=.*$", "s = " + ss, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        w2 = ns["w"]
+        obtenido = (float(w2.sum()), int(w2.isna().sum()))
+        bien = abs(obtenido[0] - suma) < 1e-9 and obtenido[1] == faltan
+    except Exception as err:
+        obtenido, bien = type(err).__name__, False
+    if not bien and fallo is None:
+        fallo = "se esperaba suma %s y %d faltantes, y salio %s" % (
+            suma, faltan, obtenido)
+if fallo is not None:
+    fallo = re.sub(r"con (\w+ = )?None", "con los datos de la celda", fallo)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: lo que no es numero queda como NaN."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 3. Comparación y agrupación con valores faltantes
 
 ::: {.definicion}
 **Definición 10.4 (valor faltante).** pandas marca la ausencia de un dato con `NaN` en las columnas numéricas, con `NaT` en las de fecha y con `None` o `NaN` en las de texto, que son de tipo `object` hasta pandas 2 y de tipo `str` desde pandas 3. En las comparaciones por elementos de pandas, los tres se comportan como el `NaN` del estándar de coma flotante: no son iguales a sí mismos. En Python, `None == None` es verdadero; la desigualdad es una regla de pandas para `None` y del estándar para `NaN`. Las funciones `isna` y `notna` los reconocen; el operador `==` no.
 :::
 
-::: {.proposicion}
-**Proposición 10.5 (dos consecuencias de que `NaN` $\neq$ `NaN`).** Sea una columna con $f$ faltantes de $n$ valores.
+::: {.regla}
+**Regla 10.5 (dos consecuencias de que `NaN` $\neq$ `NaN`).** Sea una columna con $f$ faltantes de $n$ valores.
 
 (a) La expresión `columna == np.nan` devuelve falso en las $n$ posiciones, incluidas las $f$ faltantes, mientras que `columna.isna()` devuelve verdadero en esas $f$ y solo en ellas.
 
 (b) Si esa columna se usa como clave de agrupación, el total de los conteos por grupo vale $n-f$ y no $n$: las $f$ filas de clave faltante no aparecen en ningún grupo, aunque el resto de sus valores estén completos.
 :::
 
-::: {.demostracion}
-*Demostración.* Para (a), el estándar IEEE 754 define la comparación de igualdad como falsa cuando alguno de los operandos es `NaN`. Aplicada elemento a elemento, la comparación es falsa en las posiciones faltantes por esa regla, y en las no faltantes porque un número real distinto de `NaN` tampoco es igual a `NaN`. En total, falso en las $n$ posiciones.
+Para (a), el estándar IEEE 754 define la comparación de igualdad como falsa cuando alguno de los operandos es `NaN`. Aplicada elemento a elemento, la comparación es falsa en las posiciones faltantes por esa regla, y en las no faltantes porque un número real distinto de `NaN` tampoco es igual a `NaN`. En total, falso en las $n$ posiciones.
 
-Para (b), agrupar parte las filas según el valor de la clave y forma un grupo por cada valor distinto. Como los faltantes no son iguales entre sí, no pueden agruparse por igualdad, y el comportamiento por defecto los descarta. Las filas que quedan repartidas son las de clave presente, que son $n-f$, y la suma de los conteos de una partición es el tamaño de lo repartido. [∎]{.fin-demo}
-:::
+Para (b), agrupar parte las filas según el valor de la clave y forma un grupo por cada valor distinto. Como los faltantes no son iguales entre sí, no pueden agruparse por igualdad, y el comportamiento por defecto los descarta. Las filas que quedan repartidas son las de clave presente, que son $n-f$, y la suma de los conteos de una partición es el tamaño de lo repartido.
 
 ```{pyodide}
 import numpy as np
@@ -444,6 +819,136 @@ En la última línea, la columna que se resume no tiene ningún faltante. Las $1
 **Diagnóstico.** Comparar la suma de los conteos con el número de filas de la tabla. Si no coinciden, la diferencia es igual al número de claves faltantes, y `tabla["g"].isna().sum()` lo confirma.
 
 **Remedio.** `groupby(..., dropna=False)` cuando las filas de clave faltante deban contarse, o filtrarlas explícitamente antes con `dropna(subset=["g"])` cuando no. Dejar la decisión al valor por omisión no deja registro de cuál se tomó.
+
+### Ejercicio 10.5, Conteo de faltantes
+
+La celda trae la Series `s`, con faltantes. Completar la línea de `faltan` para contar cuántos hay, sin usar `isna`, aprovechando que un faltante no es igual a sí mismo. El número impreso debe ser 2. La comprobación vuelve a ejecutar el código con otros datos.
+
+```{pyodide}
+#| exercise: ex_falta
+import pandas as pd
+import numpy as np
+
+s = pd.Series([1.0, np.nan, 3.0, np.nan, 5.0])
+
+faltan = ______
+
+print(faltan)
+int(faltan)
+```
+
+::: {.hint exercise="ex_falta"}
+Por la Definición 10.4, `s != s` es verdadero en las posiciones faltantes y solo en ellas. Sumar esa serie de booleanos los cuenta.
+:::
+
+::: {.solution exercise="ex_falta"}
+```{pyodide}
+import pandas as pd
+import numpy as np
+
+s = pd.Series([1.0, np.nan, 3.0, np.nan, 5.0])
+
+faltan = (s != s).sum()
+
+print(faltan)
+int(faltan)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_falta
+#| check: true
+import contextlib, io, re
+otro = user_code
+otro = re.sub(r"(?m)^s\s*=.*$", 's = pd.Series([np.nan, 2.0, np.nan, np.nan])', otro)
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(otro, ns)
+    general = int(ns.get("faltan")) == 3
+except Exception:
+    general = False
+ok = result == 2
+if ok and general:
+    feedback = {"correct": True, "message": "Correcto: 2. La expresión s != s es el truco que isna encapsula.", "type": "success"}
+elif ok:
+    feedback = {"correct": False,
+                "message": "Da los valores pedidos, pero con tres faltantes no da 3."}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 2 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 10.6, Filas que descarta la agrupación
+
+La tabla `t` tiene una clave `g` con dos valores ausentes y una columna `v` sin faltantes. Completar la línea de `perdidas` con el número de filas de `t` que no entran en ningún grupo al agrupar por `g` con las opciones por omisión, calculado como el número de filas menos la suma de los conteos por grupo. Por la parte (b) de la Regla 10.5, el número impreso debe ser 2. La comprobación vuelve a ejecutar el código con otra clave.
+
+```{pyodide}
+#| exercise: ex_perdidas
+import pandas as pd
+
+g = ["a", None, "b", "a", None]
+t = pd.DataFrame({"g": g, "v": [1.0, 2.0, 3.0, 4.0, 5.0]})
+
+perdidas = ______
+
+print(int(perdidas))
+```
+
+::: {.hint exercise="ex_perdidas"}
+`t.groupby("g")["v"].count()` da el conteo de cada grupo; su suma, restada de `len(t)`, da las filas que quedaron fuera.
+:::
+
+::: {.solution exercise="ex_perdidas"}
+```{pyodide}
+import pandas as pd
+
+g = ["a", None, "b", "a", None]
+t = pd.DataFrame({"g": g, "v": [1.0, 2.0, 3.0, 4.0, 5.0]})
+
+perdidas = len(t) - t.groupby("g")["v"].count().sum()
+
+print(int(perdidas))
+```
+
+El resultado coincide con `t["g"].isna().sum()`, el número de claves ausentes.
+:::
+
+```{pyodide}
+#| exercise: ex_perdidas
+#| check: true
+import contextlib, io, re
+casos = [
+    (None, 2),
+    ('[None, None, None, "x", "y"]', 3),
+    ('["a", "b", "c", "d", "e"]', 0),
+]
+fallo = None
+for gg, esperado in casos:
+    otro = user_code
+    if gg is not None:
+        otro = re.sub(r"(?m)^g\s*=.*$", "g = " + gg, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = int(ns["perdidas"])
+        bien = obtenido == esperado
+    except Exception as err:
+        obtenido, bien = type(err).__name__, False
+    if not bien and fallo is None:
+        fallo = "con g = %s se esperaba %d y salio %s" % (
+            gg, esperado, obtenido)
+if fallo is not None:
+    fallo = re.sub(r"con (\w+ = )?None", "con los datos de la celda", fallo)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: se pierden tantas filas como "
+                           "claves ausentes."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
 
 ## 4. Normalización de claves y tamaño de la unión
 
@@ -588,9 +1093,7 @@ Cuatro filas contra cuatro filas producen diez. Según el desglose, la clave `an
 </script>
 ```
 
-## Ejercicios
-
-### Ejercicio 1, Número de filas de la unión
+### Ejercicio 10.7, Número de filas de la unión
 
 Los diccionarios `m1` y `m2` dan cuántas veces aparece cada clave a la izquierda y a la derecha de una unión interna: la clave `ana` aparece $4$ veces a la izquierda y $2$ a la derecha, y la clave `luis` aparece $3$ y $5$ veces. Completar la línea de `filas` para calcular, con la Proposición 10.6, cuántas filas produce la unión. El número impreso debe ser 23. La comprobación vuelve a ejecutar el código con otros datos.
 
@@ -646,70 +1149,88 @@ else:
 feedback
 ```
 
-### Ejercicio 2, Conteo de faltantes
+### Ejercicio 10.8, Normalizar las claves
 
-La celda trae la Series `s`, con faltantes. Completar la línea de `faltan` para contar cuántos hay, sin usar `isna`, aprovechando que un faltante no es igual a sí mismo. El número impreso debe ser 2. La comprobación vuelve a ejecutar el código con otros datos.
+La Series `k` tiene cuatro claves escritas con espacios y mayúsculas distintos. Completar la línea de `norm` con las claves sin espacios en los extremos y en minúsculas. La celda imprime la lista normalizada y cuántas claves distintas quedan, que deben ser `['ana', 'ana', 'luis', 'beto']` y 3. La comprobación vuelve a ejecutar el código con otras claves.
 
 ```{pyodide}
-#| exercise: ex_falta
+#| exercise: ex_normalizar
 import pandas as pd
-import numpy as np
 
-s = pd.Series([1.0, np.nan, 3.0, np.nan, 5.0])
+k = pd.Series(["Ana", " ana", "LUIS ", "Beto"])
 
-faltan = ______
+norm = ______
 
-print(faltan)
-int(faltan)
+print(list(norm), len(set(norm)))
 ```
 
-::: {.hint exercise="ex_falta"}
-Por la Definición 10.4, `s != s` es verdadero en las posiciones faltantes y solo en ellas. Sumar esa serie de booleanos los cuenta.
+::: {.hint exercise="ex_normalizar"}
+Los métodos de texto de una Series están bajo `.str`: `k.str.strip()` quita los espacios de los extremos y `.str.lower()` pasa a minúsculas.
 :::
 
-::: {.solution exercise="ex_falta"}
+::: {.solution exercise="ex_normalizar"}
 ```{pyodide}
 import pandas as pd
-import numpy as np
 
-s = pd.Series([1.0, np.nan, 3.0, np.nan, 5.0])
+k = pd.Series(["Ana", " ana", "LUIS ", "Beto"])
 
-faltan = (s != s).sum()
+norm = k.str.strip().str.lower()
 
-print(faltan)
-int(faltan)
+print(list(norm), len(set(norm)))
 ```
+
+Antes de normalizar había 4 claves distintas y quedan 3. Por la Proposición 10.6, una unión por `norm` contra otra tabla normalizada igual no puede tener menos filas que la unión por `k`.
 :::
 
 ```{pyodide}
-#| exercise: ex_falta
+#| exercise: ex_normalizar
 #| check: true
 import contextlib, io, re
-otro = user_code
-otro = re.sub(r"(?m)^s\s*=.*$", 's = pd.Series([np.nan, 2.0, np.nan, np.nan])', otro)
-ns = {}
-try:
-    with contextlib.redirect_stdout(io.StringIO()):
-        exec(otro, ns)
-    general = int(ns.get("faltan")) == 3
-except Exception:
-    general = False
-ok = result == 2
-if ok and general:
-    feedback = {"correct": True, "message": "Correcto: 2. La expresión s != s es el truco que isna encapsula.", "type": "success"}
-elif ok:
-    feedback = {"correct": False,
-                "message": "Da los valores pedidos, pero con tres faltantes no da 3."}
+casos = [
+    (None, ["ana", "ana", "luis", "beto"]),
+    ('pd.Series(["  X ", "x", "Y"])', ["x", "x", "y"]),
+]
+fallo = None
+for kk, esperado in casos:
+    otro = user_code
+    if kk is not None:
+        otro = re.sub(r"(?m)^k\s*=.*$", "k = " + kk, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = list(ns["norm"])
+        bien = obtenido == esperado
+    except Exception as err:
+        obtenido, bien = type(err).__name__, False
+    if not bien and fallo is None:
+        fallo = "se esperaba %s y salio %s" % (esperado, obtenido)
+if fallo is not None:
+    fallo = re.sub(r"con (\w+ = )?None", "con los datos de la celda", fallo)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: sin espacios y en minusculas."}
 else:
-    feedback = {"correct": False, "message": f"Esperaba 2 y obtuve {result}.", "type": "error"}
+    feedback = {"correct": False, "message": fallo}
 feedback
 ```
+
+## Pieza del proyecto
+
+`caja.py` crece en cada lección y los entregables reutilizan sus piezas. Esta lección añade la lectura del registro de líneas de compra, que llega como texto delimitado con el código del producto, la cantidad y el precio unitario de cada línea:
+
+1. Leer el registro conservando los códigos de producto tal como están escritos, con sus ceros a la izquierda.
+2. Pasar cantidad y precio a número, de modo que un valor que no sea número quede como faltante en su línea y no detenga la lectura.
+3. Normalizar los códigos, sin espacios en los extremos y en mayúsculas, antes de cualquier cruce con el catálogo.
+4. Informar cuántas líneas se leyeron, cuántas tienen algún faltante y el importe total de las líneas completas.
+
+Lo usa el [Entregable 19](entregable-19.qmd), la depuración de un CSV de transacciones.
 
 ## Reto
 
 En `proyectos/notebooks/F1-retos.ipynb`, sección **Python 10**:
 
-1. Construir un marco con una columna de cada dtype que pandas maneja (entero, flotante, booleano, texto, fecha, categórica) y medir cuáles se conservan a la ida y vuelta por CSV y cuáles no. Anotar la tabla de columnas conservadas y comprobar la Proposición 10.2c en cada columna: a partir de la segunda vuelta no cambia nada.
+1. Construir un marco con una columna de cada dtype que pandas maneja (entero, flotante, booleano, texto, fecha, categórica) y medir cuáles se conservan a la ida y vuelta por CSV y cuáles no. Anotar la tabla de columnas conservadas y comprobar la Regla 10.2c en cada columna: a partir de la segunda vuelta no cambia nada.
 2. Tomar el archivo del punto anterior y leerlo con cinco tamaños de bloque distintos, registrando los dtypes de cada bloque. Anotar a partir de qué tamaño desaparecen las discrepancias y por qué ese número depende de la posición de la fila no numérica y no del número de filas.
 3. Programar una comprobación reutilizable que, antes de cada unión, verifique que la clave es única en el lado que debe serlo y avise con el factor de crecimiento esperado, $\sum_k m_1(k)m_2(k)\,/\,n$, cuando no lo sea. Guardarla en `50-Errores/` con los tres casos que la activan.
 
@@ -721,8 +1242,8 @@ Las otras tres secciones del capítulo 6 (§6.2 *Binary Data Formats*, §6.3 *In
 
 Preguntas para la lectura de §6.1 y §7.1:
 
-1. §6.1 enumera los argumentos de `read_csv` que controlan la inferencia. Con la Proposición 10.3, ¿cuáles de ellos dejan de tener efecto cuando se lee con `chunksize`, y cuáles siguen aplicándose bloque a bloque?
-2. §7.1 presenta `dropna` y `fillna` como las dos formas de tratar un faltante. Con la Proposición 10.5b, ¿en qué se diferencia perder una fila por `dropna` de perderla por agrupar con una clave faltante, y cuál de las dos deja rastro?
+1. §6.1 enumera los argumentos de `read_csv` que controlan la inferencia. Con la Regla 10.3, ¿cuáles de ellos dejan de tener efecto cuando se lee con `chunksize`, y cuáles siguen aplicándose bloque a bloque?
+2. §7.1 presenta `dropna` y `fillna` como las dos formas de tratar un faltante. Con la Regla 10.5b, ¿en qué se diferencia perder una fila por `dropna` de perderla por agrupar con una clave faltante, y cuál de las dos deja rastro?
 3. §7.2 describe `replace` y `map` para transformar valores. Con la Proposición 10.6, ¿qué hay que comprobar sobre una tabla de correspondencias antes de aplicarla a una clave que después se va a unir?
 
 ## Para el Cerebro
@@ -748,7 +1269,7 @@ Nota nueva en `10-Conceptos/carga-y-limpieza.md`, enlazada a [[series-y-datafram
 ::: {#fuentes .fuentes}
 ### Fuentes
 
-**Lo que esta página demuestra sola.** La Proposición 10.2 se demuestra separando la escritura, que actúa celda a celda, de la inferencia, que actúa columna a columna, y observando que la imagen de la inferencia son marcos de dtype estable; se comprueba en las tres partes: los flotantes vuelven exactos, la clave `"01"` vuelve como el entero $1$, y las igualdades $\varphi^2=\varphi$ y $\varphi^3=\varphi^2$ salen verdaderas mientras $\varphi=\mathrm{id}$ sale falsa. La Proposición 10.3 se demuestra con una columna de $30\,000$ valores cuyo último elemento no es numérico: leída entera da texto, leída en bloques de $10\,000$ da entero, entero y texto, y concatenada vuelve a dar texto. La Proposición 10.5 se demuestra desde la regla de comparación del estándar IEEE 754 y desde que agrupar es partir por igualdad; se comprueba con $1000$ filas y $137$ claves faltantes, donde la suma de los conteos da $863$ y la media se mueve $0{,}0095$ pese a que la columna resumida no tiene ningún faltante. La Proposición 10.6 se demuestra contando pares en el producto cartesiano de cada clave y desarrollando el producto de las sumas en la parte diagonal más los términos cruzados; se comprueba con una unión que pasa de $4$ filas a $10$, desglosadas en $3\times3$ y $1\times1$. Los tres visuales se contrastaron contra estas mismas reglas en todo el rango de sus controles.
+**Lo que esta página demuestra sola.** La Regla 10.2 se explica separando la escritura, que actúa celda a celda, de la inferencia, que actúa columna a columna, y observando que la imagen de la inferencia son marcos de dtype estable; se comprueba en las tres partes: los flotantes vuelven exactos, la clave `"01"` vuelve como el entero $1$, y las igualdades $\varphi^2=\varphi$ y $\varphi^3=\varphi^2$ salen verdaderas mientras $\varphi=\mathrm{id}$ sale falsa. La Regla 10.3 se comprueba con una columna de $30\,000$ valores cuyo último elemento no es numérico: leída entera da texto, leída en bloques de $10\,000$ da entero, entero y texto, y concatenada vuelve a dar texto. La Regla 10.5 se explica desde la regla de comparación del estándar IEEE 754 y desde que agrupar es partir por igualdad; se comprueba con $1000$ filas y $137$ claves faltantes, donde la suma de los conteos da $863$ y la media se mueve $0{,}0095$ pese a que la columna resumida no tiene ningún faltante. La Proposición 10.6 se demuestra contando pares en el producto cartesiano de cada clave y desarrollando el producto de las sumas en la parte diagonal más los términos cruzados; se comprueba con una unión que pasa de $4$ filas a $10$, desglosadas en $3\times3$ y $1\times1$. Los tres visuales se contrastaron contra estas mismas reglas en todo el rango de sus controles.
 
 **Lo que se usa de otras lecciones sin repetir.** La Series, el índice y la promoción de dtype al entrar un faltante son de Python 9, y la Proposición 9.6 de aquella lección (un solo faltante convierte `int64` en `float64`) justifica aquí el uso de los tipos de extensión, sin volver a demostrarla. La estadística del dato faltante, con MCAR, MAR y MNAR, es de Estadística 15 y no se repite: esta lección trata la mecánica de la marca y no el mecanismo que la produce.
 
@@ -758,7 +1279,7 @@ Nota nueva en `10-Conceptos/carga-y-limpieza.md`, enlazada a [[series-y-datafram
 
 - [*Python for Data Analysis, 3rd Edition*](https://wesmckinney.com/book/) (Wes McKinney, O'Reilly, 2022), §6.1 *Reading and Writing Data in Text Format*, §7.1 *Handling Missing Data*, §7.2 *Data Transformation* y §7.4 *String Manipulation*, citadas por número y título. El sitio declara que su contenido no se puede copiar ni reproducir, así que no se transcribe texto.
 
-**Lo que es mío, no del libro.** La Proposición 10.2 completa, y en particular la idempotencia $\varphi^2=\varphi$, que sustituye la advertencia «los tipos se pierden al pasar por CSV» por un enunciado comprobable que indica además a partir de cuándo no se pierde nada. La Proposición 10.3 enunciada como una propiedad de la inferencia, en lugar de una advertencia sobre `chunksize`. La lectura de la Proposición 10.5b como una pérdida sin aviso medida en filas, con el caso construido para que la columna resumida esté completa y la pérdida proceda solo de la clave. Y la Proposición 10.6 con su desigualdad y su condición de igualdad, que da a la normalización de claves una consecuencia cuantificable sobre el número de filas.
+**Lo que es mío, no del libro.** La Regla 10.2 completa, y en particular la idempotencia $\varphi^2=\varphi$, que sustituye la advertencia «los tipos se pierden al pasar por CSV» por un enunciado comprobable que indica además a partir de cuándo no se pierde nada. La Regla 10.3 enunciada como una propiedad de la inferencia, en lugar de una advertencia sobre `chunksize`. La lectura de la Regla 10.5b como una pérdida sin aviso medida en filas, con el caso construido para que la columna resumida esté completa y la pérdida proceda solo de la clave. Y la Proposición 10.6 con su desigualdad y su condición de igualdad, que da a la normalización de claves una consecuencia cuantificable sobre el número de filas.
 
 [Índice de McKinney 3E verificado el 17-09-2026; las secciones del capítulo 6 se trajeron ese día de <https://wesmckinney.com/book/accessing-data>.]{.sello}
 :::

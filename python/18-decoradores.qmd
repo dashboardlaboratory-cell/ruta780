@@ -21,9 +21,9 @@ engine: markdown
 
 Al terminar esta lección se puede:
 
-1. Demostrar que `@d` equivale a `f = d(f)`, y escribir las dos formas.
-2. Demostrar que el envoltorio oculta la identidad de la función, y medir qué recupera `functools.wraps` y qué no.
-3. Demostrar que el decorador se ejecuta al definir la función y el envoltorio en cada llamada.
+1. Comprobar que `@d` equivale a `f = d(f)`, y escribir las dos formas.
+2. Comprobar que el envoltorio oculta la identidad de la función, y medir qué recupera `functools.wraps` y qué no.
+3. Comprobar que el decorador se ejecuta al definir la función y el envoltorio en cada llamada.
 4. Escribir un [decorador]{.g} con argumentos, y explicar por qué requiere un nivel más.
 5. Medir el efecto de memorizar: llamadas al cuerpo con caché y sin ella.
 6. Reconocer que una caché hereda el contrato del hash de la lección anterior.
@@ -61,14 +61,115 @@ Al terminar esta lección se puede:
 | `__doc__` | dunder doc | La cadena de documentación |
 :::
 
+## Problema inicial
+
+Este problema va antes de la teoría y se resuelve con lo visto hasta Python 17: funciones que devuelven funciones y cierres, de Python 2. La Sección 1 vuelve sobre él.
+
+La función `suma_cuadrados` llama a `cuadrado` una vez por elemento. Se quiere registrar en la lista `llamadas` el argumento de cada llamada a `cuadrado` sin modificar ni `cuadrado` ni `suma_cuadrados`. La función `contada(f)` devuelve una función nueva que anota el argumento y llama a `f`. Completar el `return` de `nueva` y la línea que vuelve a ligar el nombre `cuadrado`. La celda imprime `suma_cuadrados([1, 2, 3])` y `llamadas`, que deben dar 14 y `[1, 2, 3]`. La comprobación vuelve a llamar a `suma_cuadrados` con otra lista.
+
+```{pyodide}
+#| exercise: ex_inicial
+llamadas = []
+
+def cuadrado(x):
+    return x * x
+
+def suma_cuadrados(xs):
+    total = 0
+    for x in xs:
+        total += cuadrado(x)
+    return total
+
+def contada(f):
+    def nueva(x):
+        llamadas.append(x)
+        return ______
+    return nueva
+
+cuadrado = ______
+
+print(suma_cuadrados([1, 2, 3]), llamadas)
+```
+
+::: {.hint exercise="ex_inicial"}
+`nueva` tiene que devolver lo mismo que devolvería `f` con ese argumento. Después, el nombre `cuadrado` debe quedar ligado a la función que devuelve `contada` aplicada al `cuadrado` original.
+:::
+
+::: {.solution exercise="ex_inicial"}
+```{pyodide}
+llamadas = []
+
+def cuadrado(x):
+    return x * x
+
+def suma_cuadrados(xs):
+    total = 0
+    for x in xs:
+        total += cuadrado(x)
+    return total
+
+def contada(f):
+    def nueva(x):
+        llamadas.append(x)
+        return f(x)
+    return nueva
+
+cuadrado = contada(cuadrado)
+
+print(suma_cuadrados([1, 2, 3]), llamadas)
+```
+
+`suma_cuadrados` busca el nombre `cuadrado` en cada llamada, y ese nombre ya no apunta a la función original sino a `nueva`, que conserva la original en su cierre. La Sección 1 muestra que la arroba escribe esta misma asignación.
+:::
+
+```{pyodide}
+#| exercise: ex_inicial
+#| check: true
+import contextlib, io
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(user_code, ns)
+    primero = (list(ns["llamadas"]),)
+    r = ns["suma_cuadrados"]([4, 5])
+    obtenido = (r, list(ns["llamadas"]), ns["cuadrado"](3))
+except Exception as err:
+    primero, obtenido = None, type(err).__name__
+esperado = (41, [1, 2, 3, 4, 5], 9)
+cubo = user_code.replace("    return x * x\n", "    return x * x * x\n", 1)
+ns2 = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(cubo, ns2)
+    con_cubo = ns2["suma_cuadrados"]([1, 2, 3])
+except Exception as err:
+    con_cubo = type(err).__name__
+if primero == ([1, 2, 3],) and obtenido == esperado and con_cubo != 36:
+    feedback = {"correct": False,
+                "message": "nueva debe llamar a la función que recibe: "
+                           "si cuadrado devolviera x ** 3, la suma "
+                           "debería dar 36 y dio %s." % (con_cubo,)}
+elif primero == ([1, 2, 3],) and obtenido == esperado:
+    feedback = {"correct": True,
+                "message": "Correcto: las llamadas quedan registradas "
+                           "sin tocar ninguna de las dos funciones."}
+else:
+    feedback = {"correct": False,
+                "message": "Tras imprimir, llamadas debía ser [1, 2, 3]; "
+                           "después, suma_cuadrados([4, 5]) debía dar 41 "
+                           "y dejar [1, 2, 3, 4, 5]. Salió %s y %s."
+                           % (primero, obtenido)}
+feedback
+```
+
 ## 1. La sintaxis de la arroba
 
 ::: {.definicion}
 **Definición 18.1 (decorador).** Un **decorador** es una función que recibe una función y devuelve otra, normalmente un **envoltorio** que llama a la primera y añade algo alrededor.
 :::
 
-::: {.proposicion}
-**Proposición 18.2 (`@` como azúcar sintáctico).** Escribir
+::: {.regla}
+**Regla 18.2 (`@` como azúcar sintáctico).** Escribir
 ```
 @d
 def f(...): ...
@@ -76,17 +177,13 @@ def f(...): ...
 equivale a definir `f` y después ejecutar `f = d(f)`. La arroba no introduce ningún mecanismo nuevo: escribe esa asignación encima de la definición en lugar de debajo.
 :::
 
-::: {.demostracion}
-*Demostración.* Es la definición de la sintaxis en el lenguaje. La consecuencia observable es que el nombre `f` queda ligado a lo que devuelva `d`, y no a la función escrita; si `d` devolviera el número siete, `f` valdría siete. [∎]{.fin-demo}
+Es la definición de la sintaxis en el lenguaje. La consecuencia observable es que el nombre `f` queda ligado a lo que devuelva `d`, y no a la función escrita; si `d` devolviera el número siete, `f` valdría siete.
+
+::: {.regla}
+**Regla 18.3 (el envoltorio oculta la identidad).** El objeto que queda ligado al nombre es el envoltorio, así que su `__name__`, su `__doc__` y su firma son los del envoltorio y no los de la función original. `functools.wraps` copia el nombre y la documentación, y además deja `__wrapped__` apuntando al original, de donde `inspect.signature` recupera la firma de la función original.
 :::
 
-::: {.proposicion}
-**Proposición 18.3 (el envoltorio oculta la identidad).** El objeto que queda ligado al nombre es el envoltorio, así que su `__name__`, su `__doc__` y su firma son los del envoltorio y no los de la función original. `functools.wraps` copia el nombre y la documentación, y además deja `__wrapped__` apuntando al original, de donde `inspect.signature` recupera la firma de la función original.
-:::
-
-::: {.demostracion}
-*Demostración.* Tras `f = d(f)`, el nombre `f` apunta al objeto que `d` devolvió, y los atributos `__name__` y `__doc__` de ese objeto son los que se le asignaron al definirlo dentro de `d`. `inspect.signature` inspecciona el objeto que recibe, así que ve los parámetros del envoltorio, que suelen ser `(*args, **kwargs)` para aceptar cualquier llamada. `wraps` copia los atributos y añade `__wrapped__`; `signature` comprueba ese atributo antes de examinar los parámetros, y por eso la firma recuperada es la de la función interior. [∎]{.fin-demo}
-:::
+Tras `f = d(f)`, el nombre `f` apunta al objeto que `d` devolvió, y los atributos `__name__` y `__doc__` de ese objeto son los que se le asignaron al definirlo dentro de `d`. `inspect.signature` inspecciona el objeto que recibe, así que ve los parámetros del envoltorio, que suelen ser `(*args, **kwargs)` para aceptar cualquier llamada. `wraps` copia los atributos y añade `__wrapped__`; `signature` comprueba ese atributo antes de examinar los parámetros, y por eso la firma recuperada es la de la función interior.
 
 **Modo de falla.** En una capa de código todas las funciones se llaman `envoltorio` y aceptan `(*args, **kwargs)`. La ayuda en línea deja de ser útil, los mensajes de error señalan siempre al mismo sitio, y cualquier herramienta que lea firmas (un validador, un generador de documentación, el editor) supone que todas las funciones aceptan cualquier argumento. El programa funciona; fallan las herramientas que dependen de las firmas.
 
@@ -148,9 +245,11 @@ print("  con wraps, con.__wrapped__ es area: %s" % (con.__wrapped__ is area))
 print("  sin wraps, sin tiene __wrapped__ : %s" % hasattr(sin, "__wrapped__"))
 ```
 
-Las dos primeras líneas comprueban la Proposición 18.2: la función escrita con arroba y la asignada a mano devuelven lo mismo y cuentan lo mismo.
+Las dos primeras líneas comprueban la Regla 18.2: la función escrita con arroba y la asignada a mano devuelven lo mismo y cuentan lo mismo.
 
-La tabla corresponde a la Proposición 18.3. Sin `wraps`, la función se llama `envoltorio`, no tiene documentación y su firma es `(*args, **kwargs)`. Con `wraps`, las cuatro filas coinciden con el original, incluida la firma. `wraps` no copia la firma, sino `__wrapped__`, e `inspect.signature` sigue ese enlace hasta la función original.
+El problema inicial hacía esta asignación a mano: `cuadrado = contada(cuadrado)`. Escribir `@contada` encima de `def cuadrado` produce lo mismo, por la Regla 18.2, de modo que `contada` ya era un decorador. Como no usa `functools.wraps`, tras la asignación `cuadrado.__name__` vale `"nueva"`.
+
+La tabla corresponde a la Regla 18.3. Sin `wraps`, la función se llama `envoltorio`, no tiene documentación y su firma es `(*args, **kwargs)`. Con `wraps`, las cuatro filas coinciden con el original, incluida la firma. `wraps` no copia la firma, sino `__wrapped__`, e `inspect.signature` sigue ese enlace hasta la función original.
 
 ```{=html}
 <div class="viz-envoltorio">
@@ -247,24 +346,156 @@ La tabla corresponde a la Proposición 18.3. Sin `wraps`, la función se llama `
 </script>
 ```
 
+### Ejercicio 18.1, Aplicación manual de un decorador
+
+La celda define el decorador `dobla` y la función `cuadrado`. Completar la línea de `cuadrado_doblado` aplicando `dobla` a `cuadrado` sin la sintaxis de la arroba, según la Regla 18.2. La celda imprime `cuadrado(5)` y `cuadrado_doblado(5)`; el segundo debe valer 50. La comprobación llama además a la función con otros datos.
+
+```{pyodide}
+#| exercise: ex_azucar
+def dobla(f):
+    def envoltorio(x):
+        return 2 * f(x)
+    return envoltorio
+
+def cuadrado(x):
+    return x * x
+
+cuadrado_doblado = ______
+
+print(cuadrado(5), cuadrado_doblado(5))
+cuadrado_doblado(5)
+```
+
+::: {.hint exercise="ex_azucar"}
+`@dobla` encima de la definición equivale a `f = dobla(f)` debajo.
+:::
+
+::: {.solution exercise="ex_azucar"}
+```{pyodide}
+def dobla(f):
+    def envoltorio(x):
+        return 2 * f(x)
+    return envoltorio
+
+def cuadrado(x):
+    return x * x
+
+cuadrado_doblado = dobla(cuadrado)
+
+print(cuadrado(5), cuadrado_doblado(5))
+cuadrado_doblado(5)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_azucar
+#| check: true
+try:
+    general = cuadrado_doblado(3) == 18
+except Exception:
+    general = False
+ok = result == 50
+if ok and general:
+    feedback = {"correct": True, "message": "Correcto: 50. `cuadrado(5)` sigue valiendo 25, porque el decorador devuelve una función nueva y deja intacta la original. Con la arroba, el nombre original quedaría ligado al envoltorio y la función de dentro solo sería alcanzable a través de él.", "type": "success"}
+elif ok:
+    feedback = {"correct": False,
+                "message": "Da los valores pedidos, pero cuadrado_doblado(3) no da 18."}
+else:
+    feedback = {"correct": False, "message": f"Esperaba 50 y obtuve {result}.", "type": "error"}
+feedback
+```
+
+### Ejercicio 18.2, Conservar la identidad con `wraps`
+
+El decorador `registra` envuelve una función sin cambiar lo que devuelve. Completar la línea de la arroba que va sobre `envoltorio` para que la función decorada conserve el nombre, la documentación y la firma de la original, según la Regla 18.3. La celda imprime el nombre de `precio_con_iva` y `precio_con_iva(100.0)`, que deben dar `precio_con_iva 113.0`. La comprobación decora además otra función.
+
+```{pyodide}
+#| exercise: ex_wraps
+import functools
+
+def registra(f):
+    @______
+    def envoltorio(*args, **kwargs):
+        return f(*args, **kwargs)
+    return envoltorio
+
+@registra
+def precio_con_iva(precio):
+    """Precio con el 13 % de impuesto."""
+    return round(precio * 1.13, 2)
+
+print(precio_con_iva.__name__, precio_con_iva(100.0))
+```
+
+::: {.hint exercise="ex_wraps"}
+`functools.wraps` recibe la función original y devuelve un decorador que se aplica al envoltorio.
+:::
+
+::: {.solution exercise="ex_wraps"}
+```{pyodide}
+import functools
+
+def registra(f):
+    @functools.wraps(f)
+    def envoltorio(*args, **kwargs):
+        return f(*args, **kwargs)
+    return envoltorio
+
+@registra
+def precio_con_iva(precio):
+    """Precio con el 13 % de impuesto."""
+    return round(precio * 1.13, 2)
+
+print(precio_con_iva.__name__, precio_con_iva(100.0))
+```
+
+Sin la línea de `wraps`, la celda imprimiría `envoltorio 113.0`: el resultado no cambia, y el nombre, la documentación y la firma pasan a ser los del envoltorio.
+:::
+
+```{pyodide}
+#| exercise: ex_wraps
+#| check: true
+import inspect
+try:
+    @registra
+    def area(base, altura=1.0):
+        """Area de un rectangulo."""
+        return base * altura
+    datos = (precio_con_iva.__name__, precio_con_iva.__doc__,
+             str(inspect.signature(precio_con_iva)),
+             area.__name__, area.__doc__, str(inspect.signature(area)),
+             area(3, 2))
+except Exception as err:
+    datos = type(err).__name__
+esperado = ("precio_con_iva", "Precio con el 13 % de impuesto.",
+            "(precio)", "area", "Area de un rectangulo.",
+            "(base, altura=1.0)", 6)
+if datos == esperado:
+    feedback = {"correct": True,
+                "message": "Correcto: nombre, documentación y firma "
+                           "de la función original."}
+else:
+    feedback = {"correct": False,
+                "message": "Se esperaba %s y salió %s." % (esperado, datos)}
+feedback
+```
+
 ## 2. Momento de ejecución del decorador
 
-::: {.proposicion}
-**Proposición 18.4 (definición y llamada).** El decorador se ejecuta una sola vez, en el momento en que se define la función. En cada llamada se ejecuta el envoltorio que devolvió. En consecuencia, todo lo que el decorador haga fuera del envoltorio ocurre al importar el módulo y no al usar la función.
+::: {.regla}
+**Regla 18.4 (definición y llamada).** El decorador se ejecuta una sola vez, en el momento en que se define la función. En cada llamada se ejecuta el envoltorio que devolvió. En consecuencia, todo lo que el decorador haga fuera del envoltorio ocurre al importar el módulo y no al usar la función.
 :::
 
-::: {.demostracion}
-*Demostración.* Por la Proposición 18.2, `@d` es la asignación `f = d(f)`, que forma parte de la ejecución del módulo y ocurre una vez. El cuerpo del envoltorio se ejecuta solo cuando se llama a `f`. [∎]{.fin-demo}
-:::
+Por la Regla 18.2, `@d` es la asignación `f = d(f)`, que forma parte de la ejecución del módulo y ocurre una vez. El cuerpo del envoltorio se ejecuta solo cuando se llama a `f`.
 
-Es la misma regla que la del cuerpo de una clase en la Proposición 17.8 y la de los valores por defecto de la lección 2: lo que está en el sitio de definición se evalúa al definir.
+Es la misma regla que la del cuerpo de una clase en la Regla 17.8 y la de los valores por defecto de la lección 2: lo que está en el sitio de definición se evalúa al definir.
 
 ::: {.definicion}
 **Definición 18.5 (fábrica de decoradores).** Una **fábrica de decoradores** es una función que recibe la configuración y devuelve un decorador. Se reconoce porque en la arroba lleva paréntesis: `@d(x)` usa una fábrica y `@d` usa un decorador.
 :::
 
-::: {.proposicion}
-**Proposición 18.6 (decoradores con argumentos).** `@d(x)` equivale a `f = d(x)(f)`. Por tanto `d` es una función que devuelve un decorador, y no el decorador mismo; hacen falta tres funciones anidadas en lugar de dos.
+::: {.regla}
+**Regla 18.6 (decoradores con argumentos).** `@d(x)` equivale a `f = d(x)(f)`. Por tanto `d` es una función que devuelve un decorador, y no el decorador mismo; hacen falta tres funciones anidadas en lugar de dos.
 :::
 
 **Modo de falla.** Se escribe un decorador con argumentos con solo dos niveles y se usa sin paréntesis. `@repite` en lugar de `@repite(3)` pasa la función como si fuera el número de repeticiones, y el error aparece mucho después, en la primera llamada, con un mensaje que no menciona el decorador. El caso inverso (usar paréntesis en uno que no los acepta) falla antes y es más fácil de detectar.
@@ -344,6 +575,165 @@ El registro después de definir las dos funciones, sin llamarlas, ya tiene dos e
 
 La segunda mitad muestra el nivel adicional. `repite(3)` es una función, como indica la salida, y hay que llamarla con la función decorada para obtener el envoltorio. De ahí la regla que evita el error más común: los paréntesis en la arroba indican tres niveles, y si no los hay, el decorador recibe la función donde esperaba un argumento.
 
+### Ejercicio 18.3, Cuándo corre cada parte
+
+El decorador `anuncia` anota `"decorar"` en `registro` cuando se aplica y `"llamar"` cada vez que se llama a la función decorada. La celda decora tres funciones y hace tres llamadas. Completar las líneas de `decorar` y `llamar` con el número de entradas de cada tipo que tendrá `registro`, calculado leyendo el código y sin consultar `registro`. La celda imprime las dos predicciones junto a los recuentos reales, y las dos parejas deben coincidir.
+
+```{pyodide}
+#| exercise: ex_momento
+registro = []
+
+def anuncia(f):
+    registro.append("decorar")
+    def envoltorio(*a):
+        registro.append("llamar")
+        return f(*a)
+    return envoltorio
+
+@anuncia
+def a(): return 1
+
+@anuncia
+def b(): return 2
+
+@anuncia
+def c(): return 3
+
+a(); a(); b()
+
+decorar = ______
+llamar = ______
+
+print(decorar, llamar, registro.count("decorar"),
+      registro.count("llamar"))
+```
+
+::: {.hint exercise="ex_momento"}
+Por la Regla 18.4, el decorador corre una vez por cada `@anuncia`, haya o no llamadas, y el envoltorio una vez por llamada.
+:::
+
+::: {.solution exercise="ex_momento"}
+```{pyodide}
+registro = []
+
+def anuncia(f):
+    registro.append("decorar")
+    def envoltorio(*a):
+        registro.append("llamar")
+        return f(*a)
+    return envoltorio
+
+@anuncia
+def a(): return 1
+
+@anuncia
+def b(): return 2
+
+@anuncia
+def c(): return 3
+
+a(); a(); b()
+
+decorar = 3
+llamar = 3
+
+print(decorar, llamar, registro.count("decorar"),
+      registro.count("llamar"))
+```
+
+`c` no se llama nunca y aun así deja su entrada `"decorar"`: el decorador corrió al definirla.
+:::
+
+```{pyodide}
+#| exercise: ex_momento
+#| check: true
+import re
+mira = re.search(r"(?m)^(decorar|llamar)\s*=.*registro", user_code)
+if mira:
+    feedback = {"correct": False,
+                "message": "La predicción debe salir de leer el código, "
+                           "sin consultar registro."}
+elif decorar == 3 and llamar == 3:
+    feedback = {"correct": True,
+                "message": "Correcto: tres decoraciones al definir y "
+                           "tres llamadas."}
+else:
+    feedback = {"correct": False,
+                "message": "Se predijo %s y %s; registro tiene 3 de cada "
+                           "tipo." % (decorar, llamar)}
+feedback
+```
+
+### Ejercicio 18.4, Un decorador con argumentos
+
+La fábrica `tope(maximo)` debe devolver un decorador que limite el resultado de una función a `maximo`. Completar el `return` de `tope` para que `@tope(100)` funcione, según la Regla 18.6. La celda imprime `descuento(200)` y `descuento(1000)`, que deben dar `30.0 100`. La comprobación usa además la fábrica con otro máximo.
+
+```{pyodide}
+#| exercise: ex_fabrica
+import functools
+
+def tope(maximo):
+    def decorador(f):
+        @functools.wraps(f)
+        def envoltorio(*args):
+            return min(f(*args), maximo)
+        return envoltorio
+    return ______
+
+@tope(100)
+def descuento(importe):
+    return importe * 0.15
+
+print(descuento(200), descuento(1000))
+```
+
+::: {.hint exercise="ex_fabrica"}
+`@tope(100)` equivale a `descuento = tope(100)(descuento)`: lo que devuelve `tope(100)` tiene que ser una función que reciba `descuento`.
+:::
+
+::: {.solution exercise="ex_fabrica"}
+```{pyodide}
+import functools
+
+def tope(maximo):
+    def decorador(f):
+        @functools.wraps(f)
+        def envoltorio(*args):
+            return min(f(*args), maximo)
+        return envoltorio
+    return decorador
+
+@tope(100)
+def descuento(importe):
+    return importe * 0.15
+
+print(descuento(200), descuento(1000))
+```
+
+Son tres niveles: `tope` recibe el máximo, `decorador` recibe la función y `envoltorio` recibe los argumentos de cada llamada. `descuento(1000)` daría 150.0 sin el tope.
+:::
+
+```{pyodide}
+#| exercise: ex_fabrica
+#| check: true
+try:
+    def doble(x):
+        return 2 * x
+    limitada = tope(5)(doble)
+    datos = (descuento(200), descuento(1000), limitada(2), limitada(9),
+             limitada.__name__)
+except Exception as err:
+    datos = type(err).__name__
+if datos == (30.0, 100, 4, 5, "doble"):
+    feedback = {"correct": True,
+                "message": "Correcto: tope(100) devuelve el decorador."}
+else:
+    feedback = {"correct": False,
+                "message": "Se esperaba (30.0, 100, 4, 5, 'doble') y "
+                           "salió %s." % (datos,)}
+feedback
+```
+
 ## 3. Memorización
 
 La caché es el decorador más usado y muestra con claridad la utilidad de esta técnica: el cambio que introduce se mide en órdenes de magnitud.
@@ -352,22 +742,20 @@ La caché es el decorador más usado y muestra con claridad la utilidad de esta 
 **Definición 18.7 (memorizar).** **Memorizar** una función es guardar cada resultado en un diccionario indexado por los argumentos con que se obtuvo, y devolver el resultado guardado cuando los argumentos se repiten. Solo tiene sentido si la función es **pura**: si su resultado depende de algo más que de sus argumentos, la caché devuelve respuestas desactualizadas.
 :::
 
-::: {.proposicion}
-**Proposición 18.8 (la caché como diccionario).** Memorizar guarda los argumentos como clave, así que la función solo se puede memorizar si sus argumentos se pueden hashear. Es la Proposición 17.3 aplicada: una lista o un diccionario como argumento hacen fallar la caché con `TypeError`.
+::: {.regla}
+**Regla 18.8 (la caché como diccionario).** Memorizar guarda los argumentos como clave, así que la función solo se puede memorizar si sus argumentos se pueden hashear. Es la Regla 17.3 aplicada: una lista o un diccionario como argumento hacen fallar la caché con `TypeError`.
 :::
 
-::: {.demostracion}
-*Demostración.* La caché busca los argumentos entre las claves de un diccionario, y esa búsqueda calcula su hash. Un objeto cuyo `__hash__` valga `None` no puede ser clave, y las listas y los diccionarios no tienen hash porque son mutables: si lo tuvieran, modificarlos después de guardarlos violaría el contrato de la Proposición 17.3. [∎]{.fin-demo}
-:::
+La caché busca los argumentos entre las claves de un diccionario, y esa búsqueda calcula su hash. Un objeto cuyo `__hash__` valga `None` no puede ser clave, y las listas y los diccionarios no tienen hash porque son mutables: si lo tuvieran, modificarlos después de guardarlos violaría el contrato de la Regla 17.3.
 
-**Modo de falla.** Una caché sobre una función que recibe un `DataFrame` o una lista falla en la primera llamada con un `TypeError` que menciona el hash y no la caché. El caso más grave es convertir el argumento a un valor hashable de forma descuidada (por ejemplo, usar su `repr`), porque entonces dos objetos distintos con la misma representación comparten resultado, lo que viola la Proposición 17.3 en el sentido contrario.
+**Modo de falla.** Una caché sobre una función que recibe un `DataFrame` o una lista falla en la primera llamada con un `TypeError` que menciona el hash y no la caché. El caso más grave es convertir el argumento a un valor hashable de forma descuidada (por ejemplo, usar su `repr`), porque entonces dos objetos distintos con la misma representación comparten resultado, lo que viola la Regla 17.3 en el sentido contrario.
 
 ```{pyodide}
 import functools
 
 def cachea(f):
     """Una cache propia: un diccionario de argumentos a resultados. Necesita que
-    los argumentos se puedan hashear, por la Proposicion 17.3 de la leccion
+    los argumentos se puedan hashear, por la Regla 17.3 de la leccion
     anterior: son claves de un diccionario."""
     memoria = {}
     @functools.wraps(f)
@@ -518,78 +906,9 @@ La última parte enlaza con la lección anterior. Una caché es un diccionario y
 </script>
 ```
 
-## 4. Limitaciones
+### Ejercicio 18.5, Llamadas ahorradas por la memorización
 
-- Los decoradores de clase y sobre métodos. `@property`, `@staticmethod` y `@classmethod` son decoradores, pero devuelven descriptores, que son materia de otra lección.
-- El desalojo de la caché. `lru_cache` con `maxsize` finito descarta las entradas menos usadas; aquí se usa `None`, que no descarta ninguna y puede crecer sin límite.
-- La caché como fuga de memoria. Una caché sin límite sobre argumentos que no se repiten lo guarda todo y no acierta nunca, de modo que ocupa memoria sin reducir el cálculo.
-- `contextlib` y los decoradores que también son gestores de contexto, que se nombran y no se tratan.
-- Los decoradores en bibliotecas de terceros, que a veces registran funciones en un catálogo global; el mecanismo es el de la Proposición 18.4, y las consecuencias sobre el orden de importación quedan fuera.
-
-## Ejercicios
-
-### Ejercicio 1, Aplicación manual de un decorador
-
-La celda define el decorador `dobla` y la función `cuadrado`. Completar la línea de `cuadrado_doblado` aplicando `dobla` a `cuadrado` sin la sintaxis de la arroba, según la Proposición 18.2. La celda imprime `cuadrado(5)` y `cuadrado_doblado(5)`; el segundo debe valer 50. La comprobación llama además a la función con otros datos.
-
-```{pyodide}
-#| exercise: ex_azucar
-def dobla(f):
-    def envoltorio(x):
-        return 2 * f(x)
-    return envoltorio
-
-def cuadrado(x):
-    return x * x
-
-cuadrado_doblado = ______
-
-print(cuadrado(5), cuadrado_doblado(5))
-cuadrado_doblado(5)
-```
-
-::: {.hint exercise="ex_azucar"}
-`@dobla` encima de la definición equivale a `f = dobla(f)` debajo.
-:::
-
-::: {.solution exercise="ex_azucar"}
-```{pyodide}
-def dobla(f):
-    def envoltorio(x):
-        return 2 * f(x)
-    return envoltorio
-
-def cuadrado(x):
-    return x * x
-
-cuadrado_doblado = dobla(cuadrado)
-
-print(cuadrado(5), cuadrado_doblado(5))
-cuadrado_doblado(5)
-```
-:::
-
-```{pyodide}
-#| exercise: ex_azucar
-#| check: true
-try:
-    general = cuadrado_doblado(3) == 18
-except Exception:
-    general = False
-ok = result == 50
-if ok and general:
-    feedback = {"correct": True, "message": "Correcto: 50. `cuadrado(5)` sigue valiendo 25, porque el decorador devuelve una función nueva y deja intacta la original. Con la arroba, el nombre original quedaría ligado al envoltorio y la función de dentro solo sería alcanzable a través de él.", "type": "success"}
-elif ok:
-    feedback = {"correct": False,
-                "message": "Da los valores pedidos, pero cuadrado_doblado(3) no da 18."}
-else:
-    feedback = {"correct": False, "message": f"Esperaba 50 y obtuve {result}.", "type": "error"}
-feedback
-```
-
-### Ejercicio 2, Llamadas ahorradas por la memorización
-
-La función de Fibonacci recursiva se llama a sí misma para calcular $F(n)$. Completar los dos `return`: `llamadas_sin(n)` debe devolver el número de llamadas al cuerpo sin memoria, y `llamadas_con(n)` el número con memoria, según la Proposición 18.8. En `llamadas_sin`, la lista `fib` ya contiene los números de Fibonacci de $F(0)$ a $F(n+1)$. La celda imprime las dos cantidades para $n = 10, 20, 30$. La comprobación llama además a la función con otros datos.
+La función de Fibonacci recursiva se llama a sí misma para calcular $F(n)$. Completar los dos `return`: `llamadas_sin(n)` debe devolver el número de llamadas al cuerpo sin memoria, y `llamadas_con(n)` el número con memoria, como en la celda de la Sección 3. En `llamadas_sin`, la lista `fib` ya contiene los números de Fibonacci de $F(0)$ a $F(n+1)$. La celda imprime las dos cantidades para $n = 10, 20, 30$. La comprobación llama además a la función con otros datos.
 
 ```{pyodide}
 #| exercise: ex_cache
@@ -652,6 +971,116 @@ else:
 feedback
 ```
 
+### Ejercicio 18.6, Una caché para los precios
+
+El decorador `cachea` guarda en `memoria` el resultado de cada combinación de argumentos. Completar la línea que guarda el resultado la primera vez que aparecen unos argumentos. La función `precio` anota en `cuerpo` cada ejecución real. Con los cinco pedidos de la celda, se imprimen el total, las ejecuciones del cuerpo y las entradas de la caché, que deben dar `25.5 3 3`. La comprobación vuelve a ejecutar el código con otros pedidos.
+
+```{pyodide}
+#| exercise: ex_cache_precios
+def cachea(f):
+    memoria = {}
+    def envoltorio(*args):
+        if args not in memoria:
+            memoria[args] = ______
+        return memoria[args]
+    envoltorio.memoria = memoria
+    return envoltorio
+
+cuerpo = []
+
+@cachea
+def precio(codigo, cantidad):
+    cuerpo.append(codigo)
+    return {"A1": 2.5, "B2": 4.0}[codigo] * cantidad
+
+pedidos = [("A1", 2), ("B2", 1), ("A1", 2), ("A1", 3), ("B2", 1)]
+total = sum(precio(c, n) for c, n in pedidos)
+print(total, len(cuerpo), len(precio.memoria))
+```
+
+::: {.hint exercise="ex_cache_precios"}
+`args` es la tupla de argumentos, y `f(*args)` llama a la función original con ellos.
+:::
+
+::: {.solution exercise="ex_cache_precios"}
+```{pyodide}
+def cachea(f):
+    memoria = {}
+    def envoltorio(*args):
+        if args not in memoria:
+            memoria[args] = f(*args)
+        return memoria[args]
+    envoltorio.memoria = memoria
+    return envoltorio
+
+cuerpo = []
+
+@cachea
+def precio(codigo, cantidad):
+    cuerpo.append(codigo)
+    return {"A1": 2.5, "B2": 4.0}[codigo] * cantidad
+
+pedidos = [("A1", 2), ("B2", 1), ("A1", 2), ("A1", 3), ("B2", 1)]
+total = sum(precio(c, n) for c, n in pedidos)
+print(total, len(cuerpo), len(precio.memoria))
+```
+
+De cinco pedidos, dos repiten argumentos y se sirven de la caché. La clave es la tupla `("A1", 2)`; un pedido escrito como lista no podría ser clave, por la Regla 18.8.
+:::
+
+```{pyodide}
+#| exercise: ex_cache_precios
+#| check: true
+import contextlib, io, re
+casos = [
+    (None, (25.5, 3, 3)),
+    ('[("B2", 2), ("B2", 2), ("B2", 2)]', (24.0, 1, 1)),
+    ('[("A1", 1), ("A1", 2), ("B2", 1), ("A1", 1)]', (14.0, 3, 3)),
+]
+fallo = None
+for pp, esperado in casos:
+    otro = user_code
+    if pp is not None:
+        otro = re.sub(r"(?m)^pedidos\s*=.*$", "pedidos = " + pp, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = (ns["total"], len(ns["cuerpo"]),
+                    len(ns["precio"].memoria))
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con pedidos = %s se esperaba %s y salio %s" % (
+            pp or "los de la celda", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: tres ejecuciones para cinco "
+                           "pedidos."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
+## 4. Limitaciones
+
+- Los decoradores de clase y sobre métodos. `@property`, `@staticmethod` y `@classmethod` son decoradores, pero devuelven descriptores, que son materia de otra lección.
+- El desalojo de la caché. `lru_cache` con `maxsize` finito descarta las entradas menos usadas; aquí se usa `None`, que no descarta ninguna y puede crecer sin límite.
+- La caché como fuga de memoria. Una caché sin límite sobre argumentos que no se repiten lo guarda todo y no acierta nunca, de modo que ocupa memoria sin reducir el cálculo.
+- `contextlib` y los decoradores que también son gestores de contexto, que se nombran y no se tratan.
+- Los decoradores en bibliotecas de terceros, que a veces registran funciones en un catálogo global; el mecanismo es el de la Regla 18.4, y las consecuencias sobre el orden de importación quedan fuera.
+
+## Pieza del proyecto
+
+`caja.py` crece en cada lección y los entregables reutilizan sus piezas. Esta lección añade al cierre del día el recuento y el ahorro de consultas:
+
+1. Contar cuántas veces se consulta lo que cuesta cada producto durante el cierre, sin modificar la función que hace la consulta ni las que la llaman.
+2. Evitar que el importe de un mismo producto y cantidad se calcule dos veces en el mismo cierre, y comprobar con el recuento del requisito 1 cuántas consultas se ahorran.
+3. Que las funciones así envueltas conserven su nombre y su documentación.
+4. Limitar el descuento que devuelve cada promoción a un máximo que se indica junto a la definición de la promoción.
+
+Lo usa el [Entregable 26](entregable-26.qmd), la validación de tipos y la caché de precios.
+
 ## Reto
 
 En `proyectos/notebooks/F2-retos.ipynb`, sección **Python 18**:
@@ -668,7 +1097,7 @@ Todo lo que se afirma procede del comportamiento del lenguaje y se mide: las dos
 
 ## Para el Cerebro
 
-Nota nueva en `10-Conceptos/decoradores.md`, enlazada a [[funciones-y-scope]], [[clases-y-protocolos]] y [[tipos-y-estructuras]]. Conviene rehacer a mano la Proposición 18.6: escribir `@d(x)` como `f = d(x)(f)` ocupa un renglón y justifica que los decoradores con argumentos tengan tres niveles, duda que reaparece cada vez que hay que escribir uno.
+Nota nueva en `10-Conceptos/decoradores.md`, enlazada a [[funciones-y-scope]], [[clases-y-protocolos]] y [[tipos-y-estructuras]]. Conviene rehacer a mano la Regla 18.6: escribir `@d(x)` como `f = d(x)(f)` ocupa un renglón y justifica que los decoradores con argumentos tengan tres niveles, duda que reaparece cada vez que hay que escribir uno.
 
 ```
 ¿Qué es un decorador?::Una función que recibe una función y devuelve otra
@@ -688,7 +1117,7 @@ Nota nueva en `10-Conceptos/decoradores.md`, enlazada a [[funciones-y-scope]], [
 ::: {#fuentes .fuentes}
 ### Fuentes
 
-**Lo que esta página demuestra sola.** Todos los resultados. La Proposición 18.2 es la definición de la sintaxis, y se comprueba aplicando el decorador de las dos formas. La 18.3 se comprueba con una tabla de cuatro atributos en tres columnas, donde sin `wraps` la función se llama `envoltorio` y su firma es `(*args, **kwargs)`. La 18.4 se comprueba con un registro que ya tiene dos entradas antes de llamar a ninguna función, y acaba con dos decoraciones y tres llamadas. La 18.6, aplicando `repite(2)(f)` a mano. La 18.8, con $242\,785$ ejecuciones del cuerpo frente a $26$, y con la caché propia coincidiendo con `lru_cache` en $23$ aciertos y $26$ fallos.
+**Lo que esta página demuestra sola.** Todos los resultados. La Regla 18.2 es la definición de la sintaxis, y se comprueba aplicando el decorador de las dos formas. La Regla 18.3 se comprueba con una tabla de cuatro atributos en tres columnas, donde sin `wraps` la función se llama `envoltorio` y su firma es `(*args, **kwargs)`. La Regla 18.4 se comprueba con un registro que ya tiene dos entradas antes de llamar a ninguna función, y acaba con dos decoraciones y tres llamadas. La Regla 18.6, aplicando `repite(2)(f)` a mano. La Regla 18.8, con $242\,785$ ejecuciones del cuerpo frente a $26$, y con la caché propia coincidiendo con `lru_cache` en $23$ aciertos y $26$ fallos.
 
 **Lo que viene de los libros.** Nada. McKinney cubre las funciones como objetos y los cierres, que son el prerrequisito, pero no los decoradores ni `functools`.
 
@@ -696,5 +1125,5 @@ Nota nueva en `10-Conceptos/decoradores.md`, enlazada a [[funciones-y-scope]], [
 
 **Lo que se enuncia sin demostrar.** Que `inspect.signature` siga `__wrapped__` se comprueba pero no se justifica: es una decisión de la biblioteca estándar. Y la política de desalojo de `lru_cache` se nombra sin examinarla.
 
-**Lo que es mío, no del libro.** La medición del coste de la caché en llamadas al cuerpo en lugar de en segundos, que la hace comparable entre máquinas y entre versiones y cuantifica la aceleración en $9337{,}9$ a $1$. La comparación de la caché propia con `lru_cache` por aciertos y fallos, que compara el trabajo y no el tiempo. Y la presentación de la Proposición 18.4 junto a las dos reglas análogas de las lecciones 2 y 17, como una sola regla.
+**Lo que es mío, no del libro.** La medición del coste de la caché en llamadas al cuerpo en lugar de en segundos, que la hace comparable entre máquinas y entre versiones y cuantifica la aceleración en $9337{,}9$ a $1$. La comparación de la caché propia con `lru_cache` por aciertos y fallos, que compara el trabajo y no el tiempo. Y la presentación de la Regla 18.4 junto a las dos reglas análogas de las lecciones 2 y 17, como una sola regla.
 :::

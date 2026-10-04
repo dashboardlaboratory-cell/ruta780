@@ -25,7 +25,7 @@ pyodide:
 Al terminar esta lección se puede:
 
 1. Definir el [orden C]{.g data-t="orden de almacenamiento"} y el orden F por sus pasos, y demostrar que transponer intercambia el uno por el otro.
-2. Enunciar el criterio que determina si `reshape` puede devolver una [vista]{.g}, y demostrar que sobre la transpuesta de un array contiguo ninguna elección de pasos lo cumple.
+2. Enunciar el criterio que determina si `reshape` puede devolver una [vista]{.g}, y comprobar que sobre la transpuesta de un array contiguo ninguna elección de pasos lo cumple.
 3. Distinguir `ravel` de `flatten` por ese criterio, e identificar el argumento que recupera la vista.
 4. Demostrar que las [ventanas deslizantes]{.g} de tamaño $w$ son una vista de forma $(n-w+1,\,w)$ y pasos $(s,s)$, y que por tanto no duplican memoria.
 5. Calcular el byte más lejano que toca una vista a partir de su forma y sus pasos, y usar esa cota para determinar si una descripción se sale del búfer.
@@ -36,9 +36,9 @@ Al terminar esta lección se puede:
 #### De dónde viene
 
 - **Python 6, Definición 6.1**: el desplazamiento de un elemento es $\sum_k i_k s_k$. Los resultados de esta lección son consecuencias de esa fórmula.
-- **Python 6, Proposición 6.3**: la indexación avanzada copia porque una selección arbitraria no se describe con paso constante. Aquí aparece el caso recíproco: una selección que se describe con paso constante aunque repita elementos.
-- **Python 7, Proposición 7.2**: la numeración de los ejes y su corrimiento, que hay que seguir al cambiar de forma.
-- **Python 1, Proposición 1.5**: la mutación se observa por todos los alias. Una ventana deslizante tiene $w$ alias de cada elemento.
+- **Python 6, Regla 6.3**: la indexación avanzada copia porque una selección arbitraria no se describe con paso constante. Aquí aparece el caso recíproco: una selección que se describe con paso constante aunque repita elementos.
+- **Python 7, Regla 7.2**: la numeración de los ejes y su corrimiento, que hay que seguir al cambiar de forma.
+- **Python 1, Regla 1.5**: la mutación se observa por todos los alias. Una ventana deslizante tiene $w$ alias de cada elemento.
 :::
 
 ::: {}
@@ -66,6 +66,76 @@ Al terminar esta lección se puede:
 | $p$ | pe | El número de columnas de la matriz |
 :::
 
+## Problema inicial
+
+Este problema va antes de la teoría y se resuelve con lo visto hasta Python 7: listas, `range`, rebanadas y bucles. La Sección 3 vuelve sobre él.
+
+La lista `x` tiene ocho mediciones y `w` es el ancho de una ventana. Completar la línea de `medias` con la lista de las medias de cada tramo de `w` elementos consecutivos de `x`: el primero empieza en la posición 0 y el último termina en el último elemento. La celda imprime la lista, que debe tener seis medias, `[3.0, 2.0, 3.0, 4.0, 6.0, 6.0]`. La comprobación vuelve a ejecutar el código con otras listas y otros anchos.
+
+```{pyodide}
+#| exercise: ex_inicial
+x = [3, 1, 5, 0, 4, 8, 6, 4]
+w = 3
+
+medias = ______
+
+print(medias)
+```
+
+::: {.hint exercise="ex_inicial"}
+`x[i:i + w]` es el tramo que empieza en `i`. Con ocho elementos y ancho 3, el último tramo empieza en la posición 5, así que `i` recorre `range(len(x) - w + 1)`.
+:::
+
+::: {.solution exercise="ex_inicial"}
+```{pyodide}
+x = [3, 1, 5, 0, 4, 8, 6, 4]
+w = 3
+
+medias = [sum(x[i:i + w]) / w for i in range(len(x) - w + 1)]
+
+print(medias)
+```
+
+Con `range(len(x) - w)` se pierde el último tramo y salen cinco medias. Cada tramo se copia en una lista nueva antes de sumarlo, de modo que la solución copia $w$ veces casi todos los elementos; la Sección 3 obtiene los mismos tramos sin copiar ninguno.
+:::
+
+```{pyodide}
+#| exercise: ex_inicial
+#| check: true
+import contextlib, io, re
+casos = [
+    (None, None, [3.0, 2.0, 3.0, 4.0, 6.0, 6.0]),
+    ("[1, 2, 3, 4]", "2", [1.5, 2.5, 3.5]),
+    ("[5, 7]", "2", [6.0]),
+    ("[2, 4, 6]", "1", [2.0, 4.0, 6.0]),
+]
+fallo = None
+for xx, ww, esperado in casos:
+    otro = user_code
+    if xx is not None:
+        otro = re.sub(r"(?m)^x\s*=.*$", "x = " + xx, otro)
+        otro = re.sub(r"(?m)^w\s*=.*$", "w = " + ww, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = [float(v) for v in ns["medias"]]
+        bien = len(obtenido) == len(esperado)
+        for a, b in zip(obtenido, esperado):
+            bien = bien and abs(a - b) < 1e-9
+    except Exception as err:
+        obtenido, bien = type(err).__name__, False
+    if not bien and fallo is None:
+        fallo = "con x = %s y w = %s se esperaba %s y salio %s" % (
+            xx or "la de la celda", ww or "3", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto, tambien con otras listas."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
 ## 1. Orden C y orden F
 
 ::: {.definicion}
@@ -83,41 +153,164 @@ Los dos órdenes describen el mismo conjunto de elementos sobre el mismo búfer 
 :::
 
 ::: {.demostracion}
-*Demostración.* Transponer permuta los ejes sin mover datos: el paso del eje $k$ de la transpuesta es el paso del eje $d-1-k$ del original (Proposición 6.4). Si $a$ está en orden C, ese paso vale $t\prod_{m>d-1-k} n_m$, que es el producto de los tamaños de los ejes que en la transpuesta quedan antes del $k$, porque la permutación invierte el orden de los ejes. Esa es la fórmula del orden F de la Definición 8.1.
+*Demostración.* Transponer permuta los ejes sin mover datos: el paso del eje $k$ de la transpuesta es el paso del eje $d-1-k$ del original (Regla 6.4). Si $a$ está en orden C, ese paso vale $t\prod_{m>d-1-k} n_m$, que es el producto de los tamaños de los ejes que en la transpuesta quedan antes del $k$, porque la permutación invierte el orden de los ejes. Esa es la fórmula del orden F de la Definición 8.1.
 
 El recíproco se obtiene aplicando lo anterior a la transpuesta, ya que transponer dos veces devuelve el original. [∎]{.fin-demo}
 :::
 
+### Ejercicio 8.1, Pasos del orden C
+
+La celda trae una forma `forma` y un tamaño de elemento `t` en bytes. Completar la línea de `pasos` con la tupla de pasos del orden C, calculada con la fórmula de la Definición 8.1. La celda imprime la tupla y los pasos de un array de ceros de esa forma; con `(2, 3, 4)` y 8 bytes deben salir `(96, 32, 8)` las dos veces. La comprobación vuelve a ejecutar el código con otra forma y otro tamaño.
+
+```{pyodide}
+#| exercise: ex_pasosc
+import numpy as np
+
+forma, t = (2, 3, 4), 8
+
+pasos = ______
+
+print(pasos, np.zeros(forma, dtype="i%d" % t).strides)
+```
+
+::: {.hint exercise="ex_pasosc"}
+El paso del eje $k$ es `t` por el producto de los tamaños de los ejes posteriores a $k$; para el último eje ese producto es vacío y vale 1. `np.prod(forma[k + 1:])` lo calcula.
+:::
+
+::: {.solution exercise="ex_pasosc"}
+```{pyodide}
+import numpy as np
+
+forma, t = (2, 3, 4), 8
+
+pasos = tuple(t * int(np.prod(forma[k + 1:]))
+              for k in range(len(forma)))
+
+print(pasos, np.zeros(forma, dtype="i%d" % t).strides)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_pasosc
+#| check: true
+import contextlib, io, re
+casos = [(None, (96, 32, 8)), ("(5, 2), 4", (8, 4)),
+         ("(3, 1, 2, 5), 2", (20, 20, 10, 2)), ("(7,), 8", (8,))]
+fallo = None
+for ff, esperado in casos:
+    otro = user_code
+    if ff is not None:
+        otro = re.sub(r"(?m)^forma, t\s*=.*$", "forma, t = " + ff, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = tuple(int(v) for v in ns["pasos"])
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con forma, t = %s se esperaba %s y salio %s" % (
+            ff or "(2, 3, 4), 8", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: el ultimo indice avanza de t en t."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
+### Ejercicio 8.2, Pasos de la transpuesta
+
+La celda trae el array `a`, en orden C. Completar la línea de `pasos_t` con los pasos de la transpuesta de `a`, calculados a partir de `a.strides` y sin construir la transpuesta. La celda imprime la tupla y si coincide con `a.T.strides`; deben salir `(8, 32, 96)` y `True`. La comprobación vuelve a ejecutar el código con otro array.
+
+```{pyodide}
+#| exercise: ex_transf
+import numpy as np
+
+a = np.zeros((2, 3, 4), dtype=np.int64)
+
+pasos_t = ______
+
+print(pasos_t, tuple(pasos_t) == a.T.strides)
+```
+
+::: {.hint exercise="ex_transf"}
+Por la Proposición 8.2, el paso del eje $k$ de la transpuesta es el del eje $d-1-k$ del original: la misma tupla en orden inverso.
+:::
+
+::: {.solution exercise="ex_transf"}
+```{pyodide}
+import numpy as np
+
+a = np.zeros((2, 3, 4), dtype=np.int64)
+
+pasos_t = a.strides[::-1]
+
+print(pasos_t, tuple(pasos_t) == a.T.strides)
+```
+
+`(8, 32, 96)` son los pasos del orden F de la forma $(4, 3, 2)$: el primer índice avanza de 8 en 8.
+:::
+
+```{pyodide}
+#| exercise: ex_transf
+#| check: true
+import contextlib, io, re
+linea = re.search(r"(?m)^pasos_t\s*=(.*)$", user_code)
+usa_t = linea is None or re.search(r"\.T\b|transpose", linea.group(1))
+otro = re.sub(r"(?m)^a\s*=.*$",
+              "a = np.zeros((3, 5), dtype=np.int32)", user_code)
+ns = {}
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(otro, ns)
+    general = tuple(int(v) for v in ns["pasos_t"]) == (4, 20)
+except Exception:
+    general = False
+try:
+    obtenido = tuple(int(v) for v in pasos_t)
+except Exception as err:
+    obtenido = type(err).__name__
+if obtenido == (8, 32, 96) and general and not usa_t:
+    feedback = {"correct": True,
+                "message": "Correcto: los pasos en orden inverso."}
+elif usa_t:
+    feedback = {"correct": False,
+                "message": "La linea de pasos_t construye la transpuesta; "
+                           "se pide obtenerla de a.strides."}
+elif obtenido == (8, 32, 96):
+    feedback = {"correct": False,
+                "message": "Da (8, 32, 96), pero con un array int32 de "
+                           "forma (3, 5) no da (4, 20)."}
+else:
+    feedback = {"correct": False,
+                "message": "Se esperaba (8, 32, 96) y salio %s."
+                           % (obtenido,)}
+feedback
+```
+
 ## 2. Criterio para que `reshape` devuelva una vista
 
-::: {.proposicion}
-**Proposición 8.3 (criterio de la vista).** `reshape` devuelve una vista si y solo si existe una tupla de pasos para la nueva forma que produzca, mediante la fórmula de la Definición 6.1, los mismos desplazamientos que el recorrido pedido. Si $a$ es contigua, tal tupla existe siempre; sobre la transpuesta de la matriz $3\times4$ de enteros de ocho bytes, con el recorrido por filas, no existe ninguna.
+::: {.regla}
+**Regla 8.3 (criterio de la vista).** `reshape` devuelve una vista si y solo si existe una tupla de pasos para la nueva forma que produzca, mediante la fórmula de la Definición 6.1, los mismos desplazamientos que el recorrido pedido. Si $a$ es contigua, tal tupla existe siempre; sobre la transpuesta de la matriz $3\times4$ de enteros de ocho bytes, con el recorrido por filas, no existe ninguna.
 :::
 
-::: {.demostracion}
-*Demostración.* La primera parte es la definición de vista: un array es vista de otro cuando comparte búfer y describe sus elementos con una forma y unos pasos.
+Un array es vista de otro cuando comparte búfer y describe sus elementos con una forma y unos pasos, de modo que la primera parte de la regla es la definición de vista. Si $a$ es contigua en orden C, el desplazamiento del elemento que ocupa la posición $\ell$ del recorrido vale $\ell t$, y la tupla de pasos del orden C de cualquier forma nueva con el mismo número de elementos reproduce ese desplazamiento.
 
-Si $a$ es contigua en orden C, el desplazamiento del elemento que ocupa la posición $\ell$ del recorrido vale $\ell t$. Para una forma nueva $(m_0,\dots,m_{e-1})$ con el mismo número de elementos, la tupla de pasos del orden C de esa forma reproduce ese desplazamiento, porque la fórmula del orden C es la que convierte índices en posición del recorrido.
-
-Para la segunda parte, sea $a$ de forma $(3,4)$ y pasos $(32,8)$. Su transpuesta tiene forma $(4,3)$ y pasos $(8,32)$. Recorrerla por filas visita los elementos $(0,0),(0,1),(0,2),(1,0),\dots$, cuyos desplazamientos son
+Sea ahora $a$ de forma $(3,4)$ y pasos $(32,8)$. Su transpuesta tiene forma $(4,3)$ y pasos $(8,32)$. Recorrerla por filas visita los elementos $(0,0),(0,1),(0,2),(1,0),\dots$, cuyos desplazamientos son
 $$0,\;32,\;64,\;8,\;40,\;72,\;16,\dots$$
-Aplanarla a la forma $(12,)$ como vista exigiría un único paso $p$ con el $\ell$-ésimo desplazamiento igual a $\ell p$, es decir una progresión aritmética. Las diferencias sucesivas de la lista anterior valen $32,32,-56,32,32,-56,\dots$, que no son constantes. No hay tal $p$, de modo que ninguna vista describe ese recorrido y NumPy debe copiar. [∎]{.fin-demo}
+Aplanarla a la forma $(12,)$ como vista exigiría un único paso $p$ con el $\ell$-ésimo desplazamiento igual a $\ell p$, es decir una progresión aritmética. Las diferencias sucesivas de la lista anterior valen $32,32,-56,32,32,-56,\dots$, que no son constantes. No hay tal $p$, de modo que ninguna vista describe ese recorrido y NumPy debe copiar.
+
+::: {.regla}
+**Regla 8.4 (`ravel` frente a `flatten`).** `ravel` devuelve una vista cuando el criterio de la Regla 8.3 se cumple, y una copia en caso contrario. `flatten` devuelve siempre una copia. Sobre la transpuesta de un array contiguo, `ravel(order='F')` sí devuelve vista.
 :::
 
-::: {.proposicion}
-**Proposición 8.4 (`ravel` frente a `flatten`).** `ravel` devuelve una vista cuando el criterio de la Proposición 8.3 se cumple, y una copia en caso contrario. `flatten` devuelve siempre una copia. Sobre la transpuesta de un array contiguo, `ravel(order='F')` sí devuelve vista.
-:::
-
-::: {.demostracion}
-*Demostración.* Las dos primeras afirmaciones son el contrato documentado de cada función, y la primera se apoya en la Proposición 8.3 para decidir el caso.
-
-Para la tercera: por la Proposición 8.2, la transpuesta de un array en orden C está en orden F. Recorrerla en orden F visita sus elementos siguiendo el primer índice, y sobre el búfer eso da los desplazamientos $0,8,16,\dots$, una progresión aritmética con diferencia $8$. La tupla de pasos $(8,)$ para la forma $(12,)$ los reproduce, así que el criterio se cumple y el resultado es una vista. [∎]{.fin-demo}
-:::
+Las dos primeras afirmaciones son el contrato documentado de cada función. Para la tercera: por la Proposición 8.2, la transpuesta de un array en orden C está en orden F. Recorrerla en orden F visita sus elementos siguiendo el primer índice, y sobre el búfer eso da los desplazamientos $0,8,16,\dots$, una progresión aritmética con diferencia $8$. La tupla de pasos $(8,)$ para la forma $(12,)$ los reproduce, así que el criterio se cumple.
 
 ```{pyodide}
 import numpy as np
 
-a = np.arange(12).reshape(3, 4)
+a = np.arange(12, dtype=np.int64).reshape(3, 4)
 t = a.T
 print("a contiguo por filas    :", a.flags["C_CONTIGUOUS"])
 print("t contiguo por filas    :", t.flags["C_CONTIGUOUS"], "| por columnas:", t.flags["F_CONTIGUOUS"])
@@ -136,7 +329,7 @@ print("la formula coincide con la direccion real  :",
       t[0:1, 1:2].__array_interface__["data"][0] - base == desp[1])
 ```
 
-La lista de desplazamientos reproduce la prueba de la Proposición 8.3: sus diferencias no son constantes, así que ningún paso único las genera.
+La lista de desplazamientos reproduce el argumento de la Regla 8.3: sus diferencias no son constantes, así que ningún paso único las genera.
 
 ```{=html}
 <div class="viz-orden">
@@ -217,7 +410,7 @@ La lista de desplazamientos reproduce la prueba de la Proposición 8.3: sus dife
       "), que vive en el byte <strong>" + (plano * T) + "</strong> del búfer. " +
       (fila
         ? "En orden C el recorrido y el búfer avanzan a la vez, así que la sucesión de bytes es 0, 8, 16, …: una progresión aritmética, y por eso <code>reshape</code> puede devolver una vista."
-        : "En orden F el recorrido salta de cuatro en cuatro celdas y vuelve atrás, así que la sucesión de bytes no es una progresión aritmética y <code>reshape</code> a la forma plana tiene que copiar (Proposición 8.3).");
+        : "En orden F el recorrido salta de cuatro en cuatro celdas y vuelve atrás, así que la sucesión de bytes no es una progresión aritmética y <code>reshape</code> a la forma plana tiene que copiar (Regla 8.3).");
   }
 
   cm.addEventListener("change", dibujar);
@@ -225,6 +418,120 @@ La lista de desplazamientos reproduce la prueba de la Proposición 8.3: sus dife
   dibujar();
 })();
 </script>
+```
+
+### Ejercicio 8.3, Aplanado de la transpuesta como vista
+
+La celda trae el array `a`, de forma `(3, 4)`, y su transpuesta `t`. Completar la línea de `plano` para aplanar `t` sin copiar ningún byte. La celda imprime la forma de `plano`, que debe ser `(12,)`, y el resultado de `np.shares_memory` con `a`, que debe dar `True`.
+
+```{pyodide}
+#| exercise: ex_ravel
+import numpy as np
+a = np.arange(12).reshape(3, 4)
+t = a.T
+
+plano = ______
+
+print(np.shape(plano), np.shares_memory(plano, a))
+bool(np.shares_memory(plano, a)) and np.shape(plano) == (12,)
+```
+
+::: {.hint exercise="ex_ravel"}
+La transpuesta está en orden F (Proposición 8.2). Recorrerla en ese mismo orden da una progresión aritmética.
+:::
+
+::: {.solution exercise="ex_ravel"}
+```{pyodide}
+import numpy as np
+a = np.arange(12).reshape(3, 4)
+t = a.T
+
+plano = t.ravel(order="F")
+
+print(np.shape(plano), np.shares_memory(plano, a))
+bool(np.shares_memory(plano, a)) and np.shape(plano) == (12,)
+```
+:::
+
+```{pyodide}
+#| exercise: ex_ravel
+#| check: true
+if result is True:
+    feedback = {"correct": True, "message": "Correcto: en orden F el recorrido y el bufer avanzan juntos, y el criterio de la Regla 8.3 se cumple.", "type": "success"}
+else:
+    feedback = {"correct": False, "message": "Hace falta una vista de forma (12,) que comparta memoria con a.", "type": "error"}
+feedback
+```
+
+### Ejercicio 8.4, Prueba de la progresión aritmética
+
+La celda trae el array `t`, la transpuesta de una matriz $2\times3$, y la lista `desp` con los desplazamientos de su recorrido por filas. Completar la línea de `constante` con un booleano que diga si las diferencias sucesivas de `desp` son todas iguales, que por la Regla 8.3 es la condición para aplanar `t` sin copiar. La celda imprime `desp`, `constante` y si `t.reshape(-1)` comparte memoria con `t`; las dos últimas deben dar `False`. La comprobación vuelve a ejecutar el código con otros arrays, algunos de los cuales sí admiten la vista.
+
+```{pyodide}
+#| exercise: ex_prog
+import numpy as np
+
+t = np.arange(6, dtype=np.int64).reshape(2, 3).T
+desp = [i * t.strides[0] + j * t.strides[1]
+        for i in range(t.shape[0]) for j in range(t.shape[1])]
+
+constante = ______
+
+print(desp, constante, np.shares_memory(t.reshape(-1), t))
+```
+
+::: {.hint exercise="ex_prog"}
+Las diferencias son `desp[k + 1] - desp[k]` para `k` de 0 a `len(desp) - 2`. Son todas iguales si el conjunto que forman tiene un solo elemento.
+:::
+
+::: {.solution exercise="ex_prog"}
+```{pyodide}
+import numpy as np
+
+t = np.arange(6, dtype=np.int64).reshape(2, 3).T
+desp = [i * t.strides[0] + j * t.strides[1]
+        for i in range(t.shape[0]) for j in range(t.shape[1])]
+
+difs = [desp[k + 1] - desp[k] for k in range(len(desp) - 1)]
+constante = len(set(difs)) <= 1
+
+print(desp, constante, np.shares_memory(t.reshape(-1), t))
+```
+
+Los desplazamientos son 0, 24, 8, 32, 16 y 40, con diferencias 24 y −16 alternadas.
+:::
+
+```{pyodide}
+#| exercise: ex_prog
+#| check: true
+import contextlib, io, re
+casos = [(None, False),
+         ("np.arange(6, dtype=np.int64).reshape(2, 3)", True),
+         ("np.arange(12, dtype=np.int64).reshape(3, 4)[:, :2]", False),
+         ("np.arange(8, dtype=np.int64).reshape(4, 2)[:, :1]", True),
+         ("np.arange(12, dtype=np.int64).reshape(3, 4)[::2]", False)]
+fallo = None
+for tt, esperado in casos:
+    otro = user_code
+    if tt is not None:
+        otro = re.sub(r"(?m)^t\s*=.*$", "t = " + tt, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = bool(ns["constante"])
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con t = %s se esperaba %s y salio %s" % (
+            tt or "la de la celda", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: la prueba coincide con lo que hace "
+                           "reshape en los cinco casos."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
 ```
 
 ## 3. Ventanas deslizantes como vistas
@@ -244,7 +551,7 @@ Su fila $i$ es el tramo de $x$ que empieza en la posición $i$ y tiene $w$ eleme
 $$(i+j)s \;=\; i\,s + j\,s,$$
 que es la fórmula de la Definición 6.1 con pasos $s_0=s$ y $s_1=s$. La descripción existe, así que $V$ se construye sobre el búfer de $x$ sin copiar.
 
-El número de elementos de $V$ excede al de $x$ en cuanto $w>1$, sin contradicción: cada elemento de $x$ aparece en hasta $w$ posiciones de $V$, todas leyendo el mismo byte. Es el caso límite del aliasing de la Proposición 1.5. [∎]{.fin-demo}
+El número de elementos de $V$ excede al de $x$ en cuanto $w>1$, sin contradicción: cada elemento de $x$ aparece en hasta $w$ posiciones de $V$, todas leyendo el mismo byte. Es el caso límite del aliasing de la Regla 1.5. [∎]{.fin-demo}
 :::
 
 La repetición del mismo paso en las dos dimensiones permite construir la vista, y también permite describir posiciones fuera del búfer: la fórmula no obliga a que el último índice quede dentro de él.
@@ -265,7 +572,7 @@ La condición es necesaria y suficiente porque cualquier byte anterior al máxim
 import numpy as np
 from numpy.lib.stride_tricks import as_strided
 
-x = np.arange(10)
+x = np.arange(10, dtype=np.int64)
 w = 4
 s = x.strides[0]
 V = as_strided(x, shape=(len(x) - w + 1, w), strides=(s, s))
@@ -287,6 +594,8 @@ print("con una fila de mas: ultimo byte %d, bufer %d bytes -> cabe: %s"
 ```
 
 La fila adicional pide el byte $88$ de un búfer de $80$: `as_strided` la construiría sin error y leería memoria fuera del búfer. La comprobación de la Proposición 8.7 ocupa una línea y evita ese acceso.
+
+El problema inicial pedía las medias de las filas de esta matriz. Con `V` construida, la media móvil de ancho $w$ es `V.mean(axis=1)`, una reducción por el eje 1 que no ejecuta ningún bucle de Python ni copia los tramos, y la Sección 4 obtiene la misma matriz con `sliding_window_view`.
 
 ```{=html}
 <div class="viz-ventana">
@@ -368,86 +677,7 @@ La fila adicional pide el byte $88$ de un búfer de $80$: `as_strided` la constr
 </script>
 ```
 
-## 4. Contraste con la librería
-
-Esta lección es de nivel L3, que exige implementar el resultado en NumPy puro y obtener los mismos valores que la librería. Se implementa la Proposición 8.6 precedida de la comprobación de la Proposición 8.7, y se contrasta contra `sliding_window_view`, la función de NumPy que evita escribir `as_strided` a mano.
-
-```{pyodide}
-import numpy as np
-from numpy.lib.stride_tricks import as_strided, sliding_window_view
-
-def ventanas(x, w):
-    """La Proposicion 8.6, con la cota de la 8.7 comprobada antes de construir."""
-    if w > x.shape[0]:
-        raise ValueError("la ventana no cabe en el array")
-    s = x.strides[0]
-    forma, pasos = (x.shape[0] - w + 1, w), (s, s)
-    ultimo = sum((n - 1) * p for n, p in zip(forma, pasos)) + x.itemsize
-    if ultimo > x.nbytes:
-        raise ValueError("la descripcion se sale del bufer")
-    return as_strided(x, shape=forma, strides=pasos)
-
-x = np.arange(10)
-mia = ventanas(x, 4)
-suya = sliding_window_view(x, 4)
-print("identicas a sliding_window_view:", np.array_equal(mia, suya))
-print("las dos son vistas de x        :", np.shares_memory(mia, x), np.shares_memory(suya, x))
-print("media movil:", mia.mean(axis=1))
-lenta = np.array([x[i:i + 4].mean() for i in range(len(x) - 4 + 1)])
-print("coincide con el bucle          :", np.allclose(mia.mean(axis=1), lenta))
-print()
-x[0] = 100
-print("tras escribir x[0] = 100, la primera fila es:", mia[0])
-```
-
-La última línea completa el argumento: lo que se escribe en el array de partida se observa desde la ventana, porque ambos usan el mismo búfer. La media móvil se calcula con una reducción por el eje $1$, que es la Definición 7.1 de la lección anterior aplicada a una vista sin memoria adicional.
-
-## Ejercicios
-
-### Ejercicio 1, Aplanado de la transpuesta como vista
-
-La celda trae el array `a`, de forma `(3, 4)`, y su transpuesta `t`. Completar la línea de `plano` para aplanar `t` sin copiar ningún byte. La celda imprime la forma de `plano`, que debe ser `(12,)`, y el resultado de `np.shares_memory` con `a`, que debe dar `True`.
-
-```{pyodide}
-#| exercise: ex_ravel
-import numpy as np
-a = np.arange(12).reshape(3, 4)
-t = a.T
-
-plano = ______
-
-print(np.shape(plano), np.shares_memory(plano, a))
-bool(np.shares_memory(plano, a)) and np.shape(plano) == (12,)
-```
-
-::: {.hint exercise="ex_ravel"}
-La transpuesta está en orden F (Proposición 8.2). Recorrerla en ese mismo orden da una progresión aritmética.
-:::
-
-::: {.solution exercise="ex_ravel"}
-```{pyodide}
-import numpy as np
-a = np.arange(12).reshape(3, 4)
-t = a.T
-
-plano = t.ravel(order="F")
-
-print(np.shape(plano), np.shares_memory(plano, a))
-bool(np.shares_memory(plano, a)) and np.shape(plano) == (12,)
-```
-:::
-
-```{pyodide}
-#| exercise: ex_ravel
-#| check: true
-if result is True:
-    feedback = {"correct": True, "message": "Correcto: en orden F el recorrido y el bufer avanzan juntos, y el criterio de la Proposicion 8.3 se cumple.", "type": "success"}
-else:
-    feedback = {"correct": False, "message": "Hace falta una vista de forma (12,) que comparta memoria con a.", "type": "error"}
-feedback
-```
-
-### Ejercicio 2, Último byte de una vista
+### Ejercicio 8.5, Último byte de una vista
 
 La celda trae la forma `forma` $(8,4)$, los pasos `pasos` $(8,8)$ y el tamaño de elemento `itemsize` de $8$ bytes de una vista. Completar la línea de `ultimo` para calcular el último byte que tocaría esa vista. La celda imprime `ultimo` y si cabe en un búfer de $80$ bytes; `ultimo` debe valer 88, que no cabe. La comprobación vuelve a ejecutar el código con otros datos.
 
@@ -500,6 +730,189 @@ else:
 feedback
 ```
 
+### Ejercicio 8.6, Ventanas con `as_strided`
+
+La celda trae el array `x` y el ancho `w`. Completar la línea de `V` con la matriz de ventanas de ancho `w` de `x`, construida con `as_strided` y la forma y los pasos de la Proposición 8.6. La celda imprime la suma de cada ventana y si `V` comparte memoria con `x`; deben salir `[10, 16, 11, 18]` y `True`. La comprobación vuelve a ejecutar el código con otros arrays, de otro tamaño de elemento.
+
+```{pyodide}
+#| exercise: ex_vsum
+import numpy as np
+from numpy.lib.stride_tricks import as_strided
+
+x = np.array([2, 7, 1, 8, 2, 8], dtype=np.int64)
+w = 3
+
+V = ______
+
+print([int(v) for v in np.sum(V, axis=1)], np.shares_memory(V, x))
+```
+
+::: {.hint exercise="ex_vsum"}
+La forma es `(len(x) - w + 1, w)` y los dos pasos valen `x.strides[0]`. Escribir 8 en lugar de `x.strides[0]` falla con un array de otro dtype.
+:::
+
+::: {.solution exercise="ex_vsum"}
+```{pyodide}
+import numpy as np
+from numpy.lib.stride_tricks import as_strided
+
+x = np.array([2, 7, 1, 8, 2, 8], dtype=np.int64)
+w = 3
+
+s = x.strides[0]
+V = as_strided(x, shape=(len(x) - w + 1, w), strides=(s, s))
+
+print([int(v) for v in np.sum(V, axis=1)], np.shares_memory(V, x))
+```
+:::
+
+```{pyodide}
+#| exercise: ex_vsum
+#| check: true
+import contextlib, io, re
+casos = [(None, None, [10, 16, 11, 18]),
+         ("np.array([1, 2, 3, 4, 5], dtype=np.int32)", "2", [3, 5, 7, 9]),
+         ("np.arange(4, dtype=np.int16)", "4", [6])]
+fallo = None
+for xx, ww, esperado in casos:
+    otro = user_code
+    if xx is not None:
+        otro = re.sub(r"(?m)^x\s*=.*$", "x = " + xx, otro)
+        otro = re.sub(r"(?m)^w\s*=.*$", "w = " + ww, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        V2, x2 = ns["V"], ns["x"]
+        bien = (V2.strides == (x2.strides[0], x2.strides[0])
+                and [int(v) for v in V2.sum(axis=1)] == esperado
+                and np.shares_memory(V2, x2))
+        obtenido = (V2.shape, V2.strides)
+    except Exception as err:
+        bien, obtenido = False, type(err).__name__
+    if not bien and fallo is None:
+        fallo = ("con x = %s y w = %s se esperaban las sumas %s; forma y "
+                 "pasos obtenidos: %s" % (xx or "la de la celda",
+                                         ww or "3", esperado, obtenido))
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: forma (n - w + 1, w) y pasos (s, s)."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
+## 4. Contraste con la librería
+
+Esta lección es de nivel L3, que exige implementar el resultado en NumPy puro y obtener los mismos valores que la librería. Se implementa la Proposición 8.6 precedida de la comprobación de la Proposición 8.7, y se contrasta contra `sliding_window_view`, la función de NumPy que evita escribir `as_strided` a mano.
+
+```{pyodide}
+import numpy as np
+from numpy.lib.stride_tricks import as_strided, sliding_window_view
+
+def ventanas(x, w):
+    """La Proposicion 8.6, con la cota de la 8.7 comprobada antes de construir."""
+    if w > x.shape[0]:
+        raise ValueError("la ventana no cabe en el array")
+    s = x.strides[0]
+    forma, pasos = (x.shape[0] - w + 1, w), (s, s)
+    ultimo = sum((n - 1) * p for n, p in zip(forma, pasos)) + x.itemsize
+    if ultimo > x.nbytes:
+        raise ValueError("la descripcion se sale del bufer")
+    return as_strided(x, shape=forma, strides=pasos)
+
+x = np.arange(10, dtype=np.int64)
+mia = ventanas(x, 4)
+suya = sliding_window_view(x, 4)
+print("identicas a sliding_window_view:", np.array_equal(mia, suya))
+print("las dos son vistas de x        :", np.shares_memory(mia, x), np.shares_memory(suya, x))
+print("media movil:", mia.mean(axis=1))
+lenta = np.array([x[i:i + 4].mean() for i in range(len(x) - 4 + 1)])
+print("coincide con el bucle          :", np.allclose(mia.mean(axis=1), lenta))
+print()
+x[0] = 100
+print("tras escribir x[0] = 100, la primera fila es:", mia[0])
+```
+
+La última línea completa el argumento: lo que se escribe en el array de partida se observa desde la ventana, porque ambos usan el mismo búfer. La media móvil se calcula con una reducción por el eje $1$, que es la Definición 7.1 de la lección anterior aplicada a una vista sin memoria adicional.
+
+### Ejercicio 8.7, Máximo móvil
+
+La celda trae el array `x` y el ancho `w`. Completar la línea de `pico` con el máximo de cada ventana de ancho `w` de `x`, sin bucles, a partir de `sliding_window_view`. La celda imprime la lista, que debe ser `[7, 7, 7, 9, 9]`. La comprobación vuelve a ejecutar el código con otros arrays y anchos.
+
+```{pyodide}
+#| exercise: ex_pico
+import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
+
+x = np.array([4, 1, 7, 3, 2, 9, 5])
+w = 3
+
+pico = ______
+
+print([int(v) for v in pico])
+```
+
+::: {.hint exercise="ex_pico"}
+`sliding_window_view(x, w)` tiene una fila por ventana. El máximo de cada fila es una reducción por el eje 1.
+:::
+
+::: {.solution exercise="ex_pico"}
+```{pyodide}
+import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
+
+x = np.array([4, 1, 7, 3, 2, 9, 5])
+w = 3
+
+pico = sliding_window_view(x, w).max(axis=1)
+
+print([int(v) for v in pico])
+```
+:::
+
+```{pyodide}
+#| exercise: ex_pico
+#| check: true
+import contextlib, io, re
+casos = [(None, None, [7, 7, 7, 9, 9]),
+         ("np.array([1, 5, 2, 8])", "2", [5, 5, 8]),
+         ("np.array([3, 1])", "2", [3]),
+         ("np.array([6, 2, 4])", "1", [6, 2, 4])]
+fallo = None
+for xx, ww, esperado in casos:
+    otro = user_code
+    if xx is not None:
+        otro = re.sub(r"(?m)^x\s*=.*$", "x = " + xx, otro)
+        otro = re.sub(r"(?m)^w\s*=.*$", "w = " + ww, otro)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(otro, ns)
+        obtenido = [int(v) for v in ns["pico"]]
+    except Exception as err:
+        obtenido = type(err).__name__
+    if obtenido != esperado and fallo is None:
+        fallo = "con x = %s y w = %s se esperaba %s y salio %s" % (
+            xx or "la de la celda", ww or "3", esperado, obtenido)
+if fallo is None:
+    feedback = {"correct": True,
+                "message": "Correcto: una reduccion por el eje 1 de la vista."}
+else:
+    feedback = {"correct": False, "message": fallo}
+feedback
+```
+
+## Pieza del proyecto
+
+`caja.py` crece en cada lección y los entregables reutilizan sus piezas. Esta lección añade el análisis de la afluencia a las cajas, a partir del número de clientes que llegan en cada minuto de un día:
+
+1. Calcular la media de llegadas en cada ventana de 15 minutos consecutivos, sin copiar los datos de cada ventana.
+2. Encontrar la ventana con más llegadas, el minuto en que empieza y cuántos clientes llegaron en ella; si hay empate, la que empieza antes.
+3. Rechazar con un error un ancho de ventana menor que 1 o mayor que el número de minutos del día.
+
+Lo usa el [Entregable 18](entregable-18.qmd), la afluencia por minuto.
+
 ## Reto
 
 En `proyectos/notebooks/F1-retos.ipynb`, sección **Python 8**:
@@ -514,8 +927,8 @@ En `proyectos/notebooks/F1-retos.ipynb`, sección **Python 8**:
 
 Preguntas para la lectura del capítulo 4:
 
-1. El capítulo presenta `reshape` y su argumento `order`. Con la Proposición 8.3, ¿qué tiene que cumplir el recorrido pedido para que no haga falta copiar, y por qué el argumento `order` puede cambiar la respuesta sin cambiar los datos?
-2. El capítulo distingue `ravel` de `flatten` en una frase. Con la Proposición 8.4, ¿en qué caso concreto las dos devuelven lo mismo y en cuál no, y cómo se comprueba cuál ocurrió?
+1. El capítulo presenta `reshape` y su argumento `order`. Con la Regla 8.3, ¿qué tiene que cumplir el recorrido pedido para que no haga falta copiar, y por qué el argumento `order` puede cambiar la respuesta sin cambiar los datos?
+2. El capítulo distingue `ravel` de `flatten` en una frase. Con la Regla 8.4, ¿en qué caso concreto las dos devuelven lo mismo y en cuál no, y cómo se comprueba cuál ocurrió?
 3. El capítulo trata la transposición y `swapaxes` como operaciones sin costo. Con la Proposición 8.2, ¿qué ocurre con la contigüidad después de esa operación, y qué operación posterior asume el coste?
 
 ## Para el Cerebro
@@ -540,9 +953,9 @@ Nota nueva en `10-Conceptos/ventanas-y-strides.md`, enlazada a [[arrays-y-vistas
 ::: {#fuentes .fuentes}
 ### Fuentes
 
-**Lo que esta página demuestra sola.** La Proposición 8.2 se demuestra permutando la fórmula de los pasos, y se comprueba leyendo `flags`: la transpuesta deja de ser contigua por filas y pasa a serlo por columnas. La Proposición 8.3 se demuestra exhibiendo los desplazamientos del recorrido por filas de la transpuesta, $0, 32, 64, 8, \dots$, cuyas diferencias no son constantes, y se comprueba con `np.shares_memory`: `reshape` y `ravel` copian ahí, y `ravel(order='F')` no. La Proposición 8.6 se demuestra separando $(i+j)s$ en $is+js$, y se comprueba construyendo la vista de forma $(7,4)$ y pasos $(8,8)$ sobre un búfer de $80$ bytes, con $28$ elementos y cero copias. La Proposición 8.7 se demuestra maximizando una función creciente en cada índice, y se comprueba con los dos casos: la descripción correcta llega al byte $80$ y cabe, y la de una fila de más pide el $88$ y no cabe. Los dos visuales se contrastaron contra estas mismas afirmaciones en todo el rango de sus controles.
+**Lo que esta página demuestra sola.** La Proposición 8.2 se demuestra permutando la fórmula de los pasos, y se comprueba leyendo `flags`: la transpuesta deja de ser contigua por filas y pasa a serlo por columnas. La Regla 8.3 se explica exhibiendo los desplazamientos del recorrido por filas de la transpuesta, $0, 32, 64, 8, \dots$, cuyas diferencias no son constantes, y se comprueba con `np.shares_memory`: `reshape` y `ravel` copian ahí, y `ravel(order='F')` no. La Proposición 8.6 se demuestra separando $(i+j)s$ en $is+js$, y se comprueba construyendo la vista de forma $(7,4)$ y pasos $(8,8)$ sobre un búfer de $80$ bytes, con $28$ elementos y cero copias. La Proposición 8.7 se demuestra maximizando una función creciente en cada índice, y se comprueba con los dos casos: la descripción correcta llega al byte $80$ y cabe, y la de una fila de más pide el $88$ y no cabe. Los dos visuales se contrastaron contra estas mismas afirmaciones en todo el rango de sus controles.
 
-**Lo que se usa de otras lecciones sin repetir.** La fórmula del desplazamiento es la Definición 6.1, y que transponer permuta los pasos sin mover datos es la Proposición 6.4. Que la mutación se observa por todos los alias es la Proposición 1.5, aquí con $w$ alias por elemento. La media móvil se calcula con la reducción por un eje de la Definición 7.1.
+**Lo que se usa de otras lecciones sin repetir.** La fórmula del desplazamiento es la Definición 6.1, y que transponer permuta los pasos sin mover datos es la Regla 6.4. Que la mutación se observa por todos los alias es la Regla 1.5, aquí con $w$ alias por elemento. La media móvil se calcula con la reducción por un eje de la Definición 7.1.
 
 **Lo que se enuncia sin demostrar.** El contrato de `ravel` y `flatten` se toma de la documentación de NumPy: la página demuestra cuándo la vista puede existir y comprueba cuál devuelve cada función, pero la decisión es de la implementación. Que `sliding_window_view` haga internamente la comprobación de la Proposición 8.7 se toma también de su documentación, y aquí solo se contrasta que sus resultados coinciden.
 
@@ -550,7 +963,7 @@ Nota nueva en `10-Conceptos/ventanas-y-strides.md`, enlazada a [[arrays-y-vistas
 
 - [*Python for Data Analysis*, 3ª edición](https://wesmckinney.com/book/) (Wes McKinney, O'Reilly, 2022), capítulo 4 *NumPy Basics: Arrays and Vectorized Computation*, citado por número y título, sin transcribir texto.
 
-**Lo que es mío, no del libro.** La Proposición 8.3 escrita como un criterio con una imposibilidad concreta demostrada (la lista de desplazamientos y sus diferencias), en lugar de la regla empírica «a veces copia». La Proposición 8.7 y su uso como comprobación previa, que permite usar `as_strided` con una garantía de no salir del búfer. Y la Proposición 8.6 presentada como el caso recíproco de la 6.3: allí una selección arbitraria no se describía con paso constante y había que copiar; aquí una selección con elementos repetidos se describe con paso constante y no se copia nada.
+**Lo que es mío, no del libro.** La Regla 8.3 escrita como un criterio con una imposibilidad concreta demostrada (la lista de desplazamientos y sus diferencias), en lugar de la regla empírica «a veces copia». La Proposición 8.7 y su uso como comprobación previa, que permite usar `as_strided` con una garantía de no salir del búfer. Y la Proposición 8.6 presentada como el caso recíproco de la Regla 6.3: allí una selección arbitraria no se describía con paso constante y había que copiar; aquí una selección con elementos repetidos se describe con paso constante y no se copia nada.
 
 [Índice de McKinney verificado el 12-09-2026 contra el índice publicado del sitio oficial del libro.]{.sello}
 :::

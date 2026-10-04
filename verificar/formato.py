@@ -11,7 +11,7 @@ dejarlo a la memoria.
 Sale con código 0 siempre: es un informe, no una valla. Para convertirlo en
 valla, pasar --estricto y se exige que las lecciones ya migradas no retrocedan.
 """
-import json
+import os, json
 import pathlib
 import re
 import sys
@@ -107,13 +107,14 @@ def prosa(texto):
     return fuera
 
 
-# Lecciones de Fundamentos y Python que ya siguen la regla 27: regla en vez de
-# proposición, examen de salida o problema inicial, ejercicios intercalados y
-# pieza del proyecto. Cuando estén las 42, la comprobación pasa a todo el módulo.
-REGLA27 = {
-    "fundamentos/02-condicionales-y-verdad.qmd",
-    "python/12-groupby-y-agregacion.qmd",
-}
+# Regla 27: todas las lecciones numeradas de Fundamentos y Python siguen el
+# molde de la regla 27 (04-10-2026): regla en vez de proposición, examen de
+# salida o problema inicial, ejercicios intercalados y pieza del proyecto.
+REGLA27 = {f"{p.parent.name}/{p.name}" for m in ("fundamentos", "python")
+           for p in (pathlib.Path(__file__).resolve().parent.parent / m).glob("[0-9]*.qmd")}
+# Para probar una lección de otro módulo sin editar este archivo:
+#   REGLA27_EXTRA=modulo/NN-nombre.qmd python3 verificar/formato.py --estricto
+REGLA27 |= {x.strip() for x in os.environ.get("REGLA27_EXTRA", "").split(",") if x.strip()}
 
 
 def revisa_regla27(rel, t):
