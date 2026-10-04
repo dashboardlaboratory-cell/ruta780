@@ -37,6 +37,20 @@ def ejecuta(codigo):
 
 SONDA = "\nimport json as _j\nprint('@@FB@@' + _j.dumps({'c': bool(feedback['correct']), 'm': str(feedback['message'])}))\n"
 
+
+def como_quarto_live(usuario, comprobacion):
+    """Programa que reproduce cómo corre quarto-live un ejercicio: el código de
+    quien resuelve en un espacio de nombres, y después la comprobación con ese
+    espacio como globales y un diccionario aparte como locales. Las funciones y
+    comprensiones de la comprobación solo ven los globales, como en el
+    navegador (30-09-2026: los 33 entregables fallaban allí por esto)."""
+    return ("import json as _j\n"
+            "_G = {'__name__': '__main__'}\n"
+            "exec(compile(%r, 'usuario', 'exec'), _G)\n"
+            "_L = {}\n"
+            "exec(compile(%r, 'comprobacion', 'exec'), _G, _L)\n"
+            "feedback = _L.get('feedback', _G.get('feedback'))\n" % (usuario, comprobacion)) + SONDA
+
 def revisar(p):
     t = p.read_text(encoding="utf-8"); h = []
     esp, ej, chk, sol = partes(t)
@@ -46,13 +60,13 @@ def revisar(p):
         h.append(("herramienta", f"prescribe una herramienta: «{m.group(0)}»"))
     if not (ej and chk and sol):
         h.append(("forma", "falta la celda del ejercicio, la comprobación o la solución de referencia")); return h
-    c, out, err = ejecuta(sol.group(1) + "\n" + chk.group(1) + SONDA)
+    c, out, err = ejecuta(como_quarto_live(sol.group(1), chk.group(1)))
     fb = re.search(r"@@FB@@(.*)", out)
     if c != 0 or not fb:
         h.append(("solucion", "la solución o la comprobación revientan: " + (err.strip().split("\n")[-1] if err else "sin feedback")))
     elif not json.loads(fb.group(1))["c"]:
         h.append(("solucion", "la comprobación rechaza la solución de referencia: " + json.loads(fb.group(1))["m"][:160]))
-    c2, out2, _ = ejecuta(ej.group(2).replace("______", "None") + "\n" + chk.group(1) + SONDA)
+    c2, out2, _ = ejecuta(como_quarto_live(ej.group(2).replace("______", "None"), chk.group(1)))
     fb2 = re.search(r"@@FB@@(.*)", out2)
     if fb2 and json.loads(fb2.group(1))["c"]:
         h.append(("vacio", "la plantilla sin completar pasa la comprobación"))
