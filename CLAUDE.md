@@ -21,6 +21,7 @@ python3 verificar/formato.py     && \
 python3 verificar/tono.py --estricto && \
 python3 verificar/ejercicios.py --estricto && \
 python3 verificar/entregables.py && \
+python3 verificar/ejecuta.py --estricto && \
 python3 verificar/casos.py && \
 python3 verificar/visuales.py --estricto
 ```
@@ -97,7 +98,8 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
 14. **Registro de libro de texto, no de revista.** Definición numerada →
     proposición → demostración → ejemplo. Sin títulos-golpe, sin "no es X,
     es Y", sin "Fíjate", sin párrafos de una línea para efecto, sin
-    metáforas apiladas. El molde es `estadistica/04`.
+    metáforas apiladas. El molde es `estadistica/04`. En Fundamentos y
+    Python, el molde es el de la regla 27.
 14b. **Tono frío de manual universitario (crítica de Luis, 26-09-2026).** El
     modelo es un apunte de estadística en español: «En el capítulo anterior
     introducimos…», «Definición. El valor esperado de una variable aleatoria…»,
@@ -187,6 +189,55 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
     Los conjuntos de datos públicos con licencia libre (por ejemplo, los de
     UCI con CC BY 4.0) sí se suben al repo, citando la fuente y la licencia.
     Nunca datos de la universidad de Luis ni de empresas.
+
+27. **Lecciones de Fundamentos y Python (04-10-2026, a partir de una revisión
+    de seis puntos que trajo Luis).** En esos dos módulos sustituye al molde
+    «definición → proposición → demostración → ejemplo» de la regla 14; el
+    tono de la 14b se mantiene. `verificar/formato.py` lo comprueba en las
+    lecciones de la lista `REGLA27`.
+
+    · **Regla en vez de proposición.** Un resultado de programación se enuncia
+      como `:::: {.regla}` con la etiqueta **Regla 2.2.**, y lo muestra la
+      celda que sigue. No lleva demostración: en Fundamentos 2, «`=` y `==`
+      son operaciones distintas» tenía una «demostración» que solo describía
+      la celda. Si hay un argumento que explica el porqué, va como prosa
+      después de la regla. Proposición y demostración se conservan solo
+      cuando la demostración es una derivación con fórmulas, como la media de
+      las medias de Python 12 o la suma de cuadrados; un resultado sobre el
+      comportamiento del lenguaje o de una biblioteca es una regla. En los
+      demás módulos sigue la regla 14.
+    · **Examen de salida (Fundamentos).** `## Examen de salida`, después del
+      Objetivo: un ejercicio con comprobación que combina los objetivos de la
+      lección. Si pasa, la lección se puede saltar, y el texto enlaza a la
+      siguiente.
+    · **Problema inicial (Python).** `## Problema inicial`, después de la
+      Notación: un problema que se puede resolver con lo visto en lecciones
+      anteriores, de forma más larga o con un fallo típico, antes de leer la
+      teoría. La sección que introduce la herramienta vuelve sobre él. Es el
+      diseño de *productive failure* de Kapur: el intento previo mejora la
+      comprensión conceptual si el problema es abordable con lo que ya se
+      sabe y la explicación posterior lo retoma. Por eso no se pide adivinar
+      sintaxis nueva, y por eso en Fundamentos, donde casi todo es sintaxis,
+      va el examen de salida en su lugar.
+    · **Ejercicios cortos intercalados.** Cada sección numerada termina con
+      uno o dos ejercicios de dos a cinco minutos, con comprobación: entre 6
+      y 8 por lección, sin contar el examen o el problema inicial. Se titulan
+      `### Ejercicio 2.3, Nombre`, con el número de la lección delante, y
+      cumplen la regla 14c. Estos sí pueden nombrar la herramienta, porque
+      fijan un concepto; la página en blanco la entrenan los entregables
+      (regla 25).
+    · **Pieza del proyecto.** `## Pieza del proyecto`, antes del Reto: una
+      función o un paso que se añade a `caja.py`, el programa propio que crece
+      lección a lección y que reutilizan los entregables del catálogo
+      §3.97. Requisitos numerados, sin nombrar herramienta, y el entregable
+      que la usa.
+    · **Progreso.** `encabezado.html` cuenta los ejercicios resueltos de la
+      lección (en `localStorage`, por navegador) y la racha de días con algún
+      ejercicio resuelto o una lección marcada; sábado y domingo no la cortan.
+
+    Cada ejercicio, examen y problema inicial pasa `verificar/ejecuta.py`: la
+    solución da `correct` True y la celda sin completar no, con los ámbitos
+    separados de quarto-live.
 
 15. **Cero contexto de su empresa.** Nada de CBTL, café, Multiplaza ni datos
     reales de su trabajo. Desde el 27-09-2026 (pedido de Luis) sí se admiten los

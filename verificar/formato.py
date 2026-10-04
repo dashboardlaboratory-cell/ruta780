@@ -107,6 +107,48 @@ def prosa(texto):
     return fuera
 
 
+# Lecciones de Fundamentos y Python que ya siguen la regla 27: regla en vez de
+# proposición, examen de salida o problema inicial, ejercicios intercalados y
+# pieza del proyecto. Cuando estén las 42, la comprobación pasa a todo el módulo.
+REGLA27 = {
+    "fundamentos/02-condicionales-y-verdad.qmd",
+    "python/12-groupby-y-agregacion.qmd",
+}
+
+
+def revisa_regla27(rel, t):
+    faltas = []
+    # una demostración se queda solo si deriva con fórmulas; si no, es una regla
+    demos = re.findall(r"\{\.demostracion\}\n(.*?)\n:{3,4}\n", t, re.S)
+    sin_formula = [d for d in demos if "$" not in d]
+    if sin_formula:
+        faltas.append(f"{len(sin_formula)} demostración(es) sin ninguna fórmula: van como regla (regla 27)")
+    n_prop = len(re.findall(r"\*\*Proposición \d", t))
+    if n_prop > len(demos) - len(sin_formula):
+        faltas.append("proposición sin derivación: va como regla (regla 27)")
+    if not re.search(r"\*\*Regla \d", t):
+        faltas.append("ninguna regla numerada (regla 27)")
+    inicio = "## Examen de salida" if rel.startswith("fundamentos/") else "## Problema inicial"
+    if inicio not in t:
+        faltas.append(f"sin «{inicio[3:]}» (regla 27)")
+    if "## Pieza del proyecto" not in t:
+        faltas.append("sin «Pieza del proyecto» (regla 27)")
+    cuerpo = t.split("## Pieza del proyecto")[0]
+    cuerpo = cuerpo.split("\n## 1. ", 1)[-1] if "\n## 1. " in cuerpo else ""
+    n_ej = len(re.findall(r"^### Ejercicio \d+\.\d+, ", cuerpo, re.M))
+    if not 6 <= n_ej <= 8:
+        faltas.append(f"{n_ej} ejercicios intercalados; se esperan entre 6 y 8 (regla 27)")
+    if re.search(r"^## Ejercicios\s*$", t, re.M):
+        faltas.append("bloque «## Ejercicios» al final; van dentro de cada sección (regla 27)")
+    secciones = re.split(r"^## (?=\d+\. )", cuerpo, flags=re.M)
+    sin = [s.split("\n", 1)[0] for s in secciones if s.strip() and "### Ejercicio" not in s
+           and not s.startswith(("Limitaciones", "Lo que"))]
+    sin = [s for s in sin if not re.match(r"\d+\. (?:Limitaciones|Lo que)", s)]
+    if sin:
+        faltas.append("secciones sin ejercicio: " + "; ".join(sin[:3]) + " (regla 27)")
+    return faltas
+
+
 # Lecciones que ya siguen el molde nuevo. El resto está pendiente de reescritura.
 MIGRADAS = {
     "estadistica/01-variables-aleatorias.qmd",
@@ -344,11 +386,11 @@ def revisa(ruta):
 
     # --- regla 14: registro de libro de texto ---
     n_def = len(re.findall(r"\*\*Definición \d", t))
-    n_prop = len(re.findall(r"\*\*(?:Proposición|Teorema) \d", t))
+    n_prop = len(re.findall(r"\*\*(?:Proposición|Teorema|Regla) \d", t))
     n_dem = t.count("{.demostracion}")
     if n_def + n_prop == 0:
         faltas.append("sin definiciones ni proposiciones numeradas (regla 14)")
-    elif n_prop > 0 and n_dem == 0:
+    elif n_prop > 0 and n_dem == 0 and rel not in REGLA27:   # la regla 27 no pide demostración
         faltas.append(f"{n_prop} proposiciones y ninguna demostración (regla 14)")
 
     # --- regla 17: términos marcados para el glosario ---
@@ -416,6 +458,10 @@ def revisa(ruta):
     # --- regla 20: un visual por concepto ---
     if n_def + n_prop >= 4 and len(grupos) == 0:
         faltas.append(f"{n_def + n_prop} resultados y ningún visual (regla 20)")
+
+    # --- regla 27: Fundamentos y Python ---
+    if rel in REGLA27:
+        faltas += revisa_regla27(rel, t)
 
     return rel, faltas, len(grupos), n_def, n_prop, n_dem
 
