@@ -358,6 +358,11 @@ Para añadir un libro: traer su índice de la fuente publicada, meterlo en
 ## Dónde está cada cosa
 
 - `verificar/` — el verificador de salidas y las afirmaciones declaradas
+- `verificar/pyodide.py` — prueba cada ejercicio en el Pyodide real del sitio
+  (fuera del sandbox); `verificar/renombra_citas.py` — corrige las citas a un
+  resultado que cambió de etiqueta
+- `.claude/skills/tanda/` — la skill `/tanda`: cómo aplicar un cambio a muchas
+  lecciones (valorar, regla, piloto, agentes, integrar, publicar)
 - `grafo/build_graph.py` — grafo desde el frontmatter, corre en cada build
 - `brain/` — vault de Obsidian, no se renderiza
 - `proyectos/notebooks/F1-retos.ipynb` — una sección por lección publicada
